@@ -14,6 +14,7 @@
  * @module dsh-chat-ux/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { COMPOSER_INLINE_CSS, installComposerInline } from './composer-inline'
 import { installComposerMarkdown } from './composer-markdown'
 import { COMPOSER_MARKDOWN_CSS } from './composer-markdown-styles'
 import { CARD_CSS } from './config-card-styles'
@@ -78,6 +79,7 @@ export function apply(ctx: ClientContext): void {
     // One sheet carries every half of the browser side: the chat-area rules,
     // the configuration card's, and the replacement user bubble's.
     style.textContent = CSS + '\n' + CARD_CSS + '\n' + USER_BUBBLE_CSS + '\n' + COMPOSER_MARKDOWN_CSS
+      + '\n' + COMPOSER_INLINE_CSS
     document.head.appendChild(style)
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
@@ -102,10 +104,14 @@ export function apply(ctx: ClientContext): void {
   // scoping that keeps a reader's own folds from being overridden.
   ctx.effect(() => installReasoningFold(), 'dsh-chat-ux: reasoning reveal')
 
-  // The composer is a private Lexical editor with no slot, so its decoration
-  // works from the outside: one attribute per paragraph, and a stylesheet that
-  // reads it. The module documents why the marks stay in the text.
+  // The composer is a private Lexical editor with no slot. Block marks are
+  // decorated from the outside — one attribute per paragraph, read back by a
+  // stylesheet — while inline marks need the editor's own model, because they
+  // live inside a text node the editor reconciles. Both modules document why the
+  // marks themselves stay in the text.
   ctx.effect(() => installComposerMarkdown(), 'dsh-chat-ux: composer markdown')
+
+  ctx.effect(() => installComposerInline(), 'dsh-chat-ux: composer inline marks')
 
   // The Plugins page declares `plugins.bundle.config` as a child of its own
   // `main` registration, so the slot exists while that page does. `inject`

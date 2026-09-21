@@ -28,11 +28,15 @@
  * which derives its rules from `REVEAL_STEPS` below and moves the alpha
  * linearly, so the text firms up at a constant rate).
  *
- * The fade's color is an explicit variable, never `currentColor`: inside
- * `::highlight()` Chromium collapses `currentColor` to the initial color
- * instead of resolving it against the originating element, which the dark
- * canvas then shows as black before the highlight is dropped (see `styles.ts`
- * for the measurement).
+ * The fade's color is the run's own color — read off the element its text
+ * renders in and published under `RUN_COLOR_VAR` — never `currentColor` and
+ * never one value for the whole page. `::highlight()` collapses `currentColor`
+ * to the initial color instead of resolving it against the originating element,
+ * which the dark canvas shows as black before the highlight is dropped (see
+ * `styles.ts` for the measurement), so the alpha has to ride on an explicit
+ * `color`. That color cannot be a single one either: an answer holds more than
+ * body text, and painting a link, a syntax token or a list marker in the body's
+ * color while it fades reads as a highlight flash instead of a fade.
  *
  * @module dsh-chat-ux/client/token-motion
  */
@@ -47,9 +51,9 @@
  * is the alpha each painted frame carries, not how many steps a frame skips.
  *
  * The count is only worth raising because `styles.ts` writes each step's alpha
- * as a fraction. A whole-number percentage can express just the 31 values
- * between `TOKEN_MIN_OPACITY` and 1, so any steps past that would repeat one of
- * them and the "finer" fade would be the same staircase under another name.
+ * as a fraction. A whole-number percentage expresses just the 81 values between
+ * `TOKEN_MIN_OPACITY` and 1, so any steps past that would repeat one of them and
+ * the "finer" fade would be the same staircase under another name.
  */
 export const REVEAL_STEPS = 96
 
@@ -57,12 +61,17 @@ export const REVEAL_STEPS = 96
  * Alpha a character starts at, before it fades in to fully opaque.
  *
  * The reveal is a change in the text's own transparency, not a shift into some
- * other color: a character arrives faint and becomes solid, and the transcript's
- * color is never swapped for a highlight color. `::highlight()` accepts no
- * `opacity` — its property set is small and does not include it — so the alpha
- * rides on `color` instead, which `styles.ts` turns into one rule per step.
+ * other color: a character arrives faint and becomes solid, and nothing's color
+ * is ever swapped for a highlight color. `::highlight()` accepts no `opacity` —
+ * its property set is small and does not include it — so the alpha rides on
+ * `color` instead, which `styles.ts` turns into one rule per step.
+ *
+ * A fifth of the way in is faint enough to be unreadable on either theme —
+ * `rgb(249, 250, 251)` at 20% over `rgb(21, 21, 23)` lands near
+ * `rgb(67, 68, 70)` — while still being visible enough to read as text
+ * arriving rather than as nothing having rendered at all.
  */
-export const TOKEN_MIN_OPACITY = 0.7
+export const TOKEN_MIN_OPACITY = 0.2
 
 /** Fade duration used until the settings are read, and whenever they are unusable. */
 export const DEFAULT_REVEAL_MS = 150
@@ -90,6 +99,17 @@ export function clampRevealMs(value: unknown): number {
 /** Prefix of every highlight name this module registers. */
 export const HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-'
 
+/**
+ * The custom property one element's own color is published under.
+ *
+ * `styles.ts` reads it from inside `::highlight()`, where custom properties do
+ * resolve against the run's originating element — measured on a staged page, an
+ * element holding `rgb(77, 155, 255)` yields
+ * `color(srgb 0.301961 0.607843 1 / 0.7)` for step 0. That is what lets one
+ * rule per step cover every color an answer is painted in.
+ */
+export const RUN_COLOR_VAR = '--dsh-chat-ux-run-color'
+
 /** The container the Markdown layer marks while an assistant message streams. */
 const STREAMING_SELECTOR = '[data-streaming]'
 
@@ -108,6 +128,13 @@ const FOLD_QUIET_MS = 400
 /** One character run awaiting its fade. */
 interface LiveRun {
   readonly container: Element
+  /**
+   * Element the run's characters render in; carries `RUN_COLOR_VAR`.
+   *
+   * Null only for a parentless text node, which cannot occur inside a streaming
+   * container — carried anyway so the lookup has one shape.
+   */
+  readonly element: Element | null
   /** Character offset into the container's concatenated text. */
   readonly start: number
   /** Run length in UTF-16 code units. */
@@ -184,29 +211,39 @@ export function stepForAge(age: number, revealMs: number = DEFAULT_REVEAL_MS): n
 }
 
 /**
- * Split one appended chunk into per-character runs.
+ * Split a container's appended suffix into per-character runs.
  *
- * Every character of the chunk shares one birth time on purpose: they arrived
- * together, so they fade together, and no run is offset from its neighbours.
- * Iteration is by code point, so a surrogate pair stays one run; whitespace gets
- * no run of its own but still advances the offset.
- * @param added - the appended text.
- * @param baseOffset - offset of `added` in the container's concatenated text.
+ * The walk is per text node rather than over the concatenated string because
+ * every run has to carry the element its text renders in — that element is what
+ * `styles.ts` reads the fade's color from, and one node's text always renders in
+ * one element. Within a node every character shares one birth time on purpose:
+ * they arrived together, so they fade together, and no run is offset from its
+ * neighbours. Iteration is by code point, so a surrogate pair stays one run;
+ * whitespace gets no run of its own but still advances the offset.
+ * @param snapshot - the container's current text snapshot.
+ * @param from - offset the appended suffix starts at.
  * @param now - current `performance.now()` timestamp, shared by every run.
  * @returns runs ready to be pushed onto the live list.
  */
-export function planRuns(
-  added: string,
-  baseOffset: number,
+function planSuffixRuns(
+  snapshot: TextSnapshot,
+  from: number,
   now: number,
-): Array<{ start: number; length: number; born: number }> {
-  const runs: Array<{ start: number; length: number; born: number }> = []
-  let offset = baseOffset
-  for (const character of added) {
-    if (character.trim().length !== 0) {
-      runs.push({ start: offset, length: character.length, born: now })
+): Array<Omit<LiveRun, 'container'>> {
+  const runs: Array<Omit<LiveRun, 'container'>> = []
+  for (let index = 0; index < snapshot.nodes.length; index += 1) {
+    const node = snapshot.nodes[index]!
+    const nodeStart = snapshot.starts[index]!
+    if (nodeStart + node.data.length <= from) continue
+    const begin = Math.max(from, nodeStart)
+    const element = node.parentElement
+    let offset = begin
+    for (const character of node.data.slice(begin - nodeStart)) {
+      if (character.trim().length !== 0) {
+        runs.push({ element, start: offset, length: character.length, born: now })
+      }
+      offset += character.length
     }
-    offset += character.length
   }
   return runs
 }
@@ -230,6 +267,27 @@ function collectText(container: Element): TextSnapshot {
     node = walker.nextNode()
   }
   return { text, nodes, starts }
+}
+
+/** Color last written to an element, so a repeat pass skips the read and write. */
+const runColors = new WeakMap<Element, string>()
+
+/**
+ * Publish an element's own color under `RUN_COLOR_VAR`.
+ *
+ * The computed color is read rather than remembered: what matters is the color
+ * the Markdown layer actually painted — a link's token, a syntax token, a list
+ * marker — not whatever this module wrote last. The read is skipped while the
+ * element still carries the color recorded for it, which is the common case on
+ * every frame after the first.
+ * @param element - element a run's text renders in.
+ */
+function ensureRunColor(element: Element | null): void {
+  if (element === null) return
+  const color = window.getComputedStyle(element).color
+  if (runColors.get(element) === color) return
+  runColors.set(element, color)
+  ;(element as HTMLElement).style.setProperty(RUN_COLOR_VAR, color)
 }
 
 /**
@@ -369,6 +427,10 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       // put an O(message) TreeWalker in the middle of every frame.
       const snapshot = latest.get(run.container)
       if (snapshot === undefined) continue
+      // React can replace an element while a run is still fading, and the
+      // replacement carries no color yet — without one the rule would fall back
+      // to the page default, which is the highlight flash this exists to avoid.
+      if (run.element !== null && !runColors.has(run.element)) ensureRunColor(run.element)
       const range = buildRange(snapshot, run.start, run.length)
       if (range !== null) buckets[stepForAge(age, revealMs)]!.push(range)
     }
@@ -401,7 +463,15 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
         keepRunsBefore(container, commonPrefixLength(previous, snapshot.text))
         continue
       }
-      for (const run of planRuns(snapshot.text.slice(from), from, now)) {
+      // One style read per element per pass: a chunk lands in one or two
+      // nodes, so this stays a handful of reads even when a whole paragraph
+      // arrives at once.
+      const touched = new Set<Element>()
+      for (const run of planSuffixRuns(snapshot, from, now)) {
+        if (run.element !== null && !touched.has(run.element)) {
+          touched.add(run.element)
+          ensureRunColor(run.element)
+        }
         runs.push({ container, ...run })
       }
     }
