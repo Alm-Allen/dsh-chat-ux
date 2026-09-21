@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness（dsh）Web GUI 聊天区的 UX 优化插件。
 
-当前状态：已实现 **API 响应的 token 淡入**（思考与正文都覆盖）、**思考行随思考自动展开与收起**、**用户消息气泡的 Markdown 渲染**、**输入框的 Markdown 装饰**（块级 + 行内）；渐变时长可以在 dsh 的**插件管理页**上调整。
+当前状态：已实现 **API 响应的 token 淡入**（思考与正文都覆盖）、**思考行随思考自动展开与收起**、**用户消息气泡的 Markdown 渲染**；渐变时长可以在 dsh 的**插件管理页**上调整。
 
 ## 工程结构
 
@@ -14,9 +14,6 @@ src/client/reasoning-fold.ts 思考行：思考中展开、思考结束收起
 src/client/styles.ts       聊天区样式表 + 透明度档位规则（纯文本，内联进 bundle）
 src/client/user-bubble.tsx 用户气泡：接管 conversation.chat.node 的 user / steering 座位
 src/client/user-bubble-styles.ts 气泡样式表（复刻官方度量，dsh-chat-ux-ub- 前缀）
-src/client/composer-markdown.ts 输入框：扫描段落、写块级属性
-src/client/composer-markdown-styles.ts 输入框样式表 + 属性名常量
-src/client/composer-inline.ts 输入框：行内标记（TextNode.setStyle + splitText）
 src/client/settings-card.tsx 插件管理页上的配置卡片（渐变时长表单）
 src/client/config-card-styles.ts 卡片的样式表与类名（跟随 dsh 设计令牌）
 src/client/settings-scope.ts 客户端 settings scope 的最小类型契约
@@ -69,6 +66,8 @@ body[data-ds-dark-theme] {
 ```
 
 `::highlight()` 会把自定义属性解析到**承载元素**上，所以同一档位、不同元素读到的颜色各不相同。实测：元素上写 `rgb(77, 155, 255)`，第 0 档读出 `color(srgb 0.301961 0.607843 1 / 0.7)`。
+
+颜色是**每一帧按 Range 的实际元素校正**的，不是扫描时写一次就完事。Markdown 层在流式期间会重建节点（把 `**bold` 重新解析、折叠某一行），被换掉的那个元素上留着的颜色再也没人渲染，而真正在渲染的新元素会回退到页面默认值——那是正文色，于是闪过一下白。所以 `paint()` 从 Range 的 `startContainer` 反查元素并补写变量；元素上已经带着记录过的颜色时跳过样式读取，每帧每个区间只多一次 WeakMap 查找。
 
 **为什么不能只用一个颜色**：答案里不只有正文。链接走 `--dsw-alias-link`，代码块的 token 颜色由 shiki 内联写死，列表标记是 `--dsw-alias-label-secondary`——把它们在淡入期间一律涂成正文色，每个字符就会**比它最终的颜色更亮**，然后再掉回去。深色主题下最刺眼：正文色是 `rgb(249, 250, 251)` 的近白，本该是蓝、紫、绿的那些字符会先闪一下白。那不是淡入，是高亮。
 
@@ -127,62 +126,6 @@ dsh 对两种消息用两套文本处理：助手消息走 `MarkdownText`（GFM 
 - 时钟的日期模板在官方那里来自 `chat` 命名空间（插件够不到），这里用同样的分档逻辑自己拼；
 - **发送瞬间会有一次跳变**：本地回显气泡（`PendingSubmissionBubble`）由 `ChatView` 直接渲染、不走槽位，所以回显是纯文本，落地后才变成 Markdown。
 
-## 输入框的 Markdown 装饰
-
-输入框是个**私有的 Lexical 编辑器**：`DraftEditorRuntime` 用 `createEditor` 建它，节点类型在构造时就固定（段落、文本、两种 chip），注册的是 `registerPlainText`——纯文本模式。`nodes` 改不了，插件加不了新的节点类型；输入框内部也没有槽位。
-
-装饰因此分两层，它们能碰到的 DOM 边界不一样。
-
-### 块级：从外面打属性
-
-段落就是一个元素，所以这一层是**纯装饰**：`composer-markdown.ts` 观察 `[data-composer-input]`，给每个段落写一个 `data-dsh-chat-ux-md` 属性，`composer-markdown-styles.ts` 按属性上样式。
-
-**为什么不动文本**：提交出去的草稿就是这些段落的纯文本。为了让项目符号好看去改写节点树，要么改变了真正发送的内容，要么让编辑器自己的投影（detect span、text ref、撤销）读到一份读者没打过的文档。属性只改画面，不碰任何一份真相。
-
-各标记的处理：
-
-| 语法 | 处理 |
-|---|---|
-| `- ` / `* ` / `+ ` | 悬挂缩进（`padding-left` 配等值负 `text-indent`），项目符号由绝对定位的 `::before` **盖在标记的第一个字符上**——它的背景是输入框自己的表面令牌，所以是遮住而不是并排 |
-| `1. ` / `1) ` | 只加缩进：编号本身就是列表的样子，不需要再画 |
-| 三个反引号或波浪线的围栏 | 围栏行淡化（读者仍看得见、改得动分隔符），正文行取等宽字体与表面色。段落在这块表面没有外边距，正文因此连成一块 |
-| `> ` | 缩进加左侧竖线 |
-| `#` 到 `######` | 字号与字重 |
-
-扫描器**幂等**，并在每次 mutation 后重跑：这份 DOM 归 Lexical 所有，它随时可能重建一个段落，属性会跟着丢。写入前比较当前值，所以重扫一个没变的块不会产生新的 mutation，观察器不会自激。
-
-### 行内：只能走编辑器自己的模型
-
-行内标记在**文本节点内部**。样式表选不中一行里的子串，而往 contenteditable 里塞 `<span>` 会被 Lexical 的 reconciliation 抹掉，所以 `composer-inline.ts` 走编辑器模型：`TextNode.setStyle()` 配 `splitText()`，把标记**之间**的那一段拆成独立节点再给它内联样式。这正是 dsh 自己给行首 claim token 上色的手法（`claim-decor.ts`）。
-
-客户端 bundle **不能 import `lexical`**（它不在平台模块表里），所以这条路由两个内部事实撑起来：
-
-| 需要的东西 | 来源 | 依据 |
-|---|---|---|
-| 编辑器实例 | `[data-composer-input].__lexicalEditor` | `addRootElementEvents` 写的；Lexical 自己的事件路由就靠它从 DOM 反查编辑器 |
-| 注册 transform 的类 | 一个只有 `getType()` 的替身对象 | `getRegisteredNode` 只用 `klass.getType()` 查注册表，类本身不参与 |
-
-写法上有几个要点，前三条是同一件事推出来的：
-
-- **标记字符留在文本里**：提交出去的草稿就是这份文本，标记一个都不能少——这条和块级一致。
-- **整段标记一起上样式**，不是只染标记之间的部分：反引号、`**`、`[]()` 跟着一起变。这样每个叶子节点要么是完整的标记、要么完全不含标记。
-- **一次扫出全部标记，再从右往左拆**：拆分只从节点尾部进行，左边待处理标记的偏移因此不受影响。之所以必须一次扫完，是因为上一条——如果一次只拆一个，尾部节点会以**孤立的闭反引号**开头，下一轮就会把它和后面那个 span 的开反引号配成一对，把两者之间的文字整段染成 code。这个坑是实测踩出来的（`` `a` 和 `b` `` 会把中间的「 和 」染成 code）。
-- **幂等靠「完整标记」判定，不靠标记位**：一个节点恰好是一个完整标记、且样式已经正确，就原样放过；其余一律重新解析。这一条同时解决了**在标记末尾接着打字**的情况——光标停在已染色的节点里，新字符会落进该节点，它因此不再是一个完整标记，于是被重新拆开，溢出的部分恢复成普通文本。dsh 自己的 claim 装饰出于同样的原因也做这件事，不这么做的话 `` `测试` `` 后面接着打的每一个字都会被染成 code。
-- **`registerPlainText` 不碰样式**：它只装命令处理器（删除、粘贴、方向键……），既不清 `format` 也不清 `style`，画上去的样式不会被它抹掉。
-
-| 语法 | 处理 |
-|---|---|
-| `` `code` `` | 整段取等宽字体 + `0.875em` + 内联 code 背景令牌；反引号本身画成透明 |
-| `**粗体**` / `__粗体__` | 整段 `font-weight: 600` |
-| `[label](target)` | 整段取链接色 + 下划线 |
-
-**反引号为什么看不见**：等宽段的反引号由一层 `::highlight(dsh-chat-ux-tick)` 画成透明。`::highlight()` 只改**绘制**、不碰 DOM，所以反引号既留在文本里（发给模型的原句一个字符不少），也留在光标可达的位置上。粗体与链接的标记不隐藏——`**` 本来就短，而 `[label](target)` 的 URL 读者多半想看着。
-
-已知边界：
-
-- 只做视觉、**不改语义**：输入框里显示成列表，提交出去的仍然是 `- item` 原文；行内 code 显示成代码的样子，发出去的仍然是带反引号的原句。在「模型要读源码」的前提下这是对的，但读者看到的和发出的确实不是同一种东西。
-- 行内这一层**改动了节点树**（`splitText`）。撤销一次会连同拆分一起回退，这是期望的行为，但它确实在撤销粒度里多了一层。
-- 依赖 Lexical 的 `<p>` 结构和 `data-composer-input` 标记（块级），以及 `__lexicalEditor` 字段与「`getRegisteredNode` 只读 `getType()`」这个行为（行内）。dsh 或 Lexical 换实现时会**静默失效**——不报错，只是不再装饰。
 
 ## 配置卡片
 
@@ -196,7 +139,7 @@ dsh 对两种消息用两套文本处理：助手消息走 `MarkdownText`（GFM 
 
 ## 渐变速度
 
-速度由设置命名空间 `dsh-chat-ux` 的 `revealMs` 决定，默认 150 ms，允许 30–600 ms。
+速度由设置命名空间 `dsh-chat-ux` 的 `revealMs` 决定，默认 120 ms，允许 30–600 ms。
 
 上限不是随便定的：`styles.ts` 编译期就生成了 96 条档位规则，时长越长每档跨度越大；600 ms 摊到 96 档是 6.25 ms 一档，仍在 144 Hz 的一帧之内，再长就会看出台阶。
 
@@ -260,6 +203,5 @@ dsh web                              # 启动后刷新页面
 
 聊天区 UX 继续在 `src/client/` 里做：
 
-1. 输入框的行内装饰只给标记之间的片段上样式，**标记本身留在文本里**（刻意的：提交出去的就是这份文本）。真要做到所见即所得（标记消失、列表项之间能续行），得改写节点树本身，代价是编辑器自己的文本投影——动手前先想清楚。
-2. 工具行、时间线等位置也可以用同一套 `conversation.chat.node` shadowing 替换（同 key、更低 priority 者渲染），气泡就是这么接管的。
-3. 改完用 `npm run build` 重建，刷新页面验证。
+1. 工具行、时间线等位置也可以用同一套 `conversation.chat.node` shadowing 替换（同 key、更低 priority 者渲染），气泡就是这么接管的。
+2. 改完用 `npm run build` 重建。web profile 刷新页面即可；desktop profile 必须**重启 App**——Windows 下应用菜单被置空（`apps/desktop/src/main.ts`），Ctrl+F5 与 F5 都不生效。

@@ -27,7 +27,7 @@ export const name = 'dsh-chat-ux'
 export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
 
 /** Default time one revealed character takes to settle back to the text color. */
-export const DEFAULT_REVEAL_MS = 150
+export const DEFAULT_REVEAL_MS = 120
 
 /**
  * Bounds of the fade duration. The browser half clamps to the same range, so a

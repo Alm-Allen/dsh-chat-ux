@@ -63,7 +63,7 @@ const zh: Copy = {
     MIN_REVEAL_MS +
     '–' +
     MAX_REVEAL_MS +
-    ' 毫秒，默认 150。',
+    ' 毫秒，默认 120。',
   invalid: '请输入 ' + MIN_REVEAL_MS + ' 到 ' + MAX_REVEAL_MS + ' 之间的数字。',
   overridden: '已覆盖',
   save: '保存',
@@ -82,7 +82,7 @@ const en: Copy = {
     MIN_REVEAL_MS +
     '–' +
     MAX_REVEAL_MS +
-    ' ms; the default is 150.',
+    ' ms; the default is 120.',
   invalid: 'Enter a number between ' + MIN_REVEAL_MS + ' and ' + MAX_REVEAL_MS + '.',
   overridden: 'Overridden',
   save: 'Save',

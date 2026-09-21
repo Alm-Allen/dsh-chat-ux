@@ -74,7 +74,7 @@ export const REVEAL_STEPS = 96
 export const TOKEN_MIN_OPACITY = 0.2
 
 /** Fade duration used until the settings are read, and whenever they are unusable. */
-export const DEFAULT_REVEAL_MS = 150
+export const DEFAULT_REVEAL_MS = 120
 
 /**
  * Bounds of the fade duration, mirroring the host schema. They exist because
@@ -427,12 +427,18 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       // put an O(message) TreeWalker in the middle of every frame.
       const snapshot = latest.get(run.container)
       if (snapshot === undefined) continue
-      // React can replace an element while a run is still fading, and the
-      // replacement carries no color yet — without one the rule would fall back
-      // to the page default, which is the highlight flash this exists to avoid.
-      if (run.element !== null && !runColors.has(run.element)) ensureRunColor(run.element)
       const range = buildRange(snapshot, run.start, run.length)
-      if (range !== null) buckets[stepForAge(age, revealMs)]!.push(range)
+      if (range === null) continue
+      // The element is read back from the range, not from the one the scan
+      // saw. The Markdown layer rebuilds nodes while a message streams
+      // (re-parsing `**bold`, folding a row), and a run whose element was
+      // replaced would leave its color on a node nobody renders any more —
+      // the live element would then fall back to the page default and flash
+      // the body color instead of fading. `ensureRunColor` skips the style
+      // read once the element carries the color recorded for it, so this
+      // costs one WeakMap lookup per run per frame.
+      ensureRunColor(range.startContainer.parentElement)
+      buckets[stepForAge(age, revealMs)]!.push(range)
     }
     for (let step = 0; step < REVEAL_STEPS; step += 1) {
       const name = HIGHLIGHT_PREFIX + step
