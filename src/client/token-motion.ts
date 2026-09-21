@@ -8,7 +8,7 @@
  * with `data-streaming` while the message grows.
  *
  * One character is one run, and a run carries a single color from start to
- * finish — there is deliberately no sweep across a character and no artificial
+ * finish: there is deliberately no sweep across a character and no artificial
  * stagger between neighbours. Every character's fade is decided only by when it
  * arrived, so a chunk that lands together lights up together, and the reading
  * order in the transcript comes from the API's own arrival order rather than
@@ -27,18 +27,25 @@
  * which derives its rules from `REVEAL_STEPS` below and mixes them linearly in
  * sRGB, so the color moves at a constant rate).
  *
+ * Both endpoints of the fade are explicit colors, never `currentColor`:
+ * inside `::highlight()` Chromium collapses `currentColor` to the
+ * initial color instead of resolving it against the originating element, which
+ * the dark canvas then shows as black before the highlight is dropped (see
+ * `styles.ts` for the measurement).
+ *
  * @module dsh-chat-ux/client/token-motion
  */
 
 /**
  * Number of color steps between the highlight color and the text's own color.
- * Sized at roughly one step per browser frame across `REVEAL_MS`, which is what
- * makes a stepped fade read as a continuous one.
+ * Deliberately generous against `REVEAL_MS`: at 60 Hz only a fraction of the
+ * steps are ever sampled, and the surplus keeps the fade smooth on a
+ * higher-refresh display or if `REVEAL_MS` is raised.
  */
 export const REVEAL_STEPS = 32
 
 /** Time one character takes to settle back to the text color. */
-export const REVEAL_MS = 320
+export const REVEAL_MS = 150
 
 /** Only the tail of a growing message is diffed; earlier text never changes. */
 const DIFF_TAIL_CHARS = 6000
