@@ -32,10 +32,16 @@ export const STYLE_ID = 'dsh-chat-ux-style'
  * One rule per step. Step 0 is the faintest a character ever gets and the last
  * step is fully opaque, so the text reaches its settled color exactly when the
  * run leaves the highlight registry.
+ *
+ * The alpha is written to two decimals rather than as a whole percentage.
+ * `REVEAL_STEPS` is far wider than the 31 whole values between
+ * `TOKEN_MIN_OPACITY` and 1, so rounding would give long runs of steps the same
+ * color and the ramp would come back as a staircase — the very thing the extra
+ * steps are there to remove.
  */
 const stepRules = Array.from({ length: REVEAL_STEPS }, (_, step) => {
-  const alpha = Math.round(
-    (TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))) * 100,
+  const alpha = Number(
+    ((TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))) * 100).toFixed(2),
   )
   return [
     '::highlight(' + HIGHLIGHT_PREFIX + step + ') {',

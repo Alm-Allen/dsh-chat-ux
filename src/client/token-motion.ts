@@ -39,11 +39,19 @@
 
 /**
  * Number of steps between a character's faint arrival and its settled color.
- * Deliberately generous against the longest fade the settings allow: at 60 Hz
- * only a fraction of the steps are ever sampled, and the surplus keeps the fade
- * smooth on a higher-refresh display or when the reader slows the fade down.
+ *
+ * Sized against the slowest fade the settings allow on the fastest display
+ * likely to run it: `MAX_REVEAL_MS` of 600 ms at 144 Hz is 86 frames, so 96
+ * steps keep a step at least every frame even there. A faster fade simply
+ * leaves most steps unsampled, which costs nothing — what the eye integrates
+ * is the alpha each painted frame carries, not how many steps a frame skips.
+ *
+ * The count is only worth raising because `styles.ts` writes each step's alpha
+ * as a fraction. A whole-number percentage can express just the 31 values
+ * between `TOKEN_MIN_OPACITY` and 1, so any steps past that would repeat one of
+ * them and the "finer" fade would be the same staircase under another name.
  */
-export const REVEAL_STEPS = 32
+export const REVEAL_STEPS = 96
 
 /**
  * Alpha a character starts at, before it fades in to fully opaque.
@@ -63,7 +71,8 @@ export const DEFAULT_REVEAL_MS = 150
  * Bounds of the fade duration, mirroring the host schema. They exist because
  * `styles.ts` bakes exactly `REVEAL_STEPS` color rules: a longer fade would
  * spread those buckets far enough apart to read as steps, so the maximum is the
- * point where one bucket still lasts about one display frame.
+ * point where one bucket still lasts about one display frame — 600 ms over 96
+ * steps is 6.25 ms, comfortably inside a 144 Hz frame.
  */
 export const MIN_REVEAL_MS = 30
 export const MAX_REVEAL_MS = 600
@@ -78,17 +87,23 @@ export function clampRevealMs(value: unknown): number {
   return Math.min(MAX_REVEAL_MS, Math.max(MIN_REVEAL_MS, Math.round(value)))
 }
 
-/** Only the tail of a growing message is diffed; earlier text never changes. */
-const DIFF_TAIL_CHARS = 6000
-
-/** A rewrite larger than this is a re-parse, not an append; do not animate it. */
-const REWRITE_LIMIT_CHARS = 200
-
 /** Prefix of every highlight name this module registers. */
 export const HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-'
 
 /** The container the Markdown layer marks while an assistant message streams. */
 const STREAMING_SELECTOR = '[data-streaming]'
+
+/**
+ * How long a fold keeps the container it rewrote out of the reveal.
+ *
+ * The container carries `data-streaming` for as long as its message is
+ * `running`, which spans the whole turn — including the answer text that
+ * arrives after the reasoning stopped. A click on a reasoning or tool row
+ * therefore rewrites a container the scan is still watching. Long enough to
+ * cover React's re-render and the mutation batch it produces; short enough
+ * that a stream resuming right after the click still animates.
+ */
+const FOLD_QUIET_MS = 400
 
 /** One character run awaiting its fade. */
 interface LiveRun {
@@ -125,6 +140,28 @@ export function commonPrefixLength(a: string, b: string): number {
   let index = 0
   while (index < limit && a.charCodeAt(index) === b.charCodeAt(index)) index += 1
   return index
+}
+
+/**
+ * Decide whether a container's text grew by a suffix, and where that suffix
+ * starts — the only shape of change that means the model just emitted
+ * characters.
+ *
+ * Everything else is a rewrite of text the reader has already seen: the
+ * Markdown layer re-parsing `**bold` into a `<strong>`, a process row folding
+ * open or shut, a tool result collapsing. Those can lengthen the container's
+ * text as easily as they can shorten it — a collapsed reasoning row shows the
+ * first line of the block it expands into, so opening it *appends* the rest —
+ * and animating them replays the fade over a paragraph that was already read.
+ * Hence the strict test: the old text must be a prefix of the new one.
+ * @param previous - the container's text at the last scan.
+ * @param current - the container's text now.
+ * @returns the offset the appended suffix starts at, or null when the change
+ * is a rewrite rather than an append.
+ */
+export function appendedFrom(previous: string, current: string): number | null {
+  if (current.length <= previous.length) return null
+  return current.startsWith(previous) ? previous.length : null
 }
 
 /**
@@ -256,17 +293,58 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
 
   const runs: LiveRun[] = []
   const seen = new WeakMap<Element, string>()
+  /** Each streaming container's text as of the last scan, reused by `paint`. */
+  const latest = new WeakMap<Element, TextSnapshot>()
+  /** Containers a reader just folded open or shut, against the guard's expiry. */
+  const folded = new WeakMap<Element, number>()
   let frame = 0
 
   const clearHighlights = (): void => {
     for (let step = 0; step < REVEAL_STEPS; step += 1) registry.delete(HIGHLIGHT_PREFIX + step)
   }
 
-  const dropRunsIn = (container: Element): void => {
+  /**
+   * Drop the runs a rewrite invalidated, keeping the ones whose characters are
+   * still where they were.
+   *
+   * Killing every run in a rewritten container would snap the text that was
+   * mid-fade straight to its settled color — the hard cut this whole module
+   * exists to avoid, and one that lands on exactly the paragraphs the reader is
+   * looking at, since a re-parse happens at the end of what is being written.
+   * @param container - the container that was rewritten.
+   * @param valid - length of the prefix that survived the rewrite.
+   */
+  const keepRunsBefore = (container: Element, valid: number): void => {
     for (let index = runs.length - 1; index >= 0; index -= 1) {
-      if (runs[index]!.container === container) runs.splice(index, 1)
+      const run = runs[index]!
+      if (run.container === container && run.start + run.length > valid) runs.splice(index, 1)
     }
   }
+
+  /**
+   * Mark the containers a fold is about to rewrite.
+   *
+   * A click on a reasoning row is not the model emitting text, but the row it
+   * toggles lives inside a container that still carries `data-streaming`, and
+   * the mutation it produces looks exactly like an append when the collapsed
+   * summary happens to be a prefix of the expanded block. The click is the only
+   * signal that separates the two, so it is captured before React's handler
+   * runs and the containers it can reach are held out of the reveal.
+   * @param event - a click or key press anywhere in the page.
+   */
+  const noteFold = (event: Event): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const until = performance.now() + FOLD_QUIET_MS
+    const self = target.closest(STREAMING_SELECTOR)
+    if (self !== null) folded.set(self, until)
+    // The toggling control can sit outside the container it rewrites, so the
+    // subtree is swept too rather than only the target's own ancestors.
+    for (const container of target.querySelectorAll(STREAMING_SELECTOR)) folded.set(container, until)
+  }
+
+  document.addEventListener('click', noteFold, true)
+  document.addEventListener('keydown', noteFold, true)
 
   /** Repaint every live run at its current age, then schedule the next frame. */
   const paint = (now: number): void => {
@@ -276,7 +354,6 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       return
     }
     const revealMs = clampRevealMs(readRevealMs())
-    const snapshots = new Map<Element, TextSnapshot>()
     const buckets: Range[][] = []
     for (let step = 0; step < REVEAL_STEPS; step += 1) buckets.push([])
     for (let index = runs.length - 1; index >= 0; index -= 1) {
@@ -286,11 +363,12 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
         runs.splice(index, 1)
         continue
       }
-      let snapshot = snapshots.get(run.container)
-      if (snapshot === undefined) {
-        snapshot = collectText(run.container)
-        snapshots.set(run.container, snapshot)
-      }
+      // The scan that queued these runs built the snapshot, and every later
+      // mutation goes through another scan before this frame can paint, so the
+      // cached text is the text on screen. Re-walking the container here would
+      // put an O(message) TreeWalker in the middle of every frame.
+      const snapshot = latest.get(run.container)
+      if (snapshot === undefined) continue
       const range = buildRange(snapshot, run.start, run.length)
       if (range !== null) buckets[stepForAge(age, revealMs)]!.push(range)
     }
@@ -312,21 +390,20 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       const snapshot = collectText(container)
       const previous = seen.get(container)
       seen.set(container, snapshot.text)
+      latest.set(container, snapshot)
       // First sight of a container is a baseline: history never animates.
       if (previous === undefined || snapshot.text.length === 0) continue
-      const windowStart = Math.max(0, previous.length - DIFF_TAIL_CHARS)
-      const common = windowStart + commonPrefixLength(
-        previous.slice(windowStart),
-        snapshot.text.slice(windowStart, previous.length),
-      )
-      // A big rewrite is the Markdown layer re-parsing, not fresh output.
-      if (previous.length - common > REWRITE_LIMIT_CHARS) {
-        dropRunsIn(container)
+      const quiet = folded.get(container)
+      const from = quiet !== undefined && now <= quiet
+        ? null
+        : appendedFrom(previous, snapshot.text)
+      if (from === null) {
+        keepRunsBefore(container, commonPrefixLength(previous, snapshot.text))
         continue
       }
-      if (common >= snapshot.text.length) continue
-      const added = snapshot.text.slice(common)
-      for (const run of planRuns(added, common, now)) runs.push({ container, ...run })
+      for (const run of planRuns(snapshot.text.slice(from), from, now)) {
+        runs.push({ container, ...run })
+      }
     }
     if (runs.length > 0 && frame === 0) frame = requestAnimationFrame(paint)
   }
@@ -337,6 +414,8 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
 
   return () => {
     observer.disconnect()
+    document.removeEventListener('click', noteFold, true)
+    document.removeEventListener('keydown', noteFold, true)
     if (frame !== 0) cancelAnimationFrame(frame)
     frame = 0
     runs.length = 0

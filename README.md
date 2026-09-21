@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness（dsh）Web GUI 聊天区的 UX 优化插件。
 
-当前状态：已实现 **API 响应的 token 淡入**（思考与正文都覆盖），渐变时长可以在 dsh 的**插件管理页**上调整。
+当前状态：已实现 **API 响应的 token 淡入**（思考与正文都覆盖）、**思考行随思考自动展开与收起**、**用户消息气泡的 Markdown 渲染**、**输入框的 Markdown 装饰**；渐变时长可以在 dsh 的**插件管理页**上调整。
 
 ## 工程结构
 
@@ -10,7 +10,12 @@
 src/index.ts               host 半：Node 侧入口，注册设置命名空间
 src/client/index.tsx       client 半：浏览器入口，聊天区 UX 写在这里
 src/client/token-motion.ts token 淡入：diff 新增文本并驱动透明度档位
+src/client/reasoning-fold.ts 思考行：思考中展开、思考结束收起
 src/client/styles.ts       聊天区样式表 + 透明度档位规则（纯文本，内联进 bundle）
+src/client/user-bubble.tsx 用户气泡：接管 conversation.chat.node 的 user / steering 座位
+src/client/user-bubble-styles.ts 气泡样式表（复刻官方度量，dsh-chat-ux-ub- 前缀）
+src/client/composer-markdown.ts 输入框：扫描段落、写块级属性
+src/client/composer-markdown-styles.ts 输入框样式表 + 属性名常量
 src/client/settings-card.tsx 插件管理页上的配置卡片（渐变时长表单）
 src/client/config-card-styles.ts 卡片的样式表与类名（跟随 dsh 设计令牌）
 src/client/settings-scope.ts 客户端 settings scope 的最小类型契约
@@ -45,7 +50,9 @@ client 产物必须是**单个自包含文件**：浏览器模块加载器不给
 
 `::highlight()` 接受不了 `opacity`——它的属性集很小（color、background-color、各种 text-decoration、text-shadow），所以透明度只能挂在 `color` 的 alpha 通道上。这正是 `color-mix(in srgb, C p%, transparent)` 的语义：与 `transparent` 混合会把结果的 alpha 按 `p` 加权，色相不变。
 
-`::highlight()` 同样不接受 transition，所以渐变是**分档**的：`token-motion.ts` 按存活时长把区间分到 32 个档位，`styles.ts` 为每个档位生成一条规则，从 70% 一路走到 100%，每档 1%。
+`::highlight()` 同样不接受 transition，所以渐变是**分档**的：`token-motion.ts` 按存活时长把区间分到 96 个档位，`styles.ts` 为每个档位生成一条规则，从 70% 一路走到 100%。
+
+档位数的用处取决于 alpha 的精度：整数百分比在 70%–100% 之间只有 31 个取值，96 档里会有 65 档撞成同一个颜色，看着仍是一段台阶。所以规则里写的是两位小数（`70.32%`），96 档才真是 96 个不同的颜色。96 是对着最慢档定的：600 ms 在 144 Hz 上是 86 帧，每帧至少还能分到一档。
 
 颜色端点仍是显式变量，不用 `currentColor`：
 
@@ -67,8 +74,77 @@ body[data-ds-dark-theme] {
 
 - 只处理**流式容器**内的变化，历史消息与已完成回复不会重播。
 - 首次见到某容器只记录基线，不追溯已显示的内容。
-- Markdown 重解析导致的大幅改写（超过 200 字符）视为重排而非新增，不产生动效。
+- 只有**纯粹的末尾追加**才算新字符：旧文本必须是新文本的前缀。别的形状——变短、在中间岔开——都是对已经读过的文字做重排，不产生动效。
+- **折叠/展开思考行或工具行不会重放渐变**。这些行所在的容器在整轮 `running` 期间都带着 `data-streaming`（思考停下之后才到的正文也在里面），而收起的思考行显示的正是展开后内容的第一行——所以展开它看起来和"追加了一段文字"一模一样。区分二者只能靠点击：`click`/`keydown` 在捕获阶段先记下受影响的容器，400 ms 内不把它们的变化当成新输出。
+- 重排发生时，公共前缀之内仍然有效的区间**继续**自己的淡入，而不是被整片撤销——否则正读到一半的正文会突然跳成实色。
 - 尊重 `prefers-reduced-motion: reduce`；引擎不支持 Highlight API 时静默降级（返回空 disposer）。
+
+## 思考行自动展开
+
+dsh 的思考行**默认是收起的**，也没有对应的设置项（它自己的 README 写着 "Each reasoning row starts collapsed"），所以插件只能去按行自己的展开控件：思考中（`data-state="running"`）还没展开就点开，`data-state` 转 `ok` 就点回去。
+
+认行用的是语义属性，不是 class 名——dsh 的 class 名带构建期 hash，每次发版都会变：
+
+| 属性 | 含义 |
+|---|---|
+| `data-variant="think"` | 这一行是思考行 |
+| `data-state="running" \| "ok"` | 模型还在思考 / 思考已结束 |
+| `data-expanded` | 存在即展开 |
+
+**读者仍然拥有这一行。** 在行内点一下或按一下键，会记下当时所处的阶段，本阶段内插件不再动它：思考中折叠了就保持折叠，已结束的行展开了就保持展开。**这个让位是按阶段算的，不是按行算的**——思考中折叠又展开的行，等思考结束仍然会被收起，因为读者并没有表示「思考完了也要一直开着」。阶段一变，自动规则重新接管。
+
+控件按「行内第一个 `[role="button"]` 或 `button`」来找：dsh 的 `DisclosureRow` 在 `expandOnRowClick` 为真时整行就是按钮，否则是左侧的 chevron 按钮，这样找两种配置都覆盖。
+
+两个已知边界：
+
+- 如果整段过程（turn process）本身是收起的，思考行根本不在 DOM 里，插件够不着它。
+- 展开是模拟点击（`click()`）实现的，dsh 若改掉 `DisclosureRow` 的交互，这里会静默失效——不报错，只是不再自动展开。
+
+## 用户气泡的 Markdown
+
+dsh 对两种消息用两套文本处理：助手消息走 `MarkdownText`（GFM + KaTeX），读者自己的消息走 `projectUserText`——那是个**引用装饰器**，不是解析器。它把 `@label`、`/name`、`@[label](dsh-session:...)` 三类 token 换成 chip，其余文本原样返回。所以读者在自己气泡里打的 `` `path` `` 是字面量，同样的文字出现在回答里却是代码。
+
+插件接管 `conversation.chat.node` 槽位的 `user` 与 `steering` 两个 key，把这一侧也换成 Markdown。
+
+**为什么是 `priority: -1`**：这个槽位是 keyed 的，契约写着「复用同一个 key 会替换该渲染器」，而遮蔽规则是**升序排列、最低者渲染**（同 key 同 priority 会抛错）。官方注册没传 priority，即默认 0，所以负值才是替换而不是竞争。
+
+**引用与 Markdown 二选一。** 这是这个功能的核心取舍：`projectUserText` 和 `MarkdownText` 都是「整串文本 → React 节点」的投影，而 Markdown 渲染器的输出是任意嵌套的元素树，中间没有能让 chip 穿过去的缝。所以分流按 **host 真正解析出来的 label** 判断：
+
+- 有 `referenceLabels` / `skillNames` → 保持引用投影，chip 与「点击打开文件」不变，不渲染 Markdown；
+- 其余 → 走 Markdown。
+
+判断依据是已解析的 label，而不是文本里有没有 `@`——后者会把邮箱地址也当成引用。
+
+**代价**（模块头注释里也写着）：
+
+- `UserStyleBubble` 与 `MessageIconActions` 是 ui-chat 的内部实现、没有包导出，所以气泡外壳、附件行、复制按钮与时钟都按同样的设计令牌重写了一份；
+- 时钟的日期模板在官方那里来自 `chat` 命名空间（插件够不到），这里用同样的分档逻辑自己拼；
+- **发送瞬间会有一次跳变**：本地回显气泡（`PendingSubmissionBubble`）由 `ChatView` 直接渲染、不走槽位，所以回显是纯文本，落地后才变成 Markdown。
+
+## 输入框的 Markdown 装饰
+
+输入框是个**私有的 Lexical 编辑器**：`DraftEditorRuntime` 用 `createEditor` 建它，节点类型在构造时就固定（段落、文本、两种 chip），注册的是 `registerPlainText`——纯文本模式。编辑器实例虽然挂在 DOM 上（Lexical 在 `setEditable` 时写 `rootElement.__lexicalEditor`），但 `nodes` 改不了，插件加不了新的节点类型；输入框内部也没有槽位。
+
+所以这一侧是**纯装饰**：`composer-markdown.ts` 观察 `[data-composer-input]`，给每个段落写一个 `data-dsh-chat-ux-md` 属性，`composer-markdown-styles.ts` 按属性上样式。
+
+**为什么不动文本**：提交出去的草稿就是这些段落的纯文本。为了让项目符号好看去改写节点树，要么改变了真正发送的内容，要么让编辑器自己的投影（detect span、text ref、撤销）读到一份读者没打过的文档。属性只改画面，不碰任何一份真相。
+
+各标记的处理：
+
+| 语法 | 处理 |
+|---|---|
+| `- ` / `* ` / `+ ` | 悬挂缩进（`padding-left` 配等值负 `text-indent`），项目符号由绝对定位的 `::before` **盖在标记的第一个字符上**——它的背景是输入框自己的表面令牌，所以是遮住而不是并排 |
+| `1. ` / `1) ` | 只加缩进：编号本身就是列表的样子，不需要再画 |
+| 三个反引号或波浪线的围栏 | 围栏行淡化（读者仍看得见、改得动分隔符），正文行取等宽字体与表面色。段落在这块表面没有外边距，正文因此连成一块 |
+| `> ` | 缩进加左侧竖线 |
+| `#` 到 `######` | 字号与字重 |
+
+扫描器**幂等**，并在每次 mutation 后重跑：这份 DOM 归 Lexical 所有，它随时可能重建一个段落，属性会跟着丢。写入前比较当前值，所以重扫一个没变的块不会产生新的 mutation，观察器不会自激。
+
+已知边界：
+
+- 只做视觉、**不改语义**：输入框里显示成列表，提交出去的仍然是 `- item` 原文。在「模型要读源码」的前提下这是对的，但读者看到的和发出的确实不是同一种东西。
+- 依赖 Lexical 的 `<p>` 结构和 `data-composer-input` 标记。dsh 若换掉编辑器实现，这里会静默失效——不报错，只是不再装饰。
 
 ## 配置卡片
 
@@ -84,7 +160,7 @@ body[data-ds-dark-theme] {
 
 速度由设置命名空间 `dsh-chat-ux` 的 `revealMs` 决定，默认 150 ms，允许 30–600 ms。
 
-上限不是随便定的：`styles.ts` 编译期就生成了 32 条档位规则，时长越长每档跨度越大；600 ms 时一档约等于一个显示帧，再长就会看出台阶。
+上限不是随便定的：`styles.ts` 编译期就生成了 96 条档位规则，时长越长每档跨度越大；600 ms 摊到 96 档是 6.25 ms 一档，仍在 144 Hz 的一帧之内，再长就会看出台阶。
 
 在 dsh 里改：
 
@@ -147,5 +223,6 @@ dsh web                              # 启动后刷新页面
 聊天区 UX 继续在 `src/client/` 里做：
 
 1. 行内 code、链接在淡入期间也会被涂成正文色（highlight 的 `color` 会替换元素自己的颜色），淡入结束时会跳回它们本来的颜色；要消除就得给它们各自的 settle 变量。
-2. 若要覆盖官方渲染器管不到的位置（工具行、时间线等），再考虑 `conversation.chat.node` 槽位的 shadowing 替换（同 key、更低 priority 者渲染）。
-3. 改完用 `npm run build` 重建，刷新页面验证。
+2. 输入框目前只做块级视觉。要做到所见即所得（标记真正消失、列表项之间能续行），需要从 `__lexicalEditor` 拿编辑器实例做 `registerNodeTransform`，代价是改写节点树——会影响撤销粒度与编辑器自己的文本投影，动手前先想清楚。
+3. 工具行、时间线等位置也可以用同一套 `conversation.chat.node` shadowing 替换（同 key、更低 priority 者渲染），气泡就是这么接管的。
+4. 改完用 `npm run build` 重建，刷新页面验证。

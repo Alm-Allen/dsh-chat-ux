@@ -14,10 +14,15 @@
  * @module dsh-chat-ux/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { installComposerMarkdown } from './composer-markdown'
+import { COMPOSER_MARKDOWN_CSS } from './composer-markdown-styles'
 import { CARD_CSS } from './config-card-styles'
 import { ChatUxConfigCard } from './settings-card'
 import type { LocaleLike, SettingsScope } from './settings-scope'
+import { installReasoningFold } from './reasoning-fold'
 import { CSS, STYLE_ID } from './styles'
+import { ChatUxUserBubble } from './user-bubble'
+import { USER_BUBBLE_CSS } from './user-bubble-styles'
 import { DEFAULT_REVEAL_MS, clampRevealMs, installTokenMotion } from './token-motion'
 
 /**
@@ -70,9 +75,9 @@ export function apply(ctx: ClientContext): void {
     const style = document.createElement('style')
     style.id = STYLE_ID
     style.dataset.plugin = 'dsh-chat-ux'
-    // One sheet carries both halves of the browser side: the chat-area rules
-    // and the configuration card's.
-    style.textContent = CSS + '\n' + CARD_CSS
+    // One sheet carries every half of the browser side: the chat-area rules,
+    // the configuration card's, and the replacement user bubble's.
+    style.textContent = CSS + '\n' + CARD_CSS + '\n' + USER_BUBBLE_CSS + '\n' + COMPOSER_MARKDOWN_CSS
     document.head.appendChild(style)
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
@@ -92,6 +97,16 @@ export function apply(ctx: ClientContext): void {
   // container, so one installation covers the whole answer.
   ctx.effect(() => installTokenMotion(() => motion.revealMs), 'dsh-chat-ux: token reveal')
 
+  // dsh ships every reasoning row collapsed and exposes no setting for it, so
+  // the row's own control is the only lever. The module documents the phase
+  // scoping that keeps a reader's own folds from being overridden.
+  ctx.effect(() => installReasoningFold(), 'dsh-chat-ux: reasoning reveal')
+
+  // The composer is a private Lexical editor with no slot, so its decoration
+  // works from the outside: one attribute per paragraph, and a stylesheet that
+  // reads it. The module documents why the marks stay in the text.
+  ctx.effect(() => installComposerMarkdown(), 'dsh-chat-ux: composer markdown')
+
   // The Plugins page declares `plugins.bundle.config` as a child of its own
   // `main` registration, so the slot exists while that page does. `inject`
   // waits for the declaration instead of throwing, which is also why the
@@ -109,6 +124,24 @@ export function apply(ctx: ClientContext): void {
       ChatUxConfigCard,
     ),
   )
+
+  // dsh renders answers through MarkdownText but the reader's own message
+  // through projectUserText, which decorates references and parses nothing —
+  // so a backticked path stays literal on the reader's own bubble. Both
+  // user-authored kinds move to the markdown renderer here.
+  //
+  // The seat is keyed, and the slot contract renders the LOWEST priority of a
+  // cell while the shipped registration passes none (default 0). A negative
+  // priority is therefore what makes this a replacement; registering at 0
+  // would throw as a same-key, same-priority second occupant.
+  for (const key of ['user', 'steering'] as const) {
+    services.slots.inject('conversation.chat.node', () =>
+      services.slots.register(
+        { name: 'conversation.chat.node', key, priority: -1 },
+        ChatUxUserBubble,
+      ),
+    )
+  }
 
   console.log('[dsh-chat-ux] client half loaded')
 }
