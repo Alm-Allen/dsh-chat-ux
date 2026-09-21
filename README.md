@@ -31,25 +31,34 @@ client 产物必须是**单个自包含文件**：浏览器模块加载器不给
 
 ## token 渐变动效
 
-流式回复里**新出现的每个词**会亮一次，然后渐变回正文自身的颜色并保持静止。思考（reasoning）与正文都覆盖——两者渲染在同一个 Markdown 层里，也都落在该层流式期间标记的容器（`[data-streaming]`）内，所以一处安装即可。
+流式回复里**新出现的每个字符**亮一次，然后渐变回正文自身的颜色并保持静止。思考（reasoning）与正文都覆盖——两者渲染在同一个 Markdown 层里，也都落在该层流式期间标记的容器（`[data-streaming]`）内，所以一处安装即可。
 
 实现走 **CSS Custom Highlight API**（`CSS.highlights` + `::highlight()`）：用 Range 标记字符区间，**不改动 DOM**。这一点是硬约束——聊天记录由 React 掌管，而官方 Markdown 层（`@deepseek-ai/dsh-client-ui-primitives`）不暴露任何节点渲染钩子（它的 `MarkdownDelegate` 只管链接导航），包裹 `<span>` 会和 reconciliation 打架。
 
-因为 `::highlight()` 不接受 transition，渐变是**分档**的：`token-motion.ts` 按存活时长把区间分到 12 个档位，`styles.ts` 为每个档位生成一条 `color-mix(..., currentColor)` 规则。颜色因此自动跟随主题与正文色，深浅色只改一个高亮色变量：
+每个字符**只管自己的渐变**：它到达时亮一次，然后按自己的到达时间淡回正文色，字符之间没有错峰、也不排队等待。同一批到达的字符一起亮、一起落；阅读顺序来自 API 的到达顺序，而不是插件发明的顺序。一个字符自始至终只有一种颜色，不做横扫。
+
+因为 `::highlight()` 不接受 transition，渐变是**分档**的：`token-motion.ts` 按存活时长把区间分到 32 个档位，`styles.ts` 为每个档位生成一条 `color-mix()` 规则。渐变两端都是显式颜色变量，深浅色各一套：
 
 ```css
-:root                     { --dsh-chat-ux-token-highlight: var(--dsw-static-deepseek-500, #4d6bfe); }
-body[data-ds-dark-theme]  { --dsh-chat-ux-token-highlight: var(--dsw-static-deepseek-200, #b9c6ff); }
+body {
+  --dsh-chat-ux-token-highlight: var(--dsw-static-deepseek-500, #4d6bfe);
+  --dsh-chat-ux-token-settle:    var(--dsw-alias-label-primary, #0f1115);
+}
+
+body[data-ds-dark-theme] {
+  --dsh-chat-ux-token-highlight: var(--dsw-static-deepseek-200, #b9c6ff);
+  --dsh-chat-ux-token-settle:    var(--dsw-alias-label-primary, #f9fafb);
+}
 ```
+
+**终点为什么不用 `currentColor`**：`::highlight()` 里的 `currentColor` 在 Chromium 中不解析为承载元素自己的颜色，而是塌缩成初始色。实测（`rgb(21, 21, 23)` 画布 + `color-scheme: dark`）只以 `currentColor` 为终点的规则落在 `rgb(0, 0, 0)`——在深色画布上不可见，表现为每个字符在 highlight 撤销前闪一下黑。浅色画布上看不出这个塌缩，因为那里的正文色（`rgb(15, 17, 21)`）本来就是黑。所以终点改用显式变量，并在两套主题下各校准一次。
 
 可调参数都在 `token-motion.ts` 顶部：
 
 | 参数 | 默认 | 作用 |
 |---|---|---|
-| `REVEAL_MS` | 620 | 一次渐变的总时长 |
-| `REVEAL_STEPS` | 12 | 颜色档位数（越多越平滑） |
-| `WORD_GAP_MS` | 45 | 同一批词之间的错峰延迟 |
-| `MAX_WORD_DELAY_MS` | 220 | 错峰的封顶，避免长句拖尾 |
+| `REVEAL_MS` | 150 | 一次渐变的总时长，越小越快 |
+| `REVEAL_STEPS` | 32 | 颜色档位数，约等于帧数即可；越多越平滑 |
 
 行为细节：
 
@@ -65,6 +74,22 @@ pnpm install        # 依赖（.npmrc 已指向 npmmirror）
 npm run build       # clean + 两侧编译 + 包装 client bundle
 npm run typecheck   # 只做类型检查
 ```
+
+## 调参并生效
+
+所有旋钮都在 `src/client/token-motion.ts` 顶部（见上表）。改完三步：
+
+```sh
+# 1. 按上表改参数，例如 REVEAL_MS = 120 让它更快
+# 2. 在插件目录重建产物
+cd C:/Study/typescript/deepseek-harness-chat-ux
+npm run build
+# 3. 在浏览器里硬刷新 dsh web 页面（Ctrl+F5）
+```
+
+只改 client 半（渐变时长、颜色、档位数）**不用重启** `dsh web`，刷新页面就够了；只有改到 host 半才需要重启。
+
+顺带一提，`npm run typecheck` 能在不重建的情况下先查类型。
 
 ## 本地加载
 
@@ -88,6 +113,6 @@ dsh --profile <name> web                # 启动后刷新页面
 
 聊天区 UX 继续在 `src/client/` 里做：
 
-1. 更细的 token 粒度：当前最小单位是「词」（`Intl.Segmenter` 分词），若要逐字符可按码点切分。
+1. 非正文元素（行内 code、链接）目前同样淡回正文色，渐变结束时会跳回自己的颜色；要消除就得给它们各自的 settle 变量。
 2. 若要覆盖官方渲染器管不到的位置（工具行、时间线等），再考虑 `conversation.chat.node` 槽位的 shadowing 替换（同 key、更低 priority 者渲染）。
 3. 改完用 `npm run build` 重建，刷新页面验证。
