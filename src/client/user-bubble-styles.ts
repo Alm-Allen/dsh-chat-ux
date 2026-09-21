@@ -1,25 +1,21 @@
 /**
- * Stylesheet for the user-bubble replacement renderer.
+ * 用户气泡替换渲染器的样式表。
  *
- * The shipped bubble's own sheet is a CSS Module inside ui-chat, so its hashed
- * class names are unreachable from a plugin. Every rule here is a re-statement
- * of the measurements that sheet carries — the same tokens, the same numbers —
- * under a `dsh-chat-ux-ub-` prefix that cannot collide with it.
+ * 官方气泡自己的样式表是 ui-chat 里的一个 CSS Module，那套带 hash 的类名插件够不着。
+ * 这里的每一条规则都是对那张表所载度量的重述——同样的令牌、同样的数字——只是换了
+ * `dsh-chat-ux-ub-` 前缀，不可能和它撞车。
  *
- * Two rules are deliberately NOT copied verbatim:
+ * 有两条规则是刻意不照抄的：
  *
- *   - The action row's reveal is re-expressed against `data-chat-flow-kind`,
- *     the ChatView row attribute the shipped selector also keys on. Its own
- *     rule names the hashed `.actions` class, which does not match this
- *     renderer's markup, so the behaviour is restated rather than inherited.
- *   - The markdown branch drops `white-space: pre-wrap`: the block elements
- *     MarkdownText emits own their own line breaks, and keeping the source's
- *     would double every blank line. The reference-projection branch keeps it,
- *     because there the text really is inline runs.
+ *   - 操作行的显隐改挂在 `data-chat-flow-kind` 上，也就是官方选择器同样会看的那条
+ *     ChatView 行属性。官方那条规则点名的是带 hash 的 `.actions` 类，跟这套标记对不上，
+ *     所以这里是把行为重述一遍，而不是继承它。
+ *   - markdown 分支去掉了 `white-space: pre-wrap`：MarkdownText 吐出的块级元素自带换行，
+ *     留着源文本的换行会把每个空行都翻倍。引用投影那条分支保留它，因为那里确实是一段行内文本。
  */
 
-/** Class names, so the component and this sheet cannot drift apart. */
-export const UB = {
+/** 类名表，让组件和这张样式表不会各走各的。 */
+export const USER_BUBBLE_CLASS = {
   row: 'dsh-chat-ux-ub-row',
   stack: 'dsh-chat-ux-ub-stack',
   bubble: 'dsh-chat-ux-ub-bubble',
@@ -37,28 +33,28 @@ export const UB = {
   action: 'dsh-chat-ux-ub-action',
 } as const
 
-/** The bubble half of the replacement renderer's sheet. */
+/** 替换渲染器样式表里气泡那一半。 */
 export const USER_BUBBLE_CSS = `
-/* Right-aligned column: the bubble stack, then the action row. */
-.${UB.row} {
+/* 右对齐的一列：气泡栈，然后是操作行。 */
+.${USER_BUBBLE_CLASS.row} {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
 }
 
-.${UB.stack} {
+.${USER_BUBBLE_CLASS.stack} {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
   min-width: 0;
-  /* The shipped 525px cap held as a share of the content axis, so the bubble
-     widens with a dragged column and stays sane in a narrow one. */
+  /* 官方的 525px 上限改成内容轴的一个比例，这样拖宽列时气泡跟着变宽，
+     列窄时也不会失控。 */
   max-width: min(calc(var(--dsh-chat-content-width, 748px) * 0.702), 82%);
 }
 
-.${UB.bubble} {
+.${USER_BUBBLE_CLASS.bubble} {
   max-width: 100%;
   background: var(--dsw-specific-bubble);
   border-radius: 22px;
@@ -69,21 +65,20 @@ export const USER_BUBBLE_CSS = `
   word-break: break-word;
 }
 
-/* Reference projection: inline runs, so the source's own line breaks stand. */
-.${UB.plain} {
+/* 引用投影：一段行内文本，所以源文本自己的换行照样成立。 */
+.${USER_BUBBLE_CLASS.plain} {
   white-space: pre-wrap;
 }
 
-/* Markdown: the renderer's block rhythm owns spacing, so only the bubble's
-   own edges are tightened — a one-paragraph message must not gain a leading
-   and trailing gap the plain bubble never had. */
-.${UB.markdown} {
+/* markdown：块级节奏由渲染器自己掌握，这里只收紧气泡自己的上下边缘——
+   一段话的消息不该凭空多出纯文本气泡从来没有的首尾间距。 */
+.${USER_BUBBLE_CLASS.markdown} {
   white-space: normal;
 }
-.${UB.markdown} > :first-child > :first-child { margin-top: 0; }
-.${UB.markdown} > :first-child > :last-child { margin-bottom: 0; }
+.${USER_BUBBLE_CLASS.markdown} > :first-child > :first-child { margin-top: 0; }
+.${USER_BUBBLE_CLASS.markdown} > :first-child > :last-child { margin-bottom: 0; }
 
-.${UB.attachments} {
+.${USER_BUBBLE_CLASS.attachments} {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -91,7 +86,7 @@ export const USER_BUBBLE_CSS = `
   gap: 8px;
 }
 
-.${UB.file} {
+.${USER_BUBBLE_CLASS.file} {
   display: inline-flex;
   flex: 0 0 240px;
   align-items: center;
@@ -105,11 +100,11 @@ export const USER_BUBBLE_CSS = `
   box-sizing: border-box;
 }
 
-.${UB.fileIcon} { flex: none; width: 28px; height: 28px; }
+.${USER_BUBBLE_CLASS.fileIcon} { flex: none; width: 28px; height: 28px; }
 
-.${UB.fileContent} { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.${USER_BUBBLE_CLASS.fileContent} { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 
-.${UB.fileName} {
+.${USER_BUBBLE_CLASS.fileName} {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -119,7 +114,7 @@ export const USER_BUBBLE_CSS = `
   line-height: 22px;
 }
 
-.${UB.fileMeta} {
+.${USER_BUBBLE_CLASS.fileMeta} {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -128,20 +123,20 @@ export const USER_BUBBLE_CSS = `
   line-height: 15px;
 }
 
-.${UB.refs} {
+.${USER_BUBBLE_CLASS.refs} {
   color: var(--dsw-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
 }
 
-.${UB.actions} {
+.${USER_BUBBLE_CLASS.actions} {
   display: flex;
   align-items: center;
   gap: 8px;
   height: calc(28px + var(--dsh-content-font-delta, 0px));
 }
 
-.${UB.time} {
+.${USER_BUBBLE_CLASS.time} {
   padding-right: 12px;
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
@@ -149,7 +144,7 @@ export const USER_BUBBLE_CSS = `
   white-space: nowrap;
 }
 
-.${UB.action} {
+.${USER_BUBBLE_CLASS.action} {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -163,34 +158,33 @@ export const USER_BUBBLE_CSS = `
   cursor: pointer;
 }
 
-.${UB.action} svg {
+.${USER_BUBBLE_CLASS.action} svg {
   width: calc(15px + var(--dsh-content-font-delta, 0px));
   height: calc(15px + var(--dsh-content-font-delta, 0px));
 }
 
-.${UB.action}:hover {
+.${USER_BUBBLE_CLASS.action}:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
 }
 
-/* The shipped rule hides the action row on every user/steering row that has a
-   later one, and reveals it on hover or focus. Restated here because the
-   shipped selector names a hashed class this markup does not carry. Devices
-   without hover keep every row visible. */
+/* 官方规则会把后面还跟着 user/steering 行的那些行上的操作行藏起来，悬停或聚焦时才显示。
+   这里重述一遍，因为官方选择器点名的那个带 hash 的类，这套标记并不带。
+   没有悬停能力的设备上，每一行的操作行都保持可见。 */
 @media (hover: hover) {
   :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
     ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
-  ) .${UB.actions} {
+  ) .${USER_BUBBLE_CLASS.actions} {
     opacity: 0;
     transition: opacity 80ms ease;
   }
 
   :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
     ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
-  ):hover .${UB.actions},
+  ):hover .${USER_BUBBLE_CLASS.actions},
   :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering']):has(
     ~ :is([data-chat-flow-kind='user'], [data-chat-flow-kind='steering'])
-  ):focus-within .${UB.actions} {
+  ):focus-within .${USER_BUBBLE_CLASS.actions} {
     opacity: 1;
   }
 }

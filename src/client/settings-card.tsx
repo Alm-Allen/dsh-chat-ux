@@ -1,46 +1,37 @@
 /**
- * The plugin's configuration card on the dsh Plugins page.
+ * 插件管理页上的插件配置卡片。
  *
- * dsh >= 0.1.6 renders a bundle's own configuration on the bundle's page, in the
- * `plugins.bundle.config` slot keyed by package name, between the package
- * description and its rows. The page draws the title, icon and breadcrumb; this
- * component is only the form, which is what `view: 'page'` asks for.
+ * dsh >= 0.1.6 会把一个 bundle 自己的配置渲染在 bundle 的页面上、`plugins.bundle.config` 座位里、
+ * 按包名 keyed，位置在包描述和它下面那些行之间。标题、图标和面包屑由页面画；这个组件只是表单本身，
+ * 也就是 `view: 'page'` 要的东西。
  *
- * It is built out of the same parts the page's own configuration cards are: the
- * shared `Tag` from `dsh-client-ui-primitives` for the override badge, and the
- * field rhythm, control geometry and `--dsw-*` tokens of the shipped plugin
- * configuration pages (see `config-card-styles.ts`). Nothing here is styled
- * from scratch, because a card sitting between two shipped ones should not look
- * like it came from somewhere else.
+ * 它是用页面自己的配置卡片所用的同一批零件搭出来的：覆盖徽标用 `dsh-client-ui-primitives` 里共享
+ * 的 `Tag`，字段节奏、控件几何和 `--dsw-*` 令牌来自官方插件配置页（见 `config-card-styles.ts`）。
+ * 这里没有任何东西是从零设计的，因为一张夹在两张官方卡片中间的卡片不该看起来像来自别处。
  *
- * Nothing writes until Save is pressed. The draft is text, so what the input
- * shows is exactly what a save would store, and leaving the page drops it (the
- * page unmounts the entry, so there is no discard control to offer). Whether a
- * value was accepted is read back from the host rather than predicted: writes
- * swallow transport and revision failures by design.
+ * 按下保存之前什么都不写。草稿是文本，所以输入框显示什么、保存就存什么，而离开页面就把它丢掉
+ * （页面会卸载这一项，所以没有「放弃」控件可提供）。值是否被接受是从 host 读回来的，而不是预测
+ * 出来的：写入在设计上就会吞掉传输层与版本号的失败。
  *
  * @module dsh-chat-ux/client/settings-card
  */
-import * as React from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import type { ChangeEvent, ReactElement } from 'react'
 import { Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CARD_CLASS } from './config-card-styles'
-import {
-  MAX_REVEAL_MS,
-  MIN_REVEAL_MS,
-  clampRevealMs,
-} from './token-motion'
+import { MAX_REVEAL_MS, MIN_REVEAL_MS, clampRevealMs } from './token-motion'
 import type { LocaleLike, SettingsScope } from './settings-scope'
 
-/** Field name inside the settings section; must match the host schema. */
-const FIELD = 'revealMs'
+/** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
+const FIELD_NAME = 'revealMs'
 
-/** Stable id tying the label to its control. */
-const FIELD_ID = 'dsh-chat-ux-reveal-ms'
+/** 把 label 和它的控件绑在一起的那个固定 id。 */
+const FIELD_INPUT_ID = 'dsh-chat-ux-reveal-ms'
 
-/** Stable id tying the control to the message under it. */
-const MESSAGE_ID = 'dsh-chat-ux-reveal-ms-message'
+/** 把控件和它下面那条消息绑在一起的那个固定 id。 */
+const FIELD_MESSAGE_ID = 'dsh-chat-ux-reveal-ms-message'
 
-/** Copy for one language. */
+/** 一种语言的文案。 */
 interface Copy {
   summary: (ms: number) => string
   fieldLabel: string
@@ -55,7 +46,7 @@ interface Copy {
   readOnly: string
 }
 
-const zh: Copy = {
+const ZH_COPY: Copy = {
   summary: (ms) => '新出现的字符从 ' + MIN_REVEAL_MS + ' 起的淡入，' + ms + ' ms 后完全不透明。',
   fieldLabel: '渐变时长',
   fieldHint:
@@ -74,7 +65,7 @@ const zh: Copy = {
   readOnly: '当前设置文档是只读的，改动无法保存。',
 }
 
-const en: Copy = {
+const EN_COPY: Copy = {
   summary: (ms) => 'New characters fade in and reach full opacity after ' + ms + ' ms.',
   fieldLabel: 'Fade duration',
   fieldHint:
@@ -94,189 +85,168 @@ const en: Copy = {
   readOnly: 'The settings document is read-only, so changes cannot be saved.',
 }
 
-/** The same primary-subtag rule the locale plugin uses for a fresh browser. */
-function browserLang(): 'zh' | 'en' {
-  if (typeof navigator === 'undefined') return 'zh'
-  return (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
-}
-
-/** Follow the host's language preference, re-rendering on every switch. */
-function useLang(locale: LocaleLike | undefined): 'zh' | 'en' {
-  const active = React.useSyncExternalStore(
-    React.useCallback(
-      (listener: () => void) => (locale ? locale.subscribe(listener) : () => {}),
-      [locale],
-    ),
-    React.useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
-  )
-  return active === 'en' || active === 'zh' ? active : browserLang()
-}
-
-/**
- * Parse one draft into the value a save would write.
- * @param text - what the input currently holds.
- * @returns the whole number of milliseconds, or null when the draft is not one.
- */
-function parseDraft(text: string): number | null {
-  if (text.trim().length === 0) return null
-  const value = Number(text)
-  if (!Number.isFinite(value)) return null
-  if (value < MIN_REVEAL_MS || value > MAX_REVEAL_MS) return null
-  return Math.round(value)
-}
-
-/**
- * Whether the raw user layer carries this field. Presence, not a value
- * comparison, is what marks a field overridden: an override equal to the
- * default is still an override.
- * @param user - the raw user section, of unknown shape.
- * @param field - field name to look for.
- * @returns true when the user layer names the field.
- */
-function hasUserField(user: unknown, field: string): boolean {
-  return typeof user === 'object' && user !== null && field in (user as Record<string, unknown>)
-}
-
-/** Props the Plugins page binds for one `plugins.bundle.config` entry. */
+/** 插件管理页为一条 `plugins.bundle.config` 记录绑定的 props。 */
 export interface ChatUxConfigCardProps {
-  /** The bound scope over the `dsh-chat-ux` namespace. */
+  /** 绑定在 `dsh-chat-ux` 命名空间上的 scope。 */
   scope: SettingsScope
-  /** Locale service, when the deployment ships one. */
+  /** locale 服务，部署里有的话。 */
   locale?: LocaleLike
-  /** `'page'` for the form; `'summary'` for the one-liner under the title. */
+  /** `'page'` 是要表单；`'summary'` 是标题下面那一行摘要。 */
   view?: 'summary' | 'page'
 }
 
 /**
- * Render the plugin's configuration: one staged number field and its save.
- * @param props - the bound settings scope, the locale service, and the view.
- * @returns the form, or the one-line summary the page asks for.
+ * 渲染这个插件的配置：一个分阶段的数字输入框，和它的保存。
+ * @param props - 绑定好的设置 scope、locale 服务，以及视图。
+ * @returns 那个表单，或者页面要的一行摘要。
  */
-export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps): React.ReactElement {
-  const snapshot = React.useSyncExternalStore(
-    React.useCallback((listener: () => void) => scope.subscribe(listener), [scope]),
+export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps): ReactElement {
+  const snapshot = useSyncExternalStore(
+    useCallback((listener: () => void) => scope.subscribe(listener), [scope]),
     () => scope.getSnapshot(),
   )
-  const lang = useLang(locale)
-  const t = lang === 'en' ? en : zh
-  const [draft, setDraft] = React.useState<string | null>(null)
-  const [saving, setSaving] = React.useState(false)
-  const [failed, setFailed] = React.useState(false)
+  const language = useLanguage(locale)
+  const copy = language === 'en' ? EN_COPY : ZH_COPY
+  const [draft, setDraft] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
 
-  const stored = clampRevealMs(snapshot.value?.[FIELD])
-  const overridden = hasUserField(snapshot.user, FIELD)
+  // 存着的值一律过一遍 clamp，所以 host 那边无论塞进来什么形状的东西，这里都有个能用的数。
+  const stored = clampRevealMs(snapshot.value?.revealMs)
+  const overridden = userLayerHasField(snapshot.user, FIELD_NAME)
   const text = draft ?? String(stored)
-  const parsed = parseDraft(text)
+  const trimmedDraft = text.trim()
+  let draftNumber = Number(trimmedDraft)
+  // `Number('')` 是 0，会被误当成一个合法数字，所以空草稿先顶成 NaN。
+  if (trimmedDraft === '') draftNumber = Number.NaN
+  let parsed: number | null = null
+  if (Number.isFinite(draftNumber) && draftNumber >= MIN_REVEAL_MS && draftNumber <= MAX_REVEAL_MS) {
+    parsed = Math.round(draftNumber)
+  }
   const invalid = parsed === null
   const dirty = draft !== null && parsed !== stored
   const unavailable = snapshot.status === 'unavailable'
   const readOnly = snapshot.writable === false
-  const disabled = saving || unavailable || readOnly
+  const controlsDisabled = saving || unavailable || readOnly
 
-  if (view === 'summary') return React.createElement(React.Fragment, null, t.summary(stored))
-  // A namespace nothing serves gets the same one-line answer the page's own
-  // cards give, rather than controls the host would refuse.
-  if (unavailable) {
-    return React.createElement('p', { className: CARD_CLASS.notice, role: 'status' }, t.unavailable)
-  }
+  if (view === 'summary') return <>{copy.summary(stored)}</>
+  // 一个没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件。
+  if (unavailable) return <p className={CARD_CLASS.notice} role="status">{copy.unavailable}</p>
 
+  /** 保存草稿，然后从 host 读回来确认它真的落地了。 */
   const save = async (): Promise<void> => {
     if (parsed === null) return
     setSaving(true)
     setFailed(false)
-    await scope.set(FIELD, parsed)
-    // The host's readback is the only authority on what landed.
-    const landed = clampRevealMs(scope.getSnapshot().value?.[FIELD]) === parsed
+    await scope.set(FIELD_NAME, parsed)
+    // host 读回来的那个值，才是「落地了」的唯一权威。
+    const landed = clampRevealMs(scope.getSnapshot().value?.revealMs) === parsed
     if (landed) setDraft(null)
-    else setFailed(true)
+    setFailed(!landed)
     setSaving(false)
   }
 
+  /** 清掉用户层里的覆盖，让取值退回默认层。 */
   const reset = async (): Promise<void> => {
     setSaving(true)
     setFailed(false)
-    await scope.unset(FIELD)
-    if (hasUserField(scope.getSnapshot().user, FIELD)) setFailed(true)
-    else setDraft(null)
+    await scope.unset(FIELD_NAME)
+    const stillOverridden = userLayerHasField(scope.getSnapshot().user, FIELD_NAME)
+    setFailed(stillOverridden)
+    if (!stillOverridden) setDraft(null)
     setSaving(false)
   }
 
-  const head = React.createElement(
-    'div',
-    { key: 'head', className: CARD_CLASS.head },
-    React.createElement(
-      'div',
-      { className: CARD_CLASS.labelGroup },
-      React.createElement('label', { className: CARD_CLASS.label, htmlFor: FIELD_ID }, t.fieldLabel),
-    ),
-    overridden
-      ? React.createElement(
-          'span',
-          { className: CARD_CLASS.badges },
-          React.createElement(Tag, { key: 'tag', tone: 'neutral' }, t.overridden),
-          React.createElement(
-            'button',
-            {
-              key: 'reset',
-              type: 'button',
-              className: CARD_CLASS.reset,
-              disabled: disabled || saving,
-              onClick: () => void reset(),
-            },
-            t.reset,
-          ),
-        )
-      : null,
-  )
+  // 输入框下面那行字：草稿不合法时报错，否则给提示。
+  let messageClass: string = CARD_CLASS.hint
+  let messageText = copy.fieldHint
+  if (invalid) {
+    messageClass = CARD_CLASS.invalid
+    messageText = copy.invalid
+  }
+  let saveLabel = copy.save
+  if (saving) saveLabel = copy.saving
 
-  const field = React.createElement(
-    'div',
-    { key: 'field', className: CARD_CLASS.field },
-    head,
-    React.createElement('input', {
-      id: FIELD_ID,
-      className: CARD_CLASS.input,
-      type: 'text',
-      inputMode: 'numeric',
-      'aria-invalid': invalid ? true : undefined,
-      'aria-describedby': MESSAGE_ID,
-      value: text,
-      disabled,
-      onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
-        setDraft(event.target.value)
-        setFailed(false)
-      },
-    }),
-    React.createElement(
-      'p',
-      { id: MESSAGE_ID, className: invalid ? CARD_CLASS.invalid : CARD_CLASS.hint },
-      invalid ? t.invalid : t.fieldHint,
-    ),
+  return (
+    <div className={CARD_CLASS.form} data-plugin-config-form="dsh-chat-ux">
+      {readOnly && <p className={CARD_CLASS.notice} role="status">{copy.readOnly}</p>}
+      <div className={CARD_CLASS.field}>
+        <div className={CARD_CLASS.head}>
+          <div className={CARD_CLASS.labelGroup}>
+            <label className={CARD_CLASS.label} htmlFor={FIELD_INPUT_ID}>{copy.fieldLabel}</label>
+          </div>
+          {overridden && (
+            <span className={CARD_CLASS.badges}>
+              <Tag tone="neutral">{copy.overridden}</Tag>
+              <button
+                type="button"
+                className={CARD_CLASS.reset}
+                disabled={controlsDisabled}
+                onClick={() => void reset()}
+              >
+                {copy.reset}
+              </button>
+            </span>
+          )}
+        </div>
+        <input
+          id={FIELD_INPUT_ID}
+          className={CARD_CLASS.input}
+          type="text"
+          inputMode="numeric"
+          aria-invalid={invalid || undefined}
+          aria-describedby={FIELD_MESSAGE_ID}
+          value={text}
+          disabled={controlsDisabled}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            setDraft(event.target.value)
+            setFailed(false)
+          }}
+        />
+        <p id={FIELD_MESSAGE_ID} className={messageClass}>{messageText}</p>
+      </div>
+      <div className={CARD_CLASS.footer}>
+        {failed && <p className={CARD_CLASS.failed} role="status">{copy.failed}</p>}
+        <button
+          type="button"
+          className={CARD_CLASS.save}
+          disabled={controlsDisabled || invalid || !dirty}
+          onClick={() => void save()}
+        >
+          {saveLabel}
+        </button>
+      </div>
+    </div>
   )
+}
 
-  const footer = React.createElement(
-    'div',
-    { key: 'footer', className: CARD_CLASS.footer },
-    failed ? React.createElement('p', { className: CARD_CLASS.failed, role: 'status' }, t.failed) : null,
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        className: CARD_CLASS.save,
-        disabled: disabled || invalid || !dirty,
-        onClick: () => void save(),
-      },
-      saving ? t.saving : t.save,
+/** 跟着 host 的语言偏好走，每次切换都重新渲染。 */
+function useLanguage(locale: LocaleLike | undefined): 'zh' | 'en' {
+  const active = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => (locale ? locale.subscribe(listener) : () => {}),
+      [locale],
     ),
+    useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
   )
+  if (active === 'en' || active === 'zh') return active
+  return browserLanguage()
+}
 
-  return React.createElement(
-    'div',
-    { className: CARD_CLASS.form, 'data-plugin-config-form': 'dsh-chat-ux' },
-    readOnly
-      ? React.createElement('p', { key: 'readonly', className: CARD_CLASS.notice, role: 'status' }, t.readOnly)
-      : null,
-    field,
-    footer,
-  )
+/** locale 插件给全新浏览器用的同一条主语言子标签规则。 */
+function browserLanguage(): 'zh' | 'en' {
+  if (typeof navigator === 'undefined') return 'zh'
+  return (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
+}
+
+/**
+ * 原始用户层里有没有这个字段。标记「已覆盖」看的是「在不在」，而不是值比不比得上默认值：
+ * 一个恰好等于默认值的覆盖，仍然是覆盖。
+ * @param user - 原始的用户分节，形状未知。
+ * @param field - 要找的字段名。
+ * @returns 用户层里点名了这个字段时为真。
+ */
+function userLayerHasField(user: unknown, field: string): boolean {
+  if (typeof user !== 'object' || user === null) return false
+  return field in (user as Record<string, unknown>)
 }

@@ -1,47 +1,46 @@
 /**
- * The slice of the settings transport this half consumes.
+ * 这个半区消费的那一小片设置传输层。
  *
- * The browser half talks to the host-owned `dsh-chat-ux` namespace through the
- * client settings scope (`ctx.settingsScope.bind`). The shapes here are a local
- * restatement of `@deepseek-ai/dsh-client-ui-settings`'s contract rather than an
- * import: the client bundle must stay a single self-contained file, and a
- * platform package is resolved by the module loader at run time, not compiled in.
+ * 浏览器半区通过客户端 settings scope（`ctx.settingsScope.bind`）与 host 半区持有的
+ * `dsh-chat-ux` 命名空间对话。这里的形状是 `@deepseek-ai/dsh-client-ui-settings` 契约的
+ * 本地复述，而不是 import：client bundle 必须保持单文件自包含，平台包由模块加载器在
+ * 运行时解析，不参与编译。
  *
  * @module dsh-chat-ux/client/settings-scope
  */
 
-/** The section this plugin owns, as the host resolves it. */
+/** host 解析出来的、本插件占用的那个分节。 */
 export interface ChatUxSection {
-  /** Fade duration in milliseconds; the only field in the section. */
+  /** 渐变时长，单位毫秒；分节里唯一的字段。 */
   revealMs?: number
 }
 
 /**
- * Client-side sync state of one settings namespace. Mirrors the platform's
- * `SettingsScopeSnapshot`, narrowed to the field this plugin reads.
+ * 一个设置命名空间在客户端的同步状态。对映平台的 `SettingsScopeSnapshot`，
+ * 收窄到本插件会读的那些字段。
  */
 export interface SettingsSnapshot {
   /**
-   * `loading` until the first accepted section, `ready` while one stands, and
-   * `unavailable` when the namespace is not exposed to this client — which is
-   * what a browser sees before the host half has ever been loaded.
+   * 第一个被接受的分节到达之前是 `loading`，有一个分节立着时是 `ready`，
+   * 命名空间没有暴露给这个客户端时是 `unavailable`——也就是 host 半区从未被加载过时，
+   * 浏览器看到的状态。
    */
   status: 'loading' | 'ready' | 'unavailable'
-  /** Last accepted schema-resolved section; undefined before the first acceptance. */
+  /** 最后一次被接受的、经 schema 解析的分节；第一次接受之前是 undefined。 */
   value: ChatUxSection | undefined
-  /** Composition layer the host resolved `value` over. */
+  /** host 解析 `value` 时叠在上面的组合层。 */
   base: unknown
-  /** Raw user layer; a field's PRESENCE here is what marks it overridden. */
+  /** 原始用户层；某个字段在这里「存在」才是被覆盖的标志。 */
   user: unknown
-  /** Namespace revision fencing the next write. */
+  /** 围栏下一次写入的命名空间版本号。 */
   revision: number | undefined
-  /** Whether the host document accepts writes. */
+  /** host 文档是否接受写入。 */
   writable: boolean
-  /** `host` syncs with the host document; `memory` keeps the page process-local. */
+  /** `host` 与 host 文档同步；`memory` 只活在当前页面进程里。 */
   mode: 'host' | 'memory'
 }
 
-/** One namespace's bound scope: read, observe, and write its section. */
+/** 一个命名空间绑定的 scope：读它、观察它、写它。 */
 export interface SettingsScope {
   getSnapshot(): SettingsSnapshot
   subscribe(listener: () => void): () => void
@@ -50,9 +49,8 @@ export interface SettingsScope {
 }
 
 /**
- * The locale service, read through `ctx.reflect` rather than declared as a
- * dependency: a deployment without it leaves the card working on the
- * browser-derived language instead of never mounting at all.
+ * locale 服务，通过 `ctx.reflect` 读取，而不是声明成依赖：没有它的部署里，
+ * 卡片退化成按浏览器语言显示，而不是干脆不挂载。
  */
 export interface LocaleLike {
   getSnapshot(): { active?: string | null }

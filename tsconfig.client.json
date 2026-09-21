@@ -9,6 +9,7 @@
     "rootDir": "src/client",
     "outDir": "build/client",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "declaration": true,
     "sourceMap": false,
     "skipLibCheck": true,

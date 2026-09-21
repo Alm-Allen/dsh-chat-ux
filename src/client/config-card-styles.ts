@@ -1,20 +1,16 @@
 /**
- * Styles for the plugin's configuration card, expressed the way the Plugins page
- * expresses its own: the same design tokens (`--dsw-*`), the same field rhythm,
- * and the same control geometry the shipped plugin configuration pages use. A
- * card rendered between them should read as part of the page rather than as a
- * guest, and the page draws no chrome this card could borrow instead.
+ * 插件配置卡片的样式。写法与插件管理页表达自己的方式一致：同一套设计令牌（`--dsw-*`）、
+ * 同一套字段节奏、同一套控件几何——与 dsh 随附的插件配置页完全相同。一张夹在两张官方卡片
+ * 之间的卡片应该读起来像这一页自己的一部分，而不是一个客人；何况这一页也没有可供借用的现成外壳。
  *
- * Kept as plain text beside the chat-area sheet for the same reason that one is:
- * the client bundle is a single self-contained file with no asset URLs.
+ * 与聊天区样式表一样保持为纯文本，理由也相同：client bundle 是单文件自包含的，没有资源 URL。
  *
  * @module dsh-chat-ux/client/config-card-styles
  */
 
 /**
- * Class names the card renders. Prefixed so they cannot collide with the host
- * page's own (the page ships hashed CSS-module names, but a plugin's sheet is
- * plain global CSS).
+ * 卡片渲染的类名。带前缀，所以不可能和宿主页面自己的类名撞车
+ * （那一页用的是带 hash 的 CSS Module 名，而插件的样式表是普通的全局 CSS）。
  */
 export const CARD_CLASS = {
   form: 'dsh-chat-ux-card-form',
@@ -34,10 +30,9 @@ export const CARD_CLASS = {
 } as const
 
 /**
- * The card's stylesheet. Every color comes from a theme token, so the card
- * follows the light/dark switch without a second rule set.
+ * 卡片的样式表。每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则。
  */
-export const CARD_CSS = `/* dsh-chat-ux - plugin configuration card */
+export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 .${CARD_CLASS.form} {
   display: flex;
   flex-direction: column;

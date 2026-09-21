@@ -1,9 +1,8 @@
-# Bundle layer contributed by dsh-chat-ux.
+# dsh-chat-ux 贡献的组合包层。
 #
-# A profile that lists this package in `dsh.profile.bundles` applies this patch
-# after every earlier layer, so the row below is what the loader mounts. The row
-# resolves by package name, which is why an installed copy boots its own built
-# entry instead of a path inside a checkout.
+# 一个把这个包列进 `dsh.profile.bundles` 的 profile 会在所有更早的层之后应用这个 patch，
+# 所以下面这一行就是加载器挂载的东西。这一行按包名解析，这也是为什么装好的副本启动的是它自己
+# 构建出来的入口，而不是检出目录里的某个路径。
 - insert:
     - id: dsh-chat-ux
       name: 'dsh-chat-ux'

@@ -1,105 +1,88 @@
 /**
- * Keep a reasoning row open while the model is still thinking, and close it
- * again the moment the thinking stops.
+ * 模型还在思考时让思考行开着，思考一停就把它收回去。
  *
- * dsh ships every reasoning row collapsed — its own README says so outright,
- * and `ReasoningRow` holds that in a plain `useState(false)`. No setting
- * exposes it, so the row's own disclosure control is the only lever a plugin
- * has. That lever is at least a stable one: the row carries
- * `data-variant="think"`, `data-state` (`running` while the model is
- * thinking, `ok` once it has stopped) and `data-expanded` — semantic
- * attributes, unlike the build-hashed class names around them, which change
- * with every dsh build.
+ * dsh 发出来的思考行一律是收起的——它自己的 README 就是这么写的，而 `ReasoningRow` 用一个朴素的
+ * `useState(false)` 把它固定在那儿。没有任何设置项暴露这件事，所以这一行自己的展开控件就是插件
+ * 唯一能扳的杆。好在这根杆至少是稳定的：这一行带着 `data-variant="think"`、`data-state`（模型
+ * 还在思考时是 `running`，停下来之后是 `ok`）和 `data-expanded`——都是语义属性，不像它们周围
+ * 那些跟着 dsh 每次构建变化的带 hash 类名。
  *
- * The reader still owns the row. A click or key press inside one records the
- * phase it happened in, and this module leaves that row alone for the rest of
- * that phase: folding a row mid-thought keeps it folded, and opening a settled
- * row keeps it open. The scope is deliberately the phase and not the row — a
- * reader who folds and re-opens a row while the model is still thinking has
- * not asked for it to stay open once the answer starts, so the close on
- * `ok` still happens.
+ * 这一行仍然归读者所有。在行内点一下或按一下键，会记下当时所处的阶段，本模块在这个阶段之内不再
+ * 动它：思考到一半把行折起来就让它折着，把已经停稳的行展开就让它开着。这个让位刻意按阶段算、
+ * 而不是按行算——读者在模型还在思考时把行折起来又展开，并没有要求「等思考完了也一直开着」，所以
+ * `ok` 到来时该收还是收。
  *
  * @module dsh-chat-ux/client/reasoning-fold
  */
 
-/** What dsh puts on every reasoning row. */
+/** dsh 在每一行思考行上放的东西。 */
 export const ROW_SELECTOR = '[data-variant="think"]'
 
-/** `data-state` while the model is still thinking; `ok` once it has stopped. */
+/** 模型还在思考时的 `data-state`；停下来之后是 `ok`。 */
 const RUNNING = 'running'
 
 /**
- * Install the reasoning reveal for the whole page.
- * @returns disposer that disconnects the observer and both listeners.
+ * 给整页安装思考行展开。
+ * @returns disposer：断开 observer 并摘掉两个监听。
  */
 export function installReasoningFold(): () => void {
-  /** The phase in which the reader last touched each row. */
+  /** 读者最后一次碰某一行时，那一行处在哪个阶段。 */
   const touchedIn = new WeakMap<Element, string>()
-  /** The phase each row was last toggled in, so a click that changes nothing is not retried. */
+  /** 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
   const attempted = new WeakMap<Element, string>()
-  /** True while this module is the one pressing a control. */
+  /** 本模块正在按下控件时为真。 */
   let programmatic = false
+  /** 是否已经排了一次扫描。 */
   let queued = false
 
-  const phaseOf = (row: Element): string => row.getAttribute('data-state') ?? ''
-
   /**
-   * Press one row's own disclosure control.
+   * 把每一行拉到它当前阶段该有的样子。
    *
-   * The control differs by how dsh configured the disclosure: with
-   * `expandOnRowClick` the whole row is the button, otherwise the leading
-   * chevron is. Asking for the first button-ish descendant covers both without
-   * depending on which one this build chose.
-   * @param row - the reasoning row to toggle.
+   * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
+   * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
    */
-  const toggle = (row: Element): void => {
-    const control = row.querySelector('[role="button"], button')
-    if (!(control instanceof HTMLElement)) return
-    // The capture-phase listener below sees this click as well; the flag is
-    // what tells it the reader did not ask for it.
-    programmatic = true
-    try {
-      control.click()
-    } finally {
-      programmatic = false
-    }
-  }
-
-  /** Bring every row in line with the phase it is in. */
   const sweep = (): void => {
     for (const row of document.querySelectorAll(ROW_SELECTOR)) {
-      const phase = phaseOf(row)
+      const phase = row.getAttribute('data-state') ?? ''
       if (phase === '') continue
-      // The reader decided this row's state during this phase; leave it be.
+      // 这个阶段里读者已经决定过这一行的状态，别碰它。
       if (touchedIn.get(row) === phase) continue
       if (row.hasAttribute('data-expanded') === (phase === RUNNING)) continue
-      // A click that changed nothing will not change anything next time either.
+      // 一次没引起变化的点击，下一次也不会引起变化。
       if (attempted.get(row) === phase) continue
       attempted.set(row, phase)
-      toggle(row)
+      const control = row.querySelector('[role="button"], button')
+      if (!(control instanceof HTMLElement)) continue
+      // 下面那个捕获阶段的监听同样会看到这次点击；这个标志就是用来告诉它：
+      // 这不是读者要求的。
+      programmatic = true
+      try {
+        control.click()
+      } finally {
+        programmatic = false
+      }
     }
   }
 
-  /** Queue one sweep for the next frame; streaming mutates the tree far faster than this needs to run. */
-  const schedule = (): void => {
+  /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
+  const noteReader = (event: Event): void => {
+    if (programmatic) return
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const row = target.closest(ROW_SELECTOR)
+    if (row === null) return
+    touchedIn.set(row, row.getAttribute('data-state') ?? '')
+  }
+
+  // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
+  const observer = new MutationObserver(() => {
     if (queued) return
     queued = true
     requestAnimationFrame(() => {
       queued = false
       sweep()
     })
-  }
-
-  /** Remember that the reader, not this module, just decided a row's state. */
-  const noteReader = (event: Event): void => {
-    if (programmatic) return
-    const target = event.target
-    if (!(target instanceof Element)) return
-    const row = target.closest(ROW_SELECTOR)
-    if (row !== null) touchedIn.set(row, phaseOf(row))
-  }
-
-  const observer = new MutationObserver(schedule)
+  })
   observer.observe(document.body ?? document.documentElement, {
     subtree: true,
     childList: true,
