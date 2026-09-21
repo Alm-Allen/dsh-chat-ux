@@ -1,0 +1,9 @@
+# Bundle layer contributed by dsh-chat-ux.
+#
+# A profile that lists this package in `dsh.profile.bundles` applies this patch
+# after every earlier layer, so the row below is what the loader mounts. The row
+# resolves by package name, which is why an installed copy boots its own built
+# entry instead of a path inside a checkout.
+- insert:
+    - id: dsh-chat-ux
+      name: 'dsh-chat-ux'

@@ -1,0 +1,9 @@
+# Source overlay for a local `dsh web --patch ./cordis.yml` run.
+#
+# Unlike cordis.patch.yml (which resolves the installed package by name), this
+# row points at the checkout's own entry, so a local host-side edit boots without
+# a build. The browser half is still read from exports["./client"], so run
+# `npm run build` once before using this overlay.
+- insert:
+    - id: dsh-chat-ux
+      name: './src/index.ts'
