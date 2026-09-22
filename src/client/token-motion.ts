@@ -5,9 +5,10 @@
  * 两半都自动覆盖：思考和正文走的是同一个 Markdown 层，而在消息生长期间它俩都待在这一层标了
  * `data-streaming` 的那个容器里。
  *
- * 一个字符就是一个区间，而一个区间从头到尾只带一个 alpha：这里刻意不让 alpha 在字符内部扫过
- * 一遍，也不人为让相邻字符错峰。每个字符的淡入只由它到达的时间决定，所以一批一起到达的字符
- * 一起淡入，阅读顺序来自 API 自己的到达顺序，而不是这个模块发明的什么顺序。
+ * 一个字符就是一个区间，而一个区间从头到尾只带一个 alpha：alpha 不在字符内部扫过一遍。同一批
+ * 到达的字符按它们在流里的先后各错开一点相位（见 `staggerStepMs`），于是「整块一起变亮」摊成
+ * 「亮度沿着新文字扫过去」——一次分片带几个字符是 API 的形状，不该是读者看到的东西。相位只由
+ * 到达顺序决定，阅读顺序仍然来自 API 自己，而不是这个模块发明的什么顺序。
  *
  * 为什么用 CSS Custom Highlight API，而不是把 token 包进 <span>：聊天记录是 React 掌管的，
  * 而 Markdown 层（`@deepseek-ai/dsh-client-ui-primitives`）不暴露任何节点渲染钩子——它的
@@ -74,6 +75,36 @@ export function clampRevealMs(value: unknown): number {
   return Math.min(MAX_REVEAL_MS, Math.max(MIN_REVEAL_MS, Math.round(value)))
 }
 
+/**
+ * 同一批字符之间错开多少相位。
+ *
+ * 一次分片往往带着好几个字符，而它们是在同一毫秒里落进 DOM 的：不错峰的话，这十几个字符共享一个
+ * 出生时间，整块从最淡一起走到本色——眼睛看到的是台阶，不是渐变。错峰让每个字符按自己在流里的
+ * 位次晚一点开始，亮度于是沿着新文字扫过去。
+ *
+ * 步长与渐变时长成比例，所以把设置调快调慢都不会让错峰反客为主：它只占一次渐变的一小段。
+ */
+const STAGGER_DIVISOR = 50
+/** 错峰步长的上下限：再小看不出扫动，再大就让最后到的字符显得迟滞。 */
+const MIN_STAGGER_MS = 1
+const MAX_STAGGER_MS = 8
+
+/**
+ * 一批 `count` 个字符在 `revealMs` 的渐变下的错峰步长。
+ *
+ * 整批摊开的总相位不超过一次渐变时长——否则一次插入几百个字符（长段落、粘贴、工具输出）会让尾巴
+ * 在屏幕外等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片。
+ * @param count - 这一批新字符的数量。
+ * @param revealMs - 此刻生效的渐变时长。
+ * @returns 相邻字符之间错开的毫秒数；少于两个字符时是 0。
+ */
+export function staggerStepMs(count: number, revealMs: number): number {
+  if (count <= 1) return 0
+  const budget = clampRevealMs(revealMs)
+  const step = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, budget / STAGGER_DIVISOR))
+  return Math.min(step, budget / (count - 1))
+}
+
 /** 这个模块注册的每一个 highlight 名字的前缀。 */
 export const HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-'
 
@@ -115,6 +146,11 @@ interface LiveRun {
   readonly length: number
   /** 这段区间开始淡入时的 `performance.now()` 时间戳。 */
   readonly bornAt: number
+  /**
+   * 相对同批第一个字符的相位偏移，单位毫秒。出生时间不动，淡入整体后移，所以一批字符不会挤在
+   * 同一毫秒里一起变亮。
+   */
+  delay: number
 }
 
 /** 一个文本节点，以及它在容器拼接文本里的起始偏移。 */
@@ -236,7 +272,7 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
     for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
       const run = liveRuns[index]
       if (run === undefined) continue
-      const age = now - run.bornAt
+      const age = now - run.bornAt - run.delay
       // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
       if (age >= revealMs) {
         liveRuns.splice(index, 1)
@@ -312,7 +348,11 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
     const containers = document.querySelectorAll(STREAMING_SELECTOR)
     if (containers.length === 0) return
     const now = performance.now()
+    const revealMs = clampRevealMs(readRevealMs())
+    /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
+    const created: LiveRun[] = []
     for (const container of containers) {
+      const batchStart = created.length
       // 先把容器下每一个文本节点拼起来，同时记住每个节点在拼接串里的偏移。
       const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
       const entries: TextNodeEntry[] = []
@@ -346,7 +386,8 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
 
       // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
       // `styles.ts` 正是从这个元素读淡入用的颜色，一个节点的文本总是渲染在一个元素里。
-      // 同一个节点里的字符刻意共享同一个出生时间——它们一起到达，就一起淡，谁也不比邻居慢半拍。
+      // 同一个节点里的字符出生时间相同，相位在遍历完之后按位次统一分配——一到屏幕就整块变亮的
+      // 台阶感，正是错峰要摊掉的东西。
       // 按码点迭代，所以代理对算作一个区间；空白不单独成区间，但仍然推进偏移。
       const from = previous.length
       const touchedElements = new Set<Element>()
@@ -366,12 +407,30 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
             touchedElements.add(element)
             publishRunColor(element)
           }
-          liveRuns.push({ container, element, start: offset, length: character.length, bornAt: now })
+          const run: LiveRun = { container, element, start: offset, length: character.length, bornAt: now, delay: 0 }
+          liveRuns.push(run)
+          created.push(run)
           offset += character.length
         }
       }
+      // 按这批字符在流里的位次错开：整批摊开的总相位不超过一次渐变，所以一次插入几百个字符也不会
+      // 让尾巴等上好几秒。
+      const step = staggerStepMs(created.length - batchStart, revealMs)
+      for (let slot = batchStart; slot < created.length; slot += 1) {
+        const run = created[slot]
+        if (run === undefined || step === 0) continue
+        run.delay = (slot - batchStart) * step
+      }
     }
-    if (liveRuns.length > 0 && frameHandle === 0) frameHandle = requestAnimationFrame(paint)
+    // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
+    // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
+    // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
+    if (created.length === 0) return
+    if (frameHandle !== 0) {
+      cancelAnimationFrame(frameHandle)
+      frameHandle = 0
+    }
+    paint(performance.now())
   }
 
   const observer = new MutationObserver(scan)
