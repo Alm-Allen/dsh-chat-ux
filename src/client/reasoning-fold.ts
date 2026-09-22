@@ -20,9 +20,6 @@ import { beginProgrammaticToggle, endProgrammaticToggle } from './token-motion'
 /** dsh 在每一行思考行上放的东西。 */
 export const ROW_SELECTOR = '[data-variant="think"]'
 
-/** 模型还在思考时的 `data-state`；停下来之后是 `ok`。 */
-const RUNNING = 'running'
-
 /**
  * 给整页安装思考行展开。
  * @returns disposer：断开 observer 并摘掉两个监听。
@@ -31,11 +28,11 @@ export function installReasoningFold(): () => void {
   /** 读者最后一次碰某一行时，那一行处在哪个阶段。 */
   const touchedIn = new WeakMap<Element, string>()
   /** 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
-  const attempted = new WeakMap<Element, string>()
+  const attemptedIn = new WeakMap<Element, string>()
   /** 本模块正在按下控件时为真。 */
-  let programmatic = false
+  let pressingControl = false
   /** 是否已经排了一次扫描。 */
-  let queued = false
+  let scanQueued = false
 
   /**
    * 把每一行拉到它当前阶段该有的样子。
@@ -43,7 +40,7 @@ export function installReasoningFold(): () => void {
    * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
    * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
    */
-  const sweep = (): void => {
+  const syncEveryRow = (): void => {
     for (const row of document.querySelectorAll(ROW_SELECTOR)) {
       const phase = row.getAttribute('data-state') ?? ''
       if (phase === '') continue
@@ -51,27 +48,27 @@ export function installReasoningFold(): () => void {
       if (touchedIn.get(row) === phase) continue
       if (row.hasAttribute('data-expanded') === (phase === RUNNING)) continue
       // 一次没引起变化的点击，下一次也不会引起变化。
-      if (attempted.get(row) === phase) continue
-      attempted.set(row, phase)
+      if (attemptedIn.get(row) === phase) continue
+      attemptedIn.set(row, phase)
       const control = row.querySelector('[role="button"], button')
       if (!(control instanceof HTMLElement)) continue
       // 下面那个捕获阶段的监听同样会看到这次点击；这个标志就是用来告诉它：
       // 这不是读者要求的。token-motion 的折叠守卫在同一趟事件里也会看到它，所以那份声明
       // 要一起发出去——否则自动收起会把刚开头的正文静默掉 400 ms。
-      programmatic = true
+      pressingControl = true
       beginProgrammaticToggle()
       try {
         control.click()
       } finally {
         endProgrammaticToggle()
-        programmatic = false
+        pressingControl = false
       }
     }
   }
 
   /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
-  const noteReader = (event: Event): void => {
-    if (programmatic) return
+  const rememberReaderTouched = (event: Event): void => {
+    if (pressingControl) return
     const target = event.target
     if (!(target instanceof Element)) return
     const row = target.closest(ROW_SELECTOR)
@@ -81,11 +78,11 @@ export function installReasoningFold(): () => void {
 
   // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
   const observer = new MutationObserver(() => {
-    if (queued) return
-    queued = true
+    if (scanQueued) return
+    scanQueued = true
     requestAnimationFrame(() => {
-      queued = false
-      sweep()
+      scanQueued = false
+      syncEveryRow()
     })
   })
   observer.observe(document.body ?? document.documentElement, {
@@ -94,13 +91,16 @@ export function installReasoningFold(): () => void {
     attributes: true,
     attributeFilter: ['data-state', 'data-expanded'],
   })
-  document.addEventListener('click', noteReader, true)
-  document.addEventListener('keydown', noteReader, true)
-  sweep()
+  document.addEventListener('click', rememberReaderTouched, true)
+  document.addEventListener('keydown', rememberReaderTouched, true)
+  syncEveryRow()
 
   return () => {
     observer.disconnect()
-    document.removeEventListener('click', noteReader, true)
-    document.removeEventListener('keydown', noteReader, true)
+    document.removeEventListener('click', rememberReaderTouched, true)
+    document.removeEventListener('keydown', rememberReaderTouched, true)
   }
 }
+
+/** 模型还在思考时的 `data-state`；停下来之后是 `ok`。 */
+const RUNNING = 'running'

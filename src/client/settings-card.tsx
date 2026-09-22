@@ -115,14 +115,11 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   const stored = clampRevealMs(snapshot.value?.revealMs)
   const overridden = userLayerHasField(snapshot.user, FIELD_NAME)
   const text = draft ?? String(stored)
-  const trimmedDraft = text.trim()
-  let draftNumber = Number(trimmedDraft)
   // `Number('')` 是 0，会被误当成一个合法数字，所以空草稿先顶成 NaN。
-  if (trimmedDraft === '') draftNumber = Number.NaN
-  let parsed: number | null = null
-  if (Number.isFinite(draftNumber) && draftNumber >= MIN_REVEAL_MS && draftNumber <= MAX_REVEAL_MS) {
-    parsed = Math.round(draftNumber)
-  }
+  const typedValue = text.trim() === '' ? Number.NaN : Number(text.trim())
+  const parsed = Number.isFinite(typedValue) && typedValue >= MIN_REVEAL_MS && typedValue <= MAX_REVEAL_MS
+    ? Math.round(typedValue)
+    : null
   const invalid = parsed === null
   const dirty = draft !== null && parsed !== stored
   const unavailable = snapshot.status === 'unavailable'
@@ -158,14 +155,9 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   }
 
   // 输入框下面那行字：草稿不合法时报错，否则给提示。
-  let messageClass: string = CARD_CLASS.hint
-  let messageText = copy.fieldHint
-  if (invalid) {
-    messageClass = CARD_CLASS.invalid
-    messageText = copy.invalid
-  }
-  let saveLabel = copy.save
-  if (saving) saveLabel = copy.saving
+  const messageClass = invalid ? CARD_CLASS.invalid : CARD_CLASS.hint
+  const messageText = invalid ? copy.invalid : copy.fieldHint
+  const saveLabel = saving ? copy.saving : copy.save
 
   return (
     <div className={CARD_CLASS.form} data-plugin-config-form="dsh-chat-ux">
