@@ -1,0 +1,3 @@
+# 换行一律用 LF：代码、配置、文档都按文本处理，checkout 时不转成 CRLF。
+# 这些属性优先于 core.autocrlf，所以本机系统级的 autocrlf=true 不会再影响这个仓库。
+* text=auto eol=lf
