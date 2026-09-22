@@ -130,6 +130,25 @@ const STREAMING_SELECTOR = '[data-streaming]'
  */
 const FOLD_QUIET_MS = 400
 
+/**
+ * 本插件自己按下折叠控件的深度。
+ *
+ * 自动收起思考行也会派发一次真正的 click——`HTMLElement.click()` 走的是同一条捕获路径，
+ * `noteFold` 分不出它和读者那一下的区别。可这一次点击落在「思考刚停、正文刚开头」的位置上，
+ * 静默它等于把读者正在读的那段正文的渐变整段掐掉，所以它必须被认出来并放过。
+ */
+let programmaticToggles = 0
+
+/** 标记一段本插件自己的折叠切换，让 `noteFold` 忽略其间的事件。 */
+export function beginProgrammaticToggle(): void {
+  programmaticToggles += 1
+}
+
+/** 结束一段本插件自己的折叠切换。 */
+export function endProgrammaticToggle(): void {
+  programmaticToggles = Math.max(0, programmaticToggles - 1)
+}
+
 /** 一个正在淡入的字符区间。 */
 interface LiveRun {
   readonly container: Element
@@ -221,18 +240,42 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
   }
 
   /**
-   * 丢掉重排作废的那些区间，保住字符还在原位的那些。
+   * 丢掉重排真正改写掉的那些区间，保住字符还在原位的那些。
    *
    * 重排一次就把整个容器里的区间杀光，会让正淡到一半的文字直接跳成实色——正是这个模块存在的
    * 意义所要避免的那种硬切；而重排偏偏发生在正在书写的那段文字末尾，也就是读者正盯着的地方。
+   *
+   * 判定落在两段稳定区上：公共前缀里的区间位置不变，公共后缀里的区间整体平移但仍对应同一批
+   * 字符，所以它们接着自己的淡入走下去，只是换了个偏移。只有中间那段真被改写掉的部分才丢。
+   * 展开或收起一行思考正是这个形状——容器前面的文本被摘要和正文互相替换，而后面正在流的正文
+   * 一个字都没动，那些字不该因为读者碰了一下折叠控件就整片定格。
    * @param container - 被重排的那个容器。
-   * @param valid - 重排后仍然有效的那段公共前缀长度。
+   * @param previous - 重排前的容器文本。
+   * @param text - 重排后的容器文本。
    */
-  const keepRunsBefore = (container: Element, valid: number): void => {
+  const keepRunsThroughRewrite = (container: Element, previous: string, text: string): void => {
+    const limit = Math.min(previous.length, text.length)
+    let prefix = 0
+    while (prefix < limit && previous.charCodeAt(prefix) === text.charCodeAt(prefix)) prefix += 1
+    // 后缀不与前缀重叠，所以中间那段改写区不会被两边同时认领。
+    let suffix = 0
+    while (
+      suffix < limit - prefix
+      && previous.charCodeAt(previous.length - 1 - suffix) === text.charCodeAt(text.length - 1 - suffix)
+    ) suffix += 1
+    const stableFrom = previous.length - suffix
+    const shift = text.length - previous.length
     for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
       const run = liveRuns[index]
       if (run === undefined) continue
-      if (run.container === container && run.start + run.length > valid) liveRuns.splice(index, 1)
+      if (run.container !== container) continue
+      if (run.start + run.length <= prefix) continue
+      if (run.start >= stableFrom) {
+        // 同一段字符，只是整体挪了位：跟着挪，它的年龄和相位都不动。
+        liveRuns[index] = { ...run, start: run.start + shift }
+        continue
+      }
+      liveRuns.splice(index, 1)
     }
   }
 
@@ -246,13 +289,17 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
    * @param event - 页面上任意一处点击或按键。
    */
   const noteFold = (event: Event): void => {
+    // 本插件自己的自动收起不是读者的意图，它落在思考刚停、正文刚开头的位置上。
+    if (programmaticToggles > 0) return
     const target = event.target
     if (!(target instanceof Element)) return
     const until = performance.now() + FOLD_QUIET_MS
     const ownContainer = target.closest(STREAMING_SELECTOR)
     if (ownContainer !== null) foldedUntil.set(ownContainer, until)
-    // 触发折叠的控件可能住在它要重排的那个容器之外，所以这里连子树一起扫，
-    // 而不是只看目标自己的祖先。
+    // 触发折叠的控件可能住在它要重排的那个容器之外，所以这里连子树一起扫，而不是只看目标自己的
+    // 祖先——但只在点击时扫：键盘事件的目标常常是整个 body，那时「子树」就是整篇文档，一次
+    // PageUp 会把页面上每一个流式容器一起静默掉，而按方向键的读者并没有碰过它们。
+    if (event.type !== 'click') return
     for (const container of target.querySelectorAll(STREAMING_SELECTOR)) foldedUntil.set(container, until)
   }
 
@@ -375,12 +422,9 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       const quietUntil = foldedUntil.get(container)
       const underFoldGuard = quietUntil !== undefined && now <= quietUntil
       if (underFoldGuard || text.length <= previous.length || !text.startsWith(previous)) {
-        // 重排：公共前缀之内仍然有效的区间继续自己的淡入，而不是被整片撤销——否则正读到一半的
-        // 正文会突然跳成实色。
-        let valid = 0
-        const limit = Math.min(previous.length, text.length)
-        while (valid < limit && previous.charCodeAt(valid) === text.charCodeAt(valid)) valid += 1
-        keepRunsBefore(container, valid)
+        // 重排：仍然落在原位的区间继续自己的淡入，而不是被整片撤销——否则正读到一半的正文会
+        // 突然跳成实色。
+        keepRunsThroughRewrite(container, previous, text)
         continue
       }
 

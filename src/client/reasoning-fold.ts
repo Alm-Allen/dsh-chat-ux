@@ -15,6 +15,8 @@
  * @module dsh-chat-ux/client/reasoning-fold
  */
 
+import { beginProgrammaticToggle, endProgrammaticToggle } from './token-motion'
+
 /** dsh 在每一行思考行上放的东西。 */
 export const ROW_SELECTOR = '[data-variant="think"]'
 
@@ -54,11 +56,14 @@ export function installReasoningFold(): () => void {
       const control = row.querySelector('[role="button"], button')
       if (!(control instanceof HTMLElement)) continue
       // 下面那个捕获阶段的监听同样会看到这次点击；这个标志就是用来告诉它：
-      // 这不是读者要求的。
+      // 这不是读者要求的。token-motion 的折叠守卫在同一趟事件里也会看到它，所以那份声明
+      // 要一起发出去——否则自动收起会把刚开头的正文静默掉 400 ms。
       programmatic = true
+      beginProgrammaticToggle()
       try {
         control.click()
       } finally {
+        endProgrammaticToggle()
         programmatic = false
       }
     }
