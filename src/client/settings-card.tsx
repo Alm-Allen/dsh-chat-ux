@@ -105,7 +105,15 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     useCallback((listener: () => void) => scope.subscribe(listener), [scope]),
     () => scope.getSnapshot(),
   )
-  const language = useLanguage(locale)
+  // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时退回浏览器语言——和 locale
+  // 插件给全新浏览器用的那条主语言子标签规则一样。
+  const activeLanguage = useSyncExternalStore(
+    useCallback((listener: () => void) => (locale ? locale.subscribe(listener) : () => {}), [locale]),
+    useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
+  )
+  const browserLanguage: 'zh' | 'en' =
+    typeof navigator !== 'undefined' && (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
+  const language = activeLanguage === 'en' || activeLanguage === 'zh' ? activeLanguage : browserLanguage
   const copy = language === 'en' ? EN_COPY : ZH_COPY
   const [draft, setDraft] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -210,25 +218,6 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
       </div>
     </div>
   )
-}
-
-/** 跟着 host 的语言偏好走，每次切换都重新渲染。 */
-function useLanguage(locale: LocaleLike | undefined): 'zh' | 'en' {
-  const active = useSyncExternalStore(
-    useCallback(
-      (listener: () => void) => (locale ? locale.subscribe(listener) : () => {}),
-      [locale],
-    ),
-    useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
-  )
-  if (active === 'en' || active === 'zh') return active
-  return browserLanguage()
-}
-
-/** locale 插件给全新浏览器用的同一条主语言子标签规则。 */
-function browserLanguage(): 'zh' | 'en' {
-  if (typeof navigator === 'undefined') return 'zh'
-  return (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
 }
 
 /**

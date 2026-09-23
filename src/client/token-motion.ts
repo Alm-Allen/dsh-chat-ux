@@ -6,7 +6,7 @@
  * `data-streaming` 的那个容器里。
  *
  * 一个字符就是一个区间，而一个区间从头到尾只带一个 alpha：alpha 不在字符内部扫过一遍。同一批
- * 到达的字符按它们在流里的先后各错开一点相位（见 `staggerStepMs`），于是「整块一起变亮」摊成
+ * 到达的字符按它们在流里的先后各错开一点相位，于是「整块一起变亮」摊成
  * 「亮度沿着新文字扫过去」——一次分片带几个字符是 API 的形状，不该是读者看到的东西。相位只由
  * 到达顺序决定，阅读顺序仍然来自 API 自己，而不是这个模块发明的什么顺序。
  *
@@ -96,25 +96,6 @@ const MIN_STAGGER_MS = 1
 const MAX_STAGGER_MS = 8
 
 /**
- * 一批 `count` 个字符在 `revealMs` 的渐变下的错峰步长。
- *
- * 一次分片往往带着好几个字符，而它们是在同一毫秒里落进 DOM 的：不错峰的话，这十几个字符共享一个
- * 出生时间，整块从最淡一起走到本色——眼睛看到的是台阶，不是渐变。错峰让每个字符按自己在流里的
- * 位次晚一点开始，亮度于是沿着新文字扫过去。整批摊开的总相位不超过一次渐变时长——否则一次插入
- * 几百个字符（长段落、粘贴、工具输出）会让尾巴在屏幕外等上好几秒。字符越多，每个字符让出的相位
- * 越小，扫动仍然连成一片。
- * @param count - 这一批新字符的数量。
- * @param revealMs - 此刻生效的渐变时长。
- * @returns 相邻字符之间错开的毫秒数；少于两个字符时是 0。
- */
-export function staggerStepMs(count: number, revealMs: number): number {
-  if (count <= 1) return 0
-  const budget = clampRevealMs(revealMs)
-  const step = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, budget / STAGGER_DIVISOR))
-  return Math.min(step, budget / (count - 1))
-}
-
-/**
  * 本插件自己按下折叠控件的深度。
  *
  * 自动收起思考行也会派发一次真正的 click——`HTMLElement.click()` 走的是同一条捕获路径，
@@ -145,8 +126,8 @@ export function endProgrammaticToggle(): void {
 export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_REVEAL_MS): () => void {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
   if (registry === undefined) return () => {}
-  const HighlightCtor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
-  if (HighlightCtor === undefined) return () => {}
+  const HighlightConstructor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
+  if (HighlightConstructor === undefined) return () => {}
   if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return () => {}
 
   /** 还没有停稳的字符区间。 */
@@ -228,8 +209,7 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       const unspent = gap - NOMINAL_FRAME_MS
       for (const run of liveRuns) {
         // 空白期里出生的区间按「此刻出生」算，否则它还要再等这段空白过去才开始淡入。
-        if (run.bornAt <= previousFrameAt) run.bornAt += unspent
-        else run.bornAt = now
+        run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now
       }
     }
     const revealMs = clampRevealMs(readRevealMs())
@@ -304,7 +284,7 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
         registry.delete(HIGHLIGHT_PREFIX + step)
         continue
       }
-      registry.set(HIGHLIGHT_PREFIX + step, new HighlightCtor(...ranges))
+      registry.set(HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges))
     }
     if (liveRuns.length > 0) scheduledFrame = requestAnimationFrame(paint)
   }
@@ -374,7 +354,63 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
 
       // 新出现的字符。纯粹在尾部追加时，它就是最后那一段；Markdown 闭合一个标记（`**`、反引号、
       // 链接）时，新字符夹在旧文字中间，那种改写里对不上旧文本的那几个字同样该淡入。
-      const addedRanges = addedRangesIn(before, text, prefix, suffix)
+      //
+      // 改写要看中间那段：把旧文本与新文本各自的前后缀剥掉之后，两边剩下的部分用一次字符级公共子
+      // 序列对齐，对不上的新字符就是新出现的。中间那段一旦大起来就放弃——整块重写（流式结束时整体
+      // 重排、切换渲染分支）不该让读者重看一遍淡入，只有小范围闭合才值得给那几个字动画。
+      const oldMiddle = before.slice(prefix, before.length - suffix)
+      const newMiddle = text.slice(prefix, text.length - suffix)
+      if (newMiddle.length === 0) continue
+      if (oldMiddle.length > 0 && oldMiddle.length * newMiddle.length > REWRITE_DIFF_BUDGET) continue
+
+      // 每个新字符在旧文本里对不对得上。旧文本的中间段是空的，就是整段都没对上——这一次变化全是
+      // 新增，不必走一次对齐。
+      const matched = new Uint8Array(newMiddle.length)
+      if (oldMiddle.length > 0) {
+        // 自底向上的公共子序列长度表，回溯时用它判断哪个新字符对得上旧文本。
+        const columns = newMiddle.length + 1
+        const lengths = new Uint16Array((oldMiddle.length + 1) * columns)
+        for (let row = oldMiddle.length - 1; row >= 0; row -= 1) {
+          for (let column = newMiddle.length - 1; column >= 0; column -= 1) {
+            const sameCharacter = oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)
+            lengths[row * columns + column] = sameCharacter
+              ? (lengths[(row + 1) * columns + column + 1] ?? 0) + 1
+              : Math.max(lengths[(row + 1) * columns + column] ?? 0, lengths[row * columns + column + 1] ?? 0)
+          }
+        }
+        let matchedCount = 0
+        let row = 0
+        let column = 0
+        while (row < oldMiddle.length && column < newMiddle.length) {
+          if (oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)) {
+            matched[column] = 1
+            matchedCount += 1
+            row += 1
+            column += 1
+            continue
+          }
+          // 哪边的表值大就往哪边走。
+          const skipOldRow = lengths[(row + 1) * columns + column] ?? 0
+          const skipNewColumn = lengths[row * columns + column + 1] ?? 0
+          const advanceOldRow = skipOldRow >= skipNewColumn
+          if (advanceOldRow) row += 1
+          if (!advanceOldRow) column += 1
+        }
+        if (matchedCount === 0 || newMiddle.length - matchedCount > LOCAL_REWRITE_LIMIT) continue
+      }
+
+      // 对不上的新字符就是要淡入的那批，连续的合并成一段。
+      const addedRanges: OffsetRange[] = []
+      let rangeStart = -1
+      for (let index = 0; index < newMiddle.length; index += 1) {
+        if (matched[index] === 1) {
+          if (rangeStart >= 0) addedRanges.push({ start: rangeStart + prefix, end: index + prefix })
+          rangeStart = -1
+          continue
+        }
+        if (rangeStart < 0) rangeStart = index
+      }
+      if (rangeStart >= 0) addedRanges.push({ start: rangeStart + prefix, end: newMiddle.length + prefix })
       if (addedRanges.length === 0) continue
 
       // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
@@ -410,8 +446,11 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
         }
       }
       // 按这批字符在流里的位次错开：整批摊开的总相位不超过一次渐变，所以一次插入几百个字符也不会
-      // 让尾巴等上好几秒。
-      const step = staggerStepMs(createdRuns.length - batchStart, revealMs)
+      // 让尾巴等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片；再小看不出扫动，
+      // 再大就让最后到的字符显得迟滞。
+      const batchCount = createdRuns.length - batchStart
+      const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, revealMs / STAGGER_DIVISOR))
+      const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, revealMs / (batchCount - 1))
       for (let slot = batchStart; slot < createdRuns.length; slot += 1) {
         const run = createdRuns[slot]
         if (run === undefined || step === 0) continue
@@ -529,70 +568,4 @@ const LOCAL_REWRITE_LIMIT = 64
  */
 const REWRITE_DIFF_BUDGET = 4096
 
-/**
- * 一次变化里「新出现的字符」落在新文本的哪些段上。
- *
- * 纯追加就是最后那一段。改写则要看中间那段：把旧文本与新文本各自的前后缀剥掉之后，两边剩下的
- * 部分用一次字符级公共子序列对齐，对不上的新字符就是新出现的——Markdown 闭合一个 `**` 或一个
- * 反引号时，改动正是这个样子，旧字符还在原位，新字符夹在中间。
- *
- * 中间那段一旦大起来就放弃：整块重写（流式结束时整体重排、切换渲染分支）不该让读者重看一遍
- * 淡入，只有小范围闭合才值得给那几个字动画。
- * @param previous - 变化前的容器文本。
- * @param text - 变化后的容器文本。
- * @param prefix - 两边公共前缀的长度。
- * @param suffix - 两边公共后缀的长度。
- * @returns 新文本里的偏移段，按先后排列；没有新字符时是空数组。
- */
-function addedRangesIn(previous: string, text: string, prefix: number, suffix: number): OffsetRange[] {
-  const oldMiddle = previous.slice(prefix, previous.length - suffix)
-  const newMiddle = text.slice(prefix, text.length - suffix)
-  if (newMiddle.length === 0) return []
-  if (oldMiddle.length === 0) return [{ start: prefix, end: text.length - suffix }]
-  if (oldMiddle.length * newMiddle.length > REWRITE_DIFF_BUDGET) return []
-
-  // 自底向上的公共子序列长度表，回溯时用它判断哪个新字符对得上旧文本。
-  const columns = newMiddle.length + 1
-  const lengths = new Uint16Array((oldMiddle.length + 1) * columns)
-  for (let row = oldMiddle.length - 1; row >= 0; row -= 1) {
-    for (let column = newMiddle.length - 1; column >= 0; column -= 1) {
-      const sameCharacter = oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)
-      lengths[row * columns + column] = sameCharacter
-        ? (lengths[(row + 1) * columns + column + 1] ?? 0) + 1
-        : Math.max(lengths[(row + 1) * columns + column] ?? 0, lengths[row * columns + column + 1] ?? 0)
-    }
-  }
-  const matched = new Uint8Array(newMiddle.length)
-  let matchedCount = 0
-  let row = 0
-  let column = 0
-  while (row < oldMiddle.length && column < newMiddle.length) {
-    if (oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)) {
-      matched[column] = 1
-      matchedCount += 1
-      row += 1
-      column += 1
-      continue
-    }
-    const skipOldRow = lengths[(row + 1) * columns + column] ?? 0
-    const skipNewColumn = lengths[row * columns + column + 1] ?? 0
-    if (skipOldRow >= skipNewColumn) row += 1
-    else column += 1
-  }
-  if (matchedCount === 0 || newMiddle.length - matchedCount > LOCAL_REWRITE_LIMIT) return []
-
-  // 对不上的新字符就是要淡入的那批，连续的合并成一段。
-  const ranges: OffsetRange[] = []
-  let start = -1
-  for (let index = 0; index < newMiddle.length; index += 1) {
-    if (matched[index] === 1) {
-      if (start >= 0) ranges.push({ start: start + prefix, end: index + prefix })
-      start = -1
-      continue
-    }
-    if (start < 0) start = index
-  }
-  if (start >= 0) ranges.push({ start: start + prefix, end: newMiddle.length + prefix })
-  return ranges
-}
 
