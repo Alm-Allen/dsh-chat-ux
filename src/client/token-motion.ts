@@ -115,6 +115,17 @@ export function endProgrammaticToggle(): void {
 }
 
 /**
+ * 此刻是否有本插件自己的折叠切换正在进行。
+ *
+ * 过程组的自动开合也走这条通道：两个自动开合模块各自监听读者的点击，谁都不该把对方的程序化点击
+ * 记成读者的意图，所以它们共用这一个计数。
+ * @returns 计数大于零时为真。
+ */
+export function isProgrammaticToggle(): boolean {
+  return programmaticToggles > 0
+}
+
+/**
  * 给整页安装淡入效果。
  *
  * 引擎没有 Highlight API、或者读者开了「减少动态效果」时都能安全调用：这两种情况都返回一个

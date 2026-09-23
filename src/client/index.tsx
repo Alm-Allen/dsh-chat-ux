@@ -13,6 +13,7 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CARD_CSS } from './config-card-styles'
+import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
@@ -64,6 +65,10 @@ export function apply(ctx: ClientContext): void {
   // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
   // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
   ctx.effect(() => installReasoningFold(), 'dsh-chat-ux: reasoning reveal')
+
+  // 「简洁」与「详细」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
+  // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
+  ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
 
   // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
   // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
