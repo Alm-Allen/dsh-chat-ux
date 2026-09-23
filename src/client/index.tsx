@@ -15,6 +15,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CARD_CSS } from './config-card-styles'
 import { installFileMutationRow } from './file-mutation-row'
 import { FILE_MUTATION_CSS } from './file-mutation-styles'
+import { installFoldGlide } from './fold-glide'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
 import { FONT_CSS } from './font-styles'
 import { installProcessFold } from './process-fold'
@@ -74,6 +75,11 @@ export function apply(ctx: ClientContext): void {
   // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
   // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
   ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
+
+  // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
+  // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
+  // 拉回旧位置再播到新位置。只认点击，流式追加与自动开合都不受影响。
+  ctx.effect(() => installFoldGlide(), 'dsh-chat-ux: fold glide')
 
   // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
   // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
