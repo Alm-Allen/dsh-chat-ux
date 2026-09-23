@@ -66,7 +66,7 @@ export function apply(ctx: ClientContext): void {
   // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
   ctx.effect(() => installReasoningFold(), 'dsh-chat-ux: reasoning reveal')
 
-  // 「简洁」与「详细」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
+  // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
   // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
   ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
 

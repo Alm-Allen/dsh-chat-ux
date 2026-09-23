@@ -59,16 +59,61 @@ body[data-ds-dark-theme] {
   ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
 }
 
-/* 详细档的组头把实时细节接在标签后面（"正在分析请求 · …"），而那一段正是组内思考行正在出的字——
+/* 带实时细节的档位（标准与详细）把这一段的细节接在组头标签后面（"正在分析请求 · …"），而那一段正是组内思考行正在出的字——
    组体开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以让原文本整块让位，
    改显示 process-fold 写在属性上的那半截标签：组头、图标和开合控件都还在原处，只是不再跟着出字。
-   组体一收起，原文本立刻回来；简洁档的组头没有这一段，标记不成立，什么都不变。 */
+   组体一收起，原文本立刻回来；没有实时细节的档位标记不成立，什么都不变。
+
+   替上来的那半截还要自己带流光：动画原本挂在被隐藏的那个元素上，跟着它一起没了。下面这道渐变、
+   它的半宽和周期都对着 ui-primitives 的 TextShimmer 抄，只有 keyframes 的名字是自己的——那份样式
+   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。 */
+
 [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-text-shimmer] {
   display: none;
 }
 
 [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
   content: attr(data-chat-ux-label);
+  /* 组头是 flex 容器，原文本作为 flex 项带着这三个约束，替上来的文本要占同一格。 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes dsh-chat-ux-label-shimmer {
+  66.6667%, 100% { background-position: 0% center; }
+}
+
+/* 撑得起这道渐变的浏览器，才把文字交给背景去画；撑不起就让它老实当一段静态标签，
+   而不是配上一个画不出来的背景、把字也一起搭进去。
+
+   括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入
+   「未知的函数形式」而恒为假，整块规则静默跳过——文字还在，流光没了，且不留任何痕迹。 */
+@supports (color: color-mix(in oklab, currentColor 50%, transparent)) and ((-webkit-background-clip: text) or (background-clip: text)) {
+  [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
+    background-image: linear-gradient(
+      90deg,
+      currentColor calc(50% - var(--dsh-chat-ux-label-spread, 0px)),
+      color-mix(in oklab, currentColor 50%, transparent),
+      currentColor calc(50% + var(--dsh-chat-ux-label-spread, 0px))
+    );
+    background-position: 100% center;
+    background-repeat: no-repeat;
+    background-size: 250% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: dsh-chat-ux-label-shimmer 1.5s cubic-bezier(0.33, 0, 0.67, 1) infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
+      background-image: none;
+      -webkit-text-fill-color: currentColor;
+      animation: none;
+    }
+  }
 }
 
 ${revealStepRules}
