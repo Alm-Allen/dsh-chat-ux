@@ -16,24 +16,34 @@
  * 选择器锚在 `data-disclosure-row` 上——那是 DisclosureRow 自己发的语义属性，不是带构建期
  * hash 的类名，所以不会随 dsh 发版失效。row 之后的所有兄弟就是展开体。
  *
+ * 两处排除：
+ *
+ *   聊天区之外  `[data-disclosure-row]` 是全页共用的组件发出来的，文件预览、工作流面板那些地方
+ *              也有，它们不该跟着聊天区的规则走，所以整条规则收在 `[data-chat-flow]` 里面。
+ *   轮次头     dsh 在轮次结束时把这一轮的非最终正文都收进轮次头（那个「用时 X 秒」的按钮，
+ *              `[data-turn-process]`）下面，展开它时那些过程成员是一起恢复可见的——它们内部的
+ *              展开体全被当成「刚插入」，几十个一起从 2px 上方淡入，整块内容滑着出现，看着很不
+ *              自然。过程成员由 dsh 自己发的 `data-turn-process-member` 标出来，整棵子树排除；
+ *              轮次触发通知（`[data-turn-trigger]`）同理。
+ *
  * @module dsh-chat-ux/client/fold-motion-styles
  */
 
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 export const FOLD_MOTION_CSS = `
 @starting-style {
-  [data-disclosure-row] ~ * {
+  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
     opacity: 0;
     translate: 0 -2px;
   }
 }
 
-[data-disclosure-row] ~ * {
+[data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
   transition: opacity 120ms ease-out, translate 120ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-disclosure-row] ~ * {
+  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
 }

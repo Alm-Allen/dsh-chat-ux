@@ -2,46 +2,77 @@
  * 折叠时把下方内容推开，展开体自己像卷帘门一样拉下来。
  *
  * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（`{open && children}`），所以 CSS 拿不到可过渡的
- * 旧值——高度动画在聊天区做不到，纯 CSS 的路是死的。这一处在 DOM 之外接管：
+ * 旧值——高度动画在聊天区做不到，纯 CSS 的路是死的。这一处在 DOM 之外接管，办法是**把点击拦下来**：
+ * 捕获阶段 `stopPropagation()`，React 这一下收不到，真身留在原位、还是展开态，于是可以像展开方向
+ * 那样直接动它，动画跑完再把点击原样交还。动真身意味着没有克隆体，也就没有克隆体那一串麻烦
+ * （继承链、坐标、滚动、节点上限）。
  *
- *   展开  点击后 React 刚把展开体插进来，MutationObserver 的回调还在绘制之前，于是先把它压回
- *         0 高、再动画到实际高度。布局逐帧变化，下方内容是真的被推开，不是补出来的位移。
- *   折叠  展开体在 React commit 那一刻就没了，来不及做退场。所以在**点击捕获阶段**先把它按原位
- *         克隆进一个 fixed 浮层，让 React 照常卸掉真身，再对这个残影做 h → 0。下方内容同时用
- *         FLIP 补位，两者时长一致，看起来就是卷帘门收上去。
+ * 三条路：
  *
- * 只有 DisclosureRow 走这条路。过程组、回合触发节点那些的展开体不是「行的下一个兄弟」，找不到
- * 稳定锚点，而且过程组体自己还挂着滚动控制器，所以它们仍旧只补下方位移（FLIP）。
+ *   压高度         DisclosureRow 的行：展开体是「行之后那一个兄弟」，普通块级、没有内部滚动，
+ *                  改高度就是「拉多少显示多少」。展开方向等 React 插进来之后压（观察回调仍在
+ *                  绘制之前）；收起方向拦点击、压真身的高度，压到 0 再放行。
+ *   裁剪          过程组头：组体自己带滚动条，压高度会被 dsh 的跟随逻辑滚走，所以改裁不改压——
+ *                  clip-path 只影响绘制，内容一动不动，门升起或落下而已。裁剪不腾空间，所以两个
+ *                  方向都要另外补位：展开靠 glideFlow，收起靠把组体之后的流块 translateY 顶上来，
+ *                  卷完放行时同一帧归零。这条只认组头：组体里的成员行各自是普通的 DisclosureRow，
+ *                  它们住在组里，却不控制组体。
+ *   不参与        轮次头（那个「用时 X 秒」的按钮）与轮次触发通知：它们开合的是整轮内容
+ *                  （含过程组与嵌套滚动），压不得也裁不干净，留 dsh 原本的瞬时开合反而最稳。
+ *   其余控件       没有展开体的那些，只补下方位移。
  *
- * 快照只在点击时取，且只取视口内的流块。流式追加、分页加载历史、以及本插件的自动开合都没有
- * 点击，因此不会有动画——那些场合内容本来就该自然生长。
+ * 卷帘门的意思是「内容一直在那儿，只是被无形的门挡着」——所以任何一条路上，被挡住的内容都
+ * 不能有位移。裁剪（clip-path）不改布局，是唯一能保证这一点的做法；压高度会让内部重排。
  *
- * 流块是嵌套的（过程组里还有成员），祖先的 transform 会叠到后代身上，所以后代只补
+ * 快照只在**读者**点击时取，且只取视口内的流块。流式追加与分页加载历史没有点击，因此不会有
+ * 动画；本插件的自动开合派发的是真正的 click、走的是同一条捕获路径，所以它另外被
+ * `isProgrammaticToggle()` 认出来放过——那些场合内容本来就该自然生长。
+ *
+ * 流块是**嵌套**的（过程组里还有成员），祖先的 `transform` 会叠到后代身上，所以补位时后代只补
  * `自己的绝对位移 − 最近流块祖先的绝对位移`，否则位移会被算两遍。
  *
  * @module dsh-chat-ux/client/fold-glide
  */
 
+import { isProgrammaticToggle } from './token-motion'
+
 /** 卷帘门与下方补位共用的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500
-/** 残影的节点上限：再大就不克隆了，退回成只补下方位移。 */
-const GHOST_NODE_LIMIT = 2000
 /** dsh 给每个流块发的语义锚点。 */
 const FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]'
+/** 聊天列的容器。整页都在用 `aria-expanded`，本模块只接管它里面的那些。 */
+const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
 /** DisclosureRow 的行。展开体是它的下一个兄弟。 */
 const DISCLOSURE_SELECTOR = '[data-disclosure-row]'
-/** 其余可开合的控件（过程组头、回合触发节点等）。 */
+/** 其余可开合的控件（过程组头等）。 */
 const TOGGLE_SELECTOR = '[aria-expanded]'
+/** 弹出层控件（菜单、对话框、列表）。它们开的不是折叠体，本模块整块跳过。 */
+const POPUP_SELECTOR = '[aria-haspopup]'
+/** 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知——它们开合的是整轮内容。 */
+const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
+/** 过程组的根节点。 */
+const PROCESS_GROUP_SELECTOR = '[data-step-process]'
+/** 过程组的组体。它留在 DOM 里，靠 hidden 属性开合。 */
+const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
+
+/** 裁剪式收回要的四样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁。 */
+interface ClipShut {
+  /** 展开体；它的高度就是要卷掉的量。 */
+  readonly body: HTMLElement
+  /** 裁剪目标：组体本身（组头留着）。 */
+  readonly clipTarget: HTMLElement
+  /** 补位时跳过的范围：组根——组内成员跟着组体一起走，不该补。 */
+  readonly exclude: HTMLElement
+  readonly control: HTMLElement
+}
 
 interface FoldIntent {
-  /** 被点的 DisclosureRow；null 表示这一下不走卷帘门，只补下方位移。 */
-  readonly row: HTMLElement | null
-  /** 点击时展开体已经在，所以这一下是收起。 */
-  readonly collapsing: boolean
-  /** 收起方向的浮层残影；太大没克隆时为 null。 */
-  readonly ghost: HTMLElement | null
+  /** 展开方向被点的开合控件：DisclosureRow 的行，或过程组头的按钮。 */
+  readonly control: HTMLElement
+  /** 展开方向的过程组体；不是过程组时为 null。 */
+  readonly groupBody: HTMLElement | null
   readonly tops: Map<HTMLElement, number>
   readonly takenAt: number
 }
@@ -55,45 +86,49 @@ export function installFoldGlide(): () => void {
 
   let intent: FoldIntent | null = null
   const running = new WeakMap<HTMLElement, Animation>()
-  let overlay: HTMLElement | null = null
+  /** 收起动画正在跑：这 200ms 不接受新的点击，免得两次折叠叠在一起。 */
+  let shutting = false
+  /** 正在把拦下来的那次点击原样交还给 React——那一次不该再被拦。 */
+  let replaying = false
 
   const reduceMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   const inViewport = (rect: DOMRect): boolean =>
     rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth
 
-  /** 展开体：row 之后那一个兄弟。返回 null 就说明这一行当前是收起的。 */
-  const expandedBody = (row: HTMLElement): HTMLElement | null => {
-    const last = row.parentElement?.lastElementChild
-    return last instanceof HTMLElement && last !== row ? last : null
-  }
-
-  const ghostLayer = (): HTMLElement => {
-    if (overlay !== null && overlay.isConnected) return overlay
-    overlay = document.createElement('div')
-    overlay.setAttribute('aria-hidden', 'true')
-    overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647'
-    document.body.appendChild(overlay)
-    return overlay
+  /**
+   * 控件的展开体。控件自己发 `aria-controls` 时以它为准（那个 id 由 `useId` 生成、带冒号，
+   * 只能走 `getElementById`）；否则按卸载式那一族的形状取「控件之后那一个兄弟」。返回 null
+   * 就说明这个控件当前是收起的。
+   *
+   * 过程组头到不了这里——它先被 `processBodyOf` 认走，那条路动的是组体，不是高度。
+   */
+  const expandedBodyOf = (control: HTMLElement): HTMLElement | null => {
+    const controls = control.getAttribute('aria-controls')
+    if (controls !== null) {
+      const target = document.getElementById(controls)
+      return target instanceof HTMLElement ? target : null
+    }
+    const last = control.parentElement?.lastElementChild
+    return last instanceof HTMLElement && last !== control ? last : null
   }
 
   /**
-   * 把展开体按原位钉一份到浮层上，好让 React 卸掉真身之后还有东西可卷。
-   * 逐条设置内联样式而不是写 cssText，克隆体自己带的 CSS 变量要留着。
+   * 控件控制的过程组体。
+   *
+   * 只有组头拿 `aria-controls` 指着组体（`ChatGroupSeat` 里的 `ProcessGroupHeader`），组里的成员
+   * 行不发这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组
+   * 头」**：组体里的每一个工具行、思考行都住在 `[data-step-process]` 里。只看 `closest` 的话，点
+   * 一行工具调用会被当成展开整个过程组——展开方向对整个组体重放一次裁剪，收起方向更把整块组体裁
+   * 掉，组体下方的内容被当空位补一遍。
+   * @param control - 被点的开合控件。
+   * @returns 它控制的过程组体；不是组头时为 null。
    */
-  const takeGhost = (body: HTMLElement): HTMLElement | null => {
-    if (body.querySelectorAll('*').length > GHOST_NODE_LIMIT) return null
-    const rect = body.getBoundingClientRect()
-    const ghost = body.cloneNode(true) as HTMLElement
-    ghost.removeAttribute('id')
-    for (const element of ghost.querySelectorAll('[id]')) element.removeAttribute('id')
-    Object.assign(ghost.style, {
-      position: 'absolute', margin: '0', overflow: 'hidden', boxSizing: 'border-box',
-      left: `${String(rect.left)}px`, top: `${String(rect.top)}px`,
-      width: `${String(rect.width)}px`, height: `${String(rect.height)}px`,
-    })
-    ghostLayer().appendChild(ghost)
-    return ghost
+  const processBodyOf = (control: HTMLElement): HTMLElement | null => {
+    const controls = control.getAttribute('aria-controls')
+    if (controls === null) return null
+    const target = document.getElementById(controls)
+    return target instanceof HTMLElement && target.matches(PROCESS_BODY_SELECTOR) ? target : null
   }
 
   const takeTops = (): Map<HTMLElement, number> => {
@@ -118,12 +153,18 @@ export function installFoldGlide(): () => void {
     }
   }
 
-  /** 下方内容按各自相对最近流块祖先的那一段位移滑走。 */
-  const glideFlow = (tops: Map<HTMLElement, number>): void => {
+  /**
+   * 下方内容按各自相对最近流块祖先的那一段位移滑走。
+   *
+   * `inside` 里的块不算：它们是那个组体自己的成员，位置变化是跟着组体一起出现或消失的，
+   * 给它们补位只会让内容从上方滑进来——读者报过「像从上面掉下来」。
+   */
+  const glideFlow = (tops: Map<HTMLElement, number>, inside: HTMLElement | null): void => {
     // 第一趟只读：读写交错会让浏览器反复重排。
     const absolute = new Map<HTMLElement, number>()
     for (const [element, top] of tops) {
       if (!element.isConnected) continue
+      if (inside !== null && inside.contains(element)) continue
       absolute.set(element, top - element.getBoundingClientRect().top)
     }
     for (const [element, distance] of absolute) {
@@ -134,14 +175,20 @@ export function installFoldGlide(): () => void {
     }
   }
 
-  /** 卷帘门拉开：压回 0 高再放到实际高度，布局逐帧长出来，下方内容跟着让位。 */
-  const rollOpen = (row: HTMLElement): void => {
-    const body = expandedBody(row)
-    if (body === null) return
+  /**
+   * 卷帘门拉开：压回 0 高再放到实际高度，布局逐帧长出来，下方内容跟着让位。
+   *
+   * `rect` 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成
+   * border-box，动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距
+   * 在动」。
+   */
+  const rollOpen = (body: HTMLElement): void => {
     const height = body.getBoundingClientRect().height
     if (height === 0) return
     const previousOverflow = body.style.overflow
+    const previousBoxSizing = body.style.boxSizing
     body.style.overflow = 'hidden'
+    body.style.boxSizing = 'border-box'
     const animation = body.animate(
       [{ height: '0px' }, { height: `${String(height)}px` }],
       { duration: ROLL_MS, easing: 'ease-out' },
@@ -149,68 +196,182 @@ export function installFoldGlide(): () => void {
     animation.onfinish = () => {
       animation.cancel()
       body.style.overflow = previousOverflow
+      body.style.boxSizing = previousBoxSizing
     }
   }
 
-  /** 卷帘门收回：卷的是浮层上的残影，真身早已被 React 卸掉。 */
-  const rollShut = (ghost: HTMLElement): void => {
-    const animation = ghost.animate(
-      [{ height: `${String(ghost.getBoundingClientRect().height)}px` }, { height: '0px' }],
+  /**
+   * 裁剪式拉开：只裁不压。裁剪不参与布局，内容从头到尾一动不动，门升起来就露出更多；
+   * 下方内容靠 glideFlow 补位。
+   *
+   * `lift` 是要露出来的那一段：过程组就是组体全高。
+   */
+  const openByClip = (clipTarget: HTMLElement, lift: number): void => {
+    const animation = clipTarget.animate(
+      [{ clipPath: `inset(0 0 ${String(lift)}px 0)` }, { clipPath: 'inset(0 0 0 0)' }],
+      { duration: ROLL_MS, easing: 'ease-out' },
+    )
+    animation.onfinish = () => { animation.cancel() }
+  }
+
+  /** 把拦下来的那次点击原样交给 React。重放期间不再拦，也不再起收起动画。 */
+  const replay = (control: HTMLElement): void => {
+    shutting = false
+    replaying = true
+    try {
+      control.click()
+    } finally {
+      replaying = false
+    }
+  }
+
+  /**
+   * 卷帘门收回（DisclosureRow）：**动真身，不克隆**。
+   *
+   * 这次点击已经在捕获阶段被拦下，React 还没折叠——真身留在原位、还是展开态，于是可以像展开
+   * 方向那样压它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到 0
+   * 的那一刻再放行点击：React 卸掉真身，而它此时不占任何空间，收起态那套 contain: size + 24px
+   * 接上来时不会跳。
+   */
+  const rollShutInPlace = (body: HTMLElement, control: HTMLElement): void => {
+    // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
+    const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
+    const height = body.getBoundingClientRect().height
+    if (height === 0) {
+      window.clearTimeout(release)
+      replay(control)
+      return
+    }
+    const previousOverflow = body.style.overflow
+    const previousBoxSizing = body.style.boxSizing
+    body.style.overflow = 'hidden'
+    body.style.boxSizing = 'border-box'
+    const animation = body.animate(
+      [{ height: `${String(height)}px` }, { height: '0px' }],
       { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
     )
-    animation.onfinish = () => { ghost.remove() }
+    animation.onfinish = () => {
+      window.clearTimeout(release)
+      replay(control)
+      // 真身这时已经卸掉了，这几句只是兜底：万一 React 没折叠，元素要能回到原样。
+      animation.cancel()
+      body.style.overflow = previousOverflow
+      body.style.boxSizing = previousBoxSizing
+    }
+  }
+
+  /**
+   * 裁剪式收回：门落下来遮住组体那一段，真身一个像素都不动——组体自己带滚动条，压高度会被
+   * dsh 的跟随逻辑滚走，所以这一条只能裁不能压。
+   *
+   * 裁剪不腾空间，所以展开体让出来的那一段得另外补：`exclude` 之后、又不在它里面的流块在动画里
+   * 被 translateY 往上一段，卷完放行点击时 React 收起、布局真的上移同一段，同一帧里把 transform
+   * 归零，两边正好抵消，看不出接缝。
+   */
+  const shutByClip = (fold: ClipShut): void => {
+    const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
+    const lift = fold.body.getBoundingClientRect().height
+    if (lift === 0) {
+      window.clearTimeout(release)
+      replay(fold.control)
+      return
+    }
+    const rising: Animation[] = []
+    for (const element of takeTops().keys()) {
+      if (element === fold.exclude || fold.exclude.contains(element)) continue
+      if ((fold.exclude.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) === 0) continue
+      rising.push(element.animate(
+        [{ transform: 'translateY(0)' }, { transform: `translateY(${String(-lift)}px)` }],
+        { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
+      ))
+    }
+    const clip = fold.clipTarget.animate(
+      [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: `inset(0 0 ${String(lift)}px 0)` }],
+      { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
+    )
+    clip.onfinish = () => {
+      window.clearTimeout(release)
+      // 先归零再放行，两步落在同一帧里：读者只会看到最终位置。
+      for (const animation of rising) animation.cancel()
+      clip.cancel()
+      replay(fold.control)
+    }
   }
 
   const flush = (): void => {
     const current = intent
     intent = null
     if (current === null) return
-    if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) {
-      current.ghost?.remove()
+    if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) return
+    // 过程组：裁剪组体，下方内容靠 glideFlow 补位。
+    if (current.groupBody !== null) {
+      if (current.groupBody.hasAttribute('hidden')) return
+      openByClip(current.groupBody, current.groupBody.getBoundingClientRect().height)
+      glideFlow(current.tops, current.groupBody)
       return
     }
-    if (current.row === null) {
-      glideFlow(current.tops)
+    const body = expandedBodyOf(current.control)
+    if (body === null) {
+      glideFlow(current.tops, null)
       return
     }
-    if (current.collapsing) {
-      // 展开体还在，说明这一下并没有折叠——残影作废。
-      if (expandedBody(current.row) !== null) {
-        current.ghost?.remove()
-        return
-      }
-      if (current.ghost !== null) rollShut(current.ghost)
-      glideFlow(current.tops)
-      return
-    }
-    rollOpen(current.row)
+    // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
+    rollOpen(body)
   }
 
   const onClick = (event: Event): void => {
+    // 自己重放的那一次直接放行，交给 React。
+    if (replaying) return
+    // 本插件自己的自动开合（过程组、思考行）派发的也是真正的 click，走的正是这条捕获路径。
+    // 那不是读者的意图，也不该起动画——过程结束那一刻按下控件，动画会落在刚冒头的正文上。
+    if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
-    const row = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
-    const toggle = row ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
-    if (toggle === null) return
-    intent?.ghost?.remove()
-    const body = row === null ? null : expandedBody(row)
-    intent = {
-      row,
-      collapsing: body !== null,
-      ghost: body === null ? null : takeGhost(body),
-      tops: takeTops(),
-      takenAt: Date.now(),
+    // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行、任务面板——
+    // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
+    if (target.closest<HTMLElement>(CHAT_FLOW_SELECTOR) === null) return
+    // 弹出层开的不是折叠体：菜单与对话框不该带动聊天流。
+    if (target.closest<HTMLElement>(POPUP_SELECTOR) !== null) return
+    // 收起动画正在跑：这 200ms 里不接受新的点击，免得两次折叠叠在一起。
+    if (shutting) {
+      event.stopPropagation()
+      event.preventDefault()
+      return
     }
+    intent = null
+    // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
+    const control = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
+      ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
+    if (control === null) return
+    // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
+    if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
+    // 组头控制组体，成员行不控制——见 processBodyOf。认错了，点一行工具调用会被当成展开整个过程组。
+    const groupBody = processBodyOf(control)
+    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+    const body = groupBody ?? expandedBodyOf(control)
+    // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。
+    if (body === null || body.hasAttribute('hidden')) {
+      intent = { control, groupBody, tops: takeTops(), takenAt: Date.now() }
+      return
+    }
+    if (reduceMotion()) return
+    // 收起方向：把这次点击拦下来，让真身自己卷上去，卷完再放行。
+    event.stopPropagation()
+    event.preventDefault()
+    shutting = true
+    if (groupRoot !== null && groupBody !== null) shutByClip({ body: groupBody, clipTarget: groupBody, exclude: groupRoot, control })
+    else rollShutInPlace(body, control)
   }
 
   const observer = new MutationObserver(flush)
   document.addEventListener('click', onClick, true)
-  observer.observe(document.body, { childList: true, subtree: true })
+  // hidden 也要观察：过程组的开合是 setAttribute('hidden', 'until-found')，只有属性变化，
+  // 不带 attributeFilter 就收不到，那一处连下方补位都没有。别处的 hidden 切换多在 intent
+  // 为 null 时到达，直接返回，成本可以忽略。
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] })
 
   return () => {
     document.removeEventListener('click', onClick, true)
     observer.disconnect()
-    overlay?.remove()
-    overlay = null
   }
 }
