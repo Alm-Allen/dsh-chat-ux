@@ -30,6 +30,18 @@ const BODY_SELECTOR = '[data-step-process-body]'
 /** 组头里的 shimmer：在，就说明这一段过程还没结束。 */
 const RUNNING_SELECTOR = '[data-text-shimmer]'
 
+/** dsh 把组头标签与实时细节接起来用的分隔符（`message.turnProcess.separator`，中英文都是它）。 */
+const DETAIL_SEPARATOR = ' · '
+
+/** 组根上的标记：这个组的组头此刻带着实时细节（详细档，且这一段过程还没结束）。 */
+const LIVE_DETAIL_ATTRIBUTE = 'data-chat-ux-live-detail'
+
+/** 组根上的标记：这个组的组体此刻是展开的。 */
+const OPEN_ATTRIBUTE = 'data-chat-ux-open'
+
+/** 组头控件上的属性：标题里只含标签的那半截，供样式表在组体展开时替上。 */
+const LABEL_ATTRIBUTE = 'data-chat-ux-label'
+
 /** 这一段过程还在跑。 */
 const RUNNING = 'running'
 
@@ -55,6 +67,15 @@ export function installProcessFold(): () => void {
       const body = group.querySelector(BODY_SELECTOR)
       if (!(header instanceof HTMLElement) || body === null) continue
       const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING
+      // 详细档的组头把实时细节接在标签后面，而那一段正是组内思考行正在出的字——组体开着的时候
+      // 两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独写到属性上，
+      // 样式表在组体展开时用它替掉整段文本。
+      const headerText = header.textContent ?? ''
+      const separatorAt = headerText.indexOf(DETAIL_SEPARATOR)
+      const detailed = separatorAt >= 0
+      group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed)
+      group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'))
+      if (detailed) header.setAttribute(LABEL_ATTRIBUTE, headerText.slice(0, separatorAt))
       // 这个阶段里读者已经决定过这个组的开合，别碰它。
       if (touchedIn.get(group) === phase) continue
       if (body.hasAttribute('hidden') === (phase === CLOSED)) continue

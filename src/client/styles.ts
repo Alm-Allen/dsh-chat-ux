@@ -59,5 +59,17 @@ body[data-ds-dark-theme] {
   ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
 }
 
+/* 详细档的组头把实时细节接在标签后面（"正在分析请求 · …"），而那一段正是组内思考行正在出的字——
+   组体开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以让原文本整块让位，
+   改显示 process-fold 写在属性上的那半截标签：组头、图标和开合控件都还在原处，只是不再跟着出字。
+   组体一收起，原文本立刻回来；简洁档的组头没有这一段，标记不成立，什么都不变。 */
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-text-shimmer] {
+  display: none;
+}
+
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
+  content: attr(data-chat-ux-label);
+}
+
 ${revealStepRules}
 `
