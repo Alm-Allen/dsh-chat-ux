@@ -61,6 +61,9 @@ export function installProcessFold(): () => void {
       // 一次没引起变化的点击，下一次也不会引起变化。
       if (attemptedIn.get(group) === phase) continue
       attemptedIn.set(group, phase)
+      // dsh 的组头 onClick 里有 focus()，那是给真实点击准备的。程序化点击不该把焦点从读者手里拿走，
+      // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab。
+      const previousFocus = document.activeElement
       // 这一次点击是本模块派的：折叠守卫与思考行那一侧都不该把它当成读者的意图。
       beginProgrammaticToggle()
       try {
@@ -68,6 +71,9 @@ export function installProcessFold(): () => void {
       } finally {
         endProgrammaticToggle()
       }
+      // 读者本来就停在组头上时，这一句会把焦点放回原处，等于什么都没发生。
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true })
+      if (document.activeElement === header) header.blur()
     }
   }
 
