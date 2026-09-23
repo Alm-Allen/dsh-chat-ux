@@ -16,6 +16,7 @@ import { CARD_CSS } from './config-card-styles'
 import { installFileMutationRow } from './file-mutation-row'
 import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
+import { FONT_CSS } from './font-styles'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
@@ -44,8 +45,9 @@ export function apply(ctx: ClientContext): void {
     const style = document.createElement('style')
     style.id = STYLE_ID
     style.dataset.plugin = 'dsh-chat-ux'
-    // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场。
+    // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场、字体接管。
     style.textContent = CHAT_AREA_CSS + '\n' + CARD_CSS + '\n' + FILE_MUTATION_CSS + '\n' + FOLD_MOTION_CSS
+      + '\n' + FONT_CSS
     document.head.appendChild(style)
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
