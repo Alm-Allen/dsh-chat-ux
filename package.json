@@ -44,7 +44,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/cordis": "^4.0.4",
     "react": "^18.2.0"
   },
   "peerDependenciesMeta": {
@@ -53,7 +53,7 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/cordis": "^4.0.4",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "react": "^18.2.0",
@@ -70,6 +70,6 @@
     "ux"
   ],
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.2"
+    "@deepseek-ai/schemastery": "^3.18.4"
   }
 }

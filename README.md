@@ -7,14 +7,14 @@
 ## 工程结构
 
 ```
-src/index.ts               host 半：Node 侧入口，注册设置命名空间
+src/index.ts               host 半：Node 侧入口，这一行的存在让 client 半区进入启动图
 src/client/index.tsx       client 半：浏览器入口，聊天区 UX 写在这里
 src/client/token-motion.ts token 淡入：diff 新增文本并驱动透明度档位
 src/client/reasoning-fold.ts 思考行：思考中展开、思考结束收起
 src/client/styles.ts       聊天区样式表 + 透明度档位规则（纯文本，内联进 bundle）
 src/client/settings-card.tsx 插件管理页上的配置卡片（渐变时长表单）
 src/client/config-card-styles.ts 卡片的样式表与类名（跟随 dsh 设计令牌）
-src/client/settings-scope.ts 客户端 settings scope 的最小类型契约
+src/client/settings-scope.ts 客户端 config form 的最小类型契约
 src/client/platform-modules.d.ts 平台基座模块的环境声明（运行时由加载器提供）
 scripts/wrap-client.cjs    把 tsc 的 CommonJS 产物包成 DSH 的 client bundle
 cordis.patch.yml           组合包层：按包名 insert 一行（安装后走这个）
@@ -27,14 +27,14 @@ tsconfig.client.json       client 半编译配置（CommonJS -> build/client/）
 
 dsh 的插件分两侧加载，本工程两侧都有：
 
-- **host 半** — `exports["."]` -> `dist/index.js`。Node 侧，由 `cordis.patch.yml` 里的行按包名加载。它只做一件事：把设置命名空间 `dsh-chat-ux` 注册给设置服务。
+- **host 半** — `exports["."]` -> `dist/index.js`。Node 侧，由 `cordis.patch.yml` 里的行按包名加载。它只做两件事：把 `Config` 的 `revealMs` 声明成 `.volatile()`（设置服务只投影这样的字段，插件管理页也正是靠它才认得这个条目），以及让这一行存在——client 半区靠「启用的 Loader 条目」才会被组合进浏览器启动图。
 - **client 半** — `exports["./client"]` -> `dist/client.js`。因为 package.json 声明了 `dsh.client`，宿主会把这一项组合进浏览器启动图。聊天区动效与配置卡片都在这一侧。
 
 client 产物必须是**单个自包含文件**：浏览器模块加载器不给插件 client 提供相对 require，也没有资源 URL。它只认 `window.__ModuleLoader__.load({ id, factory })` 协议，factory 拿到一个绑定到加载器模块表的 `require`（react 与平台 client 包都在里面），并返回插件的 exports。
 
 所以 `scripts/wrap-client.cjs` 做两件事：把 `src/client/` 内部所有相对 require 递归内联成一份模块表（源码可以正常拆多文件），非相对 require（react、`@deepseek-ai/*`）则原样留给加载器；最后包成协议要求的形状，并在写盘前做一次语法门禁。
 
-两侧通过两个字符串对齐：设置命名空间 `dsh-chat-ux` 与字段名 `revealMs`。它们各自写在自己那侧，改一处就要改另一处。
+两侧通过两个字符串对齐：配置条目 id `dsh-chat-ux`（就是 profile 里这一行的 id）与字段名 `revealMs`。它们各自写在自己那侧，改一处就要改另一处。
 
 ## token 淡入
 
@@ -99,9 +99,10 @@ dsh 的思考行**默认是收起的**，也没有对应的设置项（它自己
 
 控件按「行内第一个 `[role="button"]` 或 `button`」来找：dsh 的 `DisclosureRow` 在 `expandOnRowClick` 为真时整行就是按钮，否则是左侧的 chevron 按钮，这样找两种配置都覆盖。
 
-两个已知边界：
+三个已知边界：
 
-- 如果整段过程（turn process）本身是收起的，思考行根本不在 DOM 里，插件够不着它。
+- 如果整段过程（turn process）本身是收起的，这一行仍在 DOM 里，只是带着 `hidden="until-found"`——dsh 用可搜索的隐藏，不卸载子树。插件照样会去点它，读者看不见而已。
+- 「工作过程展示」（设置 → 通用）的 `compact`（默认）与 `detailed` 两档下，**运行中的过程组体本身是收起的**，自动展开的思考行要等读者展开那一组才看得到；`expanded` 档的组体直接可见，效果立刻可见。三档都不自动展开单个思考行，这正是本插件仍然有用的前提。
 - 展开是模拟点击（`click()`）实现的，dsh 若改掉 `DisclosureRow` 的交互，这里会静默失效——不报错，只是不再自动展开。
 
 ## 配置卡片
@@ -116,7 +117,7 @@ dsh 的思考行**默认是收起的**，也没有对应的设置项（它自己
 
 ## 渐变速度
 
-速度由设置命名空间 `dsh-chat-ux` 的 `revealMs` 决定，默认 120 ms，允许 30–600 ms。
+速度由配置条目 `dsh-chat-ux` 的 `revealMs` 决定，默认 120 ms，允许 30–600 ms。
 
 上限不是随便定的：`styles.ts` 编译期就生成了 96 条档位规则，时长越长每档跨度越大；600 ms 摊到 96 档是 6.25 ms 一档，仍在 144 Hz 的一帧之内，再长就会看出台阶。
 
@@ -124,7 +125,7 @@ dsh 的思考行**默认是收起的**，也没有对应的设置项（它自己
 
 1. 侧栏 **插件** → 「已安装」里的 **dsh-chat-ux**；
 2. 包说明下方的**渐变时长**输入框里改数字；
-3. 点**保存**。值写进 `$DSH_HOME/settings.yaml` 的 `dsh-chat-ux:` 分节，下一次出字立即生效——不需要重启、也不需要刷新页面。
+3. 点**保存**。值写进当前 profile 的 `cordis.patch.yml` 里 `dsh-chat-ux` 这一行的 `config`，下一次出字立即生效——不需要重启、也不需要刷新页面。
 
 「已覆盖」徽标表示用户层里有这个字段；旁边的**重置**会清掉它，让取值退回默认层。
 

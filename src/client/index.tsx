@@ -6,7 +6,7 @@
  * `window.__ModuleLoader__.load({...})` bundle。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起，以及插件管理页
- * 渲染的配置卡片。它还读 host 半区注册的 `dsh-chat-ux` 设置命名空间——这一页上改的值就是这样到达
+ * 渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页上改的值就是这样到达
  * 效果里的，不用刷新。
  *
  * @module dsh-chat-ux/client
@@ -15,18 +15,19 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CARD_CSS } from './config-card-styles'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
-import type { LocaleLike, SettingsScope } from './settings-scope'
+import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { CHAT_AREA_CSS, STYLE_ID } from './styles'
 import { DEFAULT_REVEAL_MS, clampRevealMs, installTokenMotion } from './token-motion'
 
 /**
- * 必须的客户端服务。`settingsScope.bind` 是从**调用方** context 上读 `connection` 与 `remote`
- * 的，所以这两个必须和这一半自己用的那两个服务一起声明；`slots` 承载插件管理页那个座位。
+ * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
+ * 后者由 `@deepseek-ai/dsh-client-ui-settings` 提供，而它自己声明了 `remote` 与 `remote.settings`，
+ * 所以这一半不用再直接依赖那两个服务。
  *
  * locale 服务刻意不在其中：卡片通过 `ctx.reflect` 读它，而没有 locale 插件时 `reflect` 返回
  * undefined、不会抛错，所以没有它的部署照样能得到一张能用的卡片。
  */
-export const inject: string[] = ['slots', 'settingsScope', 'connection', 'remote']
+export const inject: string[] = ['slots', 'configForms']
 
 /**
  * 浏览器侧入口。
@@ -47,7 +48,9 @@ export function apply(ctx: ClientContext): void {
 
   // 淡入在每一个绘制帧上通过这个小格子读时长，所以插件管理页上的保存不必重新安装效果就能生效，
   // 也不会丢掉正在飞的区间。
-  const scope = services.settingsScope.bind({ namespace: SETTINGS_NAMESPACE })
+  // 平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：插件管理页
+  // 给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
+  const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
   const motion = { revealMs: DEFAULT_REVEAL_MS }
   const syncRevealMs = (): void => {
     motion.revealMs = clampRevealMs(scope.getSnapshot().value?.revealMs)
@@ -88,15 +91,15 @@ interface SlotsService {
   register(options: Record<string, unknown>, component: unknown): () => void
 }
 
-/** 设置 scope 的绑定器，收窄到 `bind`。 */
-interface SettingsScopeBinder {
-  bind(spec: { namespace: string }): SettingsScope
+/** 共享配置表单的提供者，收窄到 `get`。 */
+interface ConfigFormsService {
+  get<T>(entryId: string): ConfigForm<T>
 }
 
 /** 这一半通过 context 够到的那些平台服务。 */
 interface ClientServices {
   slots: SlotsService
-  settingsScope: SettingsScopeBinder
+  configForms: ConfigFormsService
   reflect: { get(name: string): unknown }
 }
 
@@ -106,5 +109,5 @@ interface ClientServices {
  */
 const PACKAGE_NAME = 'dsh-chat-ux'
 
-/** 设置命名空间；host 半区就是把它注册在这个字符串下的。 */
+/** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux'

@@ -20,7 +20,7 @@ import type { ChangeEvent, ReactElement } from 'react'
 import { Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CARD_CLASS } from './config-card-styles'
 import { MAX_REVEAL_MS, MIN_REVEAL_MS, clampRevealMs } from './token-motion'
-import type { LocaleLike, SettingsScope } from './settings-scope'
+import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FIELD_NAME = 'revealMs'
@@ -61,7 +61,7 @@ const ZH_COPY: Copy = {
   saving: '保存中…',
   reset: '重置',
   failed: '保存未生效，请重试。',
-  unavailable: '当前 dsh 还没有服务这个配置命名空间：host 半尚未加载，重启 dsh 后即可编辑。',
+  unavailable: '当前 dsh 没有向这个页面提供 dsh-chat-ux 的配置：这一行可能没在这个 profile 里启用，或者连接把偏好留在页面进程里。',
   readOnly: '当前设置文档是只读的，改动无法保存。',
 }
 
@@ -81,14 +81,14 @@ const EN_COPY: Copy = {
   reset: 'Reset',
   failed: 'The save did not take effect. Please try again.',
   unavailable:
-    'This dsh does not serve the settings namespace yet: the host half has not been loaded. Restart dsh to edit it here.',
+    'This dsh does not expose dsh-chat-ux configuration to this page: the entry may be disabled in this profile, or the connection keeps preferences inside the page process.',
   readOnly: 'The settings document is read-only, so changes cannot be saved.',
 }
 
 /** 插件管理页为一条 `plugins.bundle.config` 记录绑定的 props。 */
 export interface ChatUxConfigCardProps {
-  /** 绑定在 `dsh-chat-ux` 命名空间上的 scope。 */
-  scope: SettingsScope
+  /** `dsh-chat-ux` 这一行的共享配置表单。 */
+  scope: ConfigForm<ChatUxSection>
   /** locale 服务，部署里有的话。 */
   locale?: LocaleLike
   /** `'page'` 是要表单；`'summary'` 是标题下面那一行摘要。 */
@@ -143,9 +143,9 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     if (parsed === null) return
     setSaving(true)
     setFailed(false)
-    await scope.set(FIELD_NAME, parsed)
-    // host 读回来的那个值，才是「落地了」的唯一权威。
-    const landed = clampRevealMs(scope.getSnapshot().value?.revealMs) === parsed
+    const accepted = await scope.set(FIELD_NAME, parsed)
+    // host 读回来的那个值，才是「落地了」的唯一权威；返回值只说明这一次写入没有被拒。
+    const landed = accepted && clampRevealMs(scope.getSnapshot().value?.revealMs) === parsed
     if (landed) setDraft(null)
     setFailed(!landed)
     setSaving(false)
