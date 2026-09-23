@@ -13,6 +13,8 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CARD_CSS } from './config-card-styles'
+import { installFileMutationRow } from './file-mutation-row'
+import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
@@ -41,8 +43,8 @@ export function apply(ctx: ClientContext): void {
     const style = document.createElement('style')
     style.id = STYLE_ID
     style.dataset.plugin = 'dsh-chat-ux'
-    // 一张样式表承载浏览器这侧的全部内容：聊天区的规则，加上配置卡片的。
-    style.textContent = CHAT_AREA_CSS + '\n' + CARD_CSS
+    // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行。
+    style.textContent = CHAT_AREA_CSS + '\n' + CARD_CSS + '\n' + FILE_MUTATION_CSS
     document.head.appendChild(style)
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
@@ -69,6 +71,12 @@ export function apply(ctx: ClientContext): void {
   // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
   // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
   ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
+
+  // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
+  // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
+  // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
+  // 内置那两行是默认的 0。
+  installFileMutationRow(services.slots)
 
   // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
   // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
