@@ -35,8 +35,7 @@
   "files": [
     "dist",
     "cordis.patch.yml",
-    "cordis.yml",
-    "README.md"
+    "cordis.yml"
   ],
   "scripts": {
     "clean": "node -e \"const fs=require('node:fs');for(const d of ['dist','build'])fs.rmSync(d,{recursive:true,force:true})\"",
