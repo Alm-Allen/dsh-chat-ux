@@ -69,6 +69,15 @@ const POPUP_SELECTOR = '[aria-haspopup]'
 const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
 /** 思考行。它的自动开合也要起动画，是 `isProgrammaticToggle` 那道守卫唯一的例外。 */
 const THINK_ROW_SELECTOR = '[data-variant="think"]'
+/** 聊天列的滚动容器。dsh 的跟随逻辑（`use-chat-reading`）挂在它身上。 */
+const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
+
+/**
+ * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
+ *
+ * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：`ResizeObserver` 一报尺寸变化就瞬时滚到底。
+ */
+const FOLLOW_THRESHOLD_PX = 25
 
 /** 裁剪式收回要的四样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁。 */
 interface ClipShut {
@@ -87,6 +96,8 @@ interface FoldIntent {
   /** 展开方向的过程组体；不是过程组时为 null。 */
   readonly groupBody: HTMLElement | null
   readonly tops: Map<HTMLElement, number>
+  /** 点击那一刻读者是不是贴着底部；贴底时下方补位要跳过。 */
+  readonly atBottom: boolean
   readonly takenAt: number
 }
 
@@ -202,6 +213,22 @@ export function installFoldGlide(): () => void {
     if (controls === null) return null
     const target = document.getElementById(controls)
     return target instanceof HTMLElement && target.matches(BODY_SELECTOR) ? target : null
+  }
+
+  /**
+   * 读者此刻是不是贴着会话底部。
+   *
+   * 贴底时 dsh 自己会补掉这次高度变化——`use-chat-reading` 在 `ResizeObserver` 回调里发现跟着
+   * 尾巴走就瞬时滚到底，视口位置本来就不动。那种情况下再补一次位就成了双重补偿：读者看到的是
+   * 内容先跳一下、再被缓缓推回来。
+   * @param control - 被点的开合控件。
+   * @returns 滚动位置落在底部阈值之内时为真。
+   */
+  const isAtBottom = (control: HTMLElement): boolean => {
+    const scroller = control.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+    // 找不到滚动容器时按「不在底部」处理：退回补位那套旧行为，而不是把补位整个丢掉。
+    if (scroller === null) return false
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
   }
 
   const takeTops = (): Map<HTMLElement, number> => {
@@ -404,16 +431,16 @@ export function installFoldGlide(): () => void {
     intent = null
     if (current === null) return
     if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) return
-    // 过程组：裁剪组体，下方内容靠 glideFlow 补位。
+    // 过程组：裁剪组体，下方内容靠 glideFlow 补位——读者贴着底部时除外，dsh 自己已经补过了。
     if (current.groupBody !== null) {
       if (current.groupBody.hasAttribute('hidden')) return
       openByClip(current.groupBody)
-      glideFlow(current.tops, current.groupBody)
+      if (!current.atBottom) glideFlow(current.tops, current.groupBody)
       return
     }
     const body = expandedBodyOf(current.control)
     if (body === null) {
-      glideFlow(current.tops, null)
+      if (!current.atBottom) glideFlow(current.tops, null)
       return
     }
     // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
@@ -455,7 +482,7 @@ export function installFoldGlide(): () => void {
     const body = groupBody ?? expandedBodyOf(control)
     // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。
     if (body === null || body.hasAttribute('hidden')) {
-      intent = { control, groupBody, tops: takeTops(), takenAt: Date.now() }
+      intent = { control, groupBody, tops: takeTops(), atBottom: isAtBottom(control), takenAt: Date.now() }
       return
     }
     if (reduceMotion()) return
