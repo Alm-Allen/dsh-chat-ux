@@ -40,10 +40,19 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
+import { BODY_SELECTOR, GROUP_SELECTOR } from './process-fold'
 import { isProgrammaticToggle } from './token-motion'
 
 /** 卷帘门与下方补位共用的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200
+
+/**
+ * 可见段占整个卷帘门时长的多少；剩下那一小段留给视口外的那一截高度。
+ *
+ * 不能不留：门的分段就以「读者看得见的那一段」为界，收尾那一下若是瞬间跳变，下方内容会跟着瞬移。
+ */
+const VISIBLE_SHARE = 0.9
+
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500
 /** dsh 给每个流块发的语义锚点。 */
@@ -58,10 +67,8 @@ const TOGGLE_SELECTOR = '[aria-expanded]'
 const POPUP_SELECTOR = '[aria-haspopup]'
 /** 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知——它们开合的是整轮内容。 */
 const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
-/** 过程组的根节点。 */
-const PROCESS_GROUP_SELECTOR = '[data-step-process]'
-/** 过程组的组体。它留在 DOM 里，靠 hidden 属性开合。 */
-const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
+/** 思考行。它的自动开合也要起动画，是 `isProgrammaticToggle` 那道守卫唯一的例外。 */
+const THINK_ROW_SELECTOR = '[data-variant="think"]'
 
 /** 裁剪式收回要的四样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁。 */
 interface ClipShut {
@@ -137,6 +144,19 @@ export function installFoldGlide(): () => void {
   }
 
   /**
+   * 读者此刻看得见的那一段有多长，也就是门要走的那段路。
+   *
+   * 门的分段就是围绕它来的：读者看到的部分占 `VISIBLE_SHARE` 的时长，视口外的那一截用剩下的时间
+   * 一口气走完。这样不管展开体是两百像素还是两万像素，门在读者眼前的移动速度都一样。
+   * @param element - 要量的展开体。
+   * @returns 可见长度，单位像素。
+   */
+  const rollTravelOf = (element: HTMLElement): number => {
+    const span = visibleSpanOf(element)
+    return Math.max(0, Math.min(element.getBoundingClientRect().height, span.to))
+  }
+
+  /**
    * 元素坐标里的一个偏移，换算成裁剪要的「从底边裁掉多少」的百分比。
    *
    * 必须是百分比：`inset()` 的百分比相对的是元素**当前**的 border box，而高度动画正在同时把
@@ -181,7 +201,7 @@ export function installFoldGlide(): () => void {
     const controls = control.getAttribute('aria-controls')
     if (controls === null) return null
     const target = document.getElementById(controls)
-    return target instanceof HTMLElement && target.matches(PROCESS_BODY_SELECTOR) ? target : null
+    return target instanceof HTMLElement && target.matches(BODY_SELECTOR) ? target : null
   }
 
   const takeTops = (): Map<HTMLElement, number> => {
@@ -229,11 +249,11 @@ export function installFoldGlide(): () => void {
   }
 
   /**
-   * 卷帘门拉开：高度逐帧长出来负责让位，裁剪负责视觉。
+   * 卷帘门拉开：高度逐帧长出来，露出多少就占多少。
    *
-   * 高度必须从 0 走到全高，下方内容才会真的让开；可高度动画的行程就是全高，长内容会在 200ms 里
-   * 被一次性跑完。所以再叠一层按可见段走的裁剪，两道同一条缓动曲线——裁剪露出的量恒小于高度，
-   * 读者看到的就只有裁剪，行程正好是可见段。
+   * 只有高度这一道，但它分两段跑：可见段占 `VISIBLE_SHARE` 的时长，视口外的那一截用剩下的时间补完。
+   * 曾经在这里叠过一层按可见段走的裁剪，那是错的——裁剪只影响绘制，而高度已经先长出来了，两道进度
+   * 相同、行程不同，差值就是一片空白。
    *
    * `rect` 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成
    * border-box，动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距
@@ -242,28 +262,23 @@ export function installFoldGlide(): () => void {
   const rollOpen = (body: HTMLElement): void => {
     const height = body.getBoundingClientRect().height
     if (height === 0) return
-    const span = visibleSpanOf(body)
+    const travel = rollTravelOf(body)
     const previousOverflow = body.style.overflow
     const previousBoxSizing = body.style.boxSizing
     body.style.overflow = 'hidden'
     body.style.boxSizing = 'border-box'
     const growing = body.animate(
-      [{ height: '0px' }, { height: `${String(height)}px` }],
+      travel >= height
+        ? [{ height: '0px' }, { height: `${String(height)}px` }]
+        : [
+          { height: '0px', offset: 0, easing: 'ease-out' },
+          { height: `${String(travel)}px`, offset: VISIBLE_SHARE, easing: 'linear' },
+          { height: `${String(height)}px`, offset: 1 },
+        ],
       { duration: ROLL_MS, easing: 'ease-out' },
     )
-    // 一点都看不见时不能裁剪：那样的行程是 0，门会从头到尾关着，元素反而整段消失。
-    const rolling = span.to > span.from
-      ? body.animate(
-        [
-          { clipPath: `inset(0 0 ${bottomCutOf(span.from, height)} 0)` },
-          { clipPath: `inset(0 0 ${bottomCutOf(span.to, height)} 0)` },
-        ],
-        { duration: ROLL_MS, easing: 'ease-out' },
-      )
-      : null
     growing.onfinish = () => {
       growing.cancel()
-      rolling?.cancel()
       body.style.overflow = previousOverflow
       body.style.boxSizing = previousBoxSizing
     }
@@ -309,42 +324,38 @@ export function installFoldGlide(): () => void {
    * 的那一刻再放行点击：React 卸掉真身，而它此时不占任何空间，收起态那套 contain: size + 24px
    * 接上来时不会跳。
    *
-   * 和展开方向一样叠一层裁剪，让读者看得见的那一段按同样的节奏卷上去；高度仍然是全行程（空间
-   * 得让出来），但两道同一条缓动曲线，读者看到的只有裁剪。
+   * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
+   * `VISIBLE_SHARE` 的时长卷上去。
    */
   const rollShutInPlace = (body: HTMLElement, control: HTMLElement): void => {
+    const height = body.getBoundingClientRect().height
     // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
     const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
-    const height = body.getBoundingClientRect().height
     if (height === 0) {
       window.clearTimeout(release)
       replay(control)
       return
     }
-    const span = visibleSpanOf(body)
+    const travel = rollTravelOf(body)
     const previousOverflow = body.style.overflow
     const previousBoxSizing = body.style.boxSizing
     body.style.overflow = 'hidden'
     body.style.boxSizing = 'border-box'
     const shrinking = body.animate(
-      [{ height: `${String(height)}px` }, { height: '0px' }],
+      travel >= height
+        ? [{ height: `${String(height)}px` }, { height: '0px' }]
+        : [
+          { height: `${String(height)}px`, offset: 0, easing: 'linear' },
+          { height: `${String(travel)}px`, offset: 1 - VISIBLE_SHARE, easing: 'ease-out' },
+          { height: '0px', offset: 1 },
+        ],
       { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
     )
-    const rolling = span.to > span.from
-      ? body.animate(
-        [
-          { clipPath: `inset(0 0 ${bottomCutOf(span.to, height)} 0)` },
-          { clipPath: `inset(0 0 ${bottomCutOf(span.from, height)} 0)` },
-        ],
-        { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
-      )
-      : null
     shrinking.onfinish = () => {
       window.clearTimeout(release)
       replay(control)
       // 真身这时已经卸掉了，这几句只是兜底：万一 React 没折叠，元素要能回到原样。
       shrinking.cancel()
-      rolling?.cancel()
       body.style.overflow = previousOverflow
       body.style.boxSizing = previousBoxSizing
     }
@@ -412,11 +423,14 @@ export function installFoldGlide(): () => void {
   const onClick = (event: Event): void => {
     // 自己重放的那一次直接放行，交给 React。
     if (replaying) return
-    // 本插件自己的自动开合（过程组、思考行）派发的也是真正的 click，走的正是这条捕获路径。
-    // 那不是读者的意图，也不该起动画——过程结束那一刻按下控件，动画会落在刚冒头的正文上。
-    if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
+    // 本插件自己的自动开合派发的也是真正的 click，走的正是这条捕获路径。思考行要和读者的点击一样
+    // 起动画：它自己展开、自己收起时若走瞬时切换，读者看到的是内容「啪」地出现和消失，而工具行
+    // 那种只由读者点击的行一直是有卷帘门的。
+    // 过程组不在此列：它一次扫描可能切换好几个组，而收起动画是全局互斥的（shutting），同时来的
+    // 第二次点击会被吞掉，那一组就再也轮不到切换了。
+    if (isProgrammaticToggle() && target.closest(THINK_ROW_SELECTOR) === null) return
     // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行、任务面板——
     // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
     if (target.closest<HTMLElement>(CHAT_FLOW_SELECTOR) === null) return
@@ -437,7 +451,7 @@ export function installFoldGlide(): () => void {
     if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
     // 组头控制组体，成员行不控制——见 processBodyOf。认错了，点一行工具调用会被当成展开整个过程组。
     const groupBody = processBodyOf(control)
-    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(GROUP_SELECTOR) ?? null
     const body = groupBody ?? expandedBodyOf(control)
     // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。
     if (body === null || body.hasAttribute('hidden')) {
