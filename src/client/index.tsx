@@ -14,6 +14,7 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CARD_CSS } from './config-card-styles'
 import { installFileMutationRow } from './file-mutation-row'
+import type { SlotsService } from './file-mutation-row'
 import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { installFoldGlide } from './fold-glide'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
@@ -105,12 +106,6 @@ export function apply(ctx: ClientContext): void {
   )
 
   console.log('[dsh-chat-ux] client half loaded')
-}
-
-/** 槽位注册表，收窄到这一半会发出的两次调用。 */
-interface SlotsService {
-  inject(name: string, callback: () => () => void): void
-  register(options: Record<string, unknown>, component: unknown): () => void
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

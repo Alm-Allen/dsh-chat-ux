@@ -22,11 +22,11 @@ import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } 
 /** dsh 给每一个过程组放的属性。 */
 export const GROUP_SELECTOR = '[data-step-process]'
 
+/** 组体；收起时带 `hidden`。折叠动画那一侧也用它认组体。 */
+export const BODY_SELECTOR = '[data-step-process-body]'
+
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]'
-
-/** 组体；收起时带 `hidden`。 */
-const BODY_SELECTOR = '[data-step-process-body]'
 
 /** 组头里的 shimmer：在，就说明这一段过程还没结束。 */
 const RUNNING_SELECTOR = '[data-text-shimmer]'

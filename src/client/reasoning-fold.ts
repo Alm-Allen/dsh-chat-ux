@@ -15,7 +15,7 @@
  * @module dsh-chat-ux/client/reasoning-fold
  */
 
-import { beginProgrammaticToggle, endProgrammaticToggle } from './token-motion'
+import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './token-motion'
 
 /** dsh 在每一行思考行上放的东西。 */
 export const ROW_SELECTOR = '[data-variant="think"]'
@@ -29,8 +29,6 @@ export function installReasoningFold(): () => void {
   const touchedIn = new WeakMap<Element, string>()
   /** 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
   const attemptedIn = new WeakMap<Element, string>()
-  /** 本模块正在按下控件时为真。 */
-  let pressingControl = false
   /** 是否已经排了一次扫描。 */
   let scanQueued = false
 
@@ -52,23 +50,21 @@ export function installReasoningFold(): () => void {
       attemptedIn.set(row, phase)
       const control = row.querySelector('[role="button"], button')
       if (!(control instanceof HTMLElement)) continue
-      // 下面那个捕获阶段的监听同样会看到这次点击；这个标志就是用来告诉它：
-      // 这不是读者要求的。token-motion 的折叠守卫在同一趟事件里也会看到它，所以那份声明
-      // 要一起发出去——否则自动收起会把刚开头的正文静默掉 400 ms。
-      pressingControl = true
+      // 下面那个捕获阶段的监听同样会看到这次点击，所以这一段要声明出去：那不是读者要求的。
+      // token-motion 的折叠守卫在同一趟事件里也会看到它——否则自动收起会把刚开头的正文
+      // 静默掉 400 ms。
       beginProgrammaticToggle()
       try {
         control.click()
       } finally {
         endProgrammaticToggle()
-        pressingControl = false
       }
     }
   }
 
   /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
   const rememberReaderTouched = (event: Event): void => {
-    if (pressingControl) return
+    if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
     const row = target.closest(ROW_SELECTOR)
