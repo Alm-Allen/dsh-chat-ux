@@ -9,9 +9,10 @@
  *
  * 三条路：
  *
- *   压高度         DisclosureRow 的行：展开体是「行之后那一个兄弟」，普通块级、没有内部滚动，
- *                  改高度就是「拉多少显示多少」。展开方向等 React 插进来之后压（观察回调仍在
- *                  绘制之前）；收起方向拦点击、压真身的高度，压到 0 再放行。
+ *   压高度 + 裁剪  DisclosureRow 的行：展开体是「行之后那一个兄弟」，普通块级、没有内部滚动。
+ *                  高度逐帧长出来负责让位，再叠一层裁剪负责视觉（见下「门只走看得见的那一段」）。
+ *                  展开方向等 React 插进来之后动手（观察回调仍在绘制之前）；收起方向拦点击、
+ *                  动真身，压到 0 再放行。
  *   裁剪          过程组头：组体自己带滚动条，压高度会被 dsh 的跟随逻辑滚走，所以改裁不改压——
  *                  clip-path 只影响绘制，内容一动不动，门升起或落下而已。裁剪不腾空间，所以两个
  *                  方向都要另外补位：展开靠 glideFlow，收起靠把组体之后的流块 translateY 顶上来，
@@ -23,6 +24,11 @@
  *
  * 卷帘门的意思是「内容一直在那儿，只是被无形的门挡着」——所以任何一条路上，被挡住的内容都
  * 不能有位移。裁剪（clip-path）不改布局，是唯一能保证这一点的做法；压高度会让内部重排。
+ *
+ * 门只走看得见的那一段。高度必须从 0 走到全高，布局才会真的让开，可高度动画的行程就是全高：
+ * 八千像素的思考内容会在 200ms 里被一次性跑完，看起来是直接弹出。所以再叠一层裁剪，把「读者
+ * 此刻看得见的那一段」单独按同样的节奏走一遍——两道用同一条缓动曲线，裁剪露出的量恒小于高度，
+ * 读者看到的就只有裁剪，行程正好是可见段。裁剪的参照也是 border box，和高度那只盒子对齐。
  *
  * 快照只在**读者**点击时取，且只取视口内的流块。流式追加与分页加载历史没有点击，因此不会有
  * 动画；本插件的自动开合派发的是真正的 click、走的是同一条捕获路径，所以它另外被
@@ -77,6 +83,12 @@ interface FoldIntent {
   readonly takenAt: number
 }
 
+/** 元素坐标里的一段区间：`from` 到 `to` 就是读者此刻看得见的那部分。 */
+interface VisibleSpan {
+  readonly from: number
+  readonly to: number
+}
+
 /**
  * 装上折叠位移。只有读者点击引起的变化会补动画。
  * @returns 卸载函数。
@@ -95,6 +107,47 @@ export function installFoldGlide(): () => void {
 
   const inViewport = (rect: DOMRect): boolean =>
     rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth
+
+  /**
+   * 元素此刻真正露在读者眼前的那一段，用元素自己的坐标表示（从元素顶边算起）。
+   *
+   * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（`max-height:
+   * min(400px, 50vh)`）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者
+   * 看得见的地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
+   * @param element - 要量的展开体。
+   * @returns 可见段的起止偏移；`to` 不大于 `from` 时说明一点都看不见。
+   */
+  const visibleSpanOf = (element: HTMLElement): VisibleSpan => {
+    const rect = element.getBoundingClientRect()
+    let top = Math.max(rect.top, 0)
+    let bottom = Math.min(rect.bottom, window.innerHeight)
+    // 每一层裁剪祖先都可能把可见范围收得更窄，所以整条链都要过一遍；overflow 是 visible 的
+    // 祖先不裁东西，跳过。getComputedStyle 在这里不算浪费——元素刚插进来，样式本来就要算。
+    for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+      const style = window.getComputedStyle(ancestor)
+      if (style.overflowX === 'visible' && style.overflowY === 'visible') continue
+      const box = ancestor.getBoundingClientRect()
+      top = Math.max(top, box.top)
+      bottom = Math.min(bottom, box.bottom)
+    }
+    return {
+      from: Math.max(0, Math.min(rect.height, top - rect.top)),
+      to: Math.max(0, Math.min(rect.height, bottom - rect.top)),
+    }
+  }
+
+  /**
+   * 元素坐标里的一个偏移，换算成裁剪要的「从底边裁掉多少」的百分比。
+   *
+   * 必须是百分比：`inset()` 的百分比相对的是元素**当前**的 border box，而高度动画正在同时把
+   * 这个盒子从 0 拉到全高。用固定的像素值，盒子越矮、裁掉的像素相对越多——展开的前大半个
+   * 动画里元素会被整个裁没，读者什么都看不到。
+   * @param offset - 从元素顶边算起的偏移。
+   * @param height - 元素的完整高度。
+   * @returns 形如 `95%` 的裁剪量。
+   */
+  const bottomCutOf = (offset: number, height: number): string =>
+    `${String(Number((((height - offset) / height) * 100).toFixed(3)))}%`
 
   /**
    * 控件的展开体。控件自己发 `aria-controls` 时以它为准（那个 id 由 `useId` 生成、带冒号，
@@ -176,7 +229,11 @@ export function installFoldGlide(): () => void {
   }
 
   /**
-   * 卷帘门拉开：压回 0 高再放到实际高度，布局逐帧长出来，下方内容跟着让位。
+   * 卷帘门拉开：高度逐帧长出来负责让位，裁剪负责视觉。
+   *
+   * 高度必须从 0 走到全高，下方内容才会真的让开；可高度动画的行程就是全高，长内容会在 200ms 里
+   * 被一次性跑完。所以再叠一层按可见段走的裁剪，两道同一条缓动曲线——裁剪露出的量恒小于高度，
+   * 读者看到的就只有裁剪，行程正好是可见段。
    *
    * `rect` 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成
    * border-box，动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距
@@ -185,16 +242,28 @@ export function installFoldGlide(): () => void {
   const rollOpen = (body: HTMLElement): void => {
     const height = body.getBoundingClientRect().height
     if (height === 0) return
+    const span = visibleSpanOf(body)
     const previousOverflow = body.style.overflow
     const previousBoxSizing = body.style.boxSizing
     body.style.overflow = 'hidden'
     body.style.boxSizing = 'border-box'
-    const animation = body.animate(
+    const growing = body.animate(
       [{ height: '0px' }, { height: `${String(height)}px` }],
       { duration: ROLL_MS, easing: 'ease-out' },
     )
-    animation.onfinish = () => {
-      animation.cancel()
+    // 一点都看不见时不能裁剪：那样的行程是 0，门会从头到尾关着，元素反而整段消失。
+    const rolling = span.to > span.from
+      ? body.animate(
+        [
+          { clipPath: `inset(0 0 ${bottomCutOf(span.from, height)} 0)` },
+          { clipPath: `inset(0 0 ${bottomCutOf(span.to, height)} 0)` },
+        ],
+        { duration: ROLL_MS, easing: 'ease-out' },
+      )
+      : null
+    growing.onfinish = () => {
+      growing.cancel()
+      rolling?.cancel()
       body.style.overflow = previousOverflow
       body.style.boxSizing = previousBoxSizing
     }
@@ -204,11 +273,18 @@ export function installFoldGlide(): () => void {
    * 裁剪式拉开：只裁不压。裁剪不参与布局，内容从头到尾一动不动，门升起来就露出更多；
    * 下方内容靠 glideFlow 补位。
    *
-   * `lift` 是要露出来的那一段：过程组就是组体全高。
+   * 行程同样只走读者看得见的那一段：组体自己虽然有 `max-height`，它也可能只有一部分在
+   * 视口里。
    */
-  const openByClip = (clipTarget: HTMLElement, lift: number): void => {
+  const openByClip = (clipTarget: HTMLElement): void => {
+    const height = clipTarget.getBoundingClientRect().height
+    const span = visibleSpanOf(clipTarget)
+    if (height === 0 || span.to <= span.from) return
     const animation = clipTarget.animate(
-      [{ clipPath: `inset(0 0 ${String(lift)}px 0)` }, { clipPath: 'inset(0 0 0 0)' }],
+      [
+        { clipPath: `inset(0 0 ${bottomCutOf(span.from, height)} 0)` },
+        { clipPath: `inset(0 0 ${bottomCutOf(span.to, height)} 0)` },
+      ],
       { duration: ROLL_MS, easing: 'ease-out' },
     )
     animation.onfinish = () => { animation.cancel() }
@@ -232,6 +308,9 @@ export function installFoldGlide(): () => void {
    * 方向那样压它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到 0
    * 的那一刻再放行点击：React 卸掉真身，而它此时不占任何空间，收起态那套 contain: size + 24px
    * 接上来时不会跳。
+   *
+   * 和展开方向一样叠一层裁剪，让读者看得见的那一段按同样的节奏卷上去；高度仍然是全行程（空间
+   * 得让出来），但两道同一条缓动曲线，读者看到的只有裁剪。
    */
   const rollShutInPlace = (body: HTMLElement, control: HTMLElement): void => {
     // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
@@ -242,19 +321,30 @@ export function installFoldGlide(): () => void {
       replay(control)
       return
     }
+    const span = visibleSpanOf(body)
     const previousOverflow = body.style.overflow
     const previousBoxSizing = body.style.boxSizing
     body.style.overflow = 'hidden'
     body.style.boxSizing = 'border-box'
-    const animation = body.animate(
+    const shrinking = body.animate(
       [{ height: `${String(height)}px` }, { height: '0px' }],
       { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
     )
-    animation.onfinish = () => {
+    const rolling = span.to > span.from
+      ? body.animate(
+        [
+          { clipPath: `inset(0 0 ${bottomCutOf(span.to, height)} 0)` },
+          { clipPath: `inset(0 0 ${bottomCutOf(span.from, height)} 0)` },
+        ],
+        { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
+      )
+      : null
+    shrinking.onfinish = () => {
       window.clearTimeout(release)
       replay(control)
       // 真身这时已经卸掉了，这几句只是兜底：万一 React 没折叠，元素要能回到原样。
-      animation.cancel()
+      shrinking.cancel()
+      rolling?.cancel()
       body.style.overflow = previousOverflow
       body.style.boxSizing = previousBoxSizing
     }
@@ -306,7 +396,7 @@ export function installFoldGlide(): () => void {
     // 过程组：裁剪组体，下方内容靠 glideFlow 补位。
     if (current.groupBody !== null) {
       if (current.groupBody.hasAttribute('hidden')) return
-      openByClip(current.groupBody, current.groupBody.getBoundingClientRect().height)
+      openByClip(current.groupBody)
       glideFlow(current.tops, current.groupBody)
       return
     }
