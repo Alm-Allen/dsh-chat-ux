@@ -6,12 +6,13 @@
  * `window.__ModuleLoader__.load({...})` bundle。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、跟随守护，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享
+ * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享
  * config form——这一页上改的值就是这样到达效果里的，不用刷新。
  *
  * @module dsh-chat-ux/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { installCaretMotion } from './caret-motion'
 import { installFileMutationRow } from './file-mutation-row'
 import type { SlotsService } from './file-mutation-row'
 import { installFoldGlide } from './fold-glide'
@@ -87,6 +88,10 @@ export function apply(ctx: ClientContext): void {
   // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
   // 拉回旧位置再播到新位置。只认点击，流式追加与自动开合都不受影响。
   ctx.effect(() => installFoldGlide(), 'dsh-chat-ux: fold glide')
+
+  // 输入框那根插入符：原生那根除了颜色和闪烁没有任何可动画的属性，所以把它按下去、自己画一根，
+  // 位移走 80ms 过渡。打字也动——要的是「凡是会挪窝的都给过渡」。
+  ctx.effect(() => installCaretMotion(), 'dsh-chat-ux: caret motion')
 
   // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
   // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽

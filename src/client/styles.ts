@@ -3,7 +3,8 @@
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则、token 淡入所驱动的分档规则（见
- * `token-motion.ts`），再加上卡片、文件变更行、折叠体入场与字体那几份各自的 `*-styles.ts`。
+ * `token-motion.ts`），再加上卡片、插入符、文件变更行、折叠体入场与字体那几份各自的
+ * `*-styles.ts`。
  *
  * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是
  * 它自己的颜色，由 `token-motion.ts` 以 `RUN_COLOR_VAR` 逐元素发布——从
@@ -23,6 +24,7 @@
  *     写成该元素自己的自定义属性，`::highlight()` 再逐元素解析它；下面的 `body` 规则
  *     只是页面级兜底。
  */
+import { CARET_MOTION_CSS } from './caret-motion-styles'
 import { CARD_CSS } from './config-card-styles'
 import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
@@ -141,4 +143,4 @@ ${revealStepRules}
  *
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
-export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS].join('\n')
+export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS].join('\n')
