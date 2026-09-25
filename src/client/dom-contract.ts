@@ -41,3 +41,6 @@ export const PROCESS_GROUP_SELECTOR = '[data-step-process]'
 
 /** 过程组体；收起时带 `hidden`。 */
 export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
+
+/** 过程组体里的内容层；组体滚的就是它。 */
+export const PROCESS_CONTENT_SELECTOR = '[data-step-process-content]'

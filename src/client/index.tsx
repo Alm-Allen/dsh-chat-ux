@@ -16,6 +16,7 @@ import { installFileMutationRow } from './file-mutation-row'
 import type { SlotsService } from './file-mutation-row'
 import { installFoldGlide } from './fold-glide'
 import { installFollowGuard } from './follow-guard'
+import { installProcessFollow } from './process-follow'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
@@ -77,6 +78,10 @@ export function apply(ctx: ClientContext): void {
   // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
   // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
   ctx.effect(() => installFollowGuard(() => follow.enhanced), 'dsh-chat-ux: follow guard')
+
+  // 组体那一层的跟随是另一回事：标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而
+  // 平滑滚动追不上匀速增长的内容，位置就长期停在离底几十像素的地方。这一处在它旁边补一次钉底。
+  ctx.effect(() => installProcessFollow(() => follow.enhanced), 'dsh-chat-ux: process follow')
 
   // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
   // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
