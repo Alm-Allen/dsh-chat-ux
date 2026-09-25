@@ -4,3 +4,10 @@ build/
 .npm-cache/
 *.log
 .DS_Store
+
+# 只留在本机，不进公开仓库：写作笔记、协作说明、构建脚本与本机包管理配置
+文档/
+AGENTS.md
+scripts/
+pnpm-lock.yaml
+pnpm-workspace.yaml

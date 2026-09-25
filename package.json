@@ -1,10 +1,21 @@
 {
-  "name": "dsh-chat-ux",
-  "version": "0.0.1",
-  "private": true,
+  "name": "@alm-hu/dsh-chat-ux",
+  "version": "0.1.0",
   "description": "Chat-area UX plugin for the DeepSeek Harness (dsh) web GUI.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alm-Hu/dsh-chat-ux.git"
+  },
+  "homepage": "https://github.com/Alm-Hu/dsh-chat-ux#readme",
+  "bugs": {
+    "url": "https://github.com/Alm-Hu/dsh-chat-ux/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

@@ -5,4 +5,4 @@
 # 构建出来的入口，而不是检出目录里的某个路径。
 - insert:
     - id: dsh-chat-ux
-      name: 'dsh-chat-ux'
+      name: '@alm-hu/dsh-chat-ux'
