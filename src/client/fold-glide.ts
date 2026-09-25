@@ -39,9 +39,10 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
-import { CHAT_FLOW_SELECTOR, COMPOSER_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, SCROLL_KEYS, THINK_ROW_SELECTOR } from './dom-contract'
+import { CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, THINK_ROW_SELECTOR } from './dom-contract'
 import { ensureFollowTail, FOLLOW_LOOK_TOTAL_MS } from './follow-tail'
 import { isProgrammaticToggle } from './programmatic-toggle'
+import { isReaderScrollIntent } from './reader-intent'
 
 /** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200
@@ -99,7 +100,7 @@ interface HeightShut {
  *
  * 收尾时要把滚动位置交还给 dsh 的跟随，但那只对「本来就贴着底、这中间也没自己出过手」的读者
  * 成立：收尾通常晚于点击两百毫秒，这段时间里读者随时可能接管滚动，而他的意图只能从事件上看
- * 出来——认的那一组与 dsh 自己的 READING_INTENTS 同源。
+ * 出来——什么算读者的意图由 `isReaderScrollIntent` 判。
  */
 interface FoldWatch {
   /** 折叠开始那一刻读者是不是贴着底部。 */
@@ -239,10 +240,9 @@ export function installFoldGlide(): () => void {
   const watchFold = (atBottom: boolean): FoldWatch => {
     let moved = false
     const note = (event: Event): void => {
-      if (event.target instanceof Element && event.target.closest(COMPOSER_SELECTOR) !== null) return
-      if (event.type === 'keydown' && !(event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key))) return
-      moved = true
+      if (isReaderScrollIntent(event)) moved = true
     }
+    // 认这四种：它们都会真的挪动位置。dsh 的 `READING_INTENTS` 里另有 beforematch，本处不认。
     const types = ['wheel', 'touchstart', 'pointerdown', 'keydown']
     for (const type of types) document.addEventListener(type, note, true)
     const stop = (): void => {

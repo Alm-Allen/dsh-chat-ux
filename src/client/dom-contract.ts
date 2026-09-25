@@ -20,8 +20,25 @@ export const THINK_ROW_SELECTOR = '[data-variant="think"]'
 /** 模型还在思考、过程还在跑时的阶段值。 */
 export const RUNNING_STATE = 'running'
 
+/** Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。 */
+export const STREAMING_SELECTOR = '[data-streaming]'
+
+/** TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。 */
+export const SHIMMER_SELECTOR = '[data-text-shimmer]'
+
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
 export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
+
+/**
+ * 跟随开着时 dsh 挂在聊天框架上的语义属性；它没了，就说明跟随已经被关掉。
+ *
+ * 属性名与选择器两种形式各有人用（前者喂 `attributeFilter`，后者查页面），所以两个都写在这里：
+ * 各自就地拼字符串的话，改一处就会漏一处。
+ */
+export const FOLLOWING_TAIL_ATTRIBUTE = 'data-chat-following-tail'
+
+/** 同一个契约的选择器形式。 */
+export const FOLLOWING_TAIL_SELECTOR = '[' + FOLLOWING_TAIL_ATTRIBUTE + ']'
 
 /**
  * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。

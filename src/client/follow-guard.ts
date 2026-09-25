@@ -21,9 +21,10 @@
  * @module dsh-chat-ux/client/follow-guard
  */
 
-import { COMPOSER_SELECTOR, FLOW_BLOCK_SELECTOR, RUNNING_STATE, SCROLL_KEYS, THINK_ROW_SELECTOR } from './dom-contract'
+import { FLOW_BLOCK_SELECTOR, FOLLOWING_TAIL_ATTRIBUTE, RUNNING_STATE, SHIMMER_SELECTOR, STREAMING_SELECTOR, THINK_ROW_SELECTOR } from './dom-contract'
 import { isFoldGlideBusy } from './fold-glide'
 import { conversationScroller, ensureFollowTail, isAtBottom } from './follow-tail'
+import { isReaderScrollIntent } from './reader-intent'
 
 /** 工具调用行自己带一个；它住在 assistant 节点内部，不必是新流块。 */
 const CALL_SELECTOR = '[data-chat-call-id]'
@@ -31,11 +32,8 @@ const CALL_SELECTOR = '[data-chat-call-id]'
 /** 上面两族合成一条，用来判断一批新增节点里有没有值得动手的东西。 */
 const STRUCTURE_SELECTOR = FLOW_BLOCK_SELECTOR + ', ' + CALL_SELECTOR
 
-/** 现在有内容正在流。有它，才有「跟随」可言。 */
-const STREAMING_SELECTOR = '[data-streaming], [data-text-shimmer]'
-
-/** 跟随开着时挂在聊天框架上的语义属性。 */
-const FOLLOWING_ATTRIBUTE = 'data-chat-following-tail'
+/** 现在有内容正在流：两个标记都由 dsh 发，有它，才有「跟随」可言。 */
+const RUNNING_CONTENT_SELECTOR = STREAMING_SELECTOR + ', ' + SHIMMER_SELECTOR
 
 /** 读者接管滚动的意图。与 dsh 自己的 `READING_INTENTS` 同源。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'beforematch'] as const
@@ -91,7 +89,7 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
 
   /** 此刻算不算「正在执行」。 */
   const running = (): boolean =>
-    document.querySelector(STREAMING_SELECTOR) !== null
+    document.querySelector(RUNNING_CONTENT_SELECTOR) !== null
     || performance.now() - lastActivityAt <= ACTIVITY_GRACE_MS
 
   /**
@@ -146,12 +144,11 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
   /**
    * 记下读者接管滚动的意图。
    *
-   * 只有内容真的长出了滚动条才算：那之前读者怎么滚都滚不动，置位只会让守护白等一轮。落在输入区里
-   * 的指针与按键也不算——那时他在打字。
+   * 只有内容真的长出了滚动条才算：那之前读者怎么滚都滚不动，置位只会让守护白等一轮。什么算读者的
+   * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
    */
   const noteReaderIntent = (event: Event): void => {
-    if (event.target instanceof Element && event.target.closest(COMPOSER_SELECTOR) !== null) return
-    if (event.type === 'keydown' && !(event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key))) return
+    if (!isReaderScrollIntent(event)) return
     const scroller = conversationScroller()
     if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0) return
     readerTookOver = true
@@ -161,8 +158,8 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
     for (const record of records) {
       if (record.type === 'attributes') {
         // 跟随从有到无：dsh 刚刚把它关掉。
-        if (record.attributeName === FOLLOWING_ATTRIBUTE) {
-          if (record.target instanceof Element && !record.target.hasAttribute(FOLLOWING_ATTRIBUTE)) guardSeen = true
+        if (record.attributeName === FOLLOWING_TAIL_ATTRIBUTE) {
+          if (record.target instanceof Element && !record.target.hasAttribute(FOLLOWING_TAIL_ATTRIBUTE)) guardSeen = true
           continue
         }
         // 思考行从「正在思考」停下来：这一段过程的分界点。
@@ -191,7 +188,7 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ['data-state', FOLLOWING_ATTRIBUTE],
+    attributeFilter: ['data-state', FOLLOWING_TAIL_ATTRIBUTE],
     attributeOldValue: true,
   })
 

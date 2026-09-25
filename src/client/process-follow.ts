@@ -1,29 +1,30 @@
 /**
  * 组体跟随：封顶的过程组里，思考与工具输出不会掉队。
  *
- * 「标准」与「简洁」两档把一段过程收进一个封顶的组体（\`max-height: min(400px, 50vh)\`），组体
- * 自己带滚动条。dsh 给这一层的跟随是 \`use-process-scroll\` 那套：内容一变就
- * \`toBottom(body, metrics, 'smooth')\`——一次原生平滑滚动。两个地方让它在流式输出时追不上：
+ * 「标准」与「简洁」两档把一段过程收进一个封顶的组体（`max-height: min(400px, 50vh)`），组体
+ * 自己带滚动条。dsh 给这一层的跟随是 `use-process-scroll` 那套：内容一变就
+ * `toBottom(body, metrics, 'smooth')`——一次原生平滑滚动。两个地方让它在流式输出时追不上：
  *
  *   速度    原生平滑滚动的行程按距离调，越接近目标越慢；而内容的增长是匀速的，一段思考连着
  *           一串工具调用时，长出去的量并不比它慢。
- *   单发    \`toBottom\` 只在没有动画在飞时才发起新的滚动（\`if (this.target === null)\`），动画
+ *   单发    `toBottom` 只在没有动画在飞时才发起新的滚动（`if (this.target === null)`），动画
  *           跑完之前内容再长多少都不追，只能等这一次落地再补下一次。
  *
  * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。
  *
  * 这一处不改 dsh 的状态，只在它旁边补一件事：落后超过 CATCH_UP_GAP_PX 才接管，把位置直接补到
- * 组体的底（\`scrollTop = scrollHeight\`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
+ * 组体的底（`scrollTop = scrollHeight`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
  * 平滑滚动，追得上的时候它是好看的；只有它追不回来时才由这一处兜住，免得最新那两行一直悬着。
  * 读者一旦在这个组体里滚过就让位，直到他自己滚回组体的底为止。
  *
- * 补齐与 dsh 那套不冲突：写 \`scrollTop\` 会走它的 \`onScroll\`，而它把「位置到底」认成读者到底，
+ * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
  * 于是重新点亮自己的跟随，并放下那个卡住的动画目标。
  *
  * @module dsh-chat-ux/client/process-follow
  */
 
-import { PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR, SCROLL_KEYS } from './dom-contract'
+import { PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR } from './dom-contract'
+import { isReaderScrollIntent } from './reader-intent'
 
 /** 读者滚回组体底部多近算「看完了」。 */
 const RELEASE_THRESHOLD_PX = 4
@@ -40,7 +41,10 @@ const CATCH_UP_GAP_PX = 40
 /** 同步被观察组体的间隔；会话切换与过程组增减都靠它跟上。 */
 const SYNC_INTERVAL_MS = 500
 
-/** 读者接管组体滚动的意图。与 dsh 自己的那一组同源。 */
+/**
+ * 认的事件：滚轮、触摸拖动（含 touchmove）、指针与滚动键。比 dsh 自己的 `READING_INTENTS`
+ * 多一个 touchmove（组体里的拖动算接管）、少一个 beforematch（那是页内查找，与组体无关）。
+ */
 const INTENT_TYPES = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown'] as const
 
 /**
@@ -51,7 +55,7 @@ const INTENT_TYPES = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydow
 export function installProcessFollow(readEnabled: () => boolean): () => void {
   /** 读者在这个组体里真的滚过之后，直到他自己回到底为止，这一处不动手。 */
   const takenOver = new WeakSet<Element>()
-  /** 已经交给 observer 的组体，以及它当时的内容层。 */
+  /** 已经交给 observer 的组体，以及它此刻的内容层。 */
   const watched = new Map<HTMLElement, Element | null>()
 
   /** 这个组体现在归不归我们管。 */
@@ -88,10 +92,9 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
     const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
     if (body === null) return
     if (event.type === 'pointerdown' && target !== body) return
-    if (event.type === 'keydown') {
-      if (!(event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key))) return
-      if (event.defaultPrevented) return
-    }
+    if (!isReaderScrollIntent(event)) return
+    // 被 dsh 自己处理掉的滚动键不算——它已经知道这一下要滚到哪里了。
+    if (event.type === 'keydown' && event.defaultPrevented) return
     takenOver.add(body)
   }
 
@@ -115,14 +118,22 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
     }
   })
 
-  /** 会话切换与过程组增减都会换掉组体，跟着走。 */
+  /**
+   * 会话切换、过程组增减、以及内容层被重挂，都要跟着走。
+   *
+   * 内容层每一轮都重新对一次，而不是认一次就完：组体自己是封顶的，内容再长它的尺寸也不动，真正会
+   * 变尺寸的是里面那一层；而 React 把那一层重挂之后，旧元素上的观察就再也收不到通知了。
+   */
   const sync = (): void => {
     const present = new Set(document.querySelectorAll<HTMLElement>(PROCESS_BODY_SELECTOR))
     for (const body of present) {
-      if (watched.has(body)) continue
+      const first = !watched.has(body)
+      if (first) observer.observe(body)
       const content = body.querySelector(PROCESS_CONTENT_SELECTOR)
+      const watchedContent = watched.get(body)
+      if (!first && watchedContent === content) continue
+      if (watchedContent !== undefined && watchedContent !== null) observer.unobserve(watchedContent)
       watched.set(body, content)
-      observer.observe(body)
       if (content !== null) observer.observe(content)
     }
     for (const [body, content] of [...watched]) {

@@ -29,6 +29,7 @@
  * @module dsh-chat-ux/client/token-motion
  */
 
+import { STREAMING_SELECTOR } from './dom-contract'
 import { isProgrammaticToggle } from './programmatic-toggle'
 
 /**
@@ -450,9 +451,6 @@ export function installTokenMotion(): () => void {
     clearHighlights()
   }
 }
-
-/** Markdown 层在助手消息流式期间标记的那个容器。 */
-const STREAMING_SELECTOR = '[data-streaming]'
 
 /**
  * 一次折叠之后，它重排过的容器要被排除在淡入之外多久。
