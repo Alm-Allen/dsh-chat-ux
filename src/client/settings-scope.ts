@@ -8,10 +8,17 @@
  * @module dsh-chat-ux/client/settings-scope
  */
 
+/**
+ * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：它修的是读者没碰过键鼠时的那一类丢失。
+ */
+export const DEFAULT_ENHANCED_FOLLOW = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
-  /** 渐变时长，单位毫秒；这个条目里唯一的字段。 */
-  revealMs?: number
+  /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部；这个条目里唯一的字段。 */
+  enhancedFollow?: boolean
 }
 
 /**

@@ -31,15 +31,12 @@ export const name = 'dsh-chat-ux'
  */
 export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
 
-// 一个被揭开的字符回到文字本色所用的默认时长。
-export const DEFAULT_REVEAL_MS = 120
-
 /**
- * 渐变时长的边界。前端会 clamp 到同一个范围，所以直接写进 profile patch 的值也没法
- * 要求一个分档的 highlight 规则采样不出来的渐变：在 `MAX_REVEAL_MS` 上，一档仍然能撑约一显示帧。
+ * 增强跟随的默认值。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：它修的正是读者没碰过键鼠时的那一类丢失，而读者自己滚动离开底部时它一概不动手。
  */
-export const MIN_REVEAL_MS = 30
-export const MAX_REVEAL_MS = 600
+export const DEFAULT_ENHANCED_FOLLOW = true
 
 /**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
@@ -48,8 +45,8 @@ export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
 
 // 这个插件拥有的配置字段。
 export interface Config {
-  // 一个刚揭开的字符从高亮色淡回文字本色所用的时长。越小越快。
-  revealMs: Volatile<number>
+  // 思考结束、出现工具调用这些时刻，是否刻意把聊天区交还给 dsh 的跟随。
+  enhancedFollow: Volatile<boolean>
 }
 
 /**
@@ -57,7 +54,7 @@ export interface Config {
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
  */
 export const Config = Schema.object({
-  revealMs: Schema.number().min(MIN_REVEAL_MS).max(MAX_REVEAL_MS).default(DEFAULT_REVEAL_MS).volatile(),
+  enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
 })
 
 /**

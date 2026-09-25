@@ -5,41 +5,32 @@
  * 按包名 keyed，位置在包描述和它下面那些行之间。标题、图标和面包屑由页面画；这个组件只是表单本身，
  * 也就是 `view: 'page'` 要的东西。
  *
- * 它是用页面自己的配置卡片所用的同一批零件搭出来的：覆盖徽标用 `dsh-client-ui-primitives` 里共享
- * 的 `Tag`，字段节奏、控件几何和 `--dsw-*` 令牌来自官方插件配置页（见 `config-card-styles.ts`）。
- * 这里没有任何东西是从零设计的，因为一张夹在两张官方卡片中间的卡片不该看起来像来自别处。
+ * 它是用页面自己的配置卡片所用的同一批零件搭出来的：开关是 `dsh-client-ui-primitives` 里共享的
+ * `Switch`（dsh 设置页里那些开关都是它），覆盖徽标是同一个包里的 `Tag`，字段节奏、控件几何和
+ * `--dsw-*` 令牌来自官方插件配置页（见 `config-card-styles.ts`）。这里没有任何东西是从零设计的，
+ * 因为一张夹在两张官方卡片中间的卡片不该看起来像来自别处。
  *
- * 按下保存之前什么都不写。草稿是文本，所以输入框显示什么、保存就存什么，而离开页面就把它丢掉
- * （页面会卸载这一项，所以没有「放弃」控件可提供）。值是否被接受是从 host 读回来的，而不是预测
- * 出来的：写入在设计上就会吞掉传输层与版本号的失败。
+ * 开关**即时写入**：点一下就存，和 dsh 自己的开关一样，没有「保存」那一步。写入在途时控件禁用，
+ * 之后从 host 读回来的值才是「落地了」的权威——写入在设计上就会吞掉传输层与版本号的失败。
  *
  * @module dsh-chat-ux/client/settings-card
  */
 import { useCallback, useState, useSyncExternalStore } from 'react'
-import type { ChangeEvent, ReactElement } from 'react'
-import { Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ReactElement } from 'react'
+import { Switch, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { CARD_CLASS } from './config-card-styles'
-import { MAX_REVEAL_MS, MIN_REVEAL_MS, clampRevealMs } from './token-motion'
+import { DEFAULT_ENHANCED_FOLLOW } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
-const FIELD_NAME = 'revealMs'
-
-/** 把 label 和它的控件绑在一起的那个固定 id。 */
-const FIELD_INPUT_ID = 'dsh-chat-ux-reveal-ms'
-
-/** 把控件和它下面那条消息绑在一起的那个固定 id。 */
-const FIELD_MESSAGE_ID = 'dsh-chat-ux-reveal-ms-message'
+const FIELD_NAME = 'enhancedFollow'
 
 /** 一种语言的文案。 */
 interface Copy {
-  summary: (ms: number) => string
+  summary: (on: boolean) => string
   fieldLabel: string
   fieldHint: string
-  invalid: string
   overridden: string
-  save: string
-  saving: string
   reset: string
   failed: string
   unavailable: string
@@ -47,18 +38,12 @@ interface Copy {
 }
 
 const ZH_COPY: Copy = {
-  summary: (ms) => '新出现的字符从 ' + MIN_REVEAL_MS + ' 起的淡入，' + ms + ' ms 后完全不透明。',
-  fieldLabel: '渐变时长',
+  summary: (on) => '思考结束、发起工具调用时把聊天区拉回底部：' + (on ? '开。' : '关。'),
+  fieldLabel: '增强跟随',
   fieldHint:
-    '每个新出现的字符从半透明变到完全不透明所用的时间，越小越快。可填 ' +
-    MIN_REVEAL_MS +
-    '–' +
-    MAX_REVEAL_MS +
-    ' 毫秒，默认 120。',
-  invalid: '请输入 ' + MIN_REVEAL_MS + ' 到 ' + MAX_REVEAL_MS + ' 之间的数字。',
+    '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
+    + '读者自己滚动离开底部的那段时间一概不动手——那一段交给你。',
   overridden: '已覆盖',
-  save: '保存',
-  saving: '保存中…',
   reset: '重置',
   failed: '保存未生效，请重试。',
   unavailable: '当前 dsh 没有向这个页面提供 dsh-chat-ux 的配置：这一行可能没在这个 profile 里启用，或者连接把偏好留在页面进程里。',
@@ -66,18 +51,12 @@ const ZH_COPY: Copy = {
 }
 
 const EN_COPY: Copy = {
-  summary: (ms) => 'New characters fade in and reach full opacity after ' + ms + ' ms.',
-  fieldLabel: 'Fade duration',
+  summary: (on) => 'Pull the transcript back to the tail when thinking ends or a tool call starts: ' + (on ? 'on.' : 'off.'),
+  fieldLabel: 'Enhanced follow',
   fieldHint:
-    'How long one freshly revealed character takes to go from faint to fully opaque. Smaller is faster. Accepts ' +
-    MIN_REVEAL_MS +
-    '–' +
-    MAX_REVEAL_MS +
-    ' ms; the default is 120.',
-  invalid: 'Enter a number between ' + MIN_REVEAL_MS + ' and ' + MAX_REVEAL_MS + '.',
+    'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
+    + 'begins), which fixes the occasional lost follow. A reader who scrolls away from the bottom is left alone.',
   overridden: 'Overridden',
-  save: 'Save',
-  saving: 'Saving…',
   reset: 'Reset',
   failed: 'The save did not take effect. Please try again.',
   unavailable:
@@ -96,7 +75,7 @@ export interface ChatUxConfigCardProps {
 }
 
 /**
- * 渲染这个插件的配置：一个分阶段的数字输入框，和它的保存。
+ * 渲染这个插件的配置：一行「增强跟随」的开关。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -115,38 +94,25 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     typeof navigator !== 'undefined' && (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
   const language = activeLanguage === 'en' || activeLanguage === 'zh' ? activeLanguage : browserLanguage
   const copy = language === 'en' ? EN_COPY : ZH_COPY
-  const [draft, setDraft] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  // 存着的值一律过一遍 clamp，所以 host 那边无论塞进来什么形状的东西，这里都有个能用的数。
-  const stored = clampRevealMs(snapshot.value?.revealMs)
+  const enabled = snapshot.value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
   const overridden = userLayerHasField(snapshot.user, FIELD_NAME)
-  const text = draft ?? String(stored)
-  // `Number('')` 是 0，会被误当成一个合法数字，所以空草稿先顶成 NaN。
-  const typedValue = text.trim() === '' ? Number.NaN : Number(text.trim())
-  const parsed = Number.isFinite(typedValue) && typedValue >= MIN_REVEAL_MS && typedValue <= MAX_REVEAL_MS
-    ? Math.round(typedValue)
-    : null
-  const invalid = parsed === null
-  const dirty = draft !== null && parsed !== stored
   const unavailable = snapshot.status === 'unavailable'
   const readOnly = snapshot.writable === false
   const controlsDisabled = saving || unavailable || readOnly
 
-  if (view === 'summary') return <>{copy.summary(stored)}</>
+  if (view === 'summary') return <>{copy.summary(enabled)}</>
   // 一个没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件。
   if (unavailable) return <p className={CARD_CLASS.notice} role="status">{copy.unavailable}</p>
 
-  /** 保存草稿，然后从 host 读回来确认它真的落地了。 */
-  const save = async (): Promise<void> => {
-    if (parsed === null) return
+  /** 写入新的开关值，然后从 host 读回来确认它真的落地了。 */
+  const toggle = async (next: boolean): Promise<void> => {
     setSaving(true)
     setFailed(false)
-    const accepted = await scope.set(FIELD_NAME, parsed)
-    // host 读回来的那个值，才是「落地了」的唯一权威；返回值只说明这一次写入没有被拒。
-    const landed = accepted && clampRevealMs(scope.getSnapshot().value?.revealMs) === parsed
-    if (landed) setDraft(null)
+    const accepted = await scope.set(FIELD_NAME, next)
+    const landed = accepted && (scope.getSnapshot().value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW) === next
     setFailed(!landed)
     setSaving(false)
   }
@@ -158,64 +124,38 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     await scope.unset(FIELD_NAME)
     const stillOverridden = userLayerHasField(scope.getSnapshot().user, FIELD_NAME)
     setFailed(stillOverridden)
-    if (!stillOverridden) setDraft(null)
     setSaving(false)
   }
-
-  // 输入框下面那行字：草稿不合法时报错，否则给提示。
-  const messageClass = invalid ? CARD_CLASS.invalid : CARD_CLASS.hint
-  const messageText = invalid ? copy.invalid : copy.fieldHint
-  const saveLabel = saving ? copy.saving : copy.save
 
   return (
     <div className={CARD_CLASS.form} data-plugin-config-form="dsh-chat-ux">
       {readOnly && <p className={CARD_CLASS.notice} role="status">{copy.readOnly}</p>}
-      <div className={CARD_CLASS.field}>
-        <div className={CARD_CLASS.head}>
-          <div className={CARD_CLASS.labelGroup}>
-            <label className={CARD_CLASS.label} htmlFor={FIELD_INPUT_ID}>{copy.fieldLabel}</label>
-          </div>
-          {overridden && (
-            <span className={CARD_CLASS.badges}>
-              <Tag tone="neutral">{copy.overridden}</Tag>
-              <button
-                type="button"
-                className={CARD_CLASS.reset}
-                disabled={controlsDisabled}
-                onClick={() => void reset()}
-              >
-                {copy.reset}
-              </button>
-            </span>
-          )}
+      <div className={CARD_CLASS.row}>
+        <div className={CARD_CLASS.rowText}>
+          <div className={CARD_CLASS.label}>{copy.fieldLabel}</div>
+          <p className={CARD_CLASS.hint}>{copy.fieldHint}</p>
         </div>
-        <input
-          id={FIELD_INPUT_ID}
-          className={CARD_CLASS.input}
-          type="text"
-          inputMode="numeric"
-          aria-invalid={invalid || undefined}
-          aria-describedby={FIELD_MESSAGE_ID}
-          value={text}
+        {overridden && (
+          <span className={CARD_CLASS.badges}>
+            <Tag tone="neutral">{copy.overridden}</Tag>
+            <button
+              type="button"
+              className={CARD_CLASS.reset}
+              disabled={controlsDisabled}
+              onClick={() => void reset()}
+            >
+              {copy.reset}
+            </button>
+          </span>
+        )}
+        <Switch
+          checked={enabled}
           disabled={controlsDisabled}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => {
-            setDraft(event.target.value)
-            setFailed(false)
-          }}
+          label={copy.fieldLabel}
+          onChange={(next: boolean) => void toggle(next)}
         />
-        <p id={FIELD_MESSAGE_ID} className={messageClass}>{messageText}</p>
       </div>
-      <div className={CARD_CLASS.footer}>
-        {failed && <p className={CARD_CLASS.failed} role="status">{copy.failed}</p>}
-        <button
-          type="button"
-          className={CARD_CLASS.save}
-          disabled={controlsDisabled || invalid || !dirty}
-          onClick={() => void save()}
-        >
-          {saveLabel}
-        </button>
-      </div>
+      {failed && <p className={CARD_CLASS.failed} role="status">{copy.failed}</p>}
     </div>
   )
 }

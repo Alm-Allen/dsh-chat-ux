@@ -3,6 +3,9 @@
  * 同一套字段节奏、同一套控件几何——与 dsh 随附的插件配置页完全相同。一张夹在两张官方卡片
  * 之间的卡片应该读起来像这一页自己的一部分，而不是一个客人；何况这一页也没有可供借用的现成外壳。
  *
+ * 开关本身不在这里画：它直接用平台提供的 `Switch`，也就是 dsh 设置页里那些开关用的同一个控件。
+ * 这一份只负责把「标题 + 说明 + 控件」摆成官方开关行的样子（左侧一列文字，控件靠右）。
+ *
  * 与聊天区样式表一样保持为纯文本，理由也相同：client bundle 是单文件自包含的，没有资源 URL。
  *
  * @module dsh-chat-ux/client/config-card-styles
@@ -15,18 +18,13 @@
 export const CARD_CLASS = {
   form: 'dsh-chat-ux-card-form',
   notice: 'dsh-chat-ux-card-notice',
-  field: 'dsh-chat-ux-card-field',
-  head: 'dsh-chat-ux-card-head',
-  labelGroup: 'dsh-chat-ux-card-label-group',
+  row: 'dsh-chat-ux-card-row',
+  rowText: 'dsh-chat-ux-card-row-text',
   label: 'dsh-chat-ux-card-label',
   badges: 'dsh-chat-ux-card-badges',
   reset: 'dsh-chat-ux-card-reset',
-  input: 'dsh-chat-ux-card-input',
   hint: 'dsh-chat-ux-card-hint',
-  invalid: 'dsh-chat-ux-card-invalid',
-  footer: 'dsh-chat-ux-card-footer',
   failed: 'dsh-chat-ux-card-failed',
-  save: 'dsh-chat-ux-card-save',
 } as const
 
 /**
@@ -45,23 +43,17 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-.${CARD_CLASS.field} {
+.${CARD_CLASS.row} {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 12px;
   padding: 12px 0;
 }
 
-.${CARD_CLASS.head} {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.${CARD_CLASS.labelGroup} {
+.${CARD_CLASS.rowText} {
   display: flex;
   flex: 1;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
@@ -99,32 +91,6 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   cursor: default;
 }
 
-.${CARD_CLASS.input} {
-  height: 34px;
-  padding: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.${CARD_CLASS.input}:focus-visible {
-  border-color: var(--dsw-alias-brand-primary);
-  outline: none;
-}
-
-.${CARD_CLASS.input}:disabled {
-  color: var(--dsw-alias-label-tertiary);
-  cursor: default;
-}
-
-.${CARD_CLASS.input}[aria-invalid='true'] {
-  border-color: var(--dsw-alias-state-error-primary);
-}
-
 .${CARD_CLASS.hint} {
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
@@ -132,49 +98,10 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-.${CARD_CLASS.invalid} {
-  margin: 0;
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.${CARD_CLASS.footer} {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 16px;
-}
-
 .${CARD_CLASS.failed} {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
+  margin: 0 0 4px;
   color: var(--dsw-alias-label-error);
   font-size: 12px;
   line-height: 1.5;
-}
-
-.${CARD_CLASS.save} {
-  padding: 5px 14px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: var(--dsw-alias-label-primary);
-  color: var(--dsw-alias-bg-layer-3);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  cursor: pointer;
-  appearance: none;
-}
-
-.${CARD_CLASS.save}:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.${CARD_CLASS.save}:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
 }
 `

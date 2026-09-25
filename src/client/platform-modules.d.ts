@@ -29,6 +29,24 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     children?: ReactNode
   }): ReactElement
 
+  /**
+   * 两态开关，dsh 自己的开关就是它——配置卡片用它，外观与设置页里那些开关是同一套。
+   * @param props.checked - 当前状态；控件完全受控。
+   * @param props.onChange - 点击要求切到的那个状态。
+   * @param props.label - 可访问名，由渲染它的地方拥有（必填）。
+   * @param props.disabled - 是否拒绝输入；写入在途时也要置上。
+   * @param props.title - 悬停说明，通常是它为什么被锁住。
+   * @param props.className - 额外的类名，用于布局定位。
+   */
+  export function Switch(props: {
+    checked: boolean
+    onChange: (next: boolean) => void
+    label: string
+    disabled?: boolean
+    title?: string | undefined
+    className?: string | undefined
+  }): ReactElement
+
   /** 共享的 24px 可展开行 chrome：思考行、工具行、过程组头都是它画的。 */
   export interface DisclosureRowProps {
     icon: ReactNode

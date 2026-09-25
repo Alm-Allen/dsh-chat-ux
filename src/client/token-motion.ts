@@ -32,9 +32,8 @@
 /**
  * 一个字符从极淡到停稳之间有多少档。
  *
- * 档数是对着设置允许的最慢渐变、以及最可能跑这个渐变的最快显示器定的：`MAX_REVEAL_MS` 600 ms
- * 在 144 Hz 上是 86 帧，所以 96 档在最坏情况下也能让每帧至少有一档。更快的渐变只是让大多数档位
- * 没被采样到，而那不花任何代价——眼睛积分的是每一绘制帧实际带着的 alpha，不是一帧跳过了几档。
+ * 档数是对着最可能跑这个渐变的最快显示器定的：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，96 档
+ * 摊下来每帧跨五六档，眼睛积分的是每一绘制帧实际带着的 alpha，所以档位多出来的部分不花任何代价。
  *
  * 之所以值得把档数调高，只是因为 `styles.ts` 把每一档的 alpha 写成小数。整数百分比只能表达
  * `TOKEN_MIN_OPACITY` 到 1 之间的那 81 个值，再多出来的档只会重复其中某一个，那个「更细」的
@@ -54,16 +53,14 @@ export const REVEAL_STEPS = 96
  */
 export const TOKEN_MIN_OPACITY = 0.2
 
-/** 设置读出来之前、以及设置不可用时使用的渐变时长。 */
-export const DEFAULT_REVEAL_MS = 120
-
 /**
- * 渐变时长的边界，与 host 侧的 schema 对齐。它们存在是因为 `styles.ts` 把颜色规则硬编码成
- * `REVEAL_STEPS` 条：更长的渐变会把这些档位摊得足够开、看成台阶，所以上限取「一档仍然约等于
- * 一显示帧」的那个点——600 ms 摊到 96 档是 6.25 ms，舒舒服服落在 144 Hz 的一帧里。
+ * 一个字符从最淡到完全不透明所用的时长。
+ *
+ * 它不是一个设置项：更长的渐变会把 `styles.ts` 硬编码的那 96 条档位规则摊成看得见的台阶，更短的
+ * 在常规刷新率下一帧就跨过去了、等于没有渐变——120 ms 是两头都合适的那个点。要动它，得连
+ * `REVEAL_STEPS` 与档位规则一起想。
  */
-export const MIN_REVEAL_MS = 30
-export const MAX_REVEAL_MS = 600
+export const REVEAL_MS = 120
 
 /** 这个模块注册的每一个 highlight 名字的前缀。 */
 export const HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-'
@@ -77,16 +74,6 @@ export const HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-'
  * 所有的颜色。
  */
 export const RUN_COLOR_VAR = '--dsh-chat-ux-run-color'
-
-/**
- * 把设置里存着的东西收拢成一个能用的渐变时长。
- * @param value - 存着的 `revealMs`，形状未知。
- * @returns 落在支持范围内的整毫秒数。
- */
-export function clampRevealMs(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_REVEAL_MS
-  return Math.min(MAX_REVEAL_MS, Math.max(MIN_REVEAL_MS, Math.round(value)))
-}
 
 /** 同一批字符之间错开多少相位：步长与渐变时长成比例，所以把设置调快调慢都不会让错峰反客为主。 */
 const STAGGER_DIVISOR = 50
@@ -130,11 +117,9 @@ export function isProgrammaticToggle(): boolean {
  *
  * 引擎没有 Highlight API、或者读者开了「减少动态效果」时都能安全调用：这两种情况都返回一个
  * 什么都不做的 disposer。
- * @param readRevealMs - 读取此刻生效的渐变时长；每一绘制帧调用一次，所以在设置里改完，
- *   下一帧就生效。
  * @returns disposer：断开 observer，并清掉全部 highlight。
  */
-export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_REVEAL_MS): () => void {
+export function installTokenMotion(): () => void {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
   if (registry === undefined) return () => {}
   const HighlightConstructor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
@@ -223,7 +208,6 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
         run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now
       }
     }
-    const revealMs = clampRevealMs(readRevealMs())
     const buckets: Range[][] = []
     for (let step = 0; step < REVEAL_STEPS; step += 1) buckets.push([])
     for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
@@ -231,7 +215,7 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       if (run === undefined) continue
       const age = now - run.bornAt - run.delay
       // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
-      if (age >= revealMs) {
+      if (age >= REVEAL_MS) {
         liveRuns.splice(index, 1)
         continue
       }
@@ -283,8 +267,8 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       publishRunColor(range.startContainer.parentElement)
 
       // 档位：0 是最淡，最后一档就是本色；按时间线性映射，所以颜色以恒定速率变实。
-      // 上面的卫语句已经排除了 age >= revealMs，比值必然小于 1，档位必然落在范围内。
-      const step = age <= 0 ? 0 : Math.floor((age / revealMs) * REVEAL_STEPS)
+      // 上面的卫语句已经排除了 age >= REVEAL_MS，比值必然小于 1，档位必然落在范围内。
+      const step = age <= 0 ? 0 : Math.floor((age / REVEAL_MS) * REVEAL_STEPS)
       const bucket = buckets[step]
       if (bucket === undefined) continue
       bucket.push(range)
@@ -305,7 +289,6 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
     const containers = document.querySelectorAll(STREAMING_SELECTOR)
     if (containers.length === 0) return
     const now = performance.now()
-    const revealMs = clampRevealMs(readRevealMs())
     /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
     const createdRuns: LiveRun[] = []
     for (const container of containers) {
@@ -460,8 +443,8 @@ export function installTokenMotion(readRevealMs: () => number = () => DEFAULT_RE
       // 让尾巴等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片；再小看不出扫动，
       // 再大就让最后到的字符显得迟滞。
       const batchCount = createdRuns.length - batchStart
-      const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, revealMs / STAGGER_DIVISOR))
-      const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, revealMs / (batchCount - 1))
+      const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, REVEAL_MS / STAGGER_DIVISOR))
+      const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, REVEAL_MS / (batchCount - 1))
       for (let slot = batchStart; slot < createdRuns.length; slot += 1) {
         const run = createdRuns[slot]
         if (run === undefined || step === 0) continue

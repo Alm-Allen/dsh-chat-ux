@@ -40,6 +40,7 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
+import { ensureFollowTail, FOLLOW_LOOK_TOTAL_MS } from './follow-tail'
 import { BODY_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, GROUP_SELECTOR } from './process-fold'
 import { isProgrammaticToggle } from './token-motion'
 
@@ -70,9 +71,6 @@ const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
 /** 思考行。它的自动开合也要起动画，是 `isProgrammaticToggle` 那道守卫唯一的例外。 */
 const THINK_ROW_SELECTOR = '[data-variant="think"]'
 
-/** dsh 的跟随开着时给那个框发的语义属性；它没了，就说明跟随已经被关掉了。 */
-const FOLLOWING_TAIL_SELECTOR = '[data-chat-following-tail]'
-
 /** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
 const COMPOSER_SELECTOR = '[data-composer-seat]'
 
@@ -82,11 +80,17 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 /** 撤掉收起动画之前最多等 React 几帧：一个 `requestAnimationFrame` 来回通常就够。 */
 const SHUT_CONFIRM_FRAMES = 3
 
-/** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
-const FOLLOW_LOOK_ROUNDS = 5
+/**
+ * 这一轮折叠的意图监听活多久。
+ *
+ * 它要盖住三段：等 React 收下那次点击（`INTENT_TTL_MS`）、等卷帘门跑完（`ROLL_MS`）、以及收尾
+ * 之后看跟随属性的那几眼（`FOLLOW_LOOK_TOTAL_MS`）。短了会在最后几眼里把监听撤掉，读者那一
+ * 下动手就没人看见了。
+ */
+const FOLD_WATCH_TTL_MS = INTENT_TTL_MS + ROLL_MS + FOLLOW_LOOK_TOTAL_MS
 
-/** 两眼之间隔多久；五眼正好盖过它那个五百毫秒的采样窗口。 */
-const FOLLOW_LOOK_INTERVAL_MS = 100
+/** 卷帘门跑完之后再多算一会儿「位置归动画管」，免得收尾那一帧跟跟随守护撞上。 */
+const FOLD_BUSY_GRACE_MS = 50
 
 /** 裁剪式收回要的五样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁、交给谁收尾。 */
 interface ClipShut {
@@ -130,6 +134,25 @@ interface FoldIntent {
 interface VisibleSpan {
   readonly from: number
   readonly to: number
+}
+
+/** 卷帘门排到哪一刻为止；这一段时间里位置归动画管。 */
+let foldBusyUntil = 0
+
+/**
+ * 卷帘门与下方补位正在跑。
+ *
+ * 位置在这一段里归动画管：跟随守护要是这时把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来
+ * 是抖。所以它自己会等这一段过去。
+ * @returns 上一次动画排到的时刻还没过时为真。
+ */
+export function isFoldGlideBusy(): boolean {
+  return performance.now() < foldBusyUntil
+}
+
+/** 排一段「位置归动画管」的时间。 */
+const markFoldBusy = (): void => {
+  foldBusyUntil = performance.now() + ROLL_MS + FOLD_BUSY_GRACE_MS
 }
 
 /**
@@ -277,9 +300,7 @@ export function installFoldGlide(): () => void {
     const stop = (): void => {
       for (const type of types) document.removeEventListener(type, note, true)
     }
-    // 保鲜期与 `INTENT_TTL_MS` 同长：过了这个点还没收尾，说明这一轮折叠根本没发生，监听不该
-    // 挂在那里等一个不会来的观察回调。
-    window.setTimeout(stop, INTENT_TTL_MS)
+    window.setTimeout(stop, FOLD_WATCH_TTL_MS)
     return { atBottom, moved: () => moved, stop }
   }
 
@@ -339,6 +360,7 @@ export function installFoldGlide(): () => void {
    * 在动」。
    */
   const rollOpen = (body: HTMLElement): void => {
+    markFoldBusy()
     const height = body.getBoundingClientRect().height
     if (height === 0) return
     const travel = rollTravelOf(body)
@@ -371,6 +393,7 @@ export function installFoldGlide(): () => void {
    * 视口里。
    */
   const openByClip = (clipTarget: HTMLElement): void => {
+    markFoldBusy()
     const height = clipTarget.getBoundingClientRect().height
     const span = visibleSpanOf(clipTarget)
     if (height === 0 || span.to <= span.from) return
@@ -396,27 +419,13 @@ export function installFoldGlide(): () => void {
   }
 
   /**
-   * dsh 那个「回到底部」按钮。它只在跟随关掉时渲染，位置是聊天列所在那个框的下一个兄弟。
-   * @returns 按钮；认不出来时为 null。
-   */
-  const toBottomButton = (): HTMLElement | null => {
-    // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框。
-    const column = document.querySelector<HTMLElement>(CHAT_FLOW_SELECTOR)
-    const root = column?.parentElement?.parentElement ?? null
-    return root?.nextElementSibling?.querySelector<HTMLElement>('button') ?? null
-  }
-
-  /**
    * 折叠收尾：折叠开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随。
    *
-   * dsh 的跟随归它自己的归属判定管：一次「像读者移动、又没到底」的滚动会把它挂进五百毫秒的采样
-   * 窗口，窗口里 `onResize` 直接返回、内容怎么长都不跟随，结算时位置离底超过它的阈值就把跟随
-   * 关掉——而折叠那种量级的高度变化最容易跨过这条线。它自己留了一个重开入口：跟随关掉时才渲染
-   * 的那个「回到底部」按钮，`onClick` 里是 `reading.followTail()`，清掉采样窗口、重新点亮跟随、
-   * 立即到底。读者自己往下滚能恢复，走的也是同一条路；这一处只是替读者做那一下。
+   * 折叠是一次量级很大的高度变化，而 dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉——
+   * 它自己那个「回到底部」按钮是唯一的重开入口。这一处只判断这一次交还算不算数；怎么交还
+   * （先钉底、属性没回来才点按钮）在 `follow-tail.ts` 里，跟随守护走的是同一条路。
    *
-   * 判据是 dsh 的语义属性 `data-chat-following-tail`：跟随开着时它在，关掉时没了。它还在，就说
-   * 明 dsh 自己会把这次折叠补掉，不必插手。
+   * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
    * @param watch - 这一轮折叠的收尾凭证。
    */
   const handBackFollow = (watch: FoldWatch): void => {
@@ -424,30 +433,11 @@ export function installFoldGlide(): () => void {
       watch.stop()
       return
     }
-    // 先把位置钉到底：读者该在的地方先回到那里。这一步顺带处理掉「跟随还开着、只是没跟上」——
-    // 那种情形下 dsh 的归属判定会把这一下认成读者到底，于是重新点亮跟随并清掉采样窗口。
-    const scroller = document.querySelector<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
-    if (scroller !== null) scroller.scrollTop = scroller.scrollHeight
-    // 位置钉住了不等于跟随也回来了：归属判定可能比折叠晚一步才把跟随关掉，而那之后它只认自己
-    // 那个「回到底部」按钮。所以再看几眼，属性一没就点它；读者中途自己动了手，这事就作罢。
-    let rounds = 0
-    const look = (): void => {
-      if (watch.moved() || rounds >= FOLLOW_LOOK_ROUNDS) {
-        watch.stop()
-        return
-      }
-      rounds += 1
-      if (document.querySelector(FOLLOWING_TAIL_SELECTOR) === null) {
-        const button = toBottomButton()
-        if (button !== null) {
-          watch.stop()
-          button.click()
-          return
-        }
-      }
-      window.setTimeout(look, FOLLOW_LOOK_INTERVAL_MS)
-    }
-    look()
+    ensureFollowTail({
+      // 读者中途自己动了手，这一次交还就作废。
+      stillWanted: () => !watch.moved(),
+      onSettled: () => { watch.stop() },
+    })
   }
 
   /**
@@ -491,6 +481,7 @@ export function installFoldGlide(): () => void {
    * `VISIBLE_SHARE` 的时长卷上去。
    */
   const rollShutInPlace = (body: HTMLElement, control: HTMLElement, watch: FoldWatch): void => {
+    markFoldBusy()
     const height = body.getBoundingClientRect().height
     // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
     const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
@@ -537,6 +528,7 @@ export function installFoldGlide(): () => void {
    * 归零，两边正好抵消，看不出接缝。
    */
   const shutByClip = (fold: ClipShut): void => {
+    markFoldBusy()
     const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
     const lift = fold.body.getBoundingClientRect().height
     if (lift === 0) {

@@ -5,9 +5,9 @@
  * `scripts/wrap-client.cjs` 生成，后者把 CommonJS 产物包成客户端模块加载器要求的那个单文件
  * `window.__ModuleLoader__.load({...})` bundle。
  *
- * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起，以及插件管理页
- * 渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页上改的值就是这样到达
- * 效果里的，不用刷新。
+ * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
+ * 开合、折叠过渡、跟随守护，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享
+ * config form——这一页上改的值就是这样到达效果里的，不用刷新。
  *
  * @module dsh-chat-ux/client
  */
@@ -19,12 +19,14 @@ import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { installFoldGlide } from './fold-glide'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
 import { FONT_CSS } from './font-styles'
+import { installFollowGuard } from './follow-guard'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
+import { DEFAULT_ENHANCED_FOLLOW } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { CHAT_AREA_CSS, STYLE_ID } from './styles'
-import { DEFAULT_REVEAL_MS, clampRevealMs, installTokenMotion } from './token-motion'
+import { installTokenMotion } from './token-motion'
 
 /**
  * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
@@ -54,20 +56,19 @@ export function apply(ctx: ClientContext): void {
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
 
-  // 淡入在每一个绘制帧上通过这个小格子读时长，所以插件管理页上的保存不必重新安装效果就能生效，
-  // 也不会丢掉正在飞的区间。
+  // 开关在每一轮守护里现读，所以插件管理页上保存完不必重新安装效果，也不会丢掉正在跑的定时器。
   // 平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：插件管理页
   // 给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
   const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
-  const motion = { revealMs: DEFAULT_REVEAL_MS }
-  const syncRevealMs = (): void => {
-    motion.revealMs = clampRevealMs(scope.getSnapshot().value?.revealMs)
+  const follow = { enhanced: DEFAULT_ENHANCED_FOLLOW }
+  const syncFollow = (): void => {
+    follow.enhanced = scope.getSnapshot().value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
   }
-  syncRevealMs()
-  ctx.effect(() => scope.subscribe(syncRevealMs), 'dsh-chat-ux: settings mirror')
+  syncFollow()
+  ctx.effect(() => scope.subscribe(syncFollow), 'dsh-chat-ux: settings mirror')
 
   // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
-  ctx.effect(() => installTokenMotion(() => motion.revealMs), 'dsh-chat-ux: token reveal')
+  ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
 
   // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
   // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
@@ -76,6 +77,10 @@ export function apply(ctx: ClientContext): void {
   // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
   // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
   ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
+
+  // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
+  // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
+  ctx.effect(() => installFollowGuard(() => follow.enhanced), 'dsh-chat-ux: follow guard')
 
   // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
   // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
