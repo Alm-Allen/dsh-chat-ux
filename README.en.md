@@ -16,6 +16,7 @@ With it installed, model output fades in token by token instead of appearing in 
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area.
 - **Bundled fonts**: HarmonyOS Sans SC for text and Maple Mono NF CN for code, shipped with the plugin—nothing to install, same type on both ends.
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click.
+- **Send flight**: after you submit, the bubble rises from the composer into the transcript; 200 ms by default, adjustable on the plugins page.
 
 ## Install
 
@@ -58,8 +59,9 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | Enhanced follow | on | When off, a bottom-parked reader is no longer handed back to dsh's follow at thinking-end / tool-call moments. |
-| Group follow | follows the above | The same switch governs whether reasoning and tool output keep up inside height-capped process groups. |
+| Group follow | follows "Enhanced follow" | Not a row of its own: the card has one "Enhanced follow" switch, which also governs whether reasoning and tool output keep up inside height-capped process groups. |
 | Caret motion | always | Three steps: off / on move / always. |
+| Send flight duration | 200 | How long the bubble's rise takes, a whole number of milliseconds from 80 to 1200. |
 | Bundled fonts | on | When off, the system font stack is used. |
 | Custom text font | empty | Your own font stack, overriding the bundled text font. |
 | Custom mono font | empty | Same, for the bundled code font. |
