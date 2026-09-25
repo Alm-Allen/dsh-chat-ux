@@ -39,6 +39,31 @@ export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
 export const DEFAULT_ENHANCED_FOLLOW = true
 
 /**
+ * 自带字体是否默认接管界面。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：装插件的人不必自己装字体，两端看到的也是同一套字。
+ */
+export const DEFAULT_EMBEDDED_FONTS = true
+
+/**
+ * 自定义字体栈的默认值。空串是「没有自定义」，也就是用插件自带的那两套。
+ * 前端有一份同样的常量，改一处就要改另一处。
+ */
+export const DEFAULT_FONT_FAMILY = ''
+
+/**
+ * 插入符动效的档位。前端 `client/caret-motion.ts` 里有同一组字面量，改一处就要改另一处。
+ *
+ * - `off` —— 不动手，用浏览器自己的插入符。
+ * - `move` —— 只在方向键、点击这类显式移动上放过渡，打字瞬时。
+ * - `typing` —— 打字也放过渡。
+ */
+export type CaretMotionMode = 'off' | 'move' | 'typing'
+
+/** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
+export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -47,6 +72,14 @@ export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
 export interface Config {
   // 思考结束、出现工具调用这些时刻，是否刻意把聊天区交还给 dsh 的跟随。
   enhancedFollow: Volatile<boolean>
+  // 插入符动效的档位。
+  caretMotion: Volatile<CaretMotionMode>
+  // 是否用插件自带的两套字体接管界面。关掉时 dsh 自己在 :root 上声明的字体栈原样生效。
+  fonts: Volatile<boolean>
+  // 自定义的正文字体栈；空串表示用自带的那套。
+  fontSans: Volatile<string>
+  // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
+  fontCode: Volatile<string>
 }
 
 /**
@@ -55,6 +88,10 @@ export interface Config {
  */
 export const Config = Schema.object({
   enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
+  caretMotion: Schema.union(['off', 'move', 'typing'] as const).default(DEFAULT_CARET_MOTION).volatile(),
+  fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
+  fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+  fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
 })
 
 /**

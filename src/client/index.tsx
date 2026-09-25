@@ -13,15 +13,18 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { installCaretMotion } from './caret-motion'
+import type { CaretMotionMode } from './caret-motion'
 import { installFileMutationRow } from './file-mutation-row'
 import type { SlotsService } from './file-mutation-row'
 import { installFoldGlide } from './fold-glide'
 import { installFollowGuard } from './follow-guard'
+import { applyFontChoice, clearFontChoice } from './font-override'
+import type { FontChoice } from './font-override'
 import { installProcessFollow } from './process-follow'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
-import { DEFAULT_ENHANCED_FOLLOW } from './settings-scope'
+import { DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { ALL_CSS, STYLE_ID } from './styles'
 import { installTokenMotion } from './token-motion'
@@ -54,16 +57,33 @@ export function apply(ctx: ClientContext): void {
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')
 
-  // 开关在每一轮守护里现读，所以插件管理页上保存完不必重新安装效果，也不会丢掉正在跑的定时器。
-  // 平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：插件管理页
-  // 给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
+  // 这一份镜像在每一轮效果里现读，所以插件管理页上改完不必重新安装任何东西，也不会丢掉正在跑的
+  // 定时器。平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：
+  // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
   const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
-  const follow = { enhanced: DEFAULT_ENHANCED_FOLLOW }
-  const syncFollow = (): void => {
-    follow.enhanced = scope.getSnapshot().value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+  const settings: ChatUxSettings = {
+    follow: DEFAULT_ENHANCED_FOLLOW,
+    caret: DEFAULT_CARET_MOTION,
+    font: { embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY },
   }
-  syncFollow()
-  ctx.effect(() => scope.subscribe(syncFollow), 'dsh-chat-ux: settings mirror')
+
+  // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
+  // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
+  const caret = installCaretMotion(() => settings.caret)
+  const syncSettings = (): void => {
+    const value = scope.getSnapshot().value
+    settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+    settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
+    settings.font.embedded = value?.fonts ?? DEFAULT_EMBEDDED_FONTS
+    settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
+    settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
+    applyFontChoice(settings.font)
+    caret.resync()
+  }
+  syncSettings()
+  ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
+  ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion')
+  ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
 
   // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
   ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
@@ -78,20 +98,16 @@ export function apply(ctx: ClientContext): void {
 
   // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
   // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
-  ctx.effect(() => installFollowGuard(() => follow.enhanced), 'dsh-chat-ux: follow guard')
+  ctx.effect(() => installFollowGuard(() => settings.follow), 'dsh-chat-ux: follow guard')
 
   // 组体那一层的跟随是另一回事：标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而
   // 平滑滚动追不上匀速增长的内容，位置就长期停在离底几十像素的地方。这一处在它旁边补一次钉底。
-  ctx.effect(() => installProcessFollow(() => follow.enhanced), 'dsh-chat-ux: process follow')
+  ctx.effect(() => installProcessFollow(() => settings.follow), 'dsh-chat-ux: process follow')
 
   // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
   // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
   // 拉回旧位置再播到新位置。只认点击，流式追加与自动开合都不受影响。
   ctx.effect(() => installFoldGlide(), 'dsh-chat-ux: fold glide')
-
-  // 输入框那根插入符：原生那根除了颜色和闪烁没有任何可动画的属性，所以把它按下去、自己画一根，
-  // 位移走 80ms 过渡。打字也动——要的是「凡是会挪窝的都给过渡」。
-  ctx.effect(() => installCaretMotion(), 'dsh-chat-ux: caret motion')
 
   // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
   // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
@@ -117,6 +133,16 @@ export function apply(ctx: ClientContext): void {
   )
 
   console.log('[dsh-chat-ux] client half loaded')
+}
+
+/** 这一半读到的配置，镜像在一份可变对象里：跟随那几处每轮现读它，插入符与字体由 `syncSettings` 重落。 */
+interface ChatUxSettings {
+  /** 增强跟随。 */
+  follow: boolean
+  /** 插入符动效的档位。 */
+  caret: CaretMotionMode
+  /** 字体那三项，原样交给 `applyFontChoice`。 */
+  font: FontChoice
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

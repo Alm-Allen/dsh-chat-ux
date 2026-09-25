@@ -25,6 +25,11 @@ export const CARD_CLASS = {
   reset: 'dsh-chat-ux-card-reset',
   hint: 'dsh-chat-ux-card-hint',
   failed: 'dsh-chat-ux-card-failed',
+  field: 'dsh-chat-ux-card-field',
+  fieldHead: 'dsh-chat-ux-card-field-head',
+  input: 'dsh-chat-ux-card-input',
+  invalid: 'dsh-chat-ux-card-invalid',
+  segment: 'dsh-chat-ux-card-segment',
 } as const
 
 /**
@@ -103,5 +108,69 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   color: var(--dsw-alias-label-error);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 字体字段是竖排：标签一行、输入框一行、说明一行。官方配置页的文本字段就是这个版式
+   （ui-primitives 的 fields.module.css），输入框要占满整行，所以不能沿用开关行的横排。 */
+.${CARD_CLASS.field} {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+}
+
+/* 首行之外每个字段行都带一条分隔线，四行（两个开关、两个字体）于是有同一个节奏。 */
+.${CARD_CLASS.row}:not(:first-child),
+.${CARD_CLASS.field}:not(:first-child) {
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.${CARD_CLASS.fieldHead} {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.${CARD_CLASS.fieldHead} > .${CARD_CLASS.label} {
+  flex: 1;
+}
+
+.${CARD_CLASS.input} {
+  height: 34px;
+  padding: 0 12px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+}
+
+.${CARD_CLASS.input}:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.${CARD_CLASS.input}:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.${CARD_CLASS.input}[aria-invalid='true'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.${CARD_CLASS.invalid} {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 分段控件由平台自己画（ui-primitives 的 SegmentedControl），这里只保证它不被左侧文字挤扁：
+   它是这一行里唯一的控件，宽度该由它自己定。 */
+.${CARD_CLASS.segment} {
+  flex: none;
 }
 `

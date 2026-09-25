@@ -1,5 +1,5 @@
 /**
- * 字体接管：让 dsh 用插件自带的两套字体。
+ * 字体接管：让 dsh 用插件自带的两套字体，或者用读者自己填的那一套。
  *
  * 这里原本把 --dsw-font-family 换成裸通用族，让字体跟随浏览器的字体设置。通用族在浏览器里由
  * 「设置 → 外观 → 自定义字体」决定，而那个设置只有浏览器有：桌面 App 用的是 Electron 自己的
@@ -17,9 +17,9 @@
  *   中文掉到 SimSun；这里换成自带的中文等宽，中文与拉丁同一套。
  * - `--dsw-font-mono` —— 被引用七次却从未定义，一律走内联兜底；这里补上同一套。
  *
- * 声明在 body 上：ui-theme 把变量声明在 :root，更近的祖先赢，与注入顺序无关。所有
- * --dsw-font-markdown-* / --dsw-font-* 复合 token 都由 var(--dsw-font-family) 拼成、在 body 上求值，
- * 会一起跟着换；表单控件靠 base.css 的 `font-family: inherit` 跟随。
+ * 三条都声明在 body 上，且**只在 `FONT_ATTRIBUTE` 挂着时**：ui-theme 把变量声明在 :root，更近的
+ * 祖先赢，与注入顺序无关。属性不在（读者关掉了这个开关）时这一条不命中，dsh 自己那套原样生效——
+ * 不需要第二份「什么都不做」的规则。
  *
  * 后面的本名不是装饰：自带的只是子集（GB2312 全集与常用符号），生僻字要靠本名接住——装了字体的人
  * 由系统那份接，没装的人由本名后面的通用族接。
@@ -29,6 +29,29 @@
  *
  * @module dsh-chat-ux/client/font-styles
  */
+
+/**
+ * 自带字体那一条规则认的属性。它由 `font-override.ts` 按开关写上或摘掉，所以「用不用自带字体」
+ * 这件事不必重新生成样式表。
+ */
+export const FONT_ATTRIBUTE = 'data-chat-ux-fonts'
+
+/** dsh 声明正文字体的那个自定义属性。 */
+export const SANS_VARIABLE = '--dsw-font-family'
+
+/** dsh 声明代码字体的那个自定义属性。 */
+export const CODE_VARIABLE = '--ds-font-family-code'
+
+/** dsh 引用七次、却从未定义的那个等宽属性；这里补上同一套。 */
+export const MONO_VARIABLE = '--dsw-font-mono'
+
+/**
+ * 自带的正文栈与等宽栈。样式表拿它们写默认值，`font-override.ts` 拿它们给读者填的那一串收尾——
+ * 两处必须是同一个字符串，所以只写在这里。
+ */
+export const EMBEDDED_SANS = "'Chat UX Sans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif"
+
+export const EMBEDDED_MONO = "'Chat UX Mono', 'Maple Mono NF CN', Consolas, monospace"
 
 /** 内嵌字体的全部 CSS。路径前缀必须与 host 半区的 FONT_ROUTE_PATH 一致。 */
 export const FONT_CSS = `
@@ -67,9 +90,9 @@ export const FONT_CSS = `
   font-style: normal;
   font-display: swap;
 }
-body {
-  --dsw-font-family: 'Chat UX Sans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
-  --ds-font-family-code: 'Chat UX Mono', 'Maple Mono NF CN', Consolas, monospace;
-  --dsw-font-mono: 'Chat UX Mono', 'Maple Mono NF CN', Consolas, monospace;
+body[${FONT_ATTRIBUTE}] {
+  ${SANS_VARIABLE}: ${EMBEDDED_SANS};
+  ${CODE_VARIABLE}: ${EMBEDDED_MONO};
+  ${MONO_VARIABLE}: ${EMBEDDED_MONO};
 }
 `

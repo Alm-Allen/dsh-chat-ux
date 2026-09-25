@@ -7,6 +7,7 @@
  *
  * @module dsh-chat-ux/client/settings-scope
  */
+import type { CaretMotionMode } from './caret-motion'
 
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
@@ -15,10 +16,37 @@
  */
 export const DEFAULT_ENHANCED_FOLLOW = true
 
+/**
+ * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：两端一致，且装插件的人不必自己装字体。
+ */
+export const DEFAULT_EMBEDDED_FONTS = true
+
+/**
+ * 自定义字体栈的默认值。空串是「没有自定义」。host 侧有一份同样的常量。
+ */
+export const DEFAULT_FONT_FAMILY = ''
+
+/**
+ * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
+ */
+export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
-  /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部；这个条目里唯一的字段。 */
+  /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
   enhancedFollow?: boolean
+  /** 插入符动效的档位。 */
+  caretMotion?: CaretMotionMode
+  /** 自带字体是否接管界面；关掉时 dsh 自己的字体栈原样生效。 */
+  fonts?: boolean
+  /** 自定义正文字体栈；空串用自带的。 */
+  fontSans?: string
+  /** 自定义等宽字体栈；空串用自带的。 */
+  fontCode?: string
 }
 
 /**

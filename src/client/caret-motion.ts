@@ -14,11 +14,16 @@
  *   量不到   光标贴着 `<br>` 时 Chromium 给 `0×0` 零矩形，而空段落正是这条路的常客。这时退回
  *            段落自己的矩形，把上一次量到的字体高度放回这一行里居中。
  *
- * 什么时候动、什么时候不动：
+ * 什么时候动、什么时候不动，由 {@link CaretMotionMode} 的三档决定：
  *
- *   打字      动，和 VS Code 的 `on` 档一样（每一格都滑一下，代价是快速连打时插入符略微落后于
- *             新字符）。它默认的 `explicit` 档只在方向键、点击这类显式移动上放过渡，这里不做那个
- *             区分——要的是「凡是会挪窝的都给过渡」。
+ *   打字时    动。与 VS Code 的 `on` 档同义：每一格都滑一下（代价是快速连打时插入符略微落后于
+ *             新字符）。默认档。
+ *   移动时    只在方向键、点击这类显式移动上放过渡，打字瞬时——VS Code 默认的 `explicit` 就是
+ *             它。判据也一样：看这次挪窝是不是打字引起的。这里是听 `beforeinput`：它会先于
+ *             `selectionchange` 到达，所以「这一帧有输入」比事后从位置上猜要准。
+ *   关        根本不动手：不建自绘的那根、不给可编辑面写标记，浏览器自己的插入符一直在。这套动效
+ *             唯一真正会伤人的失败方式是读者看不见光标（原生那根被按下去、自绘那根没画出来），
+ *             所以「关」必须是彻底的——它同时是这条路的兜底。
  *   刚露头    不动。从藏到露的那一帧先把位置写好，下一帧才把过渡接回来，否则它要从上次停的地方
  *             滑过来。
  *   合成中    照常，还是这一根。合成期间的每一次更新照样发 selectionchange、选区照样是折叠的
@@ -43,22 +48,48 @@ export const CARET_LAYER_ATTRIBUTE = 'data-chat-ux-caret-layer'
 export const CARET_VISIBLE_ATTRIBUTE = 'data-chat-ux-caret-visible'
 
 /**
- * 给整页装上插入符动效。
- * @returns disposer：摘掉监听，并把所有自绘插入符和标记一起撤掉。
+ * 这套动效的三档。host 侧的 schema 里有同一组字面量，改一处就要改另一处。
+ *
+ * - `off` —— 不动手，用浏览器自己的插入符。
+ * - `move` —— 只在显式移动上放过渡，打字瞬时。
+ * - `typing` —— 打字也放过渡。
  */
-export function installCaretMotion(): () => void {
+export type CaretMotionMode = 'off' | 'move' | 'typing'
+
+/** 安装结果：一个卸载入口，外加一个「配置变了，重新同步一次」。 */
+export interface CaretMotionHandle {
+  /** 摘掉监听，并把所有自绘插入符和标记一起撤掉。 */
+  dispose: () => void
+  /** 按当前配置再同步一次（排在下一帧）。配置一变就该调它。 */
+  resync: () => void
+}
+
+/**
+ * 给整页装上插入符动效。
+ * @param read - 现读的档位。每一帧同步时读一次，所以运行期改档不必重新安装。
+ * @returns 卸载入口与重同步入口。
+ */
+export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHandle {
   /** 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项。 */
   const layers = new Map<HTMLElement, CaretLayer>()
   /** 一次同步已经排在下一帧。 */
   let queued = false
+  /** 这一帧里来过一次输入。`move` 档靠它把打字和显式移动分开。 */
+  let typed = false
 
   const queue = (): void => {
     if (queued) return
     queued = true
     requestAnimationFrame(() => {
       queued = false
-      sync()
+      const typing = typed
+      typed = false
+      sync(typing)
     })
+  }
+
+  const markTyped = (): void => {
+    typed = true
   }
 
   /** 光标贴着 `<br>` 时，从它所在的那一段上取位置。 */
@@ -98,8 +129,11 @@ export function installCaretMotion(): () => void {
     return layer
   }
 
-  /** 把自绘的光标放到这一处选区上。 */
-  const place = (input: HTMLElement, layer: CaretLayer, range: Range): void => {
+  /**
+   * 把自绘的光标放到这一处选区上。
+   * @param paused - 这一帧不播位移过渡：刚露头，或者 `move` 档下的一次打字。
+   */
+  const place = (input: HTMLElement, layer: CaretLayer, range: Range, paused: boolean): void => {
     const host = input.parentElement ?? input
     const hostRect = host.getBoundingClientRect()
     const rect = range.getBoundingClientRect()
@@ -126,13 +160,14 @@ export function installCaretMotion(): () => void {
     left = Math.round(left)
     top = Math.round(top)
 
-    // 刚露头的那一帧必须瞬时就位，下一帧再把过渡接回来。
+    // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来。
     const fresh = !layer.visible
-    if (fresh) layer.caret.style.transitionProperty = 'none'
+    const instant = fresh || paused
+    if (instant) layer.caret.style.transitionProperty = 'none'
     layer.caret.style.transform = 'translate(' + left + 'px, ' + top + 'px)'
     layer.caret.style.height = height + 'px'
+    if (instant) requestAnimationFrame(() => { layer.caret.style.transitionProperty = '' })
     if (fresh) {
-      requestAnimationFrame(() => { layer.caret.style.transitionProperty = '' })
       layer.visible = true
       layer.caret.setAttribute(CARET_VISIBLE_ATTRIBUTE, '')
     }
@@ -144,8 +179,21 @@ export function installCaretMotion(): () => void {
     }
   }
 
-  /** 这一帧的光标归谁。 */
-  const sync = (): void => {
+  /**
+   * 这一帧的光标归谁。
+   * @param typing - 这一帧里来过一次输入。
+   */
+  const sync = (typing: boolean): void => {
+    const mode = read()
+    // 「关」是彻底的：自绘的那根和让位标记一起撤掉，原生插入符回来。留着它们只会让读者看不见光标。
+    if (mode === 'off') {
+      for (const [input, layer] of layers) {
+        layer.caret.remove()
+        input.removeAttribute(CARET_ATTRIBUTE)
+      }
+      layers.clear()
+      return
+    }
     const selection = document.getSelection()
     const active = document.activeElement
     // 光标只出现在**正拿着焦点**的那个可编辑面上：hero 态的输入框没有可编辑面，多会话时也
@@ -175,27 +223,33 @@ export function installCaretMotion(): () => void {
     target.setAttribute(CARET_ATTRIBUTE, '')
     const layer = layerFor(target)
     if (layer === null) return
-    place(target, layer, range)
+    place(target, layer, range, mode === 'move' && typing)
   }
 
   document.addEventListener('selectionchange', queue)
   document.addEventListener('focusin', queue)
   document.addEventListener('focusout', queue)
+  // `move` 档的判据。它先于 `selectionchange` 到达，所以这一帧的挪窝算不算打字，读它比猜位置准。
+  document.addEventListener('beforeinput', markTyped)
   window.addEventListener('resize', queue)
   // 自带的那两份字体是后到的，折行随之变化，光标要重新量一次。
   document.fonts.addEventListener('loadingdone', queue)
 
-  return () => {
-    document.removeEventListener('selectionchange', queue)
-    document.removeEventListener('focusin', queue)
-    document.removeEventListener('focusout', queue)
-    window.removeEventListener('resize', queue)
-    document.fonts.removeEventListener('loadingdone', queue)
-    for (const [input, layer] of layers) {
-      layer.caret.remove()
-      input.removeAttribute(CARET_ATTRIBUTE)
-    }
-    layers.clear()
+  return {
+    resync: queue,
+    dispose: () => {
+      document.removeEventListener('selectionchange', queue)
+      document.removeEventListener('focusin', queue)
+      document.removeEventListener('focusout', queue)
+      document.removeEventListener('beforeinput', markTyped)
+      window.removeEventListener('resize', queue)
+      document.fonts.removeEventListener('loadingdone', queue)
+      for (const [input, layer] of layers) {
+        layer.caret.remove()
+        input.removeAttribute(CARET_ATTRIBUTE)
+      }
+      layers.clear()
+    },
   }
 }
 

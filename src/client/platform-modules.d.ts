@@ -47,6 +47,38 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     className?: string | undefined
   }): ReactElement
 
+  /** 分段控件的一段。 */
+  export interface SegmentedControlOption<Value extends string> {
+    /** 选中这一段时交回去的值。 */
+    value: Value
+    /** 这一段的文字，由渲染它的地方拥有。 */
+    label: string
+    /** 这一段是否拒绝选中。 */
+    disabled?: boolean
+    /** 悬停说明，通常是它为什么被锁住。 */
+    title?: string
+  }
+
+  /**
+   * 两段以上的分段控件，带一个滑动指示器——把一张卡片在几档之间切换，光标动效那三档就是它。
+   * @param props.id - 基础 id：每一段是 `<id>-<value>`，并指向面板 `<id>-<value>-panel`。
+   * @param props.value - 当前选中项的值；控件完全受控。
+   * @param props.options - 按显示顺序排列的段，至少两段。
+   * @param props.onChange - 点击或走位键要求切到的值，不会是当前已经选中的那个。
+   * @param props.label - tablist 的可访问名（必填）。
+   * @param props.disabled - 是否锁住每一段，写入在途时也要置上。
+   * @param props.className - 额外的类名，用于布局定位。
+   */
+  export function SegmentedControl<Value extends string>(props: {
+    id: string
+    value: Value
+    options: readonly SegmentedControlOption<Value>[]
+    onChange: (next: Value) => void
+    label: string
+    disabled?: boolean
+    className?: string | undefined
+  }): ReactElement
+
   /** 共享的 24px 可展开行 chrome：思考行、工具行、过程组头都是它画的。 */
   export interface DisclosureRowProps {
     icon: ReactNode
