@@ -23,10 +23,7 @@
  * @module dsh-chat-ux/client/follow-tail
  */
 
-import { CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX } from './process-fold'
-
-/** 聊天列的容器。那个按钮住在它的祖先链上，所以认它先认列。 */
-const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
+import { CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX } from './dom-contract'
 
 /** dsh 的跟随开着时给聊天框架发的语义属性；它没了，就说明跟随已经被关掉了。 */
 const FOLLOWING_TAIL_SELECTOR = '[data-chat-following-tail]'

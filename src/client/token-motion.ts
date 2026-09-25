@@ -29,6 +29,8 @@
  * @module dsh-chat-ux/client/token-motion
  */
 
+import { isProgrammaticToggle } from './programmatic-toggle'
+
 /**
  * 一个字符从极淡到停稳之间有多少档。
  *
@@ -81,36 +83,6 @@ const STAGGER_DIVISOR = 50
 /** 错峰步长的上下限：再小看不出扫动，再大就让最后到的字符显得迟滞。 */
 const MIN_STAGGER_MS = 1
 const MAX_STAGGER_MS = 8
-
-/**
- * 本插件自己按下折叠控件的深度。
- *
- * 自动收起思考行也会派发一次真正的 click——`HTMLElement.click()` 走的是同一条捕获路径，
- * `rememberReaderFold` 分不出它和读者那一下的区别。可这一次点击落在「思考刚停、正文刚开头」的
- * 位置上，静默它等于把读者正在读的那段正文的渐变整段掐掉，所以它必须被认出来并放过。
- */
-let programmaticToggles = 0
-
-/** 标记一段本插件自己的折叠切换，让 `rememberReaderFold` 忽略其间的事件。 */
-export function beginProgrammaticToggle(): void {
-  programmaticToggles += 1
-}
-
-/** 结束一段本插件自己的折叠切换。 */
-export function endProgrammaticToggle(): void {
-  programmaticToggles = Math.max(0, programmaticToggles - 1)
-}
-
-/**
- * 此刻是否有本插件自己的折叠切换正在进行。
- *
- * 过程组的自动开合也走这条通道：两个自动开合模块各自监听读者的点击，谁都不该把对方的程序化点击
- * 记成读者的意图，所以它们共用这一个计数。
- * @returns 计数大于零时为真。
- */
-export function isProgrammaticToggle(): boolean {
-  return programmaticToggles > 0
-}
 
 /**
  * 给整页安装淡入效果。
@@ -175,7 +147,7 @@ export function installTokenMotion(): () => void {
    */
   const rememberReaderFold = (event: Event): void => {
     // 本插件自己的自动收起不是读者的意图，它落在思考刚停、正文刚开头的位置上。
-    if (programmaticToggles > 0) return
+    if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
     const until = performance.now() + FOLD_QUIET_MS

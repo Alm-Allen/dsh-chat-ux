@@ -17,23 +17,8 @@
  * @module dsh-chat-ux/client/process-fold
  */
 
-import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './token-motion'
-
-/** dsh 给每一个过程组放的属性。 */
-export const GROUP_SELECTOR = '[data-step-process]'
-
-/** 组体；收起时带 `hidden`。折叠动画那一侧也用它认组体。 */
-export const BODY_SELECTOR = '[data-step-process-body]'
-
-/** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动；折叠动画那一侧也用它。 */
-export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
-
-/**
- * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
- *
- * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：尺寸一变就瞬时滚到底。折叠动画那一侧也用它。
- */
-export const FOLLOW_THRESHOLD_PX = 25
+import { CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, RUNNING_STATE } from './dom-contract'
+import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './programmatic-toggle'
 
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]'
@@ -68,9 +53,6 @@ const LABEL_NAME_ATTRIBUTE = 'aria-label'
 /** dsh 的 TextShimmer 给每个字符留的渐变半宽。 */
 const SHIMMER_PIXELS_PER_CHARACTER = 8
 
-/** 这一段过程还在跑。 */
-const RUNNING = 'running'
-
 /** 这一段过程已经结束，最终正文该出来了。 */
 const CLOSED = 'closed'
 
@@ -88,11 +70,11 @@ export function installProcessFold(): () => void {
 
   /** 把每个组拉到它当前阶段该有的样子。 */
   const syncEveryGroup = (): void => {
-    for (const group of document.querySelectorAll(GROUP_SELECTOR)) {
+    for (const group of document.querySelectorAll(PROCESS_GROUP_SELECTOR)) {
       const header = group.querySelector(HEADER_SELECTOR)
-      const body = group.querySelector(BODY_SELECTOR)
+      const body = group.querySelector(PROCESS_BODY_SELECTOR)
       if (!(header instanceof HTMLElement) || body === null) continue
-      const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING
+      const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING_STATE
       // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
       // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
       // 写到属性上，样式表在组体展开时用它替掉整段文本。
@@ -151,10 +133,10 @@ export function installProcessFold(): () => void {
     if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
-    const group = target.closest(GROUP_SELECTOR)
+    const group = target.closest(PROCESS_GROUP_SELECTOR)
     if (group === null) return
     const header = group.querySelector(HEADER_SELECTOR)
-    touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING : CLOSED)
+    touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
   }
 
   // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。

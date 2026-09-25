@@ -21,11 +21,9 @@
  * @module dsh-chat-ux/client/follow-guard
  */
 
+import { COMPOSER_SELECTOR, FLOW_BLOCK_SELECTOR, RUNNING_STATE, SCROLL_KEYS, THINK_ROW_SELECTOR } from './dom-contract'
 import { isFoldGlideBusy } from './fold-glide'
 import { conversationScroller, ensureFollowTail, isAtBottom } from './follow-tail'
-
-/** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
-const FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]'
 
 /** 工具调用行自己带一个；它住在 assistant 节点内部，不必是新流块。 */
 const CALL_SELECTOR = '[data-chat-call-id]'
@@ -33,23 +31,11 @@ const CALL_SELECTOR = '[data-chat-call-id]'
 /** 上面两族合成一条，用来判断一批新增节点里有没有值得动手的东西。 */
 const STRUCTURE_SELECTOR = FLOW_BLOCK_SELECTOR + ', ' + CALL_SELECTOR
 
-/** 思考行；它的阶段看 `data-state`。 */
-const THINK_ROW_SELECTOR = '[data-variant="think"]'
-
-/** 模型还在思考时的阶段值。 */
-const THINK_RUNNING = 'running'
-
 /** 现在有内容正在流。有它，才有「跟随」可言。 */
 const STREAMING_SELECTOR = '[data-streaming], [data-text-shimmer]'
 
 /** 跟随开着时挂在聊天框架上的语义属性。 */
 const FOLLOWING_ATTRIBUTE = 'data-chat-following-tail'
-
-/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
-const COMPOSER_SELECTOR = '[data-composer-seat]'
-
-/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
-const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
 
 /** 读者接管滚动的意图。与 dsh 自己的 `READING_INTENTS` 同源。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'beforematch'] as const
@@ -180,10 +166,10 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
           continue
         }
         // 思考行从「正在思考」停下来：这一段过程的分界点。
-        if (record.oldValue === THINK_RUNNING
+        if (record.oldValue === RUNNING_STATE
           && record.target instanceof Element
           && record.target.matches(THINK_ROW_SELECTOR)
-          && record.target.getAttribute('data-state') !== THINK_RUNNING) {
+          && record.target.getAttribute('data-state') !== RUNNING_STATE) {
           lastActivityAt = performance.now()
           structureSeen = true
         }

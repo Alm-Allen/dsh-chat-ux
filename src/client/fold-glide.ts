@@ -40,9 +40,9 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
+import { CHAT_FLOW_SELECTOR, COMPOSER_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FLOW_BLOCK_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, SCROLL_KEYS, THINK_ROW_SELECTOR } from './dom-contract'
 import { ensureFollowTail, FOLLOW_LOOK_TOTAL_MS } from './follow-tail'
-import { BODY_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, GROUP_SELECTOR } from './process-fold'
-import { isProgrammaticToggle } from './token-motion'
+import { isProgrammaticToggle } from './programmatic-toggle'
 
 /** 卷帘门与下方补位共用的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200
@@ -56,10 +56,7 @@ const VISIBLE_SHARE = 0.9
 
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500
-/** dsh 给每个流块发的语义锚点。 */
-const FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]'
-/** 聊天列的容器。整页都在用 `aria-expanded`，本模块只接管它里面的那些。 */
-const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
+
 /** DisclosureRow 的行。展开体是它的下一个兄弟。 */
 const DISCLOSURE_SELECTOR = '[data-disclosure-row]'
 /** 其余可开合的控件（过程组头等）。 */
@@ -68,14 +65,6 @@ const TOGGLE_SELECTOR = '[aria-expanded]'
 const POPUP_SELECTOR = '[aria-haspopup]'
 /** 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知——它们开合的是整轮内容。 */
 const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
-/** 思考行。它的自动开合也要起动画，是 `isProgrammaticToggle` 那道守卫唯一的例外。 */
-const THINK_ROW_SELECTOR = '[data-variant="think"]'
-
-/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
-const COMPOSER_SELECTOR = '[data-composer-seat]'
-
-/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
-const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
 
 /** 撤掉收起动画之前最多等 React 几帧：一个 `requestAnimationFrame` 来回通常就够。 */
 const SHUT_CONFIRM_FRAMES = 3
@@ -260,7 +249,7 @@ export function installFoldGlide(): () => void {
     const controls = control.getAttribute('aria-controls')
     if (controls === null) return null
     const target = document.getElementById(controls)
-    return target instanceof HTMLElement && target.matches(BODY_SELECTOR) ? target : null
+    return target instanceof HTMLElement && target.matches(PROCESS_BODY_SELECTOR) ? target : null
   }
 
   /**
@@ -269,10 +258,11 @@ export function installFoldGlide(): () => void {
    * 贴底时 dsh 自己会补掉这次高度变化——`use-chat-reading` 在 `ResizeObserver` 回调里发现跟着
    * 尾巴走就瞬时滚到底，视口位置本来就不动。那种情况下再补一次位就成了双重补偿：读者看到的是
    * 内容先跳一下、再被缓缓推回来。
+   * 这一份从被点的控件往上找滚动容器——与 `follow-tail.ts` 那份同名判据的入口不同，判据相同。
    * @param control - 被点的开合控件。
    * @returns 滚动位置落在底部阈值之内时为真。
    */
-  const isAtBottom = (control: HTMLElement): boolean => {
+  const controlAtBottom = (control: HTMLElement): boolean => {
     const scroller = control.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
     // 找不到滚动容器时按「不在底部」处理：退回补位那套旧行为，而不是把补位整个丢掉。
     if (scroller === null) return false
@@ -625,7 +615,7 @@ export function installFoldGlide(): () => void {
     if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
     // 组头控制组体，成员行不控制——见 processBodyOf。认错了，点一行工具调用会被当成展开整个过程组。
     const groupBody = processBodyOf(control)
-    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(GROUP_SELECTOR) ?? null
+    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
     const body = groupBody ?? expandedBodyOf(control)
     // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。
     if (body === null || body.hasAttribute('hidden')) {
@@ -633,7 +623,7 @@ export function installFoldGlide(): () => void {
         control,
         groupBody,
         tops: takeTops(),
-        watch: watchFold(isAtBottom(control)),
+        watch: watchFold(controlAtBottom(control)),
         takenAt: Date.now(),
       }
       return
@@ -643,7 +633,7 @@ export function installFoldGlide(): () => void {
     event.stopPropagation()
     event.preventDefault()
     shutting = true
-    const watch = watchFold(isAtBottom(control))
+    const watch = watchFold(controlAtBottom(control))
     if (groupRoot !== null && groupBody !== null) {
       shutByClip({ body: groupBody, clipTarget: groupBody, exclude: groupRoot, control, watch })
       return

@@ -1,0 +1,43 @@
+/**
+ * dsh 聊天区的 DOM 契约。
+ *
+ * 这里全是 dsh 自己发出的**语义**属性：它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版
+ * 而坏，所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里——散在各处各写一份，
+ * 改一处就会漏一处。
+ *
+ * @module dsh-chat-ux/client/dom-contract
+ */
+
+/** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
+export const FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]'
+
+/** 聊天列。 */
+export const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
+
+/** 每一行思考行；它的阶段看 `data-state`。 */
+export const THINK_ROW_SELECTOR = '[data-variant="think"]'
+
+/** 模型还在思考、过程还在跑时的阶段值。 */
+export const RUNNING_STATE = 'running'
+
+/** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
+export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
+
+/**
+ * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
+ *
+ * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：尺寸一变就瞬时滚到底。
+ */
+export const FOLLOW_THRESHOLD_PX = 25
+
+/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
+export const COMPOSER_SELECTOR = '[data-composer-seat]'
+
+/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
+export const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
+
+/** dsh 给每一个过程组放的属性。 */
+export const PROCESS_GROUP_SELECTOR = '[data-step-process]'
+
+/** 过程组体；收起时带 `hidden`。 */
+export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'

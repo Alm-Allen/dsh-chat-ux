@@ -12,20 +12,16 @@
  * @module dsh-chat-ux/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { CARD_CSS } from './config-card-styles'
 import { installFileMutationRow } from './file-mutation-row'
 import type { SlotsService } from './file-mutation-row'
-import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { installFoldGlide } from './fold-glide'
-import { FOLD_MOTION_CSS } from './fold-motion-styles'
-import { FONT_CSS } from './font-styles'
 import { installFollowGuard } from './follow-guard'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { ChatUxConfigCard } from './settings-card'
 import { DEFAULT_ENHANCED_FOLLOW } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
-import { CHAT_AREA_CSS, STYLE_ID } from './styles'
+import { ALL_CSS, STYLE_ID } from './styles'
 import { installTokenMotion } from './token-motion'
 
 /**
@@ -50,8 +46,8 @@ export function apply(ctx: ClientContext): void {
     style.id = STYLE_ID
     style.dataset.plugin = 'dsh-chat-ux'
     // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场、字体接管。
-    style.textContent = CHAT_AREA_CSS + '\n' + CARD_CSS + '\n' + FILE_MUTATION_CSS + '\n' + FOLD_MOTION_CSS
-      + '\n' + FONT_CSS
+    // 那几份 CSS 由 `styles.ts` 的 `ALL_CSS` 拼起来，这里不再逐个模块地认。
+    style.textContent = ALL_CSS
     document.head.appendChild(style)
     return () => style.remove()
   }, 'dsh-chat-ux: chat-area stylesheet')

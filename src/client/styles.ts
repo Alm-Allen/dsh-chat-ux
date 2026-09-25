@@ -2,8 +2,8 @@
  * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
- * 注入的样式表管两件事：插件自己的聊天区规则，以及 token 淡入所驱动的分档规则
- * （见 `token-motion.ts`）。
+ * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则、token 淡入所驱动的分档规则（见
+ * `token-motion.ts`），再加上卡片、文件变更行、折叠体入场与字体那几份各自的 `*-styles.ts`。
  *
  * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是
  * 它自己的颜色，由 `token-motion.ts` 以 `RUN_COLOR_VAR` 逐元素发布——从
@@ -23,6 +23,10 @@
  *     写成该元素自己的自定义属性，`::highlight()` 再逐元素解析它；下面的 `body` 规则
  *     只是页面级兜底。
  */
+import { CARD_CSS } from './config-card-styles'
+import { FILE_MUTATION_CSS } from './file-mutation-styles'
+import { FOLD_MOTION_CSS } from './fold-motion-styles'
+import { FONT_CSS } from './font-styles'
 import { HIGHLIGHT_PREFIX, REVEAL_STEPS, RUN_COLOR_VAR, TOKEN_MIN_OPACITY } from './token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
@@ -118,3 +122,10 @@ body[data-ds-dark-theme] {
 
 ${revealStepRules}
 `
+
+/**
+ * 注入的那一张样式表：本插件拥有的全部规则，按下面的顺序拼起来。
+ *
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
+ */
+export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS].join('\n')

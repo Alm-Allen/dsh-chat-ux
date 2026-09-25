@@ -15,10 +15,8 @@
  * @module dsh-chat-ux/client/reasoning-fold
  */
 
-import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './token-motion'
-
-/** dsh 在每一行思考行上放的东西。 */
-export const ROW_SELECTOR = '[data-variant="think"]'
+import { RUNNING_STATE, THINK_ROW_SELECTOR } from './dom-contract'
+import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './programmatic-toggle'
 
 /**
  * 给整页安装思考行展开。
@@ -39,12 +37,12 @@ export function installReasoningFold(): () => void {
    * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
    */
   const syncEveryRow = (): void => {
-    for (const row of document.querySelectorAll(ROW_SELECTOR)) {
+    for (const row of document.querySelectorAll(THINK_ROW_SELECTOR)) {
       const phase = row.getAttribute('data-state') ?? ''
       if (phase === '') continue
       // 这个阶段里读者已经决定过这一行的状态，别碰它。
       if (touchedIn.get(row) === phase) continue
-      if (row.hasAttribute('data-expanded') === (phase === RUNNING)) continue
+      if (row.hasAttribute('data-expanded') === (phase === RUNNING_STATE)) continue
       // 一次没引起变化的点击，下一次也不会引起变化。
       if (attemptedIn.get(row) === phase) continue
       attemptedIn.set(row, phase)
@@ -67,7 +65,7 @@ export function installReasoningFold(): () => void {
     if (isProgrammaticToggle()) return
     const target = event.target
     if (!(target instanceof Element)) return
-    const row = target.closest(ROW_SELECTOR)
+    const row = target.closest(THINK_ROW_SELECTOR)
     if (row === null) return
     touchedIn.set(row, row.getAttribute('data-state') ?? '')
   }
@@ -98,5 +96,3 @@ export function installReasoningFold(): () => void {
   }
 }
 
-/** 模型还在思考时的 `data-state`；停下来之后是 `ok`。 */
-const RUNNING = 'running'
