@@ -14,8 +14,8 @@
  * 开关与档位**即时写入**：点一下就存，和 dsh 自己的开关一样，没有「保存」那一步；写入在途时控件
  * 禁用，之后从 host 读回来的值才是「落地了」的权威——写入在设计上就会吞掉传输层与版本号的失败。
  *
- * 两个字体输入框多一道提交（回车或失焦才写）：它们要等读者把名字打完，而每敲一个字符都是一次设置
- * 文档写入。打完之前的那串字只活在这个组件里，不合法的那串一个字都不写。
+ * 三个输入框（两条字体栈，加上发送动效的时长）多一道提交（回车或失焦才写）：它们要等读者把字打完，
+ * 而每敲一个字符都是一次设置文档写入。打完之前那串字只活在这个组件里，不合法的那串一个字都不写。
  *
  * @module dsh-chat-ux/client/settings-card
  */
@@ -26,7 +26,10 @@ import type { SegmentedControlOption } from '@deepseek-ai/dsh-client-ui-primitiv
 import type { CaretMotionMode } from './caret-motion'
 import { CARD_CLASS } from './config-card-styles'
 import { isFontFamilyValue } from './font-override'
-import { DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY } from './settings-scope'
+import {
+  DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
+  DEFAULT_SEND_FLIGHT_MS, SEND_FLIGHT_MS_MAX, SEND_FLIGHT_MS_MIN,
+} from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
@@ -35,6 +38,7 @@ const CARET_FIELD = 'caretMotion'
 const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
+const SEND_FLIGHT_MS_FIELD = 'sendFlightMs'
 
 /** 卡片文案的语种：这一张卡片只有中英两套。 */
 type CopyLanguage = 'zh' | 'en'
@@ -49,6 +53,9 @@ interface Copy {
   caretOff: string
   caretMove: string
   caretTyping: string
+  sendMsLabel: string
+  sendMsHint: string
+  sendMsInvalid: string
   fontsLabel: string
   fontsHint: string
   fontsOffHint: string
@@ -58,7 +65,7 @@ interface Copy {
   codeLabel: string
   codeHint: string
   codePlaceholder: string
-  invalid: string
+  fontInvalid: string
   overridden: string
   reset: string
   failed: string
@@ -67,7 +74,8 @@ interface Copy {
 }
 
 const ZH_COPY: Copy = {
-  summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、自带字体与你自己填的字体栈也在这里调。',
+  summary: (followOn) =>
+    '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、发送动效、自带字体与你自己填的字体栈也在这里调。',
   followLabel: '增强跟随',
   followHint:
     '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
@@ -79,6 +87,11 @@ const ZH_COPY: Copy = {
   caretOff: '关',
   caretMove: '移动时',
   caretTyping: '无论何时',
+  sendMsLabel: '发送动效时长',
+  sendMsHint:
+    '提交之后那条气泡从输入框飞上来的整段时长，单位毫秒，可以填 80 到 1200。默认 200：越短越干脆，'
+    + '越长越看得清路径。',
+  sendMsInvalid: '填 80 到 1200 之间的整数毫秒，回车不会保存。',
   fontsLabel: '自带字体',
   fontsHint:
     '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
@@ -92,7 +105,7 @@ const ZH_COPY: Copy = {
   codeLabel: '代码字体',
   codeHint: '等宽字体，代码块、行内代码与界面里的等宽文本都用它。留空用自带的。',
   codePlaceholder: '例如 JetBrains Mono, monospace',
-  invalid: '这不是一个合法的字体名，回车不会保存。',
+  fontInvalid: '这不是一个合法的字体名，回车不会保存。',
   overridden: '已覆盖',
   reset: '重置',
   failed: '保存未生效，请重试。',
@@ -102,7 +115,7 @@ const ZH_COPY: Copy = {
 
 const EN_COPY: Copy = {
   summary: (followOn) =>
-    'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret motion, the bundled fonts and your own font stacks are adjustable here.',
+    'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret motion, the send flight, the bundled fonts and your own font stacks are adjustable here.',
   followLabel: 'Enhanced follow',
   followHint:
     'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
@@ -114,6 +127,11 @@ const EN_COPY: Copy = {
   caretOff: 'Off',
   caretMove: 'On move',
   caretTyping: 'On typing',
+  sendMsLabel: 'Send flight duration',
+  sendMsHint:
+    'How long the bubble takes to rise from the composer after you submit, in milliseconds, anywhere from 80 to '
+    + '1200. Default 200: shorter is crisper, longer makes the path easier to see.',
+  sendMsInvalid: 'Enter a whole number of milliseconds between 80 and 1200; Enter will not save it.',
   fontsLabel: 'Bundled fonts',
   fontsHint:
     'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '
@@ -127,7 +145,7 @@ const EN_COPY: Copy = {
   codeLabel: 'Code font',
   codeHint: 'The monospace family used by code blocks, inline code, and monospace text in the interface. Leave blank to use the bundled one.',
   codePlaceholder: 'e.g. JetBrains Mono, monospace',
-  invalid: 'That is not a valid font family, so Enter will not save it.',
+  fontInvalid: 'That is not a valid font family, so Enter will not save it.',
   overridden: 'Overridden',
   reset: 'Reset',
   failed: 'The save did not take effect. Please try again.',
@@ -147,7 +165,7 @@ export interface ChatUxConfigCardProps {
 }
 
 /**
- * 渲染这个插件的配置：两个开关、光标动效的三档，以及两条自定义字体栈。
+ * 渲染这个插件的配置：两个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -165,10 +183,11 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
-  // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
+  // 三个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
   // host 值相同，所以不必清；只有「重置」要把草稿丢掉，否则它会盖住刚被清掉的字段。
   const [sansDraft, setSansDraft] = useState<string | null>(null)
   const [codeDraft, setCodeDraft] = useState<string | null>(null)
+  const [sendMsDraft, setSendMsDraft] = useState<string | null>(null)
   const fieldId = useId()
 
   const followOn = storedFollow(snapshot.value)
@@ -176,6 +195,10 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   const fontsOn = storedFonts(snapshot.value)
   const sans = sansDraft ?? storedSans(snapshot.value)
   const code = codeDraft ?? storedCode(snapshot.value)
+  const sendMs = sendMsDraft ?? String(storedSendMs(snapshot.value))
+  const sendMsValue = Number(sendMs.trim())
+  const sendMsInvalid = !Number.isInteger(sendMsValue)
+    || sendMsValue < SEND_FLIGHT_MS_MIN || sendMsValue > SEND_FLIGHT_MS_MAX
   const unavailable = snapshot.status === 'unavailable'
   const readOnly = snapshot.writable === false
   const controlsDisabled = saving || unavailable || readOnly
@@ -220,6 +243,12 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     setSaving(false)
   }
 
+  /** 提交发送动效的时长：只写 80–1200 的整数毫秒，别的一律不写（输入框下面已经说了它不合法）。 */
+  const commitSendMs = async (): Promise<void> => {
+    if (sendMsInvalid) return
+    await writeField(SEND_FLIGHT_MS_FIELD, sendMsValue, storedSendMs)
+  }
+
   /** 清掉用户层里的覆盖，让取值退回默认层。 */
   const reset = async (field: string): Promise<void> => {
     setSaving(true)
@@ -237,19 +266,7 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
         <div className={CARD_CLASS.label}>{label}</div>
         <p className={CARD_CLASS.hint}>{hint}</p>
       </div>
-      {userLayerHasField(snapshot.user, field) && (
-        <span className={CARD_CLASS.badges}>
-          <Tag tone="neutral">{copy.overridden}</Tag>
-          <button
-            type="button"
-            className={CARD_CLASS.reset}
-            disabled={controlsDisabled}
-            onClick={() => void reset(field)}
-          >
-            {copy.reset}
-          </button>
-        </span>
-      )}
+      {userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field))}
       {control}
     </div>
   )
@@ -276,6 +293,20 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
           className={CARD_CLASS.segment}
         />
       ))}
+      <DraftField
+        id={fieldId + '-send-ms'}
+        label={copy.sendMsLabel}
+        hint={copy.sendMsHint}
+        invalidHint={copy.sendMsInvalid}
+        value={sendMs}
+        invalid={sendMsInvalid}
+        overridden={userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD)}
+        disabled={controlsDisabled}
+        copy={copy}
+        onEdit={setSendMsDraft}
+        onCommit={() => void commitSendMs()}
+        onReset={() => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD) }}
+      />
       {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
         <Switch
           checked={fontsOn}
@@ -284,12 +315,14 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
           onChange={(next: boolean) => void writeField(FONTS_FIELD, next, storedFonts)}
         />
       ))}
-      <FontField
+      <DraftField
         id={fieldId + '-sans'}
         label={copy.sansLabel}
         hint={fontsOn ? copy.sansHint : copy.fontsOffHint}
+        invalidHint={copy.fontInvalid}
         placeholder={copy.sansPlaceholder}
         value={sans}
+        invalid={sans.trim() !== '' && !isFontFamilyValue(sans)}
         overridden={userLayerHasField(snapshot.user, FONT_SANS_FIELD)}
         disabled={controlsDisabled || !fontsOn}
         copy={copy}
@@ -297,12 +330,14 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
         onCommit={() => void commitFont(FONT_SANS_FIELD, sans, storedSans)}
         onReset={() => { setSansDraft(null); void reset(FONT_SANS_FIELD) }}
       />
-      <FontField
+      <DraftField
         id={fieldId + '-code'}
         label={copy.codeLabel}
         hint={fontsOn ? copy.codeHint : copy.fontsOffHint}
+        invalidHint={copy.fontInvalid}
         placeholder={copy.codePlaceholder}
         value={code}
+        invalid={code.trim() !== '' && !isFontFamilyValue(code)}
         overridden={userLayerHasField(snapshot.user, FONT_CODE_FIELD)}
         disabled={controlsDisabled || !fontsOn}
         copy={copy}
@@ -315,13 +350,18 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   )
 }
 
-/** 一行字体输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交。 */
-function FontField(props: {
+/**
+ * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
+ * `invalidHint`，输入框自己也标红——两种字段各有各的「什么算不合法」。
+ */
+function DraftField(props: {
   id: string
   label: string
   hint: string
-  placeholder: string
+  invalidHint: string
+  placeholder?: string | undefined
   value: string
+  invalid: boolean
   overridden: boolean
   disabled: boolean
   copy: Copy
@@ -330,22 +370,13 @@ function FontField(props: {
   onReset: () => void
 }): ReactElement {
   const { copy } = props
-  // 空串是「没有自定义」，不是一个不合法的值：它不该标红。
-  const invalid = props.value.trim() !== '' && !isFontFamilyValue(props.value)
   const inputId = props.id + '-input'
   const hintId = props.id + '-hint'
   return (
     <div className={CARD_CLASS.field}>
       <div className={CARD_CLASS.fieldHead}>
         <label className={CARD_CLASS.label} htmlFor={inputId}>{props.label}</label>
-        {props.overridden && (
-          <span className={CARD_CLASS.badges}>
-            <Tag tone="neutral">{copy.overridden}</Tag>
-            <button type="button" className={CARD_CLASS.reset} disabled={props.disabled} onClick={props.onReset}>
-              {copy.reset}
-            </button>
-          </span>
-        )}
+        {props.overridden && overrideBadges(copy, props.disabled, props.onReset)}
       </div>
       <input
         id={inputId}
@@ -356,7 +387,7 @@ function FontField(props: {
         placeholder={props.placeholder}
         value={props.value}
         disabled={props.disabled}
-        aria-invalid={invalid || undefined}
+        aria-invalid={props.invalid || undefined}
         aria-describedby={hintId}
         onChange={(event) => { props.onEdit(event.target.value) }}
         onBlur={props.onCommit}
@@ -366,10 +397,29 @@ function FontField(props: {
           props.onCommit()
         }}
       />
-      <p id={hintId} className={invalid ? CARD_CLASS.invalid : CARD_CLASS.hint}>
-        {invalid ? copy.invalid : props.hint}
+      <p id={hintId} className={props.invalid ? CARD_CLASS.invalid : CARD_CLASS.hint}>
+        {props.invalid ? props.invalidHint : props.hint}
       </p>
     </div>
+  )
+}
+
+/**
+ * 「已覆盖」徽标与它旁边那个重置按钮：开关行与文本字段行共用同一份，两边的差别只有谁来判
+ * 「被覆盖了」、谁来清。
+ * @param copy - 当前语言的文案。
+ * @param disabled - 写入在途、这一行不可用、或设置文档只读时锁住它。
+ * @param onReset - 清掉用户层里的覆盖，让取值退回默认层。
+ * @returns 那一小段 chrome。
+ */
+function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): ReactElement {
+  return (
+    <span className={CARD_CLASS.badges}>
+      <Tag tone="neutral">{copy.overridden}</Tag>
+      <button type="button" className={CARD_CLASS.reset} disabled={disabled} onClick={onReset}>
+        {copy.reset}
+      </button>
+    </span>
   )
 }
 
@@ -396,6 +446,11 @@ function storedSans(value: ChatUxSection | undefined): string {
 /** 从 host 的值里读自定义等宽字体栈。 */
 function storedCode(value: ChatUxSection | undefined): string {
   return value?.fontCode ?? DEFAULT_FONT_FAMILY
+}
+
+/** 从 host 的值里读发送动效的时长（毫秒）。 */
+function storedSendMs(value: ChatUxSection | undefined): number {
+  return value?.sendFlightMs ?? DEFAULT_SEND_FLIGHT_MS
 }
 
 /**

@@ -6,8 +6,9 @@
  * `window.__ModuleLoader__.load({...})` bundle。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享
- * config form——这一页上改的值就是这样到达效果里的，不用刷新。
+ * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞，以及插件管理页渲染的配置
+ * 卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页上改的值就是这样到达效果里的，
+ * 不用刷新。
  *
  * @module dsh-chat-ux/client
  */
@@ -25,7 +26,10 @@ import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
 import { installSendFlight } from './send-flight'
 import { ChatUxConfigCard } from './settings-card'
-import { DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY } from './settings-scope'
+import {
+  DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
+  DEFAULT_SEND_FLIGHT_MS,
+} from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { ALL_CSS, STYLE_ID } from './styles'
 import { installTokenMotion } from './token-motion'
@@ -66,6 +70,7 @@ export function apply(ctx: ClientContext): void {
     follow: DEFAULT_ENHANCED_FOLLOW,
     caret: DEFAULT_CARET_MOTION,
     font: { embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY },
+    sendMs: DEFAULT_SEND_FLIGHT_MS,
   }
 
   // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -78,6 +83,7 @@ export function apply(ctx: ClientContext): void {
     settings.font.embedded = value?.fonts ?? DEFAULT_EMBEDDED_FONTS
     settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
     settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
+    settings.sendMs = value?.sendFlightMs ?? DEFAULT_SEND_FLIGHT_MS
     applyFontChoice(settings.font)
     caret.resync()
   }
@@ -88,7 +94,7 @@ export function apply(ctx: ClientContext): void {
 
   // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
   // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-  ctx.effect(() => installSendFlight(), 'dsh-chat-ux: send flight')
+  ctx.effect(() => installSendFlight(() => settings.sendMs), 'dsh-chat-ux: send flight')
 
   // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
   ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
@@ -110,8 +116,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installProcessFollow(() => settings.follow), 'dsh-chat-ux: process follow')
 
   // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
-  // 旧值，所以这一处走 FLIP：点击时先记下视口内每个流块的坐标，DOM 变化后用 transform 把它们
-  // 拉回旧位置再播到新位置。只认点击，流式追加与自动开合都不受影响。
+  // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
+  // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
   ctx.effect(() => installFoldGlide(), 'dsh-chat-ux: fold glide')
 
   // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
@@ -148,6 +154,8 @@ interface ChatUxSettings {
   caret: CaretMotionMode
   /** 字体那三项，原样交给 `applyFontChoice`。 */
   font: FontChoice
+  /** 发送动效那一段的时长（毫秒），每一段起飞开始时现读。 */
+  sendMs: number
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

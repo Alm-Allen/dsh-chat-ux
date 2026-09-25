@@ -35,6 +35,20 @@ export const DEFAULT_FONT_FAMILY = ''
  */
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 
+/**
+ * 发送气泡起飞时长的默认值（毫秒）。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认 200：实测过的那一段——短到读者不等它，长到看得清路径。
+ */
+export const DEFAULT_SEND_FLIGHT_MS = 200
+
+/**
+ * 起飞时长可填的范围。host 侧 schema 的 `min` / `max` 是同一对数：这里是给输入框的即时提示，
+ * 那边是「越界的值写不进来」的保证。
+ */
+export const SEND_FLIGHT_MS_MIN = 80
+export const SEND_FLIGHT_MS_MAX = 1200
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
   /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
@@ -47,6 +61,8 @@ export interface ChatUxSection {
   fontSans?: string
   /** 自定义等宽字体栈；空串用自带的。 */
   fontCode?: string
+  /** 提交之后气泡起飞的那一段时长（毫秒）。 */
+  sendFlightMs?: number
 }
 
 /**

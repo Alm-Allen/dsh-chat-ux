@@ -64,6 +64,20 @@ export type CaretMotionMode = 'off' | 'move' | 'typing'
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 
 /**
+ * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
+ * 改一处就要改另一处。
+ *
+ * 默认 200：就是实测过的那一段——短到读者不等它，长到看得清路径。
+ */
+export const DEFAULT_SEND_FLIGHT_MS = 200
+
+/**
+ * 起飞时长可填的范围。前端输入框按同一对数给提示，schema 这里是第二道：越界的值写不进来。
+ */
+export const SEND_FLIGHT_MS_MIN = 80
+export const SEND_FLIGHT_MS_MAX = 1200
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -80,6 +94,9 @@ export interface Config {
   fontSans: Volatile<string>
   // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
   fontCode: Volatile<string>
+  // 提交之后气泡从输入框起飞的那一段时长，单位毫秒。曲线不开放：那两个幂次是量出来的，
+  // 见 `client/send-flight.ts` 里那一段说明。
+  sendFlightMs: Volatile<number>
 }
 
 /**
@@ -92,6 +109,7 @@ export const Config = Schema.object({
   fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
   fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
   fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+  sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
 })
 
 /**

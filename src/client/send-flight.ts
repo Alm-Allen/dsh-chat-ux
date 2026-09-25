@@ -13,9 +13,10 @@
  *             全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    位置与形变各走各的曲线：横向三次 ease-out、纵向二次 ease-in，形变再把横向那条压进前
- *             一段里先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的
- *             相对位置都是这几条曲线的函数。
+ *   逐帧画    位置与形变各走各的曲线：横向一路减速、纵向一路加速，形变再把横向那条压进前一段里
+ *             先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置
+ *             都是这几条曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
+ *             曲线的两个幂次不开放，它们是照着「方向一直在转」量出来的（见下面那一段）。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 四条边界（前两条是实测踩出来的）：
@@ -39,9 +40,6 @@ export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
 /** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
 
-/** 飞行时长。 */
-const FLIGHT_MS = 200
-
 /**
  * 三道缓动。
  *
@@ -49,13 +47,20 @@ const FLIGHT_MS = 200
  * 从零一路加到两倍。于是路径的角度从起手的 -3° 平滑转到收尾的 -90°，**中间没有一段是平的**——
  * 哪一段平了，画出来就是一条直角折线，生硬就生硬在那儿（已经为这个返工过一次）。
  *
- * **形变走同一条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
+ * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
  * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
  *
  * 两者分家是有代价的：右边缘会先往左退最多 55 px，再随横向回来。气泡的横向位移本来就靠左边缘右移
  * 实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
+ *
+ * 这两个幂次**不开放给读者调**：它们不是随手挑的，是照着「方向单调地转、中间没有平段」量出来的。
+ * 换一组也画得出来——两个都取 1，路径就成了一条直线；横向取 4、纵向取 3，就成了先贴地冲出去、后段
+ * 才抬起来——但那是另一种东西，不该由卡片上的一个开关决定。
  */
 const ACROSS_POWER = 3
+
+/** 纵向的幂次，见上面那一段。 */
+const RISE_POWER = 2
 
 /** 形变收尾的位置。比横向早，但不能早到把路径压成直角。 */
 const MORPH_END = 0.85
@@ -63,11 +68,17 @@ const MORPH_END = 0.85
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
 const ORIGIN_TTL_MS = 1500
 
-/** 位移超过这个距离就不飞：那看起来是「消息从屏幕外飞进来」，不是「我的字飞上去了」。 */
-const MAX_FLIGHT_PX = 900
+/**
+ * 位移上限的兜底值：一屏比它窄时按它算（见 `sameScreen`）。
+ *
+ * 这里原来是一个固定的 900px 上限，宽屏上会误伤：dsh 的内容列宽封顶 920px，输入卡片又比列每边
+ * 宽 16px，起终点的横向距离天生就压在 890 上下、贴着阈值走；纵向更随窗口高度一路涨——短对话里
+ * 消息贴在列顶、输入框粘在底部，一屏拉开一千多像素是常态。两个方向都不该由屏幕多大来决定飞不飞。
+ */
+const FLIGHT_LIMIT_FLOOR_PX = 900
 
 /** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
-const RESCUE_MS = FLIGHT_MS + 400
+const RESCUE_MARGIN_MS = 400
 
 /** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
 const ECHO_SELECTOR = CHAT_FLOW_SELECTOR + ' ' + SUBMISSION_ECHO_SELECTOR
@@ -77,9 +88,11 @@ const USER_ROW_SELECTOR = CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]'
 
 /**
  * 给整页装上发送气泡的起飞。
+ * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
+ * 不会打断正在飞的那一段。
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
-export function installSendFlight(): () => void {
+export function installSendFlight(readMs: () => number): () => void {
   // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
 
@@ -109,7 +122,7 @@ export function installSendFlight(): () => void {
     const current = flight
     if (current === null) return
     const elapsed = performance.now() - current.startedAt
-    if (elapsed >= FLIGHT_MS) {
+    if (elapsed >= current.ms) {
       settle()
       return
     }
@@ -131,13 +144,23 @@ export function installSendFlight(): () => void {
     if (bubble === null) return
     const box = bubble.getBoundingClientRect()
     const card = draft.card.box
-    if (Math.abs(card.left - box.left) > MAX_FLIGHT_PX || Math.abs(card.top - box.top) > MAX_FLIGHT_PX) return
+    if (!sameScreen(card.left, box.left, window.innerWidth)) return
+    if (!sameScreen(card.top, box.top, window.innerHeight)) return
     const ghost = createGhost(bubble)
     if (ghost === null) return
+    const ms = readMs()
     echo.setAttribute(FLYING_ATTRIBUTE, '')
-    flight = { draft, shell: ghost.shell, content: ghost.content, startedAt: performance.now(), previous: lastUserRow(), hidden: echo }
+    flight = {
+      draft,
+      shell: ghost.shell,
+      content: ghost.content,
+      startedAt: performance.now(),
+      ms,
+      previous: lastUserRow(),
+      hidden: echo,
+    }
     placeGhost(flight, bubble, 0)
-    rescue = window.setTimeout(settle, RESCUE_MS)
+    rescue = window.setTimeout(settle, ms + RESCUE_MARGIN_MS)
     requestAnimationFrame(tick)
   }
 
@@ -239,6 +262,8 @@ interface Flight {
   /** 壳里挂着的那条克隆气泡（底色摘掉了，交给壳）。 */
   readonly content: HTMLElement
   readonly startedAt: number
+  /** 这一段的整段时长。起飞那一刻定下来，飞行中改设置不改它。 */
+  readonly ms: number
   /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
   readonly previous: HTMLElement | null
   hidden: HTMLElement | null
@@ -295,6 +320,16 @@ function findBubble(row: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * 起终点还在同一屏里吗。
+ *
+ * 一屏的尺度现读视口的那一维（兜底见 `FLIGHT_LIMIT_FLOOR_PX`）：两个盒子还落在同一屏里，这段飞行
+ * 就看得见；有一头已经飞出屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
+ */
+function sameScreen(start: number, end: number, viewportExtent: number): boolean {
+  return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent)
+}
+
+/**
  * 立一个替身：壳 + 壳里的克隆气泡。
  *
  * 克隆而不是自绘：主题、字体、圆角、内边距全跟着它走，连暗色主题都自动对得上。两处必须写死——
@@ -342,12 +377,12 @@ function placeGhost(value: Flight, bubble: HTMLElement, elapsed: number): void {
   const top = pixel(style.paddingTop)
   const left = pixel(style.paddingLeft)
   const card = value.draft.card
-  const progressed = Math.min(1, elapsed / FLIGHT_MS)
+  const progressed = Math.min(1, elapsed / value.ms)
   const rest = 1 - progressed
   const across = 1 - rest ** ACROSS_POWER
   const morphRest = 1 - Math.min(1, progressed / MORPH_END)
   const morph = 1 - morphRest ** ACROSS_POWER
-  const rise = progressed * progressed
+  const rise = progressed ** RISE_POWER
   const shell = value.shell
   const content = value.content
   const x = card.box.left + (box.left - card.box.left) * across
