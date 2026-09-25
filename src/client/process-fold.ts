@@ -25,6 +25,16 @@ export const GROUP_SELECTOR = '[data-step-process]'
 /** 组体；收起时带 `hidden`。折叠动画那一侧也用它认组体。 */
 export const BODY_SELECTOR = '[data-step-process-body]'
 
+/** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动；折叠动画那一侧也用它。 */
+export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
+
+/**
+ * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
+ *
+ * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：尺寸一变就瞬时滚到底。折叠动画那一侧也用它。
+ */
+export const FOLLOW_THRESHOLD_PX = 25
+
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]'
 
@@ -110,12 +120,25 @@ export function installProcessFold(): () => void {
       // dsh 的组头 onClick 里有 focus()，那是给真实点击准备的。程序化点击不该把焦点从读者手里拿走，
       // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab。
       const previousFocus = document.activeElement
+      // 同一个 focus() 还会把组头滚进视口，而那次 scroll 在 dsh 眼里和读者自己滚一下没有区别：跟随
+      // 被挂起 500ms 采样（pending），这期间 onResize 直接返回不跟随，等它终于跑时内容已经长出去一截，
+      // nearBottom 判否，跟随就此关掉——而读者一下都没碰过键鼠。所以这一段结束后把滚动位置放回去。
+      const scroller = header.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+      const scrollTop = scroller === null ? null : scroller.scrollTop
+      // 贴底与否要在点击之前量：这一下点击自己就会改布局。
+      const wasAtBottom = scroller !== null
+        && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
       // 这一次点击是本模块派的：折叠守卫与思考行那一侧都不该把它当成读者的意图。
       beginProgrammaticToggle()
       try {
         header.click()
       } finally {
         endProgrammaticToggle()
+      }
+      // 位置要放回去，但不能把贴底的读者放到离底一截的地方：这一次写同样是一次滚动，会被 dsh
+      // 认成读者移动，跟随就此关掉。贴底时直接钉到底。
+      if (scroller !== null && scrollTop !== null && scroller.scrollTop !== scrollTop) {
+        scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : scrollTop
       }
       // 读者本来就停在组头上时，这一句会把焦点放回原处，等于什么都没发生。
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true })

@@ -40,7 +40,7 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
-import { BODY_SELECTOR, GROUP_SELECTOR } from './process-fold'
+import { BODY_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, GROUP_SELECTOR } from './process-fold'
 import { isProgrammaticToggle } from './token-motion'
 
 /** 卷帘门与下方补位共用的时长，取侧栏 AnimatedRows 的同档值。 */
@@ -69,17 +69,26 @@ const POPUP_SELECTOR = '[aria-haspopup]'
 const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]'
 /** 思考行。它的自动开合也要起动画，是 `isProgrammaticToggle` 那道守卫唯一的例外。 */
 const THINK_ROW_SELECTOR = '[data-variant="think"]'
-/** 聊天列的滚动容器。dsh 的跟随逻辑（`use-chat-reading`）挂在它身上。 */
-const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
 
-/**
- * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
- *
- * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：`ResizeObserver` 一报尺寸变化就瞬时滚到底。
- */
-const FOLLOW_THRESHOLD_PX = 25
+/** dsh 的跟随开着时给那个框发的语义属性；它没了，就说明跟随已经被关掉了。 */
+const FOLLOWING_TAIL_SELECTOR = '[data-chat-following-tail]'
 
-/** 裁剪式收回要的四样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁。 */
+/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
+const COMPOSER_SELECTOR = '[data-composer-seat]'
+
+/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
+
+/** 撤掉收起动画之前最多等 React 几帧：一个 `requestAnimationFrame` 来回通常就够。 */
+const SHUT_CONFIRM_FRAMES = 3
+
+/** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
+const FOLLOW_LOOK_ROUNDS = 5
+
+/** 两眼之间隔多久；五眼正好盖过它那个五百毫秒的采样窗口。 */
+const FOLLOW_LOOK_INTERVAL_MS = 100
+
+/** 裁剪式收回要的五样东西：卷掉多高、裁哪一层、补位时跳过谁、卷完把点击交还给谁、交给谁收尾。 */
 interface ClipShut {
   /** 展开体；它的高度就是要卷掉的量。 */
   readonly body: HTMLElement
@@ -88,6 +97,23 @@ interface ClipShut {
   /** 补位时跳过的范围：组根——组内成员跟着组体一起走，不该补。 */
   readonly exclude: HTMLElement
   readonly control: HTMLElement
+  readonly watch: FoldWatch
+}
+
+/**
+ * 一次折叠的收尾凭证。
+ *
+ * 收尾时要把滚动位置交还给 dsh 的跟随，但那只对「本来就贴着底、这中间也没自己出过手」的读者
+ * 成立：收尾通常晚于点击两百毫秒，这段时间里读者随时可能接管滚动，而他的意图只能从事件上看
+ * 出来——认的那一组与 dsh 自己的 `READING_INTENTS` 同源。
+ */
+interface FoldWatch {
+  /** 折叠开始那一刻读者是不是贴着底部；贴底时下方补位要跳过。 */
+  readonly atBottom: boolean
+  /** 这中间读者有没有为滚动出过手。 */
+  readonly moved: () => boolean
+  /** 撤掉意图监听。 */
+  readonly stop: () => void
 }
 
 interface FoldIntent {
@@ -96,8 +122,7 @@ interface FoldIntent {
   /** 展开方向的过程组体；不是过程组时为 null。 */
   readonly groupBody: HTMLElement | null
   readonly tops: Map<HTMLElement, number>
-  /** 点击那一刻读者是不是贴着底部；贴底时下方补位要跳过。 */
-  readonly atBottom: boolean
+  readonly watch: FoldWatch
   readonly takenAt: number
 }
 
@@ -231,6 +256,33 @@ export function installFoldGlide(): () => void {
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
   }
 
+  /**
+   * 挂上一份「读者有没有自己接管滚动」的监听，只活到这一轮折叠收尾为止。
+   *
+   * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
+   * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
+   * 读者在打字，不是在滚动。
+   * @param atBottom - 折叠开始那一刻读者是不是贴着底部。
+   * @returns 这一轮折叠的收尾凭证。
+   */
+  const watchFold = (atBottom: boolean): FoldWatch => {
+    let moved = false
+    const note = (event: Event): void => {
+      if (event.target instanceof Element && event.target.closest(COMPOSER_SELECTOR) !== null) return
+      if (event.type === 'keydown' && !(event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key))) return
+      moved = true
+    }
+    const types = ['wheel', 'touchstart', 'pointerdown', 'keydown']
+    for (const type of types) document.addEventListener(type, note, true)
+    const stop = (): void => {
+      for (const type of types) document.removeEventListener(type, note, true)
+    }
+    // 保鲜期与 `INTENT_TTL_MS` 同长：过了这个点还没收尾，说明这一轮折叠根本没发生，监听不该
+    // 挂在那里等一个不会来的观察回调。
+    window.setTimeout(stop, INTENT_TTL_MS)
+    return { atBottom, moved: () => moved, stop }
+  }
+
   const takeTops = (): Map<HTMLElement, number> => {
     const tops = new Map<HTMLElement, number>()
     for (const element of document.querySelectorAll<HTMLElement>(FLOW_BLOCK_SELECTOR)) {
@@ -344,6 +396,90 @@ export function installFoldGlide(): () => void {
   }
 
   /**
+   * dsh 那个「回到底部」按钮。它只在跟随关掉时渲染，位置是聊天列所在那个框的下一个兄弟。
+   * @returns 按钮；认不出来时为 null。
+   */
+  const toBottomButton = (): HTMLElement | null => {
+    // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框。
+    const column = document.querySelector<HTMLElement>(CHAT_FLOW_SELECTOR)
+    const root = column?.parentElement?.parentElement ?? null
+    return root?.nextElementSibling?.querySelector<HTMLElement>('button') ?? null
+  }
+
+  /**
+   * 折叠收尾：折叠开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随。
+   *
+   * dsh 的跟随归它自己的归属判定管：一次「像读者移动、又没到底」的滚动会把它挂进五百毫秒的采样
+   * 窗口，窗口里 `onResize` 直接返回、内容怎么长都不跟随，结算时位置离底超过它的阈值就把跟随
+   * 关掉——而折叠那种量级的高度变化最容易跨过这条线。它自己留了一个重开入口：跟随关掉时才渲染
+   * 的那个「回到底部」按钮，`onClick` 里是 `reading.followTail()`，清掉采样窗口、重新点亮跟随、
+   * 立即到底。读者自己往下滚能恢复，走的也是同一条路；这一处只是替读者做那一下。
+   *
+   * 判据是 dsh 的语义属性 `data-chat-following-tail`：跟随开着时它在，关掉时没了。它还在，就说
+   * 明 dsh 自己会把这次折叠补掉，不必插手。
+   * @param watch - 这一轮折叠的收尾凭证。
+   */
+  const handBackFollow = (watch: FoldWatch): void => {
+    if (!watch.atBottom) {
+      watch.stop()
+      return
+    }
+    // 先把位置钉到底：读者该在的地方先回到那里。这一步顺带处理掉「跟随还开着、只是没跟上」——
+    // 那种情形下 dsh 的归属判定会把这一下认成读者到底，于是重新点亮跟随并清掉采样窗口。
+    const scroller = document.querySelector<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+    if (scroller !== null) scroller.scrollTop = scroller.scrollHeight
+    // 位置钉住了不等于跟随也回来了：归属判定可能比折叠晚一步才把跟随关掉，而那之后它只认自己
+    // 那个「回到底部」按钮。所以再看几眼，属性一没就点它；读者中途自己动了手，这事就作罢。
+    let rounds = 0
+    const look = (): void => {
+      if (watch.moved() || rounds >= FOLLOW_LOOK_ROUNDS) {
+        watch.stop()
+        return
+      }
+      rounds += 1
+      if (document.querySelector(FOLLOWING_TAIL_SELECTOR) === null) {
+        const button = toBottomButton()
+        if (button !== null) {
+          watch.stop()
+          button.click()
+          return
+        }
+      }
+      window.setTimeout(look, FOLLOW_LOOK_INTERVAL_MS)
+    }
+    look()
+  }
+
+  /**
+   * 折叠收尾的入口：动画走完再看一眼跟随。
+   *
+   * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来，所以统一等
+   * `ROLL_MS`——它正好是两条动画的时长。
+   * @param watch - 这一轮折叠的收尾凭证。
+   */
+  const settleAfterFold = (watch: FoldWatch): void => {
+    window.setTimeout(() => { handBackFollow(watch) }, ROLL_MS)
+  }
+
+  /**
+   * 等 React 把真身卸掉，再去动它的动画与内联样式。
+   *
+   * 收起方向的高度动画带着 `fill: 'forwards'`，把真身锁在 0 高。真身若还在（这一次点击没被
+   * React 收下），`cancel()` 就会把高度整块还给 CSS——一次从 0 弹回全高的跳变，足够把 dsh 的
+   * 跟随甩出去。所以卸载确认了才撤；等够几帧仍然没卸载，那说明这次点击确实没有折叠，只好撤回原样。
+   * @param body - 压着高度的展开体。
+   * @param done - 可以撤掉动画与内联样式了。
+   * @param attempt - 已经等了几帧。
+   */
+  const confirmUnmounted = (body: HTMLElement, done: () => void, attempt = 0): void => {
+    if (!body.isConnected || attempt >= SHUT_CONFIRM_FRAMES) {
+      done()
+      return
+    }
+    requestAnimationFrame(() => { confirmUnmounted(body, done, attempt + 1) })
+  }
+
+  /**
    * 卷帘门收回（DisclosureRow）：**动真身，不克隆**。
    *
    * 这次点击已经在捕获阶段被拦下，React 还没折叠——真身留在原位、还是展开态，于是可以像展开
@@ -354,13 +490,14 @@ export function installFoldGlide(): () => void {
    * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
    * `VISIBLE_SHARE` 的时长卷上去。
    */
-  const rollShutInPlace = (body: HTMLElement, control: HTMLElement): void => {
+  const rollShutInPlace = (body: HTMLElement, control: HTMLElement, watch: FoldWatch): void => {
     const height = body.getBoundingClientRect().height
     // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
     const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
     if (height === 0) {
       window.clearTimeout(release)
       replay(control)
+      settleAfterFold(watch)
       return
     }
     const travel = rollTravelOf(body)
@@ -381,10 +518,13 @@ export function installFoldGlide(): () => void {
     shrinking.onfinish = () => {
       window.clearTimeout(release)
       replay(control)
-      // 真身这时已经卸掉了，这几句只是兜底：万一 React 没折叠，元素要能回到原样。
-      shrinking.cancel()
-      body.style.overflow = previousOverflow
-      body.style.boxSizing = previousBoxSizing
+      // 真身该已经卸掉了；没卸掉就不能撤动画，见 confirmUnmounted。
+      confirmUnmounted(body, () => {
+        shrinking.cancel()
+        body.style.overflow = previousOverflow
+        body.style.boxSizing = previousBoxSizing
+      })
+      settleAfterFold(watch)
     }
   }
 
@@ -402,6 +542,7 @@ export function installFoldGlide(): () => void {
     if (lift === 0) {
       window.clearTimeout(release)
       replay(fold.control)
+      settleAfterFold(fold.watch)
       return
     }
     const rising: Animation[] = []
@@ -423,6 +564,7 @@ export function installFoldGlide(): () => void {
       for (const animation of rising) animation.cancel()
       clip.cancel()
       replay(fold.control)
+      settleAfterFold(fold.watch)
     }
   }
 
@@ -430,21 +572,32 @@ export function installFoldGlide(): () => void {
     const current = intent
     intent = null
     if (current === null) return
-    if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) return
+    const watch = current.watch
+    // 这三条路上都没有动画，收尾就是把监听撤掉。
+    if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) {
+      watch.stop()
+      return
+    }
     // 过程组：裁剪组体，下方内容靠 glideFlow 补位——读者贴着底部时除外，dsh 自己已经补过了。
     if (current.groupBody !== null) {
-      if (current.groupBody.hasAttribute('hidden')) return
+      if (current.groupBody.hasAttribute('hidden')) {
+        watch.stop()
+        return
+      }
       openByClip(current.groupBody)
-      if (!current.atBottom) glideFlow(current.tops, current.groupBody)
+      if (!watch.atBottom) glideFlow(current.tops, current.groupBody)
+      settleAfterFold(watch)
       return
     }
     const body = expandedBodyOf(current.control)
     if (body === null) {
-      if (!current.atBottom) glideFlow(current.tops, null)
+      if (!watch.atBottom) glideFlow(current.tops, null)
+      watch.stop()
       return
     }
     // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
     rollOpen(body)
+    settleAfterFold(watch)
   }
 
   const onClick = (event: Event): void => {
@@ -469,6 +622,8 @@ export function installFoldGlide(): () => void {
       event.preventDefault()
       return
     }
+    // 上一轮展开方向的等待作废，它挂着的意图监听要跟着撤掉。
+    intent?.watch.stop()
     intent = null
     // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
     const control = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
@@ -482,7 +637,13 @@ export function installFoldGlide(): () => void {
     const body = groupBody ?? expandedBodyOf(control)
     // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。
     if (body === null || body.hasAttribute('hidden')) {
-      intent = { control, groupBody, tops: takeTops(), atBottom: isAtBottom(control), takenAt: Date.now() }
+      intent = {
+        control,
+        groupBody,
+        tops: takeTops(),
+        watch: watchFold(isAtBottom(control)),
+        takenAt: Date.now(),
+      }
       return
     }
     if (reduceMotion()) return
@@ -490,8 +651,12 @@ export function installFoldGlide(): () => void {
     event.stopPropagation()
     event.preventDefault()
     shutting = true
-    if (groupRoot !== null && groupBody !== null) shutByClip({ body: groupBody, clipTarget: groupBody, exclude: groupRoot, control })
-    else rollShutInPlace(body, control)
+    const watch = watchFold(isAtBottom(control))
+    if (groupRoot !== null && groupBody !== null) {
+      shutByClip({ body: groupBody, clipTarget: groupBody, exclude: groupRoot, control, watch })
+      return
+    }
+    rollShutInPlace(body, control, watch)
   }
 
   const observer = new MutationObserver(flush)
@@ -504,5 +669,6 @@ export function installFoldGlide(): () => void {
   return () => {
     document.removeEventListener('click', onClick, true)
     observer.disconnect()
+    intent?.watch.stop()
   }
 }
