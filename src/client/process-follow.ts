@@ -1,5 +1,5 @@
 /**
- * 组体跟随：封顶的过程组里，思考与工具输出永远贴着自己的底。
+ * 组体跟随：封顶的过程组里，思考与工具输出不会掉队。
  *
  * 「标准」与「简洁」两档把一段过程收进一个封顶的组体（\`max-height: min(400px, 50vh)\`），组体
  * 自己带滚动条。dsh 给这一层的跟随是 \`use-process-scroll\` 那套：内容一变就
@@ -10,13 +10,14 @@
  *   单发    \`toBottom\` 只在没有动画在飞时才发起新的滚动（\`if (this.target === null)\`），动画
  *           跑完之前内容再长多少都不追，只能等这一次落地再补下一次。
  *
- * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。读者一下都没碰过，
- * 却要等它慢慢滑下来。
+ * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。
  *
- * 这一处不改 dsh 的状态，只在它旁边补一件事：只要读者没在这个组体里真的滚过，就把位置钉到组体
- * 的底（\`scrollTop = scrollHeight\`，即时）。读者一旦滚过就让位，直到他自己滚回组体的底为止。
+ * 这一处不改 dsh 的状态，只在它旁边补一件事：落后超过 CATCH_UP_GAP_PX 才接管，把位置直接补到
+ * 组体的底（\`scrollTop = scrollHeight\`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
+ * 平滑滚动，追得上的时候它是好看的；只有它追不回来时才由这一处兜住，免得最新那两行一直悬着。
+ * 读者一旦在这个组体里滚过就让位，直到他自己滚回组体的底为止。
  *
- * 钉底与 dsh 那套不冲突：写 \`scrollTop\` 会走它的 \`onScroll\`，而它把「位置到底」认成读者到底，
+ * 补齐与 dsh 那套不冲突：写 \`scrollTop\` 会走它的 \`onScroll\`，而它把「位置到底」认成读者到底，
  * 于是重新点亮自己的跟随，并放下那个卡住的动画目标。
  *
  * @module dsh-chat-ux/client/process-follow
@@ -27,8 +28,14 @@ import { PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR, SCROLL_KEYS } from './
 /** 读者滚回组体底部多近算「看完了」。 */
 const RELEASE_THRESHOLD_PX = 4
 
-/** 已经贴在底线上时不再写：写一次就够，免得每帧都多产生一次滚动事件。 */
-const PIN_EPSILON_PX = 1
+/**
+ * 落后超过它才接管。
+ *
+ * 阈值以内归 dsh 的平滑滚动——它追得上的正是这一截，追得上的时候它是好看的。实测流式输出时它
+ * 的稳态落后在二三十到五十像素之间，40 卡在中间：让大部分平滑滚动获得自由，又能在真的掉队之前
+ * 兜住。
+ */
+const CATCH_UP_GAP_PX = 40
 
 /** 同步被观察组体的间隔；会话切换与过程组增减都靠它跟上。 */
 const SYNC_INTERVAL_MS = 500
@@ -57,12 +64,15 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
     return body.scrollHeight - body.clientHeight > 0
   }
 
-  /** 把组体钉到它自己的底。 */
-  const pin = (body: HTMLElement): void => {
+  /** 离组体自己的底还差多远。 */
+  const gapOf = (body: HTMLElement): number => body.scrollHeight - body.clientHeight - body.scrollTop
+
+  /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
+  const catchUp = (body: HTMLElement): void => {
     if (!readEnabled()) return
     if (takenOver.has(body)) return
     if (!followable(body)) return
-    if (body.scrollHeight - body.clientHeight - body.scrollTop <= PIN_EPSILON_PX) return
+    if (gapOf(body) <= CATCH_UP_GAP_PX) return
     body.scrollTop = body.scrollHeight
   }
 
@@ -90,18 +100,18 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
     const target = event.target
     if (!(target instanceof HTMLElement)) return
     if (!target.matches(PROCESS_BODY_SELECTOR)) return
-    if (target.scrollHeight - target.clientHeight - target.scrollTop > RELEASE_THRESHOLD_PX) return
+    if (gapOf(target) > RELEASE_THRESHOLD_PX) return
     takenOver.delete(target)
   }
 
-  // 内容一变就钉一次。观察组体自己也必要：窗口换宽窄会让封顶高度换一档。
+  // 内容一变就判一次。观察组体自己也必要：窗口换宽窄会让封顶高度换一档。
   const observer = new ResizeObserver(entries => {
     for (const entry of entries) {
       const target = entry.target
       if (!(target instanceof HTMLElement)) continue
       const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
       if (body === null) continue
-      pin(body)
+      catchUp(body)
     }
   })
 
