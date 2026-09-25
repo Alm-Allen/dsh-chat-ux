@@ -72,10 +72,10 @@ const ZH_COPY: Copy = {
   caretLabel: '光标动效',
   caretHint:
     '把浏览器那根插入符换成自绘的，位移走 80 ms 过渡。「移动时」只在方向键、点击这类显式移动上放过渡，'
-    + '打字瞬时；「打字时」连打字也滑过去。关掉就用回浏览器原来的那根。',
+    + '打字瞬时；「无论何时」连打字也滑过去。关掉就用回浏览器原来的那根。',
   caretOff: '关',
   caretMove: '移动时',
-  caretTyping: '打字时',
+  caretTyping: '无论何时',
   fontsLabel: '自带字体',
   fontsHint:
     '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
