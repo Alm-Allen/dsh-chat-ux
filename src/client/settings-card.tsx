@@ -36,6 +36,9 @@ const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
 
+/** 卡片文案的语种：这一张卡片只有中英两套。 */
+type CopyLanguage = 'zh' | 'en'
+
 /** 一种语言的文案。 */
 interface Copy {
   summary: (followOn: boolean) => string
@@ -153,16 +156,13 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     useCallback((listener: () => void) => scope.subscribe(listener), [scope]),
     () => scope.getSnapshot(),
   )
-  // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时退回浏览器语言——和 locale
-  // 插件给全新浏览器用的那条主语言子标签规则一样。
+  // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文。
   const activeLanguage = useSyncExternalStore(
     useCallback((listener: () => void) => (locale ? locale.subscribe(listener) : () => {}), [locale]),
     useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
   )
-  const browserLanguage: 'zh' | 'en' =
-    typeof navigator !== 'undefined' && (navigator.language || '').toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
-  const language = activeLanguage === 'en' || activeLanguage === 'zh' ? activeLanguage : browserLanguage
-  const copy = language === 'en' ? EN_COPY : ZH_COPY
+  const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language
+  const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
   // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
@@ -396,6 +396,32 @@ function storedSans(value: ChatUxSection | undefined): string {
 /** 从 host 的值里读自定义等宽字体栈。 */
 function storedCode(value: ChatUxSection | undefined): string {
   return value?.fontCode ?? DEFAULT_FONT_FAMILY
+}
+
+/**
+ * 定这一张卡片说哪种语言。
+ *
+ * dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
+ * （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
+ * 兜底，而不是"非英文即中文"的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
+ * 中文是这套文案的主要读者。
+ * @param active - locale 服务报的活跃语言 id；服务缺席时是 null。
+ * @param browserLanguage - `navigator.language`；非浏览器运行里是 null。
+ * @returns 读哪一套文案。
+ */
+function resolveCopyLanguage(active: string | null | undefined, browserLanguage: string | null | undefined): CopyLanguage {
+  const language = nonEmpty(active) ?? nonEmpty(browserLanguage) ?? 'zh'
+  return language.toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
+}
+
+/**
+ * 只放行非空字符串。
+ * @param value - 可能是 null、undefined 或空串的候选。
+ * @returns 能用的那串字，或 undefined。
+ */
+function nonEmpty(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string' || value === '') return undefined
+  return value
 }
 
 /**

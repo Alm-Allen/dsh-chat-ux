@@ -16,6 +16,8 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -35,6 +37,7 @@
   "files": [
     "dist",
     "assets",
+    "locale",
     "cordis.patch.yml",
     "cordis.yml"
   ],
