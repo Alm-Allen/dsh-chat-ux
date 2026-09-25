@@ -2545,9 +2545,15 @@ function installProcessFold() {
     const attemptedIn = new WeakMap();
     /** 是否已经排了一次扫描。 */
     let scanQueued = false;
-    /** 把每个组拉到它当前阶段该有的样子。 */
-    const syncEveryGroup = () => {
-        for (const group of document.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR)) {
+    /**
+     * 把给到的这些组拉到它们当前阶段该有的样子。
+     * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
+     */
+    const syncGroups = (groups) => {
+        for (const group of groups) {
+            // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
+            if (!group.isConnected)
+                continue;
             const header = group.querySelector(HEADER_SELECTOR);
             const body = group.querySelector(dom_contract_1.PROCESS_BODY_SELECTOR);
             if (!(header instanceof HTMLElement) || body === null)
@@ -2613,6 +2619,10 @@ function installProcessFold() {
                 header.blur();
         }
     };
+    /** 装好之后先全量收敛一遍：页面里躺着的那些组也要归位。 */
+    const syncEveryGroup = () => {
+        syncGroups(document.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR));
+    };
     /** 记住是读者、而不是本模块刚刚决定了一个组的开合。 */
     const rememberReaderTouched = (event) => {
         if ((0, programmatic_toggle_1.isProgrammaticToggle)())
@@ -2626,14 +2636,29 @@ function installProcessFold() {
         const header = group.querySelector(HEADER_SELECTOR);
         touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
     };
+    /**
+     * 这一批变化涉及哪些组。
+     *
+     * 从 records 里拿引用，而不是回头去查文档——理由同 `reasoning-fold`。组头里的实时细节是随流式
+     * 逐字变的，所以 characterData 也在观察范围里：不盯着它，组头那半截标签就会停在旧值上。
+     */
+    const touchedGroups = new Set();
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+        const known = touchedGroups.size;
+        for (const record of records)
+            collectGroups(record, touchedGroups);
+        // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
+        if (touchedGroups.size === known)
+            return;
         if (scanQueued)
             return;
         scanQueued = true;
         requestAnimationFrame(() => {
             scanQueued = false;
-            syncEveryGroup();
+            const groups = [...touchedGroups];
+            touchedGroups.clear();
+            syncGroups(groups);
         });
     });
     observer.observe(document.body ?? document.documentElement, {
@@ -2641,6 +2666,7 @@ function installProcessFold() {
         childList: true,
         attributes: true,
         attributeFilter: ['data-text-shimmer', 'hidden'],
+        characterData: true,
     });
     document.addEventListener('click', rememberReaderTouched, true);
     document.addEventListener('keydown', rememberReaderTouched, true);
@@ -2650,6 +2676,28 @@ function installProcessFold() {
         document.removeEventListener('click', rememberReaderTouched, true);
         document.removeEventListener('keydown', rememberReaderTouched, true);
     };
+}
+/**
+ * 把一条 mutation 涉及到的过程组收进集合。
+ *
+ * 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
+ * @param record - observer 交来的一条变化。
+ * @param into - 收集到的组。
+ */
+function collectGroups(record, into) {
+    const target = record.target;
+    const element = target instanceof Element ? target : target.parentElement;
+    const group = element?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
+    if (group !== null)
+        into.add(group);
+    for (const node of record.addedNodes) {
+        if (!(node instanceof HTMLElement))
+            continue;
+        if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
+            into.add(node);
+        for (const found of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
+            into.add(found);
+    }
 }
     };
 
@@ -2687,13 +2735,17 @@ function installReasoningFold() {
     /** 是否已经排了一次扫描。 */
     let scanQueued = false;
     /**
-     * 把每一行拉到它当前阶段该有的样子。
+     * 把给到的这些行拉到它们当前阶段该有的样子。
      *
      * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
      * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
+     * @param rows - 这一批要收敛的行；其中可能已经有被摘掉的。
      */
-    const syncEveryRow = () => {
-        for (const row of document.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR)) {
+    const syncRows = (rows) => {
+        for (const row of rows) {
+            // 收集与收敛之间隔着一帧，这中间行可能已经被摘掉——对不在文档里的元素点一下没有意义。
+            if (!row.isConnected)
+                continue;
             const phase = row.getAttribute('data-state') ?? '';
             if (phase === '')
                 continue;
@@ -2721,6 +2773,10 @@ function installReasoningFold() {
             }
         }
     };
+    /** 装好之后先全量收敛一遍：页面里躺着的那些行也要归位。 */
+    const syncEveryRow = () => {
+        syncRows(document.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR));
+    };
     /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
     const rememberReaderTouched = (event) => {
         if ((0, programmatic_toggle_1.isProgrammaticToggle)())
@@ -2733,14 +2789,29 @@ function installReasoningFold() {
             return;
         touchedIn.set(row, row.getAttribute('data-state') ?? '');
     };
+    /**
+     * 这一批变化涉及哪些行。
+     *
+     * 从 records 里拿引用，而不是回头去查文档：`record.target` 是浏览器直接递过来的元素，顺着它
+     * 往上找一行只是几层祖先的事；`querySelectorAll` 则要遍历整篇文档——同样的活差着一个量级。
+     */
+    const touchedRows = new Set();
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+        const known = touchedRows.size;
+        for (const record of records)
+            collectRows(record, touchedRows);
+        // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧。
+        if (touchedRows.size === known)
+            return;
         if (scanQueued)
             return;
         scanQueued = true;
         requestAnimationFrame(() => {
             scanQueued = false;
-            syncEveryRow();
+            const rows = [...touchedRows];
+            touchedRows.clear();
+            syncRows(rows);
         });
     });
     observer.observe(document.body ?? document.documentElement, {
@@ -2757,6 +2828,31 @@ function installReasoningFold() {
         document.removeEventListener('click', rememberReaderTouched, true);
         document.removeEventListener('keydown', rememberReaderTouched, true);
     };
+}
+/**
+ * 把一条 mutation 涉及到的思考行收进集合。
+ *
+ * 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
+ * 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
+ * 那时行自己就在新增的子树里。
+ * @param record - observer 交来的一条变化。
+ * @param into - 收集到的行。
+ */
+function collectRows(record, into) {
+    const target = record.target;
+    if (target instanceof Element) {
+        const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
+        if (row !== null)
+            into.add(row);
+    }
+    for (const node of record.addedNodes) {
+        if (!(node instanceof HTMLElement))
+            continue;
+        if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
+            into.add(node);
+        for (const row of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
+            into.add(row);
+    }
 }
     };
 
@@ -2784,12 +2880,19 @@ exports.installSendFlight = installSendFlight;
  *             先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置
  *             都是这几条曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
  *             曲线的两个幂次不开放，它们是照着「方向一直在转」量出来的（见下面那一段）。
+ *
+ *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
+ *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
+ *             布局结算拖进每一帧里来。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
- * 四条边界（前两条是实测踩出来的）：
+ * 五条边界（前两条是实测踩出来的）：
  *
  *   同帧就得藏    用 MutationObserver 而不是每帧轮询找回显：它在本帧渲染**之前**回调，所以真实
  *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
+ *   认行不在帧里  「当场」不等于「每帧」。回显被正式那一行换掉，同一个 observer 会在本帧渲染之前
+ *                 同步认出来；帧里再查一遍是白花的——长会话里光那两句全文档查询就够吃掉半帧。
+ *                 量外形也一样：内边距、圆角、底色都属于同一个气泡，跟着行换一次就够。
  *   宽度要写死      克隆出来的气泡离开原来的弹性上下文后会摊成整行，所以宽度取量到的那一份；而
  *                 `getBoundingClientRect` 给的是 border-box 宽，`box-sizing` 必须跟着写成 border-box，
  *                 否则内边距会再叠一次（右边胖出一截）。
@@ -2814,8 +2917,9 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
  * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
  * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
  *
- * 两者分家是有代价的：右边缘会先往左退最多 55 px，再随横向回来。气泡的横向位移本来就靠左边缘右移
- * 实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
+ * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
+ * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
+ * 右移实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
  *
  * 这两个幂次**不开放给读者调**：它们不是随手挑的，是照着「方向单调地转、中间没有平段」量出来的。
  * 换一组也画得出来——两个都取 1，路径就成了一条直线；横向取 4、纵向取 3，就成了先贴地冲出去、后段
@@ -2842,6 +2946,8 @@ const RESCUE_MARGIN_MS = 400;
 const ECHO_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' ' + dom_contract_1.SUBMISSION_ECHO_SELECTOR;
 /** 已经落定的用户行。它和回显行是同一个组件的两副面孔，结构差一层。 */
 const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]';
+/** 飞行期间要认的两种行，合成一句查：正式的用户行，以及它前面那条回显。 */
+const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
 /**
  * 给整页装上发送气泡的起飞。
  * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
@@ -2862,17 +2968,38 @@ function installSendFlight(readMs) {
     let rescue = 0;
     for (const echo of document.querySelectorAll(ECHO_SELECTOR))
         handled.add(echo);
+    /**
+     * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
+     *
+     * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
+     * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
+     */
+    const rowWatcher = new MutationObserver((records) => {
+        const current = flight;
+        if (current === null || !touchesUserRow(records))
+            return;
+        const row = currentRow(current.previous);
+        if (row === null || row === current.hidden)
+            return;
+        current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        row.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        current.hidden = row;
+        current.target = measureTarget(row);
+        placeGhost(current, performance.now() - current.startedAt);
+    });
     /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
     const settle = () => {
         const current = flight;
         if (current === null)
             return;
         flight = null;
+        rowWatcher.disconnect();
         window.clearTimeout(rescue);
         rescue = 0;
         current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
         current.shell.remove();
     };
+    /** 帧里只画。认行与量外形都交给上面那个 observer——它们不是每帧都有新答案的事。 */
     const tick = () => {
         const current = flight;
         if (current === null)
@@ -2882,30 +3009,21 @@ function installSendFlight(readMs) {
             settle();
             return;
         }
-        // 回显随时会被正式那一行换掉，所以每一帧认一遍此刻该藏哪一条。
-        const row = currentRow(current.previous);
-        if (row !== null && row !== current.hidden) {
-            current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
-            row.setAttribute(exports.FLYING_ATTRIBUTE, '');
-            current.hidden = row;
-        }
-        const bubble = current.hidden === null ? null : findBubble(current.hidden);
-        if (bubble !== null)
-            placeGhost(current, bubble, elapsed);
+        placeGhost(current, elapsed);
         requestAnimationFrame(tick);
     };
     /** 起一段飞行：立替身、藏真实行、把第一帧摆好。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
     const startFlight = (echo, draft) => {
-        const bubble = findBubble(echo);
-        if (bubble === null)
+        const target = measureTarget(echo);
+        if (target === null)
             return;
-        const box = bubble.getBoundingClientRect();
+        const box = target.bubble.getBoundingClientRect();
         const card = draft.card.box;
         if (!sameScreen(card.left, box.left, window.innerWidth))
             return;
         if (!sameScreen(card.top, box.top, window.innerHeight))
             return;
-        const ghost = createGhost(bubble);
+        const ghost = createGhost(target.bubble, box);
         if (ghost === null)
             return;
         const ms = readMs();
@@ -2918,8 +3036,10 @@ function installSendFlight(readMs) {
             ms,
             previous: lastUserRow(),
             hidden: echo,
+            target,
         };
-        placeGhost(flight, bubble, 0);
+        placeGhost(flight, 0);
+        rowWatcher.observe(document.body, { childList: true, subtree: true });
         rescue = window.setTimeout(settle, ms + RESCUE_MARGIN_MS);
         requestAnimationFrame(tick);
     };
@@ -2996,6 +3116,7 @@ function installSendFlight(readMs) {
         document.removeEventListener('keydown', onKeyDown, true);
         document.removeEventListener('click', onClick, true);
         echoWatcher.disconnect();
+        rowWatcher.disconnect();
         origin = null;
         settle();
     };
@@ -3054,6 +3175,49 @@ function findBubble(row) {
     return null;
 }
 /**
+ * 量一次终点：气泡在哪儿（每帧现读）、长什么样（只读这一次）。
+ * @param row - 此刻藏着的那一行。
+ * @returns 终点；这一行里找不到画了底色的元素时为 null。
+ */
+function measureTarget(row) {
+    const bubble = findBubble(row);
+    if (bubble === null)
+        return null;
+    const style = getComputedStyle(bubble);
+    return {
+        bubble,
+        padding: { top: pixel(style.paddingTop), left: pixel(style.paddingLeft) },
+        radius: pixel(style.borderTopLeftRadius),
+        background: style.backgroundColor,
+    };
+}
+/**
+ * 这一批 DOM 变化里有没有碰用户行或回显行。
+ *
+ * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
+ * 就是几千个节点。
+ * @param records - observer 交来的这一批变化。
+ * @returns 值得认一次行时为真。
+ */
+function touchesUserRow(records) {
+    for (const record of records) {
+        for (const node of record.addedNodes) {
+            if (isRowNode(node))
+                return true;
+        }
+        for (const node of record.removedNodes) {
+            if (isRowNode(node))
+                return true;
+        }
+    }
+    return false;
+}
+/** 一个节点自己、或者它带进来的那棵子树里，有没有用户行或回显行。 */
+function isRowNode(node) {
+    return node instanceof HTMLElement
+        && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null);
+}
+/**
  * 起终点还在同一屏里吗。
  *
  * 一屏的尺度现读视口的那一维（兜底见 `FLIGHT_LIMIT_FLOOR_PX`）：两个盒子还落在同一屏里，这段飞行
@@ -3069,9 +3233,11 @@ function sameScreen(start, end, viewportExtent) {
  * 宽度（它原来靠一个靠右对齐的弹性上下文撑着，一挪到 body 上就会摊成整行）与 `box-sizing`
  * （`getBoundingClientRect` 量到的是 border-box 宽，不声明的话内边距会再叠一次）。底色摘掉交给壳，
  * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
+ * @param bubble - 克隆的源头。
+ * @param box - 已经量好的气泡矩形。调用方本来就要它，这里不再重量一次。
+ * @returns 壳与内容；气泡量不到尺寸时为 null。
  */
-function createGhost(bubble) {
-    const box = bubble.getBoundingClientRect();
+function createGhost(bubble, box) {
     if (box.width === 0 || box.height === 0)
         return null;
     const content = bubble.cloneNode(true);
@@ -3092,6 +3258,8 @@ function createGhost(bubble) {
     shell.style.margin = '0px';
     shell.style.overflow = 'hidden';
     shell.style.pointerEvents = 'none';
+    // 壳的尺寸每帧都在变。圈成一块独立的布局与绘制区域，那些变化就不会外溢到聊天区去。
+    shell.style.contain = 'layout paint';
     // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
     shell.style.zIndex = '2147483000';
     shell.appendChild(content);
@@ -3103,12 +3271,18 @@ function createGhost(bubble) {
  *
  * 位置走 `across` 与 `rise` 两条互补的曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
  * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
+ *
+ * 外形从 `target` 里拿，不在这里读计算样式——这一帧只重量终点的位置，因为只有它会变。
  */
-function placeGhost(value, bubble, elapsed) {
-    const box = bubble.getBoundingClientRect();
-    const style = getComputedStyle(bubble);
-    const top = pixel(style.paddingTop);
-    const left = pixel(style.paddingLeft);
+function placeGhost(value, elapsed) {
+    const target = value.target;
+    if (target === null)
+        return;
+    const box = target.bubble.getBoundingClientRect();
+    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不画，
+    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+    if (box.width === 0)
+        return;
     const card = value.draft.card;
     const progressed = Math.min(1, elapsed / value.ms);
     const rest = 1 - progressed;
@@ -3123,11 +3297,11 @@ function placeGhost(value, bubble, elapsed) {
     shell.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
     shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px';
     shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px';
-    shell.style.borderRadius = (card.radius + (pixel(style.borderTopLeftRadius) - card.radius) * morph) + 'px';
-    shell.style.backgroundColor = mixColor(card.background, style.backgroundColor, morph);
+    shell.style.borderRadius = (card.radius + (target.radius - card.radius) * morph) + 'px';
+    shell.style.backgroundColor = mixColor(card.background, target.background, morph);
     content.style.transform = 'translate('
-        + ((value.draft.box.left - card.box.left - left) * (1 - morph)) + 'px, '
-        + ((value.draft.box.top - card.box.top - top) * (1 - morph)) + 'px)';
+        + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
+        + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)';
 }
 /** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
 function mixColor(from, to, progress) {

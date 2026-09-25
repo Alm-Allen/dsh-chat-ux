@@ -31,13 +31,16 @@ export function installReasoningFold(): () => void {
   let scanQueued = false
 
   /**
-   * 把每一行拉到它当前阶段该有的样子。
+   * 把给到的这些行拉到它们当前阶段该有的样子。
    *
    * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
    * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
+   * @param rows - 这一批要收敛的行；其中可能已经有被摘掉的。
    */
-  const syncEveryRow = (): void => {
-    for (const row of document.querySelectorAll(THINK_ROW_SELECTOR)) {
+  const syncRows = (rows: Iterable<HTMLElement>): void => {
+    for (const row of rows) {
+      // 收集与收敛之间隔着一帧，这中间行可能已经被摘掉——对不在文档里的元素点一下没有意义。
+      if (!row.isConnected) continue
       const phase = row.getAttribute('data-state') ?? ''
       if (phase === '') continue
       // 这个阶段里读者已经决定过这一行的状态，别碰它。
@@ -60,6 +63,11 @@ export function installReasoningFold(): () => void {
     }
   }
 
+  /** 装好之后先全量收敛一遍：页面里躺着的那些行也要归位。 */
+  const syncEveryRow = (): void => {
+    syncRows(document.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR))
+  }
+
   /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
   const rememberReaderTouched = (event: Event): void => {
     if (isProgrammaticToggle()) return
@@ -70,13 +78,27 @@ export function installReasoningFold(): () => void {
     touchedIn.set(row, row.getAttribute('data-state') ?? '')
   }
 
+  /**
+   * 这一批变化涉及哪些行。
+   *
+   * 从 records 里拿引用，而不是回头去查文档：`record.target` 是浏览器直接递过来的元素，顺着它
+   * 往上找一行只是几层祖先的事；`querySelectorAll` 则要遍历整篇文档——同样的活差着一个量级。
+   */
+  const touchedRows = new Set<HTMLElement>()
+
   // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
+    const known = touchedRows.size
+    for (const record of records) collectRows(record, touchedRows)
+    // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧。
+    if (touchedRows.size === known) return
     if (scanQueued) return
     scanQueued = true
     requestAnimationFrame(() => {
       scanQueued = false
-      syncEveryRow()
+      const rows = [...touchedRows]
+      touchedRows.clear()
+      syncRows(rows)
     })
   })
   observer.observe(document.body ?? document.documentElement, {
@@ -96,3 +118,24 @@ export function installReasoningFold(): () => void {
   }
 }
 
+/**
+ * 把一条 mutation 涉及到的思考行收进集合。
+ *
+ * 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
+ * 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
+ * 那时行自己就在新增的子树里。
+ * @param record - observer 交来的一条变化。
+ * @param into - 收集到的行。
+ */
+function collectRows(record: MutationRecord, into: Set<HTMLElement>): void {
+  const target = record.target
+  if (target instanceof Element) {
+    const row = target.closest<HTMLElement>(THINK_ROW_SELECTOR)
+    if (row !== null) into.add(row)
+  }
+  for (const node of record.addedNodes) {
+    if (!(node instanceof HTMLElement)) continue
+    if (node.matches(THINK_ROW_SELECTOR)) into.add(node)
+    for (const row of node.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR)) into.add(row)
+  }
+}

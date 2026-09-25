@@ -68,9 +68,14 @@ export function installProcessFold(): () => void {
   /** 是否已经排了一次扫描。 */
   let scanQueued = false
 
-  /** 把每个组拉到它当前阶段该有的样子。 */
-  const syncEveryGroup = (): void => {
-    for (const group of document.querySelectorAll(PROCESS_GROUP_SELECTOR)) {
+  /**
+   * 把给到的这些组拉到它们当前阶段该有的样子。
+   * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
+   */
+  const syncGroups = (groups: Iterable<HTMLElement>): void => {
+    for (const group of groups) {
+      // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
+      if (!group.isConnected) continue
       const header = group.querySelector(HEADER_SELECTOR)
       const body = group.querySelector(PROCESS_BODY_SELECTOR)
       if (!(header instanceof HTMLElement) || body === null) continue
@@ -128,6 +133,11 @@ export function installProcessFold(): () => void {
     }
   }
 
+  /** 装好之后先全量收敛一遍：页面里躺着的那些组也要归位。 */
+  const syncEveryGroup = (): void => {
+    syncGroups(document.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR))
+  }
+
   /** 记住是读者、而不是本模块刚刚决定了一个组的开合。 */
   const rememberReaderTouched = (event: Event): void => {
     if (isProgrammaticToggle()) return
@@ -139,13 +149,27 @@ export function installProcessFold(): () => void {
     touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
   }
 
+  /**
+   * 这一批变化涉及哪些组。
+   *
+   * 从 records 里拿引用，而不是回头去查文档——理由同 `reasoning-fold`。组头里的实时细节是随流式
+   * 逐字变的，所以 characterData 也在观察范围里：不盯着它，组头那半截标签就会停在旧值上。
+   */
+  const touchedGroups = new Set<HTMLElement>()
+
   // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
+    const known = touchedGroups.size
+    for (const record of records) collectGroups(record, touchedGroups)
+    // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
+    if (touchedGroups.size === known) return
     if (scanQueued) return
     scanQueued = true
     requestAnimationFrame(() => {
       scanQueued = false
-      syncEveryGroup()
+      const groups = [...touchedGroups]
+      touchedGroups.clear()
+      syncGroups(groups)
     })
   })
   observer.observe(document.body ?? document.documentElement, {
@@ -153,6 +177,7 @@ export function installProcessFold(): () => void {
     childList: true,
     attributes: true,
     attributeFilter: ['data-text-shimmer', 'hidden'],
+    characterData: true,
   })
   document.addEventListener('click', rememberReaderTouched, true)
   document.addEventListener('keydown', rememberReaderTouched, true)
@@ -162,5 +187,24 @@ export function installProcessFold(): () => void {
     observer.disconnect()
     document.removeEventListener('click', rememberReaderTouched, true)
     document.removeEventListener('keydown', rememberReaderTouched, true)
+  }
+}
+
+/**
+ * 把一条 mutation 涉及到的过程组收进集合。
+ *
+ * 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
+ * @param record - observer 交来的一条变化。
+ * @param into - 收集到的组。
+ */
+function collectGroups(record: MutationRecord, into: Set<HTMLElement>): void {
+  const target = record.target
+  const element = target instanceof Element ? target : target.parentElement
+  const group = element?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+  if (group !== null) into.add(group)
+  for (const node of record.addedNodes) {
+    if (!(node instanceof HTMLElement)) continue
+    if (node.matches(PROCESS_GROUP_SELECTOR)) into.add(node)
+    for (const found of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) into.add(found)
   }
 }
