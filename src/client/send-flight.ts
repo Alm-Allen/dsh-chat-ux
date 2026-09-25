@@ -17,12 +17,19 @@
  *             先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置
  *             都是这几条曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
  *             曲线的两个幂次不开放，它们是照着「方向一直在转」量出来的（见下面那一段）。
+ *
+ *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
+ *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
+ *             布局结算拖进每一帧里来。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
- * 四条边界（前两条是实测踩出来的）：
+ * 五条边界（前两条是实测踩出来的）：
  *
  *   同帧就得藏    用 MutationObserver 而不是每帧轮询找回显：它在本帧渲染**之前**回调，所以真实
  *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
+ *   认行不在帧里  「当场」不等于「每帧」。回显被正式那一行换掉，同一个 observer 会在本帧渲染之前
+ *                 同步认出来；帧里再查一遍是白花的——长会话里光那两句全文档查询就够吃掉半帧。
+ *                 量外形也一样：内边距、圆角、底色都属于同一个气泡，跟着行换一次就够。
  *   宽度要写死      克隆出来的气泡离开原来的弹性上下文后会摊成整行，所以宽度取量到的那一份；而
  *                 `getBoundingClientRect` 给的是 border-box 宽，`box-sizing` 必须跟着写成 border-box，
  *                 否则内边距会再叠一次（右边胖出一截）。
@@ -50,8 +57,9 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
  * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
  * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
  *
- * 两者分家是有代价的：右边缘会先往左退最多 55 px，再随横向回来。气泡的横向位移本来就靠左边缘右移
- * 实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
+ * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
+ * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
+ * 右移实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
  *
  * 这两个幂次**不开放给读者调**：它们不是随手挑的，是照着「方向单调地转、中间没有平段」量出来的。
  * 换一组也画得出来——两个都取 1，路径就成了一条直线；横向取 4、纵向取 3，就成了先贴地冲出去、后段
@@ -86,6 +94,9 @@ const ECHO_SELECTOR = CHAT_FLOW_SELECTOR + ' ' + SUBMISSION_ECHO_SELECTOR
 /** 已经落定的用户行。它和回显行是同一个组件的两副面孔，结构差一层。 */
 const USER_ROW_SELECTOR = CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]'
 
+/** 飞行期间要认的两种行，合成一句查：正式的用户行，以及它前面那条回显。 */
+const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR
+
 /**
  * 给整页装上发送气泡的起飞。
  * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
@@ -107,17 +118,37 @@ export function installSendFlight(readMs: () => number): () => void {
 
   for (const echo of document.querySelectorAll(ECHO_SELECTOR)) handled.add(echo)
 
+  /**
+   * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
+   *
+   * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
+   * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
+   */
+  const rowWatcher = new MutationObserver((records) => {
+    const current = flight
+    if (current === null || !touchesUserRow(records)) return
+    const row = currentRow(current.previous)
+    if (row === null || row === current.hidden) return
+    current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
+    row.setAttribute(FLYING_ATTRIBUTE, '')
+    current.hidden = row
+    current.target = measureTarget(row)
+    placeGhost(current, performance.now() - current.startedAt)
+  })
+
   /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
   const settle = (): void => {
     const current = flight
     if (current === null) return
     flight = null
+    rowWatcher.disconnect()
     window.clearTimeout(rescue)
     rescue = 0
     current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
     current.shell.remove()
   }
 
+  /** 帧里只画。认行与量外形都交给上面那个 observer——它们不是每帧都有新答案的事。 */
   const tick = (): void => {
     const current = flight
     if (current === null) return
@@ -126,27 +157,19 @@ export function installSendFlight(readMs: () => number): () => void {
       settle()
       return
     }
-    // 回显随时会被正式那一行换掉，所以每一帧认一遍此刻该藏哪一条。
-    const row = currentRow(current.previous)
-    if (row !== null && row !== current.hidden) {
-      current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-      row.setAttribute(FLYING_ATTRIBUTE, '')
-      current.hidden = row
-    }
-    const bubble = current.hidden === null ? null : findBubble(current.hidden)
-    if (bubble !== null) placeGhost(current, bubble, elapsed)
+    placeGhost(current, elapsed)
     requestAnimationFrame(tick)
   }
 
   /** 起一段飞行：立替身、藏真实行、把第一帧摆好。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
   const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
-    const bubble = findBubble(echo)
-    if (bubble === null) return
-    const box = bubble.getBoundingClientRect()
+    const target = measureTarget(echo)
+    if (target === null) return
+    const box = target.bubble.getBoundingClientRect()
     const card = draft.card.box
     if (!sameScreen(card.left, box.left, window.innerWidth)) return
     if (!sameScreen(card.top, box.top, window.innerHeight)) return
-    const ghost = createGhost(bubble)
+    const ghost = createGhost(target.bubble, box)
     if (ghost === null) return
     const ms = readMs()
     echo.setAttribute(FLYING_ATTRIBUTE, '')
@@ -158,8 +181,10 @@ export function installSendFlight(readMs: () => number): () => void {
       ms,
       previous: lastUserRow(),
       hidden: echo,
+      target,
     }
-    placeGhost(flight, bubble, 0)
+    placeGhost(flight, 0)
+    rowWatcher.observe(document.body, { childList: true, subtree: true })
     rescue = window.setTimeout(settle, ms + RESCUE_MARGIN_MS)
     requestAnimationFrame(tick)
   }
@@ -234,6 +259,7 @@ export function installSendFlight(readMs: () => number): () => void {
     document.removeEventListener('keydown', onKeyDown, true)
     document.removeEventListener('click', onClick, true)
     echoWatcher.disconnect()
+    rowWatcher.disconnect()
     origin = null
     settle()
   }
@@ -267,6 +293,22 @@ interface Flight {
   /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
   readonly previous: HTMLElement | null
   hidden: HTMLElement | null
+  /** 终点。跟着 `hidden` 一起换；量不到时留 null，这一帧就不画。 */
+  target: FlightTarget | null
+}
+
+/**
+ * 终点：气泡在哪儿，以及它长什么样。
+ *
+ * 位置每一帧都得重量（它会随滚动走），外形不用——内边距、圆角、底色都属于同一个气泡，飞行期间
+ * 不会有第二个值。分成两半存就是为了这个：一半每帧读，一半只读一次。
+ */
+interface FlightTarget {
+  /** 那一行里真正画了底色的元素，替身一路长成它。 */
+  readonly bubble: HTMLElement
+  readonly padding: { readonly top: number; readonly left: number }
+  readonly radius: number
+  readonly background: string
 }
 
 /**
@@ -320,6 +362,49 @@ function findBubble(row: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * 量一次终点：气泡在哪儿（每帧现读）、长什么样（只读这一次）。
+ * @param row - 此刻藏着的那一行。
+ * @returns 终点；这一行里找不到画了底色的元素时为 null。
+ */
+function measureTarget(row: HTMLElement): FlightTarget | null {
+  const bubble = findBubble(row)
+  if (bubble === null) return null
+  const style = getComputedStyle(bubble)
+  return {
+    bubble,
+    padding: { top: pixel(style.paddingTop), left: pixel(style.paddingLeft) },
+    radius: pixel(style.borderTopLeftRadius),
+    background: style.backgroundColor,
+  }
+}
+
+/**
+ * 这一批 DOM 变化里有没有碰用户行或回显行。
+ *
+ * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
+ * 就是几千个节点。
+ * @param records - observer 交来的这一批变化。
+ * @returns 值得认一次行时为真。
+ */
+function touchesUserRow(records: MutationRecord[]): boolean {
+  for (const record of records) {
+    for (const node of record.addedNodes) {
+      if (isRowNode(node)) return true
+    }
+    for (const node of record.removedNodes) {
+      if (isRowNode(node)) return true
+    }
+  }
+  return false
+}
+
+/** 一个节点自己、或者它带进来的那棵子树里，有没有用户行或回显行。 */
+function isRowNode(node: Node): boolean {
+  return node instanceof HTMLElement
+    && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null)
+}
+
+/**
  * 起终点还在同一屏里吗。
  *
  * 一屏的尺度现读视口的那一维（兜底见 `FLIGHT_LIMIT_FLOOR_PX`）：两个盒子还落在同一屏里，这段飞行
@@ -336,9 +421,11 @@ function sameScreen(start: number, end: number, viewportExtent: number): boolean
  * 宽度（它原来靠一个靠右对齐的弹性上下文撑着，一挪到 body 上就会摊成整行）与 `box-sizing`
  * （`getBoundingClientRect` 量到的是 border-box 宽，不声明的话内边距会再叠一次）。底色摘掉交给壳，
  * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
+ * @param bubble - 克隆的源头。
+ * @param box - 已经量好的气泡矩形。调用方本来就要它，这里不再重量一次。
+ * @returns 壳与内容；气泡量不到尺寸时为 null。
  */
-function createGhost(bubble: HTMLElement): { shell: HTMLElement; content: HTMLElement } | null {
-  const box = bubble.getBoundingClientRect()
+function createGhost(bubble: HTMLElement, box: DOMRect): { shell: HTMLElement; content: HTMLElement } | null {
   if (box.width === 0 || box.height === 0) return null
   const content = bubble.cloneNode(true) as HTMLElement
   content.removeAttribute('id')
@@ -358,6 +445,8 @@ function createGhost(bubble: HTMLElement): { shell: HTMLElement; content: HTMLEl
   shell.style.margin = '0px'
   shell.style.overflow = 'hidden'
   shell.style.pointerEvents = 'none'
+  // 壳的尺寸每帧都在变。圈成一块独立的布局与绘制区域，那些变化就不会外溢到聊天区去。
+  shell.style.contain = 'layout paint'
   // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
   shell.style.zIndex = '2147483000'
   shell.appendChild(content)
@@ -370,12 +459,16 @@ function createGhost(bubble: HTMLElement): { shell: HTMLElement; content: HTMLEl
  *
  * 位置走 `across` 与 `rise` 两条互补的曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
  * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
+ *
+ * 外形从 `target` 里拿，不在这里读计算样式——这一帧只重量终点的位置，因为只有它会变。
  */
-function placeGhost(value: Flight, bubble: HTMLElement, elapsed: number): void {
-  const box = bubble.getBoundingClientRect()
-  const style = getComputedStyle(bubble)
-  const top = pixel(style.paddingTop)
-  const left = pixel(style.paddingLeft)
+function placeGhost(value: Flight, elapsed: number): void {
+  const target = value.target
+  if (target === null) return
+  const box = target.bubble.getBoundingClientRect()
+  // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不画，
+  // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+  if (box.width === 0) return
   const card = value.draft.card
   const progressed = Math.min(1, elapsed / value.ms)
   const rest = 1 - progressed
@@ -390,11 +483,11 @@ function placeGhost(value: Flight, bubble: HTMLElement, elapsed: number): void {
   shell.style.transform = 'translate(' + x + 'px, ' + y + 'px)'
   shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px'
   shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px'
-  shell.style.borderRadius = (card.radius + (pixel(style.borderTopLeftRadius) - card.radius) * morph) + 'px'
-  shell.style.backgroundColor = mixColor(card.background, style.backgroundColor, morph)
+  shell.style.borderRadius = (card.radius + (target.radius - card.radius) * morph) + 'px'
+  shell.style.backgroundColor = mixColor(card.background, target.background, morph)
   content.style.transform = 'translate('
-    + ((value.draft.box.left - card.box.left - left) * (1 - morph)) + 'px, '
-    + ((value.draft.box.top - card.box.top - top) * (1 - morph)) + 'px)'
+    + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
+    + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)'
 }
 
 /** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
