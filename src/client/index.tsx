@@ -161,7 +161,7 @@ interface ClientServices {
  * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 `plugins.bundle.config` 按 **bundle** 的包名
  * 索引，而不是按设置命名空间，所以下面两个字符串都需要，且不能混为一谈。
  */
-const PACKAGE_NAME = 'dsh-chat-ux'
+const PACKAGE_NAME = '@alm-allen/dsh-chat-ux'
 
 /** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux'
