@@ -53,6 +53,7 @@ const font_override_1 = require("./font-override");
 const process_follow_1 = require("./process-follow");
 const process_fold_1 = require("./process-fold");
 const reasoning_fold_1 = require("./reasoning-fold");
+const send_flight_1 = require("./send-flight");
 const settings_card_1 = require("./settings-card");
 const settings_scope_1 = require("./settings-scope");
 const styles_1 = require("./styles");
@@ -108,6 +109,9 @@ function apply(ctx) {
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
+    // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
+    // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
+    ctx.effect(() => (0, send_flight_1.installSendFlight)(), 'dsh-chat-ux: send flight');
     // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
     ctx.effect(() => (0, token_motion_1.installTokenMotion)(), 'dsh-chat-ux: token reveal');
     // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
@@ -142,7 +146,7 @@ function apply(ctx) {
             locale: services.reflect.get('locale'),
         }),
     }, settings_card_1.ChatUxConfigCard));
-    console.log('[dsh-chat-ux] client half loaded');
+    console.log('[dsh-chat-ux] client half loaded', { rev: clientRevision() ?? 'unknown' });
 }
 /**
  * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 `plugins.bundle.config` 按 **bundle** 的包名
@@ -151,6 +155,16 @@ function apply(ctx) {
 const PACKAGE_NAME = '@alm-allen/dsh-chat-ux';
 /** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux';
+/**
+ * 宿主给这个插件的 client 产物算的内容哈希，取自浏览器启动图（\`window.__DSH_BOOT__\` 的 entries）。
+ *
+ * 开发期这一条最省事：产物一改哈希就变，刷新页面看一眼控制台就知道浏览器拿到的是不是刚构建的那一份。
+ * 没有启动图的场合返回 undefined。
+ */
+function clientRevision() {
+    const boot = window.__DSH_BOOT__;
+    return boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev;
+}
     };
 
     __registry["caret-motion.js"] = function (module, exports, require) {
@@ -568,7 +582,7 @@ function installCaretMotion(read) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -600,8 +614,16 @@ exports.FOLLOWING_TAIL_SELECTOR = '[' + exports.FOLLOWING_TAIL_ATTRIBUTE + ']';
 exports.FOLLOW_THRESHOLD_PX = 25;
 /** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
 exports.COMPOSER_SELECTOR = '[data-composer-seat]';
-/** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位。 */
+/** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位，发送气泡按它取起点。 */
 exports.COMPOSER_INPUT_SELECTOR = '[data-composer-input]';
+/** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
+exports.COMPOSER_CARD_SELECTOR = '[data-composer-card]';
+/**
+ * 提交之后 dsh 立刻挂上来的那条「即发即显」回显行；发送气泡的落点就是它。
+ *
+ * 排队的那一条落在队列坞里、也带这个属性，所以要飞的那条必须连同聊天列一起认（见 `send-flight.ts`）。
+ */
+exports.SUBMISSION_ECHO_SELECTOR = '[data-submission-echo]';
 /** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
 exports.SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 /** dsh 给每一个过程组放的属性。 */
@@ -2714,6 +2736,383 @@ function installReasoningFold() {
 }
     };
 
+    __registry["send-flight.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FLYING_ATTRIBUTE = void 0;
+exports.installSendFlight = installSendFlight;
+/**
+ * 发送气泡的起飞。
+ *
+ * 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡（`[data-submission-echo]`），真实消息一到就把
+ * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到，一次飞行却要
+ * 480 ms——动画挂在这两条节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
+ *
+ * 所以这里自己画一个替身。它是**两层**：外面那层壳就是输入框的形状（尺寸、圆角、底色都从输入卡片
+ * 现读），里面挂着克隆下来的那条气泡（底色摘掉，交给壳），于是同一个元素从「一条输入框」连续地
+ * 长成「一条气泡」：
+ *
+ *   抓起点    提交的 capture 阶段量下三样东西：草稿的位置与颜色、输入卡片的矩形、卡片的底色与圆角。
+ *             全都早于 React 清空草稿。
+ *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
+ *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
+ *   逐帧画    横向与纵向各走各的进度：两者都是贝塞尔，横向的控制点压在起点这条水平线的七成半处。
+ *             于是前半程几乎只横着走、抬升越到后面越急，空间上是一道**连续的弯**——位置、尺寸、
+ *             圆角、底色、内容的相对位置全是这条曲线的函数。
+ *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
+ *
+ * 四条边界（前两条是实测踩出来的）：
+ *
+ *   同帧就得藏    用 MutationObserver 而不是每帧轮询找回显：它在本帧渲染**之前**回调，所以真实
+ *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
+ *   宽度要写死      克隆出来的气泡离开原来的弹性上下文后会摊成整行，所以宽度取量到的那一份；而
+ *                 `getBoundingClientRect` 给的是 border-box 宽，`box-sizing` 必须跟着写成 border-box，
+ *                 否则内边距会再叠一次（右边胖出一截）。
+ *   抓不到就不做    起点抓不到（快捷键、程序化提交）时这一次不动手，读者看到的还是 dsh 原来的样子。
+ *   藏起来必须还    真实行被藏着的这会儿，读者看不见那条消息。所以除了正常落定，还有一条定时器
+ *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
+ *
+ * @module dsh-chat-ux/client/send-flight
+ */
+const dom_contract_1 = require("./dom-contract");
+/** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
+exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
+/** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
+const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
+/** 飞行时长。 */
+const FLIGHT_MS = 520;
+/**
+ * 路径那道弯的两个数。横向是一条二次贝塞尔（控制点压在起点这条水平线的七成半处），纵向的比例里
+ * 先扣掉一段固定延迟，剩下的再平方。两个都是连续函数，所以路径**始终是一条平滑的曲线**——把横向
+ * 与纵向各自做成「先走完一段、再走另一段」，画出来就是一个直角折角，生硬就生硬在那儿。
+ *
+ * 横向刻意不用任何缓动：缓动是「前快」的，横向会在一眨眼之间冲完，曲线的水平段就没了。
+ */
+const ACROSS_CONTROL = 0.85;
+/** 纵向从总时长的这个比例才开始动；在此之前是纯横向的行程。 */
+const RISE_START = 0.25;
+/** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
+const ORIGIN_TTL_MS = 1500;
+/** 位移超过这个距离就不飞：那看起来是「消息从屏幕外飞进来」，不是「我的字飞上去了」。 */
+const MAX_FLIGHT_PX = 900;
+/** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
+const RESCUE_MS = FLIGHT_MS + 400;
+/** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
+const ECHO_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' ' + dom_contract_1.SUBMISSION_ECHO_SELECTOR;
+/** 已经落定的用户行。它和回显行是同一个组件的两副面孔，结构差一层。 */
+const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]';
+/**
+ * 给整页装上发送气泡的起飞。
+ * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
+ */
+function installSendFlight() {
+    // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+        return () => { };
+    /** 最近一次抓到的草稿起点。 */
+    let origin = null;
+    /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
+    const handled = new WeakSet();
+    /** 正在飞的那一段。读者连发时，最后一段说了算。 */
+    let flight = null;
+    /** 定时器兜底。 */
+    let rescue = 0;
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR))
+        handled.add(echo);
+    /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
+    const settle = () => {
+        const current = flight;
+        if (current === null)
+            return;
+        flight = null;
+        window.clearTimeout(rescue);
+        rescue = 0;
+        current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        current.shell.remove();
+    };
+    const tick = () => {
+        const current = flight;
+        if (current === null)
+            return;
+        const elapsed = performance.now() - current.startedAt;
+        if (elapsed >= FLIGHT_MS) {
+            settle();
+            return;
+        }
+        // 回显随时会被正式那一行换掉，所以每一帧认一遍此刻该藏哪一条。
+        const row = currentRow(current.previous);
+        if (row !== null && row !== current.hidden) {
+            current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+            row.setAttribute(exports.FLYING_ATTRIBUTE, '');
+            current.hidden = row;
+        }
+        const bubble = current.hidden === null ? null : findBubble(current.hidden);
+        if (bubble !== null)
+            placeGhost(current, bubble, elapsed);
+        requestAnimationFrame(tick);
+    };
+    /** 起一段飞行：立替身、藏真实行、把第一帧摆好。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+    const startFlight = (echo, draft) => {
+        const bubble = findBubble(echo);
+        if (bubble === null)
+            return;
+        const box = bubble.getBoundingClientRect();
+        const card = draft.card.box;
+        if (Math.abs(card.left - box.left) > MAX_FLIGHT_PX || Math.abs(card.top - box.top) > MAX_FLIGHT_PX)
+            return;
+        const ghost = createGhost(bubble);
+        if (ghost === null)
+            return;
+        echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        flight = { draft, shell: ghost.shell, content: ghost.content, startedAt: performance.now(), previous: lastUserRow(), hidden: echo };
+        placeGhost(flight, bubble, 0);
+        rescue = window.setTimeout(settle, RESCUE_MS);
+        requestAnimationFrame(tick);
+    };
+    /**
+     * 等这一次提交的回显。
+     *
+     * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
+     */
+    const echoWatcher = new MutationObserver(() => {
+        const draft = origin;
+        if (draft === null) {
+            echoWatcher.disconnect();
+            return;
+        }
+        if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
+            origin = null;
+            echoWatcher.disconnect();
+            return;
+        }
+        const echo = takeFreshEcho(handled);
+        if (echo === null)
+            return;
+        origin = null;
+        echoWatcher.disconnect();
+        startFlight(echo, draft);
+    });
+    /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
+    const captureOrigin = () => {
+        const input = document.querySelector(dom_contract_1.COMPOSER_INPUT_SELECTOR);
+        if (!(input instanceof HTMLElement))
+            return;
+        const card = input.closest(dom_contract_1.COMPOSER_CARD_SELECTOR);
+        if (!(card instanceof HTMLElement))
+            return;
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        const box = range.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0)
+            return;
+        const cardStyle = getComputedStyle(card);
+        origin = {
+            capturedAt: performance.now(),
+            box,
+            color: getComputedStyle(input).color,
+            card: {
+                box: card.getBoundingClientRect(),
+                background: cardStyle.backgroundColor,
+                radius: pixel(cardStyle.borderTopLeftRadius),
+            },
+        };
+        echoWatcher.observe(document.body, { childList: true, subtree: true });
+    };
+    /**
+     * 提交的两条手动路径：回车，和点输入卡片里的按钮。两个都早于 React 清空草稿，所以起点量得到。
+     * 点了没提交也不亏——没有回显就没有动画。
+     */
+    const onKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)
+            return;
+        if (event.isComposing)
+            return;
+        captureOrigin();
+    };
+    const onClick = (event) => {
+        if (!(event.target instanceof Element))
+            return;
+        if (event.target.closest(dom_contract_1.COMPOSER_CARD_SELECTOR) === null)
+            return;
+        captureOrigin();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('click', onClick, true);
+    return () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('click', onClick, true);
+        echoWatcher.disconnect();
+        origin = null;
+        settle();
+    };
+}
+/**
+ * 取一条还没认过的回显行。
+ *
+ * 一批里只认最新的一条（`querySelectorAll` 是文档序），其余的也一并记下——否则它们会在后面的帧
+ * 里被当成新的，跟着再飞一次。
+ */
+function takeFreshEcho(handled) {
+    const fresh = [];
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR)) {
+        if (!handled.has(echo))
+            fresh.push(echo);
+    }
+    if (fresh.length === 0)
+        return null;
+    for (const echo of fresh)
+        handled.add(echo);
+    const latest = fresh.at(-1);
+    return latest instanceof HTMLElement ? latest : null;
+}
+/** 此刻该藏的那一条：回显还在就是它，回显被换掉之后就是正式那一行。 */
+function currentRow(previous) {
+    const echo = document.querySelector(ECHO_SELECTOR);
+    if (echo instanceof HTMLElement && echo !== previous)
+        return echo;
+    const row = lastUserRow();
+    return row === previous ? null : row;
+}
+/** 聊天流里最后一条用户行。 */
+function lastUserRow() {
+    const rows = document.querySelectorAll(USER_ROW_SELECTOR);
+    const last = rows.item(rows.length - 1);
+    return last instanceof HTMLElement ? last : null;
+}
+/**
+ * 一行用户消息里真正画了底色的那一个元素，也就是气泡。
+ *
+ * 不能认死层数：回显行自己就是气泡那一行（`data-submission-echo` 挂在 `.userRow` 上），而正式行
+ * 外面还套着一层流块容器——两边的深度差一层。所以从这一行往下按层找，谁先画了底色就是谁；附件行
+ * 与引用摘要都没有底色，会被跳过。
+ */
+function findBubble(row) {
+    const queue = Array.from(row.children);
+    while (queue.length > 0) {
+        const current = queue.shift();
+        if (current === undefined)
+            break;
+        if (current instanceof HTMLElement && alphaOf(getComputedStyle(current).backgroundColor) > 0)
+            return current;
+        for (const child of current.children)
+            queue.push(child);
+    }
+    return null;
+}
+/**
+ * 立一个替身：壳 + 壳里的克隆气泡。
+ *
+ * 克隆而不是自绘：主题、字体、圆角、内边距全跟着它走，连暗色主题都自动对得上。两处必须写死——
+ * 宽度（它原来靠一个靠右对齐的弹性上下文撑着，一挪到 body 上就会摊成整行）与 `box-sizing`
+ * （`getBoundingClientRect` 量到的是 border-box 宽，不声明的话内边距会再叠一次）。底色摘掉交给壳，
+ * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
+ */
+function createGhost(bubble) {
+    const box = bubble.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0)
+        return null;
+    const content = bubble.cloneNode(true);
+    content.removeAttribute('id');
+    content.style.position = 'absolute';
+    content.style.left = '0px';
+    content.style.top = '0px';
+    content.style.width = box.width + 'px';
+    content.style.boxSizing = 'border-box';
+    content.style.margin = '0px';
+    content.style.backgroundColor = 'transparent';
+    const shell = document.createElement('div');
+    shell.setAttribute(GHOST_ATTRIBUTE, '');
+    shell.setAttribute('aria-hidden', 'true');
+    shell.style.position = 'fixed';
+    shell.style.left = '0px';
+    shell.style.top = '0px';
+    shell.style.margin = '0px';
+    shell.style.overflow = 'hidden';
+    shell.style.pointerEvents = 'none';
+    // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
+    shell.style.zIndex = '2147483000';
+    shell.appendChild(content);
+    document.body.appendChild(shell);
+    return { shell, content };
+}
+/**
+ * 把替身摆到进度处。
+ *
+ * 横向与纵向各走各的：横向吃掉前七成时长、形变跟着它一起走完；纵向等横向走到四分之三才开始，
+ * 然后一路收上去。于是路径是「先横着挪出去、再抬起来」的一道弯——直线看起来像被弹出去。
+ *
+ * 壳负责位置、尺寸、圆角与底色；内容只负责自己的相对位置：起点时它落在原来那句话的位置上，
+ * 随着壳收缩回到自己的角落。
+ */
+function placeGhost(value, bubble, elapsed) {
+    const box = bubble.getBoundingClientRect();
+    const style = getComputedStyle(bubble);
+    const top = pixel(style.paddingTop);
+    const left = pixel(style.paddingLeft);
+    const card = value.draft.card;
+    const progressed = Math.min(1, elapsed / FLIGHT_MS);
+    const across = bend(0, ACROSS_CONTROL, 1, progressed);
+    // 扣掉延迟再平方：接缝处导数为零，所以「开始抬升」那一刻不会有折角，末端却又足够急。
+    const risen = Math.max(0, (progressed - RISE_START) / (1 - RISE_START));
+    const rise = risen * risen;
+    const shell = value.shell;
+    const content = value.content;
+    const x = card.box.left + (box.left - card.box.left) * across;
+    const y = card.box.top + (box.top - card.box.top) * rise;
+    shell.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+    shell.style.width = (card.box.width + (box.width - card.box.width) * across) + 'px';
+    shell.style.height = (card.box.height + (box.height - card.box.height) * rise) + 'px';
+    shell.style.borderRadius = (card.radius + (pixel(style.borderTopLeftRadius) - card.radius) * across) + 'px';
+    shell.style.backgroundColor = mixColor(card.background, style.backgroundColor, across);
+    content.style.transform = 'translate('
+        + ((value.draft.box.left - card.box.left - left) * (1 - across)) + 'px, '
+        + ((value.draft.box.top - card.box.top - top) * (1 - rise)) + 'px)';
+}
+/**
+ * 二次贝塞尔取一点。控制点压在哪，路径的弯就朝哪：压在起点这条水平线上，前半程就几乎只横着走，
+ * 抬升全挤在后半程，中间没有折角。
+ */
+function bend(start, control, end, progress) {
+    const rest = 1 - progress;
+    return rest * rest * start + 2 * rest * progress * control + progress * progress * end;
+}
+/** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
+function mixColor(from, to, progress) {
+    const start = colorParts(from);
+    const end = colorParts(to);
+    if (start === null || end === null)
+        return to;
+    const channel = (index) => Math.round((start[index] ?? 0) + ((end[index] ?? 0) - (start[index] ?? 0)) * progress);
+    const alpha = (start[3] ?? 1) + ((end[3] ?? 1) - (start[3] ?? 1)) * progress;
+    return 'rgba(' + channel(0) + ', ' + channel(1) + ', ' + channel(2) + ', ' + alpha + ')';
+}
+/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
+function pixel(value) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
+function alphaOf(color) {
+    const parts = colorParts(color);
+    if (parts === null)
+        return 0;
+    return parts[3] ?? 1;
+}
+/** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
+function colorParts(color) {
+    const match = /^rgba?\(([^)]+)\)$/.exec(color.trim());
+    if (match === null)
+        return null;
+    const raw = match[1];
+    if (raw === undefined)
+        return null;
+    const parts = raw.split(',').map(part => Number.parseFloat(part));
+    if (parts.length < 3 || parts.some(part => !Number.isFinite(part)))
+        return null;
+    return parts;
+}
+    };
+
     __registry["settings-card.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -3196,6 +3595,7 @@ const config_card_styles_1 = require("./config-card-styles");
 const file_mutation_styles_1 = require("./file-mutation-styles");
 const fold_motion_styles_1 = require("./fold-motion-styles");
 const font_styles_1 = require("./font-styles");
+const send_flight_styles_1 = require("./send-flight-styles");
 const token_motion_1 = require("./token-motion");
 /** 注入样式表的固定 id，用于卸载和排查。 */
 exports.STYLE_ID = 'dsh-chat-ux-style';
@@ -3306,7 +3706,7 @@ ${revealStepRules}
  *
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
     };
 
     __registry["caret-motion-styles.js"] = function (module, exports, require) {
@@ -3428,6 +3828,25 @@ exports.FOLD_MOTION_CSS = `
   [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
+}
+`;
+    };
+
+    __registry["send-flight-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SEND_FLIGHT_CSS = void 0;
+/**
+ * 发送气泡起飞时的样式。
+ *
+ * 只有一条规则：真实那一行在替身飞行期间藏着。用 `visibility` 而不是 `display`——藏起来的那一行
+ * 必须**保留布局盒**，替身每一帧都要从它身上量终点在哪里。
+ *
+ * 属性名与 `send-flight.ts` 的 `FLYING_ATTRIBUTE` 必须一字不差。
+ */
+exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
+[data-chat-ux-send-flight] {
+  visibility: hidden;
 }
 `;
     };

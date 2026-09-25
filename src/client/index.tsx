@@ -23,6 +23,7 @@ import type { FontChoice } from './font-override'
 import { installProcessFollow } from './process-follow'
 import { installProcessFold } from './process-fold'
 import { installReasoningFold } from './reasoning-fold'
+import { installSendFlight } from './send-flight'
 import { ChatUxConfigCard } from './settings-card'
 import { DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
@@ -85,6 +86,10 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion')
   ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
 
+  // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
+  // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
+  ctx.effect(() => installSendFlight(), 'dsh-chat-ux: send flight')
+
   // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
   ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
 
@@ -132,7 +137,7 @@ export function apply(ctx: ClientContext): void {
     ),
   )
 
-  console.log('[dsh-chat-ux] client half loaded')
+  console.log('[dsh-chat-ux] client half loaded', { rev: clientRevision() ?? 'unknown' })
 }
 
 /** 这一半读到的配置，镜像在一份可变对象里：跟随那几处每轮现读它，插入符与字体由 `syncSettings` 重落。 */
@@ -165,3 +170,16 @@ const PACKAGE_NAME = '@alm-allen/dsh-chat-ux'
 
 /** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux'
+
+/**
+ * 宿主给这个插件的 client 产物算的内容哈希，取自浏览器启动图（\`window.__DSH_BOOT__\` 的 entries）。
+ *
+ * 开发期这一条最省事：产物一改哈希就变，刷新页面看一眼控制台就知道浏览器拿到的是不是刚构建的那一份。
+ * 没有启动图的场合返回 undefined。
+ */
+function clientRevision(): string | undefined {
+  const boot = (window as unknown as {
+    __DSH_BOOT__?: { entries?: readonly { id?: string; rev?: string }[] }
+  }).__DSH_BOOT__
+  return boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev
+}

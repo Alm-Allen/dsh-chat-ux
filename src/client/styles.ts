@@ -29,6 +29,7 @@ import { CARD_CSS } from './config-card-styles'
 import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
 import { FONT_CSS } from './font-styles'
+import { SEND_FLIGHT_CSS } from './send-flight-styles'
 import { HIGHLIGHT_PREFIX, REVEAL_STEPS, RUN_COLOR_VAR, TOKEN_MIN_OPACITY } from './token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
@@ -143,4 +144,4 @@ ${revealStepRules}
  *
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
-export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS].join('\n')
+export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')
