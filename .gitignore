@@ -1,9 +1,12 @@
 node_modules/
-dist/
 build/
 .npm-cache/
 *.log
 .DS_Store
+
+# dist/ 是故意提交的：仓库要支持 `github:Alm-Allen/dsh-chat-ux` 这种直装，
+# 而构建脚本（scripts/）不在仓库里，安装时没法现场重新构建。
+# 代价：改完源码要 `npm run build` 之后再提交，否则仓库里的产物会落后于 src/。
 
 # 只留在本机，不进公开仓库：写作笔记、协作说明、构建脚本与本机包管理配置
 文档/

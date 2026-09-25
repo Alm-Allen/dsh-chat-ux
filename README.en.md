@@ -37,6 +37,20 @@ Restart dsh and reload the page. To remove it, use the plugin page or:
 dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 ```
 
+### Install from the GitHub repository
+
+You can also install straight from the repository — the build output is committed, so no build approval is required:
+
+```sh
+dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux
+```
+
+Pin it to a commit so later pushes cannot change what you installed:
+
+```sh
+dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
+```
+
 ## Configuration
 
 Every switch lives on the plugin's own row on the **Plugins** page:

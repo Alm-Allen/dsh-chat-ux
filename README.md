@@ -37,6 +37,20 @@ dsh plugin --profile web add @alm-allen/dsh-chat-ux
 dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 ```
 
+### 从 GitHub 仓库安装
+
+也可以直接从仓库装 —— 仓库里带了构建产物，所以不需要任何构建授权：
+
+```sh
+dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux
+```
+
+想锁死到某个 commit（后续推送就改不了你装到的东西）：
+
+```sh
+dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
+```
+
 ## 配置
 
 插件装好后，在**插件**页的这一行上可以直接改：
