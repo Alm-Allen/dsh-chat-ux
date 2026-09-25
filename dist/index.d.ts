@@ -34,6 +34,18 @@ export type CaretMotionMode = 'off' | 'move' | 'typing';
 /** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
 export declare const DEFAULT_CARET_MOTION: CaretMotionMode;
 /**
+ * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
+ * 改一处就要改另一处。
+ *
+ * 默认 200：就是实测过的那一段——短到读者不等它，长到看得清路径。
+ */
+export declare const DEFAULT_SEND_FLIGHT_MS = 200;
+/**
+ * 起飞时长可填的范围。前端输入框按同一对数给提示，schema 这里是第二道：越界的值写不进来。
+ */
+export declare const SEND_FLIGHT_MS_MIN = 80;
+export declare const SEND_FLIGHT_MS_MAX = 1200;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
@@ -43,6 +55,7 @@ export interface Config {
     fonts: Volatile<boolean>;
     fontSans: Volatile<string>;
     fontCode: Volatile<string>;
+    sendFlightMs: Volatile<number>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -54,12 +67,14 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;
     fontCode: Schema<string, string, "volatile-defined">;
+    sendFlightMs: Schema<number, number, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;
     fontCode: Schema<string, string, "volatile-defined">;
+    sendFlightMs: Schema<number, number, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。

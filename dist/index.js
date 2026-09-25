@@ -46,6 +46,18 @@ export const DEFAULT_FONT_FAMILY = '';
 /** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
 export const DEFAULT_CARET_MOTION = 'typing';
 /**
+ * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
+ * 改一处就要改另一处。
+ *
+ * 默认 200：就是实测过的那一段——短到读者不等它，长到看得清路径。
+ */
+export const DEFAULT_SEND_FLIGHT_MS = 200;
+/**
+ * 起飞时长可填的范围。前端输入框按同一对数给提示，schema 这里是第二道：越界的值写不进来。
+ */
+export const SEND_FLIGHT_MS_MIN = 80;
+export const SEND_FLIGHT_MS_MAX = 1200;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts';
@@ -59,6 +71,7 @@ export const Config = Schema.object({
     fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
     fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+    sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
 });
 /**
  * host 侧入口。
