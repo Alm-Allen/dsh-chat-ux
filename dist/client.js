@@ -2745,8 +2745,8 @@ exports.installSendFlight = installSendFlight;
  * 发送气泡的起飞。
  *
  * 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡（`[data-submission-echo]`），真实消息一到就把
- * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到，一次飞行却要
- * 480 ms——动画挂在这两条节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
+ * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到——动画挂在这两条
+ * 节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
  *
  * 所以这里自己画一个替身。它是**两层**：外面那层壳就是输入框的形状（尺寸、圆角、底色都从输入卡片
  * 现读），里面挂着克隆下来的那条气泡（底色摘掉，交给壳），于是同一个元素从「一条输入框」连续地
@@ -2756,9 +2756,9 @@ exports.installSendFlight = installSendFlight;
  *             全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    横向与纵向各走各的进度：两者都是贝塞尔，横向的控制点压在起点这条水平线的七成半处。
- *             于是前半程几乎只横着走、抬升越到后面越急，空间上是一道**连续的弯**——位置、尺寸、
- *             圆角、底色、内容的相对位置全是这条曲线的函数。
+ *   逐帧画    位置与形变各走各的曲线：横向三次 ease-out、纵向二次 ease-in，形变再把横向那条压进前
+ *             一段里先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的
+ *             相对位置都是这几条曲线的函数。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 四条边界（前两条是实测踩出来的）：
@@ -2780,17 +2780,23 @@ exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
 /** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
 /** 飞行时长。 */
-const FLIGHT_MS = 520;
+const FLIGHT_MS = 200;
 /**
- * 路径那道弯的两个数。横向是一条二次贝塞尔（控制点压在起点这条水平线的七成半处），纵向的比例里
- * 先扣掉一段固定延迟，剩下的再平方。两个都是连续函数，所以路径**始终是一条平滑的曲线**——把横向
- * 与纵向各自做成「先走完一段、再走另一段」，画出来就是一个直角折角，生硬就生硬在那儿。
+ * 三道缓动。
  *
- * 横向刻意不用任何缓动：缓动是「前快」的，横向会在一眨眼之间冲完，曲线的水平段就没了。
+ * **横向是三次 ease-out，纵向是二次 ease-in。** 两条导数互补：横向从三倍平均速度一路减到零，纵向
+ * 从零一路加到两倍。于是路径的角度从起手的 -3° 平滑转到收尾的 -90°，**中间没有一段是平的**——
+ * 哪一段平了，画出来就是一条直角折线，生硬就生硬在那儿（已经为这个返工过一次）。
+ *
+ * **形变走同一条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
+ * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
+ *
+ * 两者分家是有代价的：右边缘会先往左退最多 55 px，再随横向回来。气泡的横向位移本来就靠左边缘右移
+ * 实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
  */
-const ACROSS_CONTROL = 0.85;
-/** 纵向从总时长的这个比例才开始动；在此之前是纯横向的行程。 */
-const RISE_START = 0.25;
+const ACROSS_POWER = 3;
+/** 形变收尾的位置。比横向早，但不能早到把路径压成直角。 */
+const MORPH_END = 0.85;
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
 const ORIGIN_TTL_MS = 1500;
 /** 位移超过这个距离就不飞：那看起来是「消息从屏幕外飞进来」，不是「我的字飞上去了」。 */
@@ -3038,11 +3044,8 @@ function createGhost(bubble) {
 /**
  * 把替身摆到进度处。
  *
- * 横向与纵向各走各的：横向吃掉前七成时长、形变跟着它一起走完；纵向等横向走到四分之三才开始，
- * 然后一路收上去。于是路径是「先横着挪出去、再抬起来」的一道弯——直线看起来像被弹出去。
- *
- * 壳负责位置、尺寸、圆角与底色；内容只负责自己的相对位置：起点时它落在原来那句话的位置上，
- * 随着壳收缩回到自己的角落。
+ * 位置走 `across` 与 `rise` 两条互补的曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
+ * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
  */
 function placeGhost(value, bubble, elapsed) {
     const box = bubble.getBoundingClientRect();
@@ -3051,30 +3054,23 @@ function placeGhost(value, bubble, elapsed) {
     const left = pixel(style.paddingLeft);
     const card = value.draft.card;
     const progressed = Math.min(1, elapsed / FLIGHT_MS);
-    const across = bend(0, ACROSS_CONTROL, 1, progressed);
-    // 扣掉延迟再平方：接缝处导数为零，所以「开始抬升」那一刻不会有折角，末端却又足够急。
-    const risen = Math.max(0, (progressed - RISE_START) / (1 - RISE_START));
-    const rise = risen * risen;
+    const rest = 1 - progressed;
+    const across = 1 - rest ** ACROSS_POWER;
+    const morphRest = 1 - Math.min(1, progressed / MORPH_END);
+    const morph = 1 - morphRest ** ACROSS_POWER;
+    const rise = progressed * progressed;
     const shell = value.shell;
     const content = value.content;
     const x = card.box.left + (box.left - card.box.left) * across;
     const y = card.box.top + (box.top - card.box.top) * rise;
     shell.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
-    shell.style.width = (card.box.width + (box.width - card.box.width) * across) + 'px';
-    shell.style.height = (card.box.height + (box.height - card.box.height) * rise) + 'px';
-    shell.style.borderRadius = (card.radius + (pixel(style.borderTopLeftRadius) - card.radius) * across) + 'px';
-    shell.style.backgroundColor = mixColor(card.background, style.backgroundColor, across);
+    shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px';
+    shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px';
+    shell.style.borderRadius = (card.radius + (pixel(style.borderTopLeftRadius) - card.radius) * morph) + 'px';
+    shell.style.backgroundColor = mixColor(card.background, style.backgroundColor, morph);
     content.style.transform = 'translate('
-        + ((value.draft.box.left - card.box.left - left) * (1 - across)) + 'px, '
-        + ((value.draft.box.top - card.box.top - top) * (1 - rise)) + 'px)';
-}
-/**
- * 二次贝塞尔取一点。控制点压在哪，路径的弯就朝哪：压在起点这条水平线上，前半程就几乎只横着走，
- * 抬升全挤在后半程，中间没有折角。
- */
-function bend(start, control, end, progress) {
-    const rest = 1 - progress;
-    return rest * rest * start + 2 * rest * progress * control + progress * progress * end;
+        + ((value.draft.box.left - card.box.left - left) * (1 - morph)) + 'px, '
+        + ((value.draft.box.top - card.box.top - top) * (1 - morph)) + 'px)';
 }
 /** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
 function mixColor(from, to, progress) {
