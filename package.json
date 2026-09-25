@@ -34,13 +34,15 @@
   },
   "files": [
     "dist",
+    "assets",
     "cordis.patch.yml",
     "cordis.yml"
   ],
   "scripts": {
     "clean": "node -e \"const fs=require('node:fs');for(const d of ['dist','build'])fs.rmSync(d,{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/wrap-client.cjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "fonts": "python scripts/subset-fonts.py"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
