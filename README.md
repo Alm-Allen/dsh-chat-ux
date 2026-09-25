@@ -22,19 +22,19 @@
 在 dsh Web GUI 里打开**插件**页 →**添加插件**→ 输入包名：
 
 ```
-@alm-hu/dsh-chat-ux
+@alm-allen/dsh-chat-ux
 ```
 
 或者直接走命令行（等价于在 profile 目录里执行 pnpm）：
 
 ```sh
-dsh plugin --profile web add @alm-hu/dsh-chat-ux
+dsh plugin --profile web add @alm-allen/dsh-chat-ux
 ```
 
 装完重启 dsh、刷新页面即可。卸载用插件页的开关，或：
 
 ```sh
-dsh plugin --profile web remove @alm-hu/dsh-chat-ux
+dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 ```
 
 ## 配置

@@ -22,19 +22,19 @@ With it installed, model output fades in token by token instead of appearing in 
 In the dsh web GUI, open **Plugins** → **Add plugin** and enter the package name:
 
 ```
-@alm-hu/dsh-chat-ux
+@alm-allen/dsh-chat-ux
 ```
 
 Or from the command line (this forwards to pnpm inside the profile directory):
 
 ```sh
-dsh plugin --profile web add @alm-hu/dsh-chat-ux
+dsh plugin --profile web add @alm-allen/dsh-chat-ux
 ```
 
 Restart dsh and reload the page. To remove it, use the plugin page or:
 
 ```sh
-dsh plugin --profile web remove @alm-hu/dsh-chat-ux
+dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 ```
 
 ## Configuration
