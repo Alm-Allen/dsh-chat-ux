@@ -63,6 +63,19 @@ body[data-ds-dark-theme] {
   ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
 }
 
+/* 过程组的组体只该在纵向滚。dsh 的 .body 只声明了 overflow-y: auto，而按 CSS Overflow 规范，
+   一个轴是 visible、另一个不是时，visible 会计算成 auto——于是它同时成了横向滚动容器，内容只要
+   横向多出一两个像素就长出横向滚动条（宽表格的 100cqw 突破、行内代码的 inline-flex 原子，或者
+   scrollbar-gutter 削窄之后剩下的一点舍入，都算）。「详细」与「完全展开」两档走的是简写
+   overflow: visible，两轴一起放开，本来就没有这个问题，所以这一条只认收纳档。
+
+   横向超出只裁剪、不给滚：组体里能横向滚的东西（代码块、表格）各自带着自己的 overflow-x，不该由
+   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——process-follow 量的是 scrollHeight
+   减 clientHeight，少一条滚动条就少一份偏差。 */
+[data-step-process]:not([data-group-expanded-mode]) [data-step-process-body] {
+  overflow-x: hidden;
+}
+
 /* 带实时细节的档位（标准与详细）把这一段的细节接在组头标签后面（"正在分析请求 · …"），而那一段正是组内思考行正在出的字——
    组体开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以让原文本整块让位，
    改显示 process-fold 写在属性上的那半截标签：组头、图标和开合控件都还在原处，只是不再跟着出字。
