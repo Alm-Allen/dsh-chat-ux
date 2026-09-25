@@ -35,7 +35,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
    * @param props.onChange - 点击要求切到的那个状态。
    * @param props.label - 可访问名，由渲染它的地方拥有（必填）。
    * @param props.disabled - 是否拒绝输入；写入在途时也要置上。
-   * @param props.title - 悬停说明，通常是它为什么被锁住。
    * @param props.className - 额外的类名，用于布局定位。
    */
   export function Switch(props: {
@@ -43,7 +42,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     onChange: (next: boolean) => void
     label: string
     disabled?: boolean
-    title?: string | undefined
     className?: string | undefined
   }): ReactElement
 
@@ -53,10 +51,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     value: Value
     /** 这一段的文字，由渲染它的地方拥有。 */
     label: string
-    /** 这一段是否拒绝选中。 */
-    disabled?: boolean
-    /** 悬停说明，通常是它为什么被锁住。 */
-    title?: string
   }
 
   /**
@@ -90,8 +84,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     running?: boolean | undefined
     /** 整行都是开合目标。 */
     expandOnRowClick?: boolean | undefined
-    /** 收起时把图标换成 chevron（默认跟随 `expandable`）。 */
-    previewChevron?: boolean | undefined
     /** 展开时仍把 `collapsedContent` 留在行内。 */
     keepContentWhenOpen?: boolean | undefined
     collapsedContent?: ReactNode

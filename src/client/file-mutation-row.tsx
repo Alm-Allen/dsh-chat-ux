@@ -166,8 +166,12 @@ export function installFileMutationRow(slots: SlotsService): void {
 export function FileMutationRow(props: FileMutationRowProps): ReactElement {
   const { t, toolName, block, cwd, home, openFile, inspect, useDisclosure } = props
   const { expanded, toggle } = useDisclosure()
-  const model = useMemo(() => rowModel(toolName, block, cwd, home), [block, cwd, home, toolName])
-  const hunks = useMemo(() => diffHunks(block), [block])
+  const args = useMemo(() => {
+    const head = callHead(block)
+    return head === null ? null : parseArgs(head.argsRaw)
+  }, [block])
+  const model = useMemo(() => rowModel(toolName, block, args, cwd, home), [args, block, cwd, home, toolName])
+  const hunks = useMemo(() => diffHunks(block, args), [args, block])
   const labels = useMemo(() => diffBlockLabels(t), [t])
   const running = model.state === 'running'
   const totals = useMemo(() => (hunks === null ? null : diffTotals(hunks)), [hunks])
@@ -278,29 +282,29 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
  * 与内置 diff-card-model 只有一处不同：**不排除子调用**（原因见模块注释）。其余分支保持同序：
  * 未结算时只有参数可用；结算后优先用结果元数据里真实应用的 hunks，拿不到才退回参数。
  * @param block - 运行中或已结算的调用块。
+ * @param args - 这一行的调用参数，已解析；准备态为 null。
  * @returns 要画的 hunks，或 null（这一行没有可画的改动）。
  */
-function diffHunks(block: ToolCallBlock): DiffHunk[] | null {
+function diffHunks(block: ToolCallBlock, args: Record<string, unknown> | null): DiffHunk[] | null {
   if (!('kind' in block)) {
     if (block.phase === 'preparing') return null
-    return intendedHunks(block.name, block.argsRaw)
+    return intendedHunks(block.name, args)
   }
   if (block.isError) return null
   const applied = appliedHunks(block.meta)
   if (applied !== null && applied !== 'empty') return applied
   // 没有真实 hunks 可依：write 的参数就是整份内容，edit 的参数就是那一对替换。
   if (block.call === null) return null
-  return intendedHunks(block.call.name, block.call.argsRaw)
+  return intendedHunks(block.call.name, args)
 }
 
 /**
  * 从调用参数派生改动：write 是整份内容，edit 是那一对替换。
  * @param name - 线上工具名。
- * @param argsRaw - 原始参数 JSON。
+ * @param args - 已解析的参数；解析不出来时为 null。
  * @returns 单个 hunk，或 null（参数不是这一行的形状）。
  */
-function intendedHunks(name: string, argsRaw: string): DiffHunk[] | null {
-  const args = parseArgs(argsRaw)
+function intendedHunks(name: string, args: Record<string, unknown> | null): DiffHunk[] | null {
   if (args === null) return null
   const path = pickString(args, ['path', 'file_path'])
   if (path === undefined) return null
@@ -344,6 +348,7 @@ function appliedHunks(meta: unknown): DiffHunk[] | 'empty' | null {
  * 派生整行的展示模型。
  * @param toolName - 线上工具名。
  * @param block - 运行中或已结算的调用块。
+ * @param args - 这一行的调用参数，已解析；准备态为 null。
  * @param cwd - 会话工作区根。
  * @param home - 宿主账户主目录。
  * @returns 这一行的模型。
@@ -351,15 +356,15 @@ function appliedHunks(meta: unknown): DiffHunk[] | 'empty' | null {
 function rowModel(
   toolName: string,
   block: ToolCallBlock,
+  args: Record<string, unknown> | null,
   cwd: string | undefined,
   home: string | undefined,
 ): RowModel {
   const done = 'kind' in block
-  const head = done ? block.call : block.phase === 'start' ? { name: block.name, argsRaw: block.argsRaw } : null
+  const head = callHead(block)
   const state: RowState = !done
     ? block.phase === 'preparing' ? 'preparing' : 'running'
     : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok'
-  const args = head === null ? null : parseArgs(head.argsRaw)
   const path = args === null ? undefined : pickString(args, ['path', 'file_path'])
   const output = done ? resultText(block) || null : null
   return {
@@ -387,6 +392,16 @@ function resultText(node: ToolResultNode): string {
   }
   if (parts.length === 0 && node.error !== undefined) parts.push(node.error.name + ': ' + node.error.code)
   return parts.join('\n')
+}
+
+/**
+ * 这一行的调用头：已结算的看结果节点带回的那一份，仍在跑的看它自己的参数。
+ * @param block - 运行中或已结算的调用块。
+ * @returns 调用头，或 null（参数还在流进来的准备态）。
+ */
+function callHead(block: ToolCallBlock): ToolCallHead | null {
+  if ('kind' in block) return block.call
+  return block.phase === 'start' ? { name: block.name, argsRaw: block.argsRaw } : null
 }
 
 /**

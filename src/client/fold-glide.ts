@@ -315,6 +315,25 @@ export function installFoldGlide(): () => void {
   }
 
   /**
+   * 高度动画开工前的两件记账：把裁剪关上，并把 `height` 按 border-box 解释。
+   *
+   * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把这两条内联样式还回去，所以记下的
+   * 旧值与还原动作一起交回来。
+   * @param target - 要压的真身。
+   * @returns 把内联样式还原到开工之前。
+   */
+  const beginHeightClip = (target: HTMLElement): (() => void) => {
+    const previousOverflow = target.style.overflow
+    const previousBoxSizing = target.style.boxSizing
+    target.style.overflow = 'hidden'
+    target.style.boxSizing = 'border-box'
+    return () => {
+      target.style.overflow = previousOverflow
+      target.style.boxSizing = previousBoxSizing
+    }
+  }
+
+  /**
    * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
    *
    * 只有高度这一道，但它分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
@@ -331,10 +350,7 @@ export function installFoldGlide(): () => void {
     const height = target.getBoundingClientRect().height
     if (height <= from) return
     const travel = Math.max(from, visibleReachOf(target))
-    const previousOverflow = target.style.overflow
-    const previousBoxSizing = target.style.boxSizing
-    target.style.overflow = 'hidden'
-    target.style.boxSizing = 'border-box'
+    const restore = beginHeightClip(target)
     const growing = target.animate(
       travel >= height
         ? [{ height: String(from) + 'px' }, { height: String(height) + 'px' }]
@@ -347,8 +363,7 @@ export function installFoldGlide(): () => void {
     )
     growing.onfinish = () => {
       growing.cancel()
-      target.style.overflow = previousOverflow
-      target.style.boxSizing = previousBoxSizing
+      restore()
     }
   }
 
@@ -375,10 +390,7 @@ export function installFoldGlide(): () => void {
       return
     }
     const travel = Math.max(fold.floor, visibleReachOf(fold.target))
-    const previousOverflow = fold.target.style.overflow
-    const previousBoxSizing = fold.target.style.boxSizing
-    fold.target.style.overflow = 'hidden'
-    fold.target.style.boxSizing = 'border-box'
+    const restore = beginHeightClip(fold.target)
     const shrinking = fold.target.animate(
       travel >= height
         ? [{ height: String(height) + 'px' }, { height: String(fold.floor) + 'px' }]
@@ -395,8 +407,7 @@ export function installFoldGlide(): () => void {
       // DOM 那边该已经收拢了；没收拢就不能撤动画，见 confirmCollapsed。
       confirmCollapsed(fold.collapsed, () => {
         shrinking.cancel()
-        fold.target.style.overflow = previousOverflow
-        fold.target.style.boxSizing = previousBoxSizing
+        restore()
       })
       settleAfterFold(fold.watch)
     }

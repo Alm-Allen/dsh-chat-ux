@@ -23,10 +23,7 @@
  * @module dsh-chat-ux/client/follow-tail
  */
 
-import { CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX } from './dom-contract'
-
-/** dsh 的跟随开着时给聊天框架发的语义属性；它没了，就说明跟随已经被关掉了。 */
-const FOLLOWING_TAIL_SELECTOR = '[data-chat-following-tail]'
+import { CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR, FOLLOW_THRESHOLD_PX } from './dom-contract'
 
 /** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
 export const FOLLOW_LOOK_ROUNDS = 5
