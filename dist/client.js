@@ -3878,9 +3878,9 @@ exports.STYLE_ID = 'dsh-chat-ux-style';
  * 一档一条规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开
  * highlight 注册表的那一刻到达它最终的颜色。
  *
- * alpha 写成两位小数，而不是整数百分比。`REVEAL_STEPS` 比 `TOKEN_MIN_OPACITY` 到 1
- * 之间的那 81 个整数百分比更密，四舍五入会让若干档撞成同一个颜色，渐变就变回一段台阶——
- * 而那正是这些多出来的档位要消掉的东西。
+ * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量的说明），所以这里不额外多生成任何一档。
+ * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
+ * 的值本来就在那儿，不必再舍一次。
  */
 const revealStepRules = Array.from({ length: token_motion_1.REVEAL_STEPS }, (_, step) => {
     const ratio = token_motion_1.TOKEN_MIN_OPACITY + (1 - token_motion_1.TOKEN_MIN_OPACITY) * (step / (token_motion_1.REVEAL_STEPS - 1));
@@ -4166,14 +4166,15 @@ const programmatic_toggle_1 = require("./programmatic-toggle");
 /**
  * 一个字符从极淡到停稳之间有多少档。
  *
- * 档数是对着最可能跑这个渐变的最快显示器定的：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，96 档
- * 摊下来每帧跨五六档，眼睛积分的是每一绘制帧实际带着的 alpha，所以档位多出来的部分不花任何代价。
+ * 下界由最可能跑这个渐变的最快显示器定：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，档数少于帧数
+ * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
- * 之所以值得把档数调高，只是因为 `styles.ts` 把每一档的 alpha 写成小数。整数百分比只能表达
- * `TOKEN_MIN_OPACITY` 到 1 之间的那 81 个值，再多出来的档只会重复其中某一个，那个「更细」的
- * 渐变不过是同一段台阶换了个名字。
+ * 上界由 `styles.ts` 的代价定，而这是实测出来的：每一档在注入的那张样式表里就是一条
+ * `::highlight()` 规则，而规则条数直接乘在浏览器每一次强制同步样式重算上。在一个 5800 节点的
+ * 会话里，96 条档位规则把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms；只留 1 条时它又回到
+ * 18 ms。档数曾经按「多出来的部分不花任何代价」取到 96，那个前提不成立。
  */
-exports.REVEAL_STEPS = 96;
+exports.REVEAL_STEPS = 24;
 /**
  * 一个字符开始淡入之前的不透明度。
  *
@@ -4188,7 +4189,7 @@ exports.TOKEN_MIN_OPACITY = 0.2;
 /**
  * 一个字符从最淡到完全不透明所用的时长。
  *
- * 它不是一个设置项：更长的渐变会把 `styles.ts` 硬编码的那 96 条档位规则摊成看得见的台阶，更短的
+ * 它不是一个设置项：更长的渐变会把 `styles.ts` 按 `REVEAL_STEPS` 生成的档位规则摊成看得见的台阶，更短的
  * 在常规刷新率下一帧就跨过去了、等于没有渐变——120 ms 是两头都合适的那个点。要动它，得连
  * `REVEAL_STEPS` 与档位规则一起想。
  */
