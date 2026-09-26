@@ -90,8 +90,11 @@ export function installProcessFold(): () => void {
       group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'))
       if (detailed) {
         const label = headerText.slice(0, separatorAt)
-        header.setAttribute(LABEL_ATTRIBUTE, label)
-        header.setAttribute(LABEL_NAME_ATTRIBUTE, label)
+        // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
+        // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
+        // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
+        if (header.getAttribute(LABEL_ATTRIBUTE) !== label) header.setAttribute(LABEL_ATTRIBUTE, label)
+        if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label) header.setAttribute(LABEL_NAME_ATTRIBUTE, label)
         const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`
         // 这条路径每个扫描帧都会走到，值没变就别再写一次。
         if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {

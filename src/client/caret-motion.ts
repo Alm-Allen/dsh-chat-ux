@@ -78,14 +78,26 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
   const layers = new Map<HTMLElement, CaretLayer>()
   /** 一次同步已经排在下一帧。 */
   let queued = false
+  /** 已经排出去的那一帧；0 表示没有。卸载时要能把它连同回调一起取消。 */
+  let frameHandle = 0
+  /**
+   * 卸载之后一律不做。
+   *
+   * 帧回调与 `syncAfterFocusChange` 里那两个定时器都可能还在路上：让它们跑完，`sync` 会重建
+   * 自绘的那根、重新挂上观察者，而原生插入符的让位标记已经在卸载时摘掉了——读者看到的是
+   * 「原生被按下去了、自绘的又不在」，也就是没有光标。
+   */
+  let disposed = false
   /** 这一帧里来过一次输入。`move` 档靠它把打字和显式移动分开。 */
   let typed = false
 
   const queue = (): void => {
-    if (queued) return
+    if (disposed || queued) return
     queued = true
-    requestAnimationFrame(() => {
+    frameHandle = requestAnimationFrame(() => {
+      frameHandle = 0
       queued = false
+      if (disposed) return
       const typing = typed
       typed = false
       sync(typing)
@@ -390,6 +402,9 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
   return {
     resync: queue,
     dispose: () => {
+      disposed = true
+      if (frameHandle !== 0) cancelAnimationFrame(frameHandle)
+      frameHandle = 0
       document.removeEventListener('selectionchange', queue)
       document.removeEventListener('focusin', syncAfterFocusChange)
       document.removeEventListener('focusout', syncAfterFocusChange)

@@ -238,14 +238,27 @@ function installCaretMotion(read) {
     const layers = new Map();
     /** 一次同步已经排在下一帧。 */
     let queued = false;
+    /** 已经排出去的那一帧；0 表示没有。卸载时要能把它连同回调一起取消。 */
+    let frameHandle = 0;
+    /**
+     * 卸载之后一律不做。
+     *
+     * 帧回调与 `syncAfterFocusChange` 里那两个定时器都可能还在路上：让它们跑完，`sync` 会重建
+     * 自绘的那根、重新挂上观察者，而原生插入符的让位标记已经在卸载时摘掉了——读者看到的是
+     * 「原生被按下去了、自绘的又不在」，也就是没有光标。
+     */
+    let disposed = false;
     /** 这一帧里来过一次输入。`move` 档靠它把打字和显式移动分开。 */
     let typed = false;
     const queue = () => {
-        if (queued)
+        if (disposed || queued)
             return;
         queued = true;
-        requestAnimationFrame(() => {
+        frameHandle = requestAnimationFrame(() => {
+            frameHandle = 0;
             queued = false;
+            if (disposed)
+                return;
             const typing = typed;
             typed = false;
             sync(typing);
@@ -562,6 +575,10 @@ function installCaretMotion(read) {
     return {
         resync: queue,
         dispose: () => {
+            disposed = true;
+            if (frameHandle !== 0)
+                cancelAnimationFrame(frameHandle);
+            frameHandle = 0;
             document.removeEventListener('selectionchange', queue);
             document.removeEventListener('focusin', syncAfterFocusChange);
             document.removeEventListener('focusout', syncAfterFocusChange);
@@ -1985,6 +2002,8 @@ const FOLD_WAIT_ATTEMPTS = 4;
 function installFollowGuard(readEnabled) {
     /** 读者上一次接管滚动之后，有没有自己回到底部。 */
     let readerTookOver = false;
+    /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
+    let scrollerCache = null;
     /** 上一次真正交还的时刻，用来节流。 */
     let lastEnsureAt = 0;
     /** 最后一次见到结构变化的时刻。 */
@@ -2075,9 +2094,17 @@ function installFollowGuard(readEnabled) {
      * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
      */
     const noteReaderIntent = (event) => {
+        // 接管了就不必再判：这个函数唯一的作用就是置位，而它一旦置位，同一手势里后面那几十个
+        // 事件的结果都改不了它。
+        if (readerTookOver)
+            return;
         if (!(0, reader_intent_1.isReaderScrollIntent)(event))
             return;
-        const scroller = (0, follow_tail_1.conversationScroller)();
+        // 容器缓存下来：滚轮在触控板上能到每秒上百次，而这几次读（全文档查询 + 两个几何值）本来
+        // 就落在读者正在滚、布局正被新内容写脏的时刻。
+        if (scrollerCache === null || !scrollerCache.isConnected)
+            scrollerCache = (0, follow_tail_1.conversationScroller)();
+        const scroller = scrollerCache;
         if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0)
             return;
         readerTookOver = true;
@@ -2583,8 +2610,13 @@ function installProcessFold() {
             group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'));
             if (detailed) {
                 const label = headerText.slice(0, separatorAt);
-                header.setAttribute(LABEL_ATTRIBUTE, label);
-                header.setAttribute(LABEL_NAME_ATTRIBUTE, label);
+                // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
+                // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
+                // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
+                if (header.getAttribute(LABEL_ATTRIBUTE) !== label)
+                    header.setAttribute(LABEL_ATTRIBUTE, label);
+                if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label)
+                    header.setAttribute(LABEL_NAME_ATTRIBUTE, label);
                 const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`;
                 // 这条路径每个扫描帧都会走到，值没变就别再写一次。
                 if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {

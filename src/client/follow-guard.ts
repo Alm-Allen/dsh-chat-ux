@@ -62,6 +62,8 @@ const FOLD_WAIT_ATTEMPTS = 4
 export function installFollowGuard(readEnabled: () => boolean): () => void {
   /** 读者上一次接管滚动之后，有没有自己回到底部。 */
   let readerTookOver = false
+  /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
+  let scrollerCache: HTMLElement | null = null
   /** 上一次真正交还的时刻，用来节流。 */
   let lastEnsureAt = 0
   /** 最后一次见到结构变化的时刻。 */
@@ -148,8 +150,14 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
    * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
    */
   const noteReaderIntent = (event: Event): void => {
+    // 接管了就不必再判：这个函数唯一的作用就是置位，而它一旦置位，同一手势里后面那几十个
+    // 事件的结果都改不了它。
+    if (readerTookOver) return
     if (!isReaderScrollIntent(event)) return
-    const scroller = conversationScroller()
+    // 容器缓存下来：滚轮在触控板上能到每秒上百次，而这几次读（全文档查询 + 两个几何值）本来
+    // 就落在读者正在滚、布局正被新内容写脏的时刻。
+    if (scrollerCache === null || !scrollerCache.isConnected) scrollerCache = conversationScroller()
+    const scroller = scrollerCache
     if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0) return
     readerTookOver = true
   }
