@@ -14,3 +14,5 @@ AGENTS.md
 scripts/
 pnpm-lock.yaml
 pnpm-workspace.yaml
+.probe/
+.idea/

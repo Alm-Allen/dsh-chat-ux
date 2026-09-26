@@ -170,6 +170,8 @@ function runTokenMotion(): () => void {
   let revealRulesOn = false
   /** 排队中的绘制帧句柄；0 表示没有排队。 */
   let scheduledFrame = 0
+  /** 排队中的「收起档位规则」任务；`0` 表示没有排队。 */
+  let collapseHandle = 0
 
   // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
   //
@@ -359,13 +361,26 @@ function runTokenMotion(): () => void {
    *
    * 只在**确定这一趟没有新字符**的路径上调用。同一趟扫描里先收再开会让整篇文档失效两次——两次
    * 全量重算全压在「思考的第一个字上屏」那一帧上，比一直挂着还贵。
+   *
+   * 收起那一下翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」
+   * （四千七百节点上实测约六十五毫秒，掉三到四帧）。绑在「下一次 mutation」上还不够：那次
+   * mutation 可能正落在读者滚动、气泡起飞或思考行收起的动画里——实测收录起的那一刻，相邻两帧
+   * 之间隔了一百一十七毫秒。所以交给浏览器挑它认为不影响交互的空当去做：这段动效由合成器线程
+   * 扛着，主线程里的空白正是付这笔钱的地方。超时兜底，浏览器一直忙就照做，只是晚一点。
    * @param now - 这一趟扫描开始的时间戳。
    */
   const idleOut = (now: number): void => {
     if (!revealRulesOn) return
     if (now - lastBornAt <= IDLE_REVEAL_MS) return
-    revealStyleElement.disabled = true
-    revealRulesOn = false
+    if (collapseHandle !== 0) return
+    collapseHandle = window.requestIdleCallback(() => {
+      collapseHandle = 0
+      if (!revealRulesOn) return
+      // 排队这段时间里又来了新字符：这一轮还没讲完，继续挂着。
+      if (performance.now() - lastBornAt <= IDLE_REVEAL_MS) return
+      revealStyleElement.disabled = true
+      revealRulesOn = false
+    }, { timeout: IDLE_COLLAPSE_TIMEOUT_MS })
   }
 
   const scan = (): void => {
@@ -540,7 +555,11 @@ function runTokenMotion(): () => void {
               length: character.length,
               bornAt: now,
               delay: 0,
-              colorElement: null,
+              // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
+              // 就是一次强制样式结算，而这一次读取恰好落在档位规则刚挂上、整篇文档样式刚失效的
+              // 那一帧——实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）
+              // 绘制帧的那次比较仍然会发现，颜色照旧补上。
+              colorElement: element,
             }
             liveRuns.push(run)
             createdRuns.push(run)
@@ -600,6 +619,8 @@ function runTokenMotion(): () => void {
     document.removeEventListener('keydown', rememberReaderFold, true)
     if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame)
     scheduledFrame = 0
+    if (collapseHandle !== 0) window.cancelIdleCallback(collapseHandle)
+    collapseHandle = 0
     liveRuns.length = 0
     clearHighlights()
     revealStyleElement.remove()
@@ -663,6 +684,14 @@ const FOLD_QUIET_MS = 400
  * 十秒了，该收的还是收着。
  */
 const IDLE_REVEAL_MS = 10000
+
+/**
+ * 收起那一下最多等多久。
+ *
+ * `requestIdleCallback` 只在浏览器自己认定的空当里跑；页面一直忙（长会话里滚动挂载、流式
+ * 不断吐字）时它会一直等下去，所以给一个上限：到点了照做，只是不再挑时机。
+ */
+const IDLE_COLLAPSE_TIMEOUT_MS = 4000
 
 /**
  * 一批里最多认多少字符。
