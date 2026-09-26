@@ -5,8 +5,8 @@
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上卡片、插入符、文件变更行、折叠体入场
  * 与字体那几份各自的 `*-styles.ts`。
  *
- * token 淡入的档位规则**不在这里**：那批规则按需挂载，由 `token-motion.ts` 自己带着一张单独的
- * 样式表（见它里面的 `revealCss`）。这里只留淡入用色在页面级的那份兜底。
+ * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
+ * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
  */
 import { CARET_MOTION_CSS } from './caret-motion-styles'
 import { CARD_CSS } from './config-card-styles'
@@ -106,7 +106,7 @@ body[data-ds-dark-theme] {
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。按需挂载的那一份
- * （token 淡入的档位规则）不进这里，它由 `token-motion.ts` 自己带着。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
+ * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
 export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')

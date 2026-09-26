@@ -27,9 +27,10 @@
  * 这个颜色也不能是同一个：一段回答里不只有正文，把链接、语法 token 或列表标记在淡入期间涂成
  * 正文色，读起来是高亮闪一下，而不是淡入。
  *
- * 档位规则**按需挂载**：它们只在页面上真的存在流式容器时才生效，回答定型之后整张撤下来。理由是
- * 条数——每档一条规则，而条数是直接乘在浏览器每一次强制同步样式重算上的，无论那一刻有没有字符
- * 正在淡（见 `REVEAL_STEPS`）。
+ * 档位规则**常驻，不按需插拔**。禁用与启用之间的那一下翻转会让整篇文档的样式失效，于是下一次
+ * 样式计算从「只算新节点」变成「整页重算」——而它恰好落在流式刚开头那一帧，也就是读者按下提交的
+ * 同一帧。常驻的代价只是「每次全量重算多几条规则」，而全量重算在阅读期本来就不常发生（见
+ * `REVEAL_STEPS`）。
  *
  * @module dsh-chat-ux/client/token-motion
  */
@@ -48,8 +49,9 @@ import { isProgrammaticToggle } from './programmatic-toggle'
  * 会话里，96 条档位规则把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms；只留 1 条时它又回到
  * 18 ms。档数曾经按「多出来的部分不花任何代价」取到 96，那个前提不成立。
  *
- * 那份代价现在只在流式期间付（见 `installTokenMotion` 里的按需挂载），但档数仍由它定：一次
- * 回答里大半时间都在流，而流式期间的每一次样式重算照样乘上这个条数。
+ * 常驻就是拿它换来的：页面上每一次全量样式重算都要乘上这个条数，六千节点上实测约四十毫秒。
+ * 把它降下来只有两条路——减档，或者让这些规则不参与重算；后者已经试过并撤掉了（见
+ * `installTokenMotion`）。
  */
 export const REVEAL_STEPS = 24
 
@@ -124,25 +126,18 @@ export function installTokenMotion(): () => void {
   /** 排队中的绘制帧句柄；0 表示没有排队。 */
   let scheduledFrame = 0
 
-  // 档位规则单独一张样式表，一开始就禁用：没有字符在淡入的时候，这些规则一条都不该参与样式
-  // 重算。附着到文档之后才拿得到 CSSOM，所以先挂上再关。
+  // 档位规则单独一张样式表，挂上就一直生效。
+  //
+  // 它曾经按需插拔：没有流式容器时整张 `disabled`，有新字符要淡入时再启用。那样省下的是「阅读期
+  // 每一次全量重算」，代价却出在另一头：`disabled` 的翻转会让整篇文档的样式失效，于是紧接着的那
+  // 一次样式计算从「只算新节点」升级成「整页重算」。六千节点上实测，翻转后的一次重算约三十八毫秒，
+  // 而不翻转的插入四百个节点只要三点五毫秒——也就是说这一下翻转**凭空造出**了一次整页重算，还正好
+  // 造在读者按下提交的那一帧上（新字符到达、流式刚开头）。同值写入是零代价的（Blink 会短路），
+  // 贵的是值真的变了。
   const revealStyleElement = document.createElement('style')
   revealStyleElement.id = REVEAL_STYLE_ID
   revealStyleElement.textContent = revealCss
   document.head.append(revealStyleElement)
-  const revealSheet = revealStyleElement.sheet
-
-  /**
-   * 开关档位规则。
-   *
-   * 取不到 CSSOM 时就让它常驻：那是拿不到 `sheet` 的浏览器，淡入照常，只是少了一层优化。
-   * @param active - 此刻起页面上有没有字符可能正在淡入。
-   */
-  const setRevealRulesActive = (active: boolean): void => {
-    if (revealSheet === null) return
-    revealSheet.disabled = !active
-  }
-  setRevealRulesActive(false)
 
   /** 清掉全部档位的 highlight。 */
   const clearHighlights = (): void => {
@@ -289,11 +284,7 @@ export function installTokenMotion(): () => void {
   /** 把每个流式容器与上一次的快照对比，然后把新出现的那一段排成区间。 */
   const scan = (): void => {
     const containers = document.querySelectorAll(STREAMING_SELECTOR)
-    // 一个流式容器都没有了：这一段回答已经定型，档位规则再没有人用得到，整张撤下来。
-    if (containers.length === 0) {
-      setRevealRulesActive(false)
-      return
-    }
+    if (containers.length === 0) return
     const now = performance.now()
     /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
     const createdRuns: LiveRun[] = []
@@ -461,9 +452,6 @@ export function installTokenMotion(): () => void {
     // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
     // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
     if (createdRuns.length === 0) return
-    // 有字符要淡入：档位规则此刻起必须生效，而且要赶在注册 highlight 之前——规则不在的那一帧，
-    // 新字会先以本色画出来、下一帧才被压回最淡，那就是眼睛看到的「闪一下」。
-    setRevealRulesActive(true)
     if (scheduledFrame !== 0) {
       cancelAnimationFrame(scheduledFrame)
       scheduledFrame = 0
@@ -472,8 +460,8 @@ export function installTokenMotion(): () => void {
   }
 
   const observer = new MutationObserver(scan)
-  // 也看着 `data-streaming`：它是「这一轮回答还在流」的唯一信号，而它被摘掉时未必伴随别的 DOM
-  // 变化——不盯着它，档位规则就会在回答定型之后继续挂着。
+  // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div 补上
+  // 这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
   observer.observe(document.body, {
     subtree: true,
     childList: true,
@@ -500,8 +488,8 @@ export function installTokenMotion(): () => void {
 /**
  * 承载档位规则的那张样式表的 id，用于排查。
  *
- * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张按需，回答定型之后整张禁用（见
- * `installTokenMotion`）。
+ * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装 `REVEAL_STEPS` 条档位规则，跟着
+ * `installTokenMotion` 一起挂上和撤下。
  */
 const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal'
 
