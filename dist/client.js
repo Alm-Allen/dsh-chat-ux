@@ -91,6 +91,7 @@ function apply(ctx) {
         follow: settings_scope_1.DEFAULT_ENHANCED_FOLLOW,
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
         font: { embedded: settings_scope_1.DEFAULT_EMBEDDED_FONTS, sans: settings_scope_1.DEFAULT_FONT_FAMILY, code: settings_scope_1.DEFAULT_FONT_FAMILY },
+        sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
         sendMs: settings_scope_1.DEFAULT_SEND_FLIGHT_MS,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -103,6 +104,7 @@ function apply(ctx) {
         settings.font.embedded = value?.fonts ?? settings_scope_1.DEFAULT_EMBEDDED_FONTS;
         settings.font.sans = value?.fontSans ?? settings_scope_1.DEFAULT_FONT_FAMILY;
         settings.font.code = value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
+        settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.sendMs = value?.sendFlightMs ?? settings_scope_1.DEFAULT_SEND_FLIGHT_MS;
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
@@ -112,8 +114,9 @@ function apply(ctx) {
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
     // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
-    // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendMs), 'dsh-chat-ux: send flight');
+    // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
+    // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。
+    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn, () => settings.sendMs), 'dsh-chat-ux: send flight');
     // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
     ctx.effect(() => (0, token_motion_1.installTokenMotion)(), 'dsh-chat-ux: token reveal');
     // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
@@ -2883,10 +2886,11 @@ exports.installSendFlight = installSendFlight;
  *             全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    位置与形变各走各的曲线：横向一路减速、纵向一路加速，形变再把横向那条压进前一段里
- *             先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置
- *             都是这几条曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
- *             曲线的两个幂次不开放，它们是照着「方向一直在转」量出来的（见下面那一段）。
+ *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
+ *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
+ *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
+ *             曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
+ *             曲线是阻尼弹簧，三个参数不开放（见下面那一段）。
  *
  *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
  *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
@@ -2915,27 +2919,35 @@ exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
 /** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
 /**
- * 三道缓动。
+ * 三道缓动。**两条轴都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，
+ * 走过了头还会弹回来一点点。
  *
- * **横向是三次 ease-out，纵向是二次 ease-in。** 两条导数互补：横向从三倍平均速度一路减到零，纵向
- * 从零一路加到两倍。于是路径的角度从起手的 -3° 平滑转到收尾的 -90°，**中间没有一段是平的**——
- * 哪一段平了，画出来就是一条直角折线，生硬就生硬在那儿（已经为这个返工过一次）。
+ * **横向的角频率给得很大，于是它早早收完**：两成时间走掉八成三、四成走掉九成九，之后剩下的位移小到
+ * 看不见。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开。
  *
- * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
- * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
+ * 上一版是三次 ease-out 配二次 ease-in：两条导数互补，路径**始终在拐**、方向从起手平滑转到收尾，
+ * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
+ * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
+ *
+ * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 2.8%，再落回目标——落定那一下的弹性就是它。
+ *
+ * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
+ * 气泡的样子，剩下那段上升里形状不再有可见变化。
  *
  * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
  * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
- * 右移实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
+ * 右移实现，宽度收得越早、左边缘到位就越早——两头不可兼得，这里选形状早点定死。
  *
- * 这两个幂次**不开放给读者调**：它们不是随手挑的，是照着「方向单调地转、中间没有平段」量出来的。
- * 换一组也画得出来——两个都取 1，路径就成了一条直线；横向取 4、纵向取 3，就成了先贴地冲出去、后段
- * 才抬起来——但那是另一种东西，不该由卡片上的一个开关决定。
+ * 这三个数**不开放给读者调**：它们是照着「横向早早到位、上升占住后段、落定时回冲一下」量出来的
+ * （逐帧对照见 `文档/业务/发送动效.md`）。换一组也画得出来——阻尼比取 1 就没有回冲，角频率取小
+ * 就成了一条慢吞吞的直线——但那是另一种东西，不该由卡片上的一个开关决定。
  */
-const ACROSS_POWER = 3;
-/** 纵向的幂次，见上面那一段。 */
-const RISE_POWER = 2;
-/** 形变收尾的位置。比横向早，但不能早到把路径压成直角。 */
+const ACROSS_OMEGA = 16;
+/** 纵向弹簧的阻尼比。临界是 1；0.75 让落定时冲过去约 2.8% 再回来。 */
+const RISE_DAMPING = 0.75;
+/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
+const RISE_OMEGA = 7.5;
+/** 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。 */
 const MORPH_END = 0.85;
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
 const ORIGIN_TTL_MS = 1500;
@@ -2957,11 +2969,13 @@ const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-
 const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
 /**
  * 给整页装上发送气泡的起飞。
+ * @param readEnabled - 现读开关；关着时一次都不动手。闸门放在抓起点那一步：开关关着的这段时间里，
+ * 页面上连一次测量都不会发生，看到的完全是 dsh 原来的样子。
  * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
  * 不会打断正在飞的那一段。
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
-function installSendFlight(readMs) {
+function installSendFlight(readEnabled, readMs) {
     // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
         return () => { };
@@ -3075,6 +3089,8 @@ function installSendFlight(readMs) {
     });
     /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
     const captureOrigin = () => {
+        if (!readEnabled())
+            return;
         const input = document.querySelector(dom_contract_1.COMPOSER_INPUT_SELECTOR);
         if (!(input instanceof HTMLElement))
             return;
@@ -3276,7 +3292,7 @@ function createGhost(bubble, box) {
 /**
  * 把替身摆到进度处。
  *
- * 位置走 `across` 与 `rise` 两条互补的曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
+ * 位置走 `across` 与 `rise` 两条弹簧曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
  * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
  *
  * 外形从 `target` 里拿，不在这里读计算样式——这一帧只重量终点的位置，因为只有它会变。
@@ -3292,11 +3308,9 @@ function placeGhost(value, elapsed) {
         return;
     const card = value.draft.card;
     const progressed = Math.min(1, elapsed / value.ms);
-    const rest = 1 - progressed;
-    const across = 1 - rest ** ACROSS_POWER;
-    const morphRest = 1 - Math.min(1, progressed / MORPH_END);
-    const morph = 1 - morphRest ** ACROSS_POWER;
-    const rise = progressed ** RISE_POWER;
+    const across = springProgress(progressed, 1, ACROSS_OMEGA);
+    const morph = springProgress(Math.min(1, progressed / MORPH_END), 1, ACROSS_OMEGA);
+    const rise = springProgress(progressed, RISE_DAMPING, RISE_OMEGA);
     const shell = value.shell;
     const content = value.content;
     const x = card.box.left + (box.left - card.box.left) * across;
@@ -3309,6 +3323,23 @@ function placeGhost(value, elapsed) {
     content.style.transform = 'translate('
         + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
         + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)';
+}
+/**
+ * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
+ *
+ * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
+ * 就是它。`u` 超出 1 的部分由调用方夹住。
+ * @param u - 时间占比，0 到 1。
+ * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
+ * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
+ * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
+ */
+function springProgress(u, damping, omega) {
+    if (damping >= 1)
+        return 1 - (1 + omega * u) * Math.exp(-omega * u);
+    const damped = omega * Math.sqrt(1 - damping * damping);
+    return 1 - Math.exp(-damping * omega * u)
+        * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
 }
 /** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
 function mixColor(from, to, progress) {
@@ -3384,6 +3415,7 @@ const CARET_FIELD = 'caretMotion';
 const FONTS_FIELD = 'fonts';
 const FONT_SANS_FIELD = 'fontSans';
 const FONT_CODE_FIELD = 'fontCode';
+const SEND_FLIGHT_FIELD = 'sendFlight';
 const SEND_FLIGHT_MS_FIELD = 'sendFlightMs';
 const ZH_COPY = {
     summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、发送动效、自带字体与你自己填的字体栈也在这里调。',
@@ -3396,6 +3428,10 @@ const ZH_COPY = {
     caretOff: '关',
     caretMove: '移动时',
     caretTyping: '无论何时',
+    sendLabel: '聊天气泡动效',
+    sendHint: '提交之后那条气泡从输入框飞上来、落进消息列，路径、形变与落位都是新调出来的。这一段还在收，'
+        + '标着 beta，默认关着——打开之后下面那个时长才生效。',
+    sendOffHint: '聊天气泡动效关着，这一项现在不生效。',
     sendMsLabel: '发送动效时长',
     sendMsHint: '提交之后那条气泡从输入框飞上来的整段时长，单位毫秒，可以填 80 到 1200。默认 200：越短越干脆，'
         + '越长越看得清路径。',
@@ -3429,6 +3465,10 @@ const EN_COPY = {
     caretOff: 'Off',
     caretMove: 'On move',
     caretTyping: 'On typing',
+    sendLabel: 'Chat bubble motion',
+    sendHint: 'The bubble rises from the composer into the transcript after you submit. This stretch is still settling, '
+        + 'so it is marked beta and off by default — the duration below only matters once you turn it on.',
+    sendOffHint: 'Chat bubble motion is off, so this field has no effect right now.',
     sendMsLabel: 'Send flight duration',
     sendMsHint: 'How long the bubble takes to rise from the composer after you submit, in milliseconds, anywhere from 80 to '
         + '1200. Default 200: shorter is crisper, longer makes the path easier to see.',
@@ -3452,7 +3492,7 @@ const EN_COPY = {
     readOnly: 'The settings document is read-only, so changes cannot be saved.',
 };
 /**
- * 渲染这个插件的配置：两个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
+ * 渲染这个插件的配置：三个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -3471,6 +3511,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [sendMsDraft, setSendMsDraft] = (0, react_1.useState)(null);
     const fieldId = (0, react_1.useId)();
     const followOn = storedFollow(snapshot.value);
+    const sendOn = storedSendOn(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const fontsOn = storedFonts(snapshot.value);
     const sans = sansDraft ?? storedSans(snapshot.value);
@@ -3529,9 +3570,12 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setFailed(stillOverridden);
         setSaving(false);
     };
-    /** 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，四种字段共用。 */
-    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.label, children: label }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-send-ms', label: copy.sendMsLabel, hint: copy.sendMsHint, invalidHint: copy.sendMsInvalid, value: sendMs, invalid: sendMsInvalid, overridden: userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD), disabled: controlsDisabled, copy: copy, onEdit: setSendMsDraft, onCommit: () => void commitSendMs(), onReset: () => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD); } }), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    /**
+     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
+     * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
+     */
+    const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-send-ms', label: copy.sendMsLabel, hint: sendOn ? copy.sendMsHint : copy.sendOffHint, invalidHint: copy.sendMsInvalid, value: sendMs, invalid: sendMsInvalid, overridden: userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD), disabled: controlsDisabled || !sendOn, copy: copy, onEdit: setSendMsDraft, onCommit: () => void commitSendMs(), onReset: () => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD); } }), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
@@ -3562,6 +3606,10 @@ function overrideBadges(copy, disabled, onReset) {
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value) {
     return value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
+}
+/** 从 host 的值里读聊天气泡动效的开关。 */
+function storedSendOn(value) {
+    return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
 }
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value) {
@@ -3648,6 +3696,7 @@ exports.CARD_CLASS = {
     row: 'dsh-chat-ux-card-row',
     rowText: 'dsh-chat-ux-card-row-text',
     label: 'dsh-chat-ux-card-label',
+    labelLine: 'dsh-chat-ux-card-label-line',
     badges: 'dsh-chat-ux-card-badges',
     reset: 'dsh-chat-ux-card-reset',
     hint: 'dsh-chat-ux-card-hint',
@@ -3695,6 +3744,14 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
+}
+
+/* 标签那一行：标签后面可以跟一个小标（beta）。用行内 flex，标才不会把说明挤下去。 */
+.${exports.CARD_CLASS.labelLine} {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .${exports.CARD_CLASS.badges} {
@@ -3805,7 +3862,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
     __registry["settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SEND_FLIGHT_MS_MAX = exports.SEND_FLIGHT_MS_MIN = exports.DEFAULT_SEND_FLIGHT_MS = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.SEND_FLIGHT_MS_MAX = exports.SEND_FLIGHT_MS_MIN = exports.DEFAULT_SEND_FLIGHT_MS = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -3828,6 +3885,12 @@ exports.DEFAULT_FONT_FAMILY = '';
  * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
  */
 exports.DEFAULT_CARET_MOTION = 'typing';
+/**
+ * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认关着，理由与那一处相同：这一段还在调，卡片上标着 beta，读者自己打开才算数。
+ */
+exports.DEFAULT_SEND_FLIGHT = false;
 /**
  * 发送气泡起飞时长的默认值（毫秒）。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *

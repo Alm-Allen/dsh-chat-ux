@@ -28,7 +28,7 @@ import { installSendFlight } from './send-flight'
 import { ChatUxConfigCard } from './settings-card'
 import {
   DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-  DEFAULT_SEND_FLIGHT_MS,
+  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS,
 } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { ALL_CSS, STYLE_ID } from './styles'
@@ -70,6 +70,7 @@ export function apply(ctx: ClientContext): void {
     follow: DEFAULT_ENHANCED_FOLLOW,
     caret: DEFAULT_CARET_MOTION,
     font: { embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY },
+    sendOn: DEFAULT_SEND_FLIGHT,
     sendMs: DEFAULT_SEND_FLIGHT_MS,
   }
 
@@ -83,6 +84,7 @@ export function apply(ctx: ClientContext): void {
     settings.font.embedded = value?.fonts ?? DEFAULT_EMBEDDED_FONTS
     settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
     settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
+    settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
     settings.sendMs = value?.sendFlightMs ?? DEFAULT_SEND_FLIGHT_MS
     applyFontChoice(settings.font)
     caret.resync()
@@ -93,8 +95,12 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
 
   // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
-  // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-  ctx.effect(() => installSendFlight(() => settings.sendMs), 'dsh-chat-ux: send flight')
+  // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
+  // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。
+  ctx.effect(
+    () => installSendFlight(() => settings.sendOn, () => settings.sendMs),
+    'dsh-chat-ux: send flight',
+  )
 
   // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
   ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
@@ -154,6 +160,8 @@ interface ChatUxSettings {
   caret: CaretMotionMode
   /** 字体那三项，原样交给 `applyFontChoice`。 */
   font: FontChoice
+  /** 聊天气泡动效开着没有，每一段起手前现读。 */
+  sendOn: boolean
   /** 发送动效那一段的时长（毫秒），每一段起飞开始时现读。 */
   sendMs: number
 }

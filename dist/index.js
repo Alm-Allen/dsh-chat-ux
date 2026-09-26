@@ -46,6 +46,13 @@ export const DEFAULT_FONT_FAMILY = '';
 /** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
 export const DEFAULT_CARET_MOTION = 'typing';
 /**
+ * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认关着：这一段还在调，卡片上标着 beta，读者自己打开才算数。关着时页面上一次都不动手，
+ * 看到的就是 dsh 原来的样子。
+ */
+export const DEFAULT_SEND_FLIGHT = false;
+/**
  * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
  * 改一处就要改另一处。
  *
@@ -71,6 +78,7 @@ export const Config = Schema.object({
     fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
     fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+    sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
 });
 /**

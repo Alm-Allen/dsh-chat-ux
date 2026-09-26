@@ -64,6 +64,14 @@ export type CaretMotionMode = 'off' | 'move' | 'typing'
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 
 /**
+ * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认关着：这一段还在调，卡片上标着 beta，读者自己打开才算数。关着时页面上一次都不动手，
+ * 看到的就是 dsh 原来的样子。
+ */
+export const DEFAULT_SEND_FLIGHT = false
+
+/**
  * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
  * 改一处就要改另一处。
  *
@@ -94,6 +102,8 @@ export interface Config {
   fontSans: Volatile<string>
   // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
   fontCode: Volatile<string>
+  // 提交之后气泡是否从输入框起飞。标着 beta 的那一项，默认关着。
+  sendFlight: Volatile<boolean>
   // 提交之后气泡从输入框起飞的那一段时长，单位毫秒。曲线不开放：那两个幂次是量出来的，
   // 见 `client/send-flight.ts` 里那一段说明。
   sendFlightMs: Volatile<number>
@@ -109,6 +119,7 @@ export const Config = Schema.object({
   fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
   fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
   fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+  sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
   sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
 })
 

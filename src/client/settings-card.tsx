@@ -28,7 +28,7 @@ import { CARD_CLASS } from './config-card-styles'
 import { isFontFamilyValue } from './font-override'
 import {
   DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-  DEFAULT_SEND_FLIGHT_MS, SEND_FLIGHT_MS_MAX, SEND_FLIGHT_MS_MIN,
+  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS, SEND_FLIGHT_MS_MAX, SEND_FLIGHT_MS_MIN,
 } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 
@@ -38,6 +38,7 @@ const CARET_FIELD = 'caretMotion'
 const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
+const SEND_FLIGHT_FIELD = 'sendFlight'
 const SEND_FLIGHT_MS_FIELD = 'sendFlightMs'
 
 /** 卡片文案的语种：这一张卡片只有中英两套。 */
@@ -53,6 +54,9 @@ interface Copy {
   caretOff: string
   caretMove: string
   caretTyping: string
+  sendLabel: string
+  sendHint: string
+  sendOffHint: string
   sendMsLabel: string
   sendMsHint: string
   sendMsInvalid: string
@@ -87,6 +91,11 @@ const ZH_COPY: Copy = {
   caretOff: '关',
   caretMove: '移动时',
   caretTyping: '无论何时',
+  sendLabel: '聊天气泡动效',
+  sendHint:
+    '提交之后那条气泡从输入框飞上来、落进消息列，路径、形变与落位都是新调出来的。这一段还在收，'
+    + '标着 beta，默认关着——打开之后下面那个时长才生效。',
+  sendOffHint: '聊天气泡动效关着，这一项现在不生效。',
   sendMsLabel: '发送动效时长',
   sendMsHint:
     '提交之后那条气泡从输入框飞上来的整段时长，单位毫秒，可以填 80 到 1200。默认 200：越短越干脆，'
@@ -127,6 +136,11 @@ const EN_COPY: Copy = {
   caretOff: 'Off',
   caretMove: 'On move',
   caretTyping: 'On typing',
+  sendLabel: 'Chat bubble motion',
+  sendHint:
+    'The bubble rises from the composer into the transcript after you submit. This stretch is still settling, '
+    + 'so it is marked beta and off by default — the duration below only matters once you turn it on.',
+  sendOffHint: 'Chat bubble motion is off, so this field has no effect right now.',
   sendMsLabel: 'Send flight duration',
   sendMsHint:
     'How long the bubble takes to rise from the composer after you submit, in milliseconds, anywhere from 80 to '
@@ -165,7 +179,7 @@ export interface ChatUxConfigCardProps {
 }
 
 /**
- * 渲染这个插件的配置：两个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
+ * 渲染这个插件的配置：三个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -191,6 +205,7 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   const fieldId = useId()
 
   const followOn = storedFollow(snapshot.value)
+  const sendOn = storedSendOn(snapshot.value)
   const caretMode = storedCaret(snapshot.value)
   const fontsOn = storedFonts(snapshot.value)
   const sans = sansDraft ?? storedSans(snapshot.value)
@@ -259,11 +274,23 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
     setSaving(false)
   }
 
-  /** 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，四种字段共用。 */
-  const rowChrome = (field: string, label: string, hint: string, control: ReactElement): ReactElement => (
+  /**
+   * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
+   * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
+   */
+  const rowChrome = (
+    field: string,
+    label: string,
+    hint: string,
+    control: ReactElement,
+    badge?: ReactElement,
+  ): ReactElement => (
     <div className={CARD_CLASS.row}>
       <div className={CARD_CLASS.rowText}>
-        <div className={CARD_CLASS.label}>{label}</div>
+        <div className={CARD_CLASS.labelLine}>
+          <span className={CARD_CLASS.label}>{label}</span>
+          {badge}
+        </div>
         <p className={CARD_CLASS.hint}>{hint}</p>
       </div>
       {userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field))}
@@ -293,15 +320,23 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
           className={CARD_CLASS.segment}
         />
       ))}
+      {rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, (
+        <Switch
+          checked={sendOn}
+          disabled={controlsDisabled}
+          label={copy.sendLabel}
+          onChange={(next: boolean) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn)}
+        />
+      ), <Tag tone="info">beta</Tag>)}
       <DraftField
         id={fieldId + '-send-ms'}
         label={copy.sendMsLabel}
-        hint={copy.sendMsHint}
+        hint={sendOn ? copy.sendMsHint : copy.sendOffHint}
         invalidHint={copy.sendMsInvalid}
         value={sendMs}
         invalid={sendMsInvalid}
         overridden={userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD)}
-        disabled={controlsDisabled}
+        disabled={controlsDisabled || !sendOn}
         copy={copy}
         onEdit={setSendMsDraft}
         onCommit={() => void commitSendMs()}
@@ -426,6 +461,11 @@ function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): Rea
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value: ChatUxSection | undefined): boolean {
   return value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+}
+
+/** 从 host 的值里读聊天气泡动效的开关。 */
+function storedSendOn(value: ChatUxSection | undefined): boolean {
+  return value?.sendFlight ?? DEFAULT_SEND_FLIGHT
 }
 
 /** 从 host 的值里读光标动效档位。 */

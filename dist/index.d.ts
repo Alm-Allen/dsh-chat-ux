@@ -34,6 +34,13 @@ export type CaretMotionMode = 'off' | 'move' | 'typing';
 /** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
 export declare const DEFAULT_CARET_MOTION: CaretMotionMode;
 /**
+ * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认关着：这一段还在调，卡片上标着 beta，读者自己打开才算数。关着时页面上一次都不动手，
+ * 看到的就是 dsh 原来的样子。
+ */
+export declare const DEFAULT_SEND_FLIGHT = false;
+/**
  * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
  * 改一处就要改另一处。
  *
@@ -55,6 +62,7 @@ export interface Config {
     fonts: Volatile<boolean>;
     fontSans: Volatile<string>;
     fontCode: Volatile<string>;
+    sendFlight: Volatile<boolean>;
     sendFlightMs: Volatile<number>;
 }
 /**
@@ -67,6 +75,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;
     fontCode: Schema<string, string, "volatile-defined">;
+    sendFlight: Schema<boolean, boolean, "volatile-defined">;
     sendFlightMs: Schema<number, number, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
@@ -74,6 +83,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;
     fontCode: Schema<string, string, "volatile-defined">;
+    sendFlight: Schema<boolean, boolean, "volatile-defined">;
     sendFlightMs: Schema<number, number, "volatile-defined">;
 }>>, "plain">;
 /**

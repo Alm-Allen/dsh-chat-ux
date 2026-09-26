@@ -36,6 +36,13 @@ export const DEFAULT_FONT_FAMILY = ''
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 
 /**
+ * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认关着，理由与那一处相同：这一段还在调，卡片上标着 beta，读者自己打开才算数。
+ */
+export const DEFAULT_SEND_FLIGHT = false
+
+/**
  * 发送气泡起飞时长的默认值（毫秒）。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认 200：实测过的那一段——短到读者不等它，长到看得清路径。
@@ -61,6 +68,8 @@ export interface ChatUxSection {
   fontSans?: string
   /** 自定义等宽字体栈；空串用自带的。 */
   fontCode?: string
+  /** 提交之后气泡是否从输入框起飞；默认关着。 */
+  sendFlight?: boolean
   /** 提交之后气泡起飞的那一段时长（毫秒）。 */
   sendFlightMs?: number
 }

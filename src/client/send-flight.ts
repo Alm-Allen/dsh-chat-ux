@@ -13,10 +13,11 @@
  *             全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    位置与形变各走各的曲线：横向一路减速、纵向一路加速，形变再把横向那条压进前一段里
- *             先收住。于是路径**始终在拐**、形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置
- *             都是这几条曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
- *             曲线的两个幂次不开放，它们是照着「方向一直在转」量出来的（见下面那一段）。
+ *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
+ *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
+ *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
+ *             曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
+ *             曲线是阻尼弹簧，三个参数不开放（见下面那一段）。
  *
  *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
  *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
@@ -48,29 +49,38 @@ export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
 
 /**
- * 三道缓动。
+ * 三道缓动。**两条轴都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，
+ * 走过了头还会弹回来一点点。
  *
- * **横向是三次 ease-out，纵向是二次 ease-in。** 两条导数互补：横向从三倍平均速度一路减到零，纵向
- * 从零一路加到两倍。于是路径的角度从起手的 -3° 平滑转到收尾的 -90°，**中间没有一段是平的**——
- * 哪一段平了，画出来就是一条直角折线，生硬就生硬在那儿（已经为这个返工过一次）。
+ * **横向的角频率给得很大，于是它早早收完**：两成时间走掉八成三、四成走掉九成九，之后剩下的位移小到
+ * 看不见。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开。
  *
- * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：六成时长处已经走完九成八，气泡
- * 还没离开输入框就长成了气泡的样子，剩下那段上升里形状不再有可见变化。
+ * 上一版是三次 ease-out 配二次 ease-in：两条导数互补，路径**始终在拐**、方向从起手平滑转到收尾，
+ * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
+ * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
+ *
+ * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 2.8%，再落回目标——落定那一下的弹性就是它。
+ *
+ * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
+ * 气泡的样子，剩下那段上升里形状不再有可见变化。
  *
  * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
  * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
- * 右移实现，宽度收得越早、左边缘到位就越早、路径就越像直角——两头不可兼得，这里选路径。
+ * 右移实现，宽度收得越早、左边缘到位就越早——两头不可兼得，这里选形状早点定死。
  *
- * 这两个幂次**不开放给读者调**：它们不是随手挑的，是照着「方向单调地转、中间没有平段」量出来的。
- * 换一组也画得出来——两个都取 1，路径就成了一条直线；横向取 4、纵向取 3，就成了先贴地冲出去、后段
- * 才抬起来——但那是另一种东西，不该由卡片上的一个开关决定。
+ * 这三个数**不开放给读者调**：它们是照着「横向早早到位、上升占住后段、落定时回冲一下」量出来的
+ * （逐帧对照见 `文档/业务/发送动效.md`）。换一组也画得出来——阻尼比取 1 就没有回冲，角频率取小
+ * 就成了一条慢吞吞的直线——但那是另一种东西，不该由卡片上的一个开关决定。
  */
-const ACROSS_POWER = 3
+const ACROSS_OMEGA = 16
 
-/** 纵向的幂次，见上面那一段。 */
-const RISE_POWER = 2
+/** 纵向弹簧的阻尼比。临界是 1；0.75 让落定时冲过去约 2.8% 再回来。 */
+const RISE_DAMPING = 0.75
 
-/** 形变收尾的位置。比横向早，但不能早到把路径压成直角。 */
+/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
+const RISE_OMEGA = 7.5
+
+/** 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。 */
 const MORPH_END = 0.85
 
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
@@ -99,11 +109,13 @@ const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR
 
 /**
  * 给整页装上发送气泡的起飞。
+ * @param readEnabled - 现读开关；关着时一次都不动手。闸门放在抓起点那一步：开关关着的这段时间里，
+ * 页面上连一次测量都不会发生，看到的完全是 dsh 原来的样子。
  * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
  * 不会打断正在飞的那一段。
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
-export function installSendFlight(readMs: () => number): () => void {
+export function installSendFlight(readEnabled: () => boolean, readMs: () => number): () => void {
   // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
 
@@ -214,6 +226,7 @@ export function installSendFlight(readMs: () => number): () => void {
 
   /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
   const captureOrigin = (): void => {
+    if (!readEnabled()) return
     const input = document.querySelector(COMPOSER_INPUT_SELECTOR)
     if (!(input instanceof HTMLElement)) return
     const card = input.closest(COMPOSER_CARD_SELECTOR)
@@ -457,7 +470,7 @@ function createGhost(bubble: HTMLElement, box: DOMRect): { shell: HTMLElement; c
 /**
  * 把替身摆到进度处。
  *
- * 位置走 `across` 与 `rise` 两条互补的曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
+ * 位置走 `across` 与 `rise` 两条弹簧曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
  * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
  *
  * 外形从 `target` 里拿，不在这里读计算样式——这一帧只重量终点的位置，因为只有它会变。
@@ -471,11 +484,9 @@ function placeGhost(value: Flight, elapsed: number): void {
   if (box.width === 0) return
   const card = value.draft.card
   const progressed = Math.min(1, elapsed / value.ms)
-  const rest = 1 - progressed
-  const across = 1 - rest ** ACROSS_POWER
-  const morphRest = 1 - Math.min(1, progressed / MORPH_END)
-  const morph = 1 - morphRest ** ACROSS_POWER
-  const rise = progressed ** RISE_POWER
+  const across = springProgress(progressed, 1, ACROSS_OMEGA)
+  const morph = springProgress(Math.min(1, progressed / MORPH_END), 1, ACROSS_OMEGA)
+  const rise = springProgress(progressed, RISE_DAMPING, RISE_OMEGA)
   const shell = value.shell
   const content = value.content
   const x = card.box.left + (box.left - card.box.left) * across
@@ -488,6 +499,23 @@ function placeGhost(value: Flight, elapsed: number): void {
   content.style.transform = 'translate('
     + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
     + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)'
+}
+
+/**
+ * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
+ *
+ * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
+ * 就是它。`u` 超出 1 的部分由调用方夹住。
+ * @param u - 时间占比，0 到 1。
+ * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
+ * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
+ * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
+ */
+function springProgress(u: number, damping: number, omega: number): number {
+  if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
+  const damped = omega * Math.sqrt(1 - damping * damping)
+  return 1 - Math.exp(-damping * omega * u)
+    * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u))
 }
 
 /** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */

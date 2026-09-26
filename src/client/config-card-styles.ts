@@ -21,6 +21,7 @@ export const CARD_CLASS = {
   row: 'dsh-chat-ux-card-row',
   rowText: 'dsh-chat-ux-card-row-text',
   label: 'dsh-chat-ux-card-label',
+  labelLine: 'dsh-chat-ux-card-label-line',
   badges: 'dsh-chat-ux-card-badges',
   reset: 'dsh-chat-ux-card-reset',
   hint: 'dsh-chat-ux-card-hint',
@@ -69,6 +70,14 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
+}
+
+/* 标签那一行：标签后面可以跟一个小标（beta）。用行内 flex，标才不会把说明挤下去。 */
+.${CARD_CLASS.labelLine} {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .${CARD_CLASS.badges} {
