@@ -2931,6 +2931,11 @@ exports.installSendFlight = installSendFlight;
  *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
  *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
  *             布局结算拖进每一帧里来。
+ *
+ *             **位移不在主线程上。** 起手那一刻把两条曲线采成一段 `transform` 关键帧，交给
+ *             `Element.animate` 去跑，合成器线程负责插值——dsh 解析一批响应占住主线程那几十毫秒时
+ *             轨迹照样在走（改造前是每帧写一次 `transform`，主线程一忙它就冻住）。主线程每帧只剩
+ *             形变与"终点移动了多少"这两件事，后者写在外层，动它不会把里层那段合成动画顶掉。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 五条边界（前两条是实测踩出来的）：
@@ -2997,7 +3002,7 @@ const ACROSS_OMEGA = 16;
  * 它是照着 iMessage 收了一档来的——那一边本来就有回弹，只是比这里原来的 0.75（约 2.8%）更收敛。
  * **要自己再调就改这一个数**，改完 `npm run build`、Ctrl+F5 刷新页面看落定那一瞬。
  */
-const RISE_DAMPING = 0.8;
+const RISE_DAMPING = 0.75;
 /** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
 const RISE_OMEGA = 7.5;
 /** 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。 */
@@ -3069,7 +3074,8 @@ function installSendFlight(readEnabled) {
         window.clearTimeout(rescue);
         rescue = 0;
         current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
-        current.shell.remove();
+        current.travel.cancel();
+        current.wrapper.remove();
     };
     /** 帧里只画。认行与量外形都交给上面那个 observer——它们不是每帧都有新答案的事。 */
     const tick = () => {
@@ -3095,16 +3101,27 @@ function installSendFlight(readEnabled) {
             return;
         if (!sameScreen(card.top, box.top, window.innerHeight))
             return;
-        const ghost = createGhost(target.bubble, box);
+        const ghost = createGhost(target.bubble, box, { left: card.left, top: card.top });
         if (ghost === null)
             return;
         echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        // 位移整段交给合成器：主线程被响应解析占住那几十毫秒时，轨迹照样在走。
+        const travel = ghost.shell.animate(flightKeyframes(box.left - card.left, box.top - card.top), {
+            duration: exports.FLIGHT_MS,
+            easing: 'linear',
+            fill: 'forwards',
+        });
         flight = {
             draft,
+            wrapper: ghost.wrapper,
             shell: ghost.shell,
             content: ghost.content,
+            travel,
             startedAt: performance.now(),
             ms: exports.FLIGHT_MS,
+            targetAt: { left: box.left, top: box.top },
+            shiftedX: 0,
+            shiftedY: 0,
             previous: lastUserRow(),
             hidden: echo,
             target,
@@ -3308,9 +3325,10 @@ function sameScreen(start, end, viewportExtent) {
  * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
  * @param bubble - 克隆的源头。
  * @param box - 已经量好的气泡矩形。调用方本来就要它，这里不再重量一次。
- * @returns 壳与内容；气泡量不到尺寸时为 null。
+ * @param origin - 输入卡片左上角：外层就摆在它上面，位移从零开始。
+ * @returns 外层、壳与内容；气泡量不到尺寸时为 null。
  */
-function createGhost(bubble, box) {
+function createGhost(bubble, box, origin) {
     if (box.width === 0 || box.height === 0)
         return null;
     const content = bubble.cloneNode(true);
@@ -3323,9 +3341,7 @@ function createGhost(bubble, box) {
     content.style.margin = '0px';
     content.style.backgroundColor = 'transparent';
     const shell = document.createElement('div');
-    shell.setAttribute(GHOST_ATTRIBUTE, '');
-    shell.setAttribute('aria-hidden', 'true');
-    shell.style.position = 'fixed';
+    shell.style.position = 'absolute';
     shell.style.left = '0px';
     shell.style.top = '0px';
     shell.style.margin = '0px';
@@ -3333,19 +3349,37 @@ function createGhost(bubble, box) {
     shell.style.pointerEvents = 'none';
     // 壳的尺寸每帧都在变。圈成一块独立的布局与绘制区域，那些变化就不会外溢到聊天区去。
     shell.style.contain = 'layout paint';
-    // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
-    shell.style.zIndex = '2147483000';
+    // 光有关键帧还不够：没有自己的合成层时，Blink 会把它当普通动画留在主线程上，dsh 一忙就停。
+    // 这个提示让壳拿到自己的层（它只活一段飞行，层跟着一起消失）。
+    shell.style.willChange = 'transform';
     shell.appendChild(content);
-    document.body.appendChild(shell);
-    return { shell, content };
+    // 两层是分开放的：位移动画挂在里层的壳上，而"终点动了多少"写在外层。合在一层的话，每补一次
+    // 终点位移都会把那段合成动画顶掉——那正是主线程忙时最不该丢掉的东西。
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute(GHOST_ATTRIBUTE, '');
+    wrapper.setAttribute('aria-hidden', 'true');
+    wrapper.style.position = 'fixed';
+    wrapper.style.left = origin.left + 'px';
+    wrapper.style.top = origin.top + 'px';
+    wrapper.style.width = '0px';
+    wrapper.style.height = '0px';
+    wrapper.style.margin = '0px';
+    wrapper.style.pointerEvents = 'none';
+    // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
+    wrapper.style.zIndex = '2147483000';
+    wrapper.appendChild(shell);
+    document.body.appendChild(wrapper);
+    return { wrapper, shell, content };
 }
 /**
  * 把替身摆到进度处。
  *
- * 位置走 `across` 与 `rise` 两条弹簧曲线，形变走 `morph`。壳负责位置、尺寸、圆角与底色；
- * 内容只负责自己的相对位置：起点时它落在原来那句话的位置上，随着壳收缩回到自己的角落。
+ * **位移不在这里。** 它是一条 `transform` 关键帧动画，跑在**合成器线程**上——主线程被 dsh 解析
+ * 响应占住那几十毫秒时，读者看到的仍然是一条在走的轨迹。这里是每帧唯一的 JS：形变（尺寸、圆角、
+ * 底色）写到壳上，终点移动了多少补到外层，内容保持自己的相对位置。
  *
- * 外形从 `target` 里拿，不在这里读计算样式——这一帧只重量终点的位置，因为只有它会变。
+ * 形变留在主线程是有意的：它到 `MORPH_END` 就定死，之后再没有可见变化，而且它只是几次样式写、
+ * 一次布局读都没有。外形从 `target` 里拿，不在这里读计算样式。
  */
 function placeGhost(value, elapsed) {
     const target = value.target;
@@ -3358,14 +3392,18 @@ function placeGhost(value, elapsed) {
         return;
     const card = value.draft.card;
     const progressed = Math.min(1, elapsed / value.ms);
-    const across = springProgress(progressed, 1, ACROSS_OMEGA);
     const morph = springProgress(Math.min(1, progressed / MORPH_END), 1, ACROSS_OMEGA);
-    const rise = springProgress(progressed, RISE_DAMPING, RISE_OMEGA);
     const shell = value.shell;
     const content = value.content;
-    const x = card.box.left + (box.left - card.box.left) * across;
-    const y = card.box.top + (box.top - card.box.top) * rise;
-    shell.style.transform = 'translate(' + x + 'px, ' + y + 'px)';
+    // 终点动了多少就补多少。飞行期间它通常只动几十像素（提交后 dsh 自己会滚到底、回显会被正式行
+    // 换掉），所以这条"整体补差"与原来"每帧按曲线重算位置"看起来是同一件事。
+    const shiftX = box.left - value.targetAt.left;
+    const shiftY = box.top - value.targetAt.top;
+    if (shiftX !== value.shiftedX || shiftY !== value.shiftedY) {
+        value.shiftedX = shiftX;
+        value.shiftedY = shiftY;
+        value.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)';
+    }
     shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px';
     shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px';
     shell.style.borderRadius = (card.radius + (target.radius - card.radius) * morph) + 'px';
@@ -3373,6 +3411,25 @@ function placeGhost(value, elapsed) {
     content.style.transform = 'translate('
         + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
         + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)';
+}
+/** 位移采样的段数。弹簧是连续曲线，拿折线去逼近它——段数够密就看不出折点。 */
+const FLIGHT_KEYFRAMES = 48;
+/**
+ * 把两条弹簧曲线采成一段 `transform` 关键帧：横向临界阻尼（早早收完），纵向欠阻尼（收尾回冲）。
+ * 采样点之间是线性插值，所以动画自己不用 easing——曲线已经在关键帧里。
+ * @param dx - 起点到终点的横向位移。
+ * @param dy - 起点到终点的纵向位移。
+ * @returns 可以直接交给 `Element.animate` 的关键帧数组。
+ */
+function flightKeyframes(dx, dy) {
+    const frames = [];
+    for (let step = 0; step <= FLIGHT_KEYFRAMES; step += 1) {
+        const u = step / FLIGHT_KEYFRAMES;
+        const x = dx * springProgress(u, 1, ACROSS_OMEGA);
+        const y = dy * springProgress(u, RISE_DAMPING, RISE_OMEGA);
+        frames.push({ transform: 'translate(' + x + 'px, ' + y + 'px)', offset: u });
+    }
+    return frames;
 }
 /**
  * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
