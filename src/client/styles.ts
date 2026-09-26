@@ -2,27 +2,11 @@
  * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
- * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则、token 淡入所驱动的分档规则（见
- * `token-motion.ts`），再加上卡片、插入符、文件变更行、折叠体入场与字体那几份各自的
- * `*-styles.ts`。
+ * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上卡片、插入符、文件变更行、折叠体入场
+ * 与字体那几份各自的 `*-styles.ts`。
  *
- * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是
- * 它自己的颜色，由 `token-motion.ts` 以 `RUN_COLOR_VAR` 逐元素发布——从
- * `TOKEN_MIN_OPACITY` 一路走到完全不透明。三条约束决定了它只能这么写：
- *
- *   - 用不了 `opacity`。highlight 伪元素只接受很小的属性集（color、background-color、
- *     各种 text-decoration、text-shadow），所以透明度只能挂在 `color` 的 alpha 通道上——
- *     这正是 `color-mix(in srgb, C p%, transparent)` 的语义：与 `transparent` 混合会把
- *     结果的 alpha 按 `p` 加权，色相不变。
- *   - 也用不了 `currentColor`。在 `::highlight()` 里 Chromium 不会把它解析到承载元素上，
- *     而是塌缩成初始色：实测（`rgb(21, 21, 23)` 画布 + `color-scheme: dark`）只以
- *     `currentColor` 为色的规则画出了 `rgb(0, 0, 0)`——在那块画布上不可见，表现为每个
- *     字符在 highlight 撤销前闪一下黑。
- *   - 更不能用同一个颜色。一段回答里不只有正文：它还带着链接、语法 token 和列表标记，
- *     这些字符最终停住的都不是正文色。淡入期间把它们涂成正文色，每个字符就会先比它最终
- *     的颜色更亮、然后掉回去——那是高亮闪一下，不是淡入。所以颜色从区间所在的元素上读出来，
- *     写成该元素自己的自定义属性，`::highlight()` 再逐元素解析它；下面的 `body` 规则
- *     只是页面级兜底。
+ * token 淡入的档位规则**不在这里**：那批规则按需挂载，由 `token-motion.ts` 自己带着一张单独的
+ * 样式表（见它里面的 `revealCss`）。这里只留淡入用色在页面级的那份兜底。
  */
 import { CARET_MOTION_CSS } from './caret-motion-styles'
 import { CARD_CSS } from './config-card-styles'
@@ -30,28 +14,10 @@ import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
 import { FONT_CSS } from './font-styles'
 import { SEND_FLIGHT_CSS } from './send-flight-styles'
-import { HIGHLIGHT_PREFIX, REVEAL_STEPS, RUN_COLOR_VAR, TOKEN_MIN_OPACITY } from './token-motion'
+import { RUN_COLOR_VAR } from './token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
 export const STYLE_ID = 'dsh-chat-ux-style'
-
-/**
- * 一档一条规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开
- * highlight 注册表的那一刻到达它最终的颜色。
- *
- * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量的说明），所以这里不额外多生成任何一档。
- * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
- * 的值本来就在那儿，不必再舍一次。
- */
-const revealStepRules = Array.from({ length: REVEAL_STEPS }, (_, step) => {
-  const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
-  const alpha = Number((ratio * 100).toFixed(2))
-  return [
-    '::highlight(' + HIGHLIGHT_PREFIX + step + ') {',
-    '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
-    '}',
-  ].join('\n')
-}).join('\n\n')
 
 /** 聊天区样式表。 */
 export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
@@ -135,13 +101,12 @@ body[data-ds-dark-theme] {
     }
   }
 }
-
-${revealStepRules}
 `
 
 /**
- * 注入的那一张样式表：本插件拥有的全部规则，按下面的顺序拼起来。
+ * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。按需挂载的那一份
+ * （token 淡入的档位规则）不进这里，它由 `token-motion.ts` 自己带着。
  */
 export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')

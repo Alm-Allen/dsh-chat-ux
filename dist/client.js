@@ -584,7 +584,7 @@ function installCaretMotion(read) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -593,8 +593,15 @@ exports.CHAT_FLOW_SELECTOR = '[data-chat-flow]';
 exports.THINK_ROW_SELECTOR = '[data-variant="think"]';
 /** 模型还在思考、过程还在跑时的阶段值。 */
 exports.RUNNING_STATE = 'running';
-/** Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。 */
-exports.STREAMING_SELECTOR = '[data-streaming]';
+/**
+ * Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。
+ *
+ * 属性名与选择器两种形式各有人用（前者喂 `MutationObserver` 的 `attributeFilter`，后者查页面），
+ * 所以两个都写在这里：各自就地拼字符串的话，改一处就会漏一处。
+ */
+exports.STREAMING_ATTRIBUTE = 'data-streaming';
+/** 同一个契约的选择器形式。 */
+exports.STREAMING_SELECTOR = '[' + exports.STREAMING_ATTRIBUTE + ']';
 /** TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。 */
 exports.SHIMMER_SELECTOR = '[data-text-shimmer]';
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
@@ -3843,27 +3850,11 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
- * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则、token 淡入所驱动的分档规则（见
- * `token-motion.ts`），再加上卡片、插入符、文件变更行、折叠体入场与字体那几份各自的
- * `*-styles.ts`。
+ * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上卡片、插入符、文件变更行、折叠体入场
+ * 与字体那几份各自的 `*-styles.ts`。
  *
- * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是
- * 它自己的颜色，由 `token-motion.ts` 以 `RUN_COLOR_VAR` 逐元素发布——从
- * `TOKEN_MIN_OPACITY` 一路走到完全不透明。三条约束决定了它只能这么写：
- *
- *   - 用不了 `opacity`。highlight 伪元素只接受很小的属性集（color、background-color、
- *     各种 text-decoration、text-shadow），所以透明度只能挂在 `color` 的 alpha 通道上——
- *     这正是 `color-mix(in srgb, C p%, transparent)` 的语义：与 `transparent` 混合会把
- *     结果的 alpha 按 `p` 加权，色相不变。
- *   - 也用不了 `currentColor`。在 `::highlight()` 里 Chromium 不会把它解析到承载元素上，
- *     而是塌缩成初始色：实测（`rgb(21, 21, 23)` 画布 + `color-scheme: dark`）只以
- *     `currentColor` 为色的规则画出了 `rgb(0, 0, 0)`——在那块画布上不可见，表现为每个
- *     字符在 highlight 撤销前闪一下黑。
- *   - 更不能用同一个颜色。一段回答里不只有正文：它还带着链接、语法 token 和列表标记，
- *     这些字符最终停住的都不是正文色。淡入期间把它们涂成正文色，每个字符就会先比它最终
- *     的颜色更亮、然后掉回去——那是高亮闪一下，不是淡入。所以颜色从区间所在的元素上读出来，
- *     写成该元素自己的自定义属性，`::highlight()` 再逐元素解析它；下面的 `body` 规则
- *     只是页面级兜底。
+ * token 淡入的档位规则**不在这里**：那批规则按需挂载，由 `token-motion.ts` 自己带着一张单独的
+ * 样式表（见它里面的 `revealCss`）。这里只留淡入用色在页面级的那份兜底。
  */
 const caret_motion_styles_1 = require("./caret-motion-styles");
 const config_card_styles_1 = require("./config-card-styles");
@@ -3874,23 +3865,6 @@ const send_flight_styles_1 = require("./send-flight-styles");
 const token_motion_1 = require("./token-motion");
 /** 注入样式表的固定 id，用于卸载和排查。 */
 exports.STYLE_ID = 'dsh-chat-ux-style';
-/**
- * 一档一条规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开
- * highlight 注册表的那一刻到达它最终的颜色。
- *
- * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量的说明），所以这里不额外多生成任何一档。
- * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
- * 的值本来就在那儿，不必再舍一次。
- */
-const revealStepRules = Array.from({ length: token_motion_1.REVEAL_STEPS }, (_, step) => {
-    const ratio = token_motion_1.TOKEN_MIN_OPACITY + (1 - token_motion_1.TOKEN_MIN_OPACITY) * (step / (token_motion_1.REVEAL_STEPS - 1));
-    const alpha = Number((ratio * 100).toFixed(2));
-    return [
-        '::highlight(' + token_motion_1.HIGHLIGHT_PREFIX + step + ') {',
-        '  color: color-mix(in srgb, var(' + token_motion_1.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
-        '}',
-    ].join('\n');
-}).join('\n\n');
 /** 聊天区样式表。 */
 exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
 body {
@@ -3973,13 +3947,12 @@ body[data-ds-dark-theme] {
     }
   }
 }
-
-${revealStepRules}
 `;
 /**
- * 注入的那一张样式表：本插件拥有的全部规则，按下面的顺序拼起来。
+ * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。按需挂载的那一份
+ * （token 淡入的档位规则）不进这里，它由 `token-motion.ts` 自己带着。
  */
 exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
     };
@@ -4146,15 +4119,20 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  * 能在不碰 DOM 的前提下标出字符段：React 继续拥有结构，这个模块只拥有文字的透明度。
  *
  * `::highlight()` 不接受 transition，所以淡入是采样出来的、而不是动画出来的：活着的区间按
- * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（见 `styles.ts`，它从下面
- * 的 `REVEAL_STEPS` 推出自己的规则，并让 alpha 线性移动，于是文字以恒定速率变实）。
+ * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `revealCss`
+ * 从 `REVEAL_STEPS` 推出，alpha 线性移动，于是文字以恒定速率变实）。
  *
  * 淡入用的颜色是区间自己的颜色——从它文字渲染所在的元素上读出来，发布到 `RUN_COLOR_VAR` 下——
- * 既不是 `currentColor`，也不是全页面共用一个值。`::highlight()` 会把 `currentColor` 塌缩成
- * 初始色，而不是解析到承载元素上，深色画布上表现为 highlight 撤销前闪一下黑（实测见
- * `styles.ts`），所以 alpha 只能挂在显式的 `color` 上。这个颜色也不能是同一个：一段回答里
- * 不只有正文，把链接、语法 token 或列表标记在淡入期间涂成正文色，读起来是高亮闪一下，
- * 而不是淡入。
+ * 既不是 `currentColor`，也不是全页面共用一个值。`::highlight()` 里的 `currentColor` 在
+ * Chromium 中不解析到承载元素上，而是塌缩成初始色：实测（`rgb(21, 21, 23)` 画布 +
+ * `color-scheme: dark`）只以它作为颜色的规则画出了 `rgb(0, 0, 0)`——在那块画布上不可见，
+ * 表现为每个字符在 highlight 撤销前闪一下黑。所以 alpha 只能挂在显式的 `color` 上。
+ * 这个颜色也不能是同一个：一段回答里不只有正文，把链接、语法 token 或列表标记在淡入期间涂成
+ * 正文色，读起来是高亮闪一下，而不是淡入。
+ *
+ * 档位规则**按需挂载**：它们只在页面上真的存在流式容器时才生效，回答定型之后整张撤下来。理由是
+ * 条数——每档一条规则，而条数是直接乘在浏览器每一次强制同步样式重算上的，无论那一刻有没有字符
+ * 正在淡（见 `REVEAL_STEPS`）。
  *
  * @module dsh-chat-ux/client/token-motion
  */
@@ -4169,10 +4147,13 @@ const programmatic_toggle_1 = require("./programmatic-toggle");
  * 下界由最可能跑这个渐变的最快显示器定：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，档数少于帧数
  * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
- * 上界由 `styles.ts` 的代价定，而这是实测出来的：每一档在注入的那张样式表里就是一条
+ * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `revealCss` 里的一条
  * `::highlight()` 规则，而规则条数直接乘在浏览器每一次强制同步样式重算上。在一个 5800 节点的
  * 会话里，96 条档位规则把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms；只留 1 条时它又回到
  * 18 ms。档数曾经按「多出来的部分不花任何代价」取到 96，那个前提不成立。
+ *
+ * 那份代价现在只在流式期间付（见 `installTokenMotion` 里的按需挂载），但档数仍由它定：一次
+ * 回答里大半时间都在流，而流式期间的每一次样式重算照样乘上这个条数。
  */
 exports.REVEAL_STEPS = 24;
 /**
@@ -4180,7 +4161,7 @@ exports.REVEAL_STEPS = 24;
  *
  * 淡入是文字自身透明度的变化，不是换成别的颜色：字符淡淡地到达、然后坐实，没有任何东西的颜色
  * 被替换成某个高亮色。`::highlight()` 不接受 `opacity`——它能用的属性集很小，并不包含它——
- * 所以 alpha 挂在 `color` 上，由 `styles.ts` 变成每档一条规则。
+ * 所以 alpha 挂在 `color` 上，由下面的档位规则变成每档一条。
  *
  * 五分之一淡到两种主题下都读不出字来——`rgb(249, 250, 251)` 以 20% 压在 `rgb(21, 21, 23)` 上
  * 约合 `rgb(67, 68, 70)`——同时仍然看得见，读起来像文字正在到达，而不是什么都没渲染出来。
@@ -4189,7 +4170,7 @@ exports.TOKEN_MIN_OPACITY = 0.2;
 /**
  * 一个字符从最淡到完全不透明所用的时长。
  *
- * 它不是一个设置项：更长的渐变会把 `styles.ts` 按 `REVEAL_STEPS` 生成的档位规则摊成看得见的台阶，更短的
+ * 它不是一个设置项：更长的渐变会把按 `REVEAL_STEPS` 生成的档位规则摊成看得见的台阶，更短的
  * 在常规刷新率下一帧就跨过去了、等于没有渐变——120 ms 是两头都合适的那个点。要动它，得连
  * `REVEAL_STEPS` 与档位规则一起想。
  */
@@ -4199,8 +4180,8 @@ exports.HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-';
 /**
  * 一个元素自己的颜色所发布到的自定义属性。
  *
- * `styles.ts` 在 `::highlight()` 里读它——在那个位置自定义属性确实会解析到区间所在的元素上：
- * 实测一个带着 `rgb(77, 155, 255)` 的元素，在第 0 档读出
+ * 下面那份档位规则在 `::highlight()` 里读它——在那个位置自定义属性确实会解析到区间所在的元素
+ * 上：实测一个带着 `rgb(77, 155, 255)` 的元素，在第 0 档读出
  * `color(srgb 0.301961 0.607843 1 / 0.7)`。正是这一点让「每档一条规则」能覆盖一段回答里
  * 所有的颜色。
  */
@@ -4242,6 +4223,25 @@ function installTokenMotion() {
     const writtenColors = new WeakMap();
     /** 排队中的绘制帧句柄；0 表示没有排队。 */
     let scheduledFrame = 0;
+    // 档位规则单独一张样式表，一开始就禁用：没有字符在淡入的时候，这些规则一条都不该参与样式
+    // 重算。附着到文档之后才拿得到 CSSOM，所以先挂上再关。
+    const revealStyleElement = document.createElement('style');
+    revealStyleElement.id = REVEAL_STYLE_ID;
+    revealStyleElement.textContent = revealCss;
+    document.head.append(revealStyleElement);
+    const revealSheet = revealStyleElement.sheet;
+    /**
+     * 开关档位规则。
+     *
+     * 取不到 CSSOM 时就让它常驻：那是拿不到 `sheet` 的浏览器，淡入照常，只是少了一层优化。
+     * @param active - 此刻起页面上有没有字符可能正在淡入。
+     */
+    const setRevealRulesActive = (active) => {
+        if (revealSheet === null)
+            return;
+        revealSheet.disabled = !active;
+    };
+    setRevealRulesActive(false);
     /** 清掉全部档位的 highlight。 */
     const clearHighlights = () => {
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
@@ -4398,8 +4398,11 @@ function installTokenMotion() {
     /** 把每个流式容器与上一次的快照对比，然后把新出现的那一段排成区间。 */
     const scan = () => {
         const containers = document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR);
-        if (containers.length === 0)
+        // 一个流式容器都没有了：这一段回答已经定型，档位规则再没有人用得到，整张撤下来。
+        if (containers.length === 0) {
+            setRevealRulesActive(false);
             return;
+        }
         const now = performance.now();
         /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
         const createdRuns = [];
@@ -4577,6 +4580,9 @@ function installTokenMotion() {
         // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
         if (createdRuns.length === 0)
             return;
+        // 有字符要淡入：档位规则此刻起必须生效，而且要赶在注册 highlight 之前——规则不在的那一帧，
+        // 新字会先以本色画出来、下一帧才被压回最淡，那就是眼睛看到的「闪一下」。
+        setRevealRulesActive(true);
         if (scheduledFrame !== 0) {
             cancelAnimationFrame(scheduledFrame);
             scheduledFrame = 0;
@@ -4584,7 +4590,15 @@ function installTokenMotion() {
         paint(performance.now());
     };
     const observer = new MutationObserver(scan);
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    // 也看着 `data-streaming`：它是「这一轮回答还在流」的唯一信号，而它被摘掉时未必伴随别的 DOM
+    // 变化——不盯着它，档位规则就会在回答定型之后继续挂着。
+    observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: [dom_contract_1.STREAMING_ATTRIBUTE],
+    });
     document.addEventListener('click', rememberReaderFold, true);
     document.addEventListener('keydown', rememberReaderFold, true);
     scan();
@@ -4597,8 +4611,39 @@ function installTokenMotion() {
         scheduledFrame = 0;
         liveRuns.length = 0;
         clearHighlights();
+        revealStyleElement.remove();
     };
 }
+/**
+ * 承载档位规则的那张样式表的 id，用于排查。
+ *
+ * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张按需，回答定型之后整张禁用（见
+ * `installTokenMotion`）。
+ */
+const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
+/**
+ * 档位规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开 highlight
+ * 注册表的那一刻到达它最终的颜色。
+ *
+ * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是它自己的
+ * 颜色，由 `RUN_COLOR_VAR` 逐元素发布——从 `TOKEN_MIN_OPACITY` 一路走到完全不透明。透明度只能
+ * 走 `color` 的 alpha 通道（`::highlight()` 的属性集里没有 `opacity`），而
+ * `color-mix(in srgb, C p%, transparent)` 的语义正好是它：与 `transparent` 混合会把结果的
+ * alpha 按 `p` 加权，色相不变。
+ *
+ * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量），所以这里不额外多生成任何一档。
+ * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
+ * 的值本来就在那儿，不必再舍一次。
+ */
+const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
+    const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
+    const alpha = Number((ratio * 100).toFixed(2));
+    return [
+        '::highlight(' + exports.HIGHLIGHT_PREFIX + step + ') {',
+        '  color: color-mix(in srgb, var(' + exports.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+        '}',
+    ].join('\n');
+}).join('\n\n');
 /**
  * 一次折叠之后，它重排过的容器要被排除在淡入之外多久。
  *
