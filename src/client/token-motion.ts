@@ -259,9 +259,15 @@ export function installTokenMotion(): () => void {
       // 元素是从 range 反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
       // （重新解析 `**bold`、折叠某一行），区间所在的元素被换掉之后，旧元素上的颜色再也没人渲染，
       // 真正在渲染的新元素会回退到页面默认色——于是闪一下正文色，而不是淡入。
-      // `publishRunColor` 在元素已经带着记给它的颜色时跳过样式读取，所以这里每帧每个区间
-      // 只多一次 WeakMap 查找。
-      publishRunColor(range.startContainer.parentElement)
+      //
+      // 但只在**元素真的换了**才去读它的颜色。`publishRunColor` 的第一步是 `getComputedStyle`，
+      // 而它是一次强制样式结算——一帧里几百个区间各读一次，等于把整页的样式重算拖进 rAF 里。元素
+      // 没换的那些帧（绝大多数）只需要一次比较。
+      const element = range.startContainer.parentElement
+      if (element !== run.colorElement) {
+        publishRunColor(element)
+        run.colorElement = element
+      }
 
       // 档位：0 是最淡，最后一档就是本色；按时间线性映射，所以颜色以恒定速率变实。
       // 上面的卫语句已经排除了 age >= REVEAL_MS，比值必然小于 1，档位必然落在范围内。
@@ -429,7 +435,14 @@ export function installTokenMotion(): () => void {
               touchedElements.add(element)
               publishRunColor(element)
             }
-            const run: LiveRun = { container, start: offset, length: character.length, bornAt: now, delay: 0 }
+            const run: LiveRun = {
+              container,
+              start: offset,
+              length: character.length,
+              bornAt: now,
+              delay: 0,
+              colorElement: null,
+            }
             liveRuns.push(run)
             createdRuns.push(run)
             offset += character.length
@@ -556,6 +569,13 @@ interface LiveRun {
    * 同一毫秒里一起变亮。
    */
   delay: number
+  /**
+   * 上一次为这个区间读过颜色的那个承载元素。
+   *
+   * 颜色只在它换掉时才重量：读一次颜色就是一次强制样式结算，而一帧里可能有几百个区间——每个区间
+   * 每帧读一次，等于把整页的样式重算拖进 rAF 里。元素没换的帧只需要一次比较。
+   */
+  colorElement: Element | null
 }
 
 /** 一个文本节点，以及它在容器拼接文本里的起始偏移。 */
