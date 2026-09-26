@@ -1,0 +1,32 @@
+name: Release
+
+# 推一个 v* 标签，自动开一次 GitHub Release。
+#
+# GitHub 不会把标签自动变成 Release —— 它只为显式创建的标签建 Release，
+# 所以这里在打标签的那一刻替你做掉那一步。
+#
+# 注意：本文件必须存在于标签指向的那个提交里，标签才会触发它。
+# 改过本文件之后打的标签才享受自动发布；之前的标签要手动建 Release，
+# 或者把标签挪到含本文件的提交上。
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # gh release create 需要写权限
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes

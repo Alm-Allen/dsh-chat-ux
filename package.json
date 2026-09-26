@@ -1,6 +1,6 @@
 {
   "name": "@alm-allen/dsh-chat-ux",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Chat-area UX plugin for the DeepSeek Harness (dsh) web GUI.",
   "type": "module",
   "license": "MIT",
