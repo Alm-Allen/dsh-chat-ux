@@ -92,7 +92,6 @@ function apply(ctx) {
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
         font: { embedded: settings_scope_1.DEFAULT_EMBEDDED_FONTS, sans: settings_scope_1.DEFAULT_FONT_FAMILY, code: settings_scope_1.DEFAULT_FONT_FAMILY },
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
-        sendMs: settings_scope_1.DEFAULT_SEND_FLIGHT_MS,
         tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -107,7 +106,6 @@ function apply(ctx) {
         settings.font.sans = value?.fontSans ?? settings_scope_1.DEFAULT_FONT_FAMILY;
         settings.font.code = value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
-        settings.sendMs = value?.sendFlightMs ?? settings_scope_1.DEFAULT_SEND_FLIGHT_MS;
         settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
@@ -119,8 +117,9 @@ function apply(ctx) {
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
     // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
     // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
-    // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。
-    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn, () => settings.sendMs), 'dsh-chat-ux: send flight');
+    // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长不是一个
+    // 设置项，它是 send-flight 里的 FLIGHT_MS。
+    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
     // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
     // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
     ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal');
@@ -2874,7 +2873,7 @@ function collectRows(record, into) {
     __registry["send-flight.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.FLYING_ATTRIBUTE = void 0;
+exports.FLIGHT_MS = exports.FLYING_ATTRIBUTE = void 0;
 exports.installSendFlight = installSendFlight;
 /**
  * 发送气泡的起飞。
@@ -2894,8 +2893,8 @@ exports.installSendFlight = installSendFlight;
  *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
  *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
  *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
- *             曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
- *             曲线是阻尼弹簧，三个参数不开放（见下面那一段）。
+ *             曲线的函数。整段时长固定在 `FLIGHT_MS`，曲线是阻尼弹簧，四个数都在下面写着、
+ *             不开放给读者调。
  *
  *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
  *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
@@ -2921,6 +2920,16 @@ exports.installSendFlight = installSendFlight;
 const dom_contract_1 = require("./dom-contract");
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
+/**
+ * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
+ * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。270 是选定值——短到读者不等它，
+ * 长到看得清路径与落定那一下的回弹。
+ *
+ * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
+ * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
+ * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
+ */
+exports.FLIGHT_MS = 270;
 /** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
 /**
@@ -2934,7 +2943,7 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
  * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
  * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
  *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 2.8%，再落回目标——落定那一下的弹性就是它。
+ * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 1.5%，再落回目标——落定那一下的弹性就是它。
  *
  * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
  * 气泡的样子，剩下那段上升里形状不再有可见变化。
@@ -2948,8 +2957,15 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
  * 就成了一条慢吞吞的直线——但那是另一种东西，不该由卡片上的一个开关决定。
  */
 const ACROSS_OMEGA = 16;
-/** 纵向弹簧的阻尼比。临界是 1；0.75 让落定时冲过去约 2.8% 再回来。 */
-const RISE_DAMPING = 0.75;
+/**
+ * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
+ * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
+ *
+ * 现在这个 0.8 冲过去约 **1.5%**：几百像素的行程上是十来个像素，看得见「放上去」那一下，又不会像弹球。
+ * 它是照着 iMessage 收了一档来的——那一边本来就有回弹，只是比这里原来的 0.75（约 2.8%）更收敛。
+ * **要自己再调就改这一个数**，改完 `npm run build`、Ctrl+F5 刷新页面看落定那一瞬。
+ */
+const RISE_DAMPING = 0.8;
 /** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
 const RISE_OMEGA = 7.5;
 /** 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。 */
@@ -2976,11 +2992,9 @@ const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
  * 给整页装上发送气泡的起飞。
  * @param readEnabled - 现读开关；关着时一次都不动手。闸门放在抓起点那一步：开关关着的这段时间里，
  * 页面上连一次测量都不会发生，看到的完全是 dsh 原来的样子。
- * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
- * 不会打断正在飞的那一段。
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
-function installSendFlight(readEnabled, readMs) {
+function installSendFlight(readEnabled) {
     // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
         return () => { };
@@ -3052,21 +3066,20 @@ function installSendFlight(readEnabled, readMs) {
         const ghost = createGhost(target.bubble, box);
         if (ghost === null)
             return;
-        const ms = readMs();
         echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
         flight = {
             draft,
             shell: ghost.shell,
             content: ghost.content,
             startedAt: performance.now(),
-            ms,
+            ms: exports.FLIGHT_MS,
             previous: lastUserRow(),
             hidden: echo,
             target,
         };
         placeGhost(flight, 0);
         rowWatcher.observe(document.body, { childList: true, subtree: true });
-        rescue = window.setTimeout(settle, ms + RESCUE_MARGIN_MS);
+        rescue = window.setTimeout(settle, exports.FLIGHT_MS + RESCUE_MARGIN_MS);
         requestAnimationFrame(tick);
     };
     /**
@@ -3404,7 +3417,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 开关与档位**即时写入**：点一下就存，和 dsh 自己的开关一样，没有「保存」那一步；写入在途时控件
  * 禁用，之后从 host 读回来的值才是「落地了」的权威——写入在设计上就会吞掉传输层与版本号的失败。
  *
- * 三个输入框（两条字体栈，加上发送动效的时长）多一道提交（回车或失焦才写）：它们要等读者把字打完，
+ * 两个输入框（两条字体栈）多一道提交（回车或失焦才写）：它们要等读者把字打完，
  * 而每敲一个字符都是一次设置文档写入。打完之前那串字只活在这个组件里，不合法的那串一个字都不写。
  *
  * @module dsh-chat-ux/client/settings-card
@@ -3422,7 +3435,6 @@ const FONTS_FIELD = 'fonts';
 const FONT_SANS_FIELD = 'fontSans';
 const FONT_CODE_FIELD = 'fontCode';
 const SEND_FLIGHT_FIELD = 'sendFlight';
-const SEND_FLIGHT_MS_FIELD = 'sendFlightMs';
 const ZH_COPY = {
     summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、发送动效、自带字体与你自己填的字体栈也在这里调。',
     followLabel: '增强跟随',
@@ -3439,12 +3451,7 @@ const ZH_COPY = {
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
     sendHint: '提交之后那条气泡从输入框飞上来、落进消息列，路径、形变与落位都是新调出来的。这一段还在收，'
-        + '标着 beta，默认关着——打开之后下面那个时长才生效。',
-    sendOffHint: '聊天气泡动效关着，这一项现在不生效。',
-    sendMsLabel: '发送动效时长',
-    sendMsHint: '提交之后那条气泡从输入框飞上来的整段时长，单位毫秒，可以填 80 到 1200。默认 200：越短越干脆，'
-        + '越长越看得清路径。',
-    sendMsInvalid: '填 80 到 1200 之间的整数毫秒，回车不会保存。',
+        + '标着 beta，默认关着。整段时长固定，不给用户配置。',
     fontsLabel: '自带字体',
     fontsHint: '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
         + '关掉就回到 dsh 自己的字体栈，下面两项随之停用。',
@@ -3480,12 +3487,7 @@ const EN_COPY = {
     caretTyping: 'On typing',
     sendLabel: 'Chat bubble motion',
     sendHint: 'The bubble rises from the composer into the transcript after you submit. This stretch is still settling, '
-        + 'so it is marked beta and off by default — the duration below only matters once you turn it on.',
-    sendOffHint: 'Chat bubble motion is off, so this field has no effect right now.',
-    sendMsLabel: 'Send flight duration',
-    sendMsHint: 'How long the bubble takes to rise from the composer after you submit, in milliseconds, anywhere from 80 to '
-        + '1200. Default 200: shorter is crisper, longer makes the path easier to see.',
-    sendMsInvalid: 'Enter a whole number of milliseconds between 80 and 1200; Enter will not save it.',
+        + 'so it is marked beta and off by default. The run has a fixed length; the duration is not configurable.',
     fontsLabel: 'Bundled fonts',
     fontsHint: 'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '
         + 'code. Turning this off restores dsh\'s own font stacks and disables the two fields below.',
@@ -3505,7 +3507,7 @@ const EN_COPY = {
     readOnly: 'The settings document is read-only, so changes cannot be saved.',
 };
 /**
- * 渲染这个插件的配置：三个开关、光标动效的三档、发送动效的时长，以及两条自定义字体栈。
+ * 渲染这个插件的配置：三个开关、光标动效的三档，以及两条自定义字体栈。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -3517,11 +3519,10 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [failed, setFailed] = (0, react_1.useState)(false);
-    // 三个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
+    // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
     // host 值相同，所以不必清；只有「重置」要把草稿丢掉，否则它会盖住刚被清掉的字段。
     const [sansDraft, setSansDraft] = (0, react_1.useState)(null);
     const [codeDraft, setCodeDraft] = (0, react_1.useState)(null);
-    const [sendMsDraft, setSendMsDraft] = (0, react_1.useState)(null);
     const fieldId = (0, react_1.useId)();
     const followOn = storedFollow(snapshot.value);
     const tokenFadeOn = storedTokenFade(snapshot.value);
@@ -3530,10 +3531,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const fontsOn = storedFonts(snapshot.value);
     const sans = sansDraft ?? storedSans(snapshot.value);
     const code = codeDraft ?? storedCode(snapshot.value);
-    const sendMs = sendMsDraft ?? String(storedSendMs(snapshot.value));
-    const sendMsValue = Number(sendMs.trim());
-    const sendMsInvalid = !Number.isInteger(sendMsValue)
-        || sendMsValue < settings_scope_1.SEND_FLIGHT_MS_MIN || sendMsValue > settings_scope_1.SEND_FLIGHT_MS_MAX;
     const unavailable = snapshot.status === 'unavailable';
     const readOnly = snapshot.writable === false;
     const controlsDisabled = saving || unavailable || readOnly;
@@ -3569,12 +3566,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setFailed(!landed);
         setSaving(false);
     };
-    /** 提交发送动效的时长：只写 80–1200 的整数毫秒，别的一律不写（输入框下面已经说了它不合法）。 */
-    const commitSendMs = async () => {
-        if (sendMsInvalid)
-            return;
-        await writeField(SEND_FLIGHT_MS_FIELD, sendMsValue, storedSendMs);
-    };
     /** 清掉用户层里的覆盖，让取值退回默认层。 */
     const reset = async (field) => {
         setSaving(true);
@@ -3589,7 +3580,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-send-ms', label: copy.sendMsLabel, hint: sendOn ? copy.sendMsHint : copy.sendOffHint, invalidHint: copy.sendMsInvalid, value: sendMs, invalid: sendMsInvalid, overridden: userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD), disabled: controlsDisabled || !sendOn, copy: copy, onEdit: setSendMsDraft, onCommit: () => void commitSendMs(), onReset: () => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD); } }), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } })] }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
@@ -3644,10 +3635,6 @@ function storedSans(value) {
 /** 从 host 的值里读自定义等宽字体栈。 */
 function storedCode(value) {
     return value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
-}
-/** 从 host 的值里读发送动效的时长（毫秒）。 */
-function storedSendMs(value) {
-    return value?.sendFlightMs ?? settings_scope_1.DEFAULT_SEND_FLIGHT_MS;
 }
 /**
  * 定这一张卡片说哪种语言。
@@ -3724,6 +3711,7 @@ exports.CARD_CLASS = {
     input: 'dsh-chat-ux-card-input',
     invalid: 'dsh-chat-ux-card-invalid',
     segment: 'dsh-chat-ux-card-segment',
+    subfields: 'dsh-chat-ux-card-subfields',
 };
 /**
  * 卡片的样式表。每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则。
@@ -3820,10 +3808,23 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   padding: 12px 0;
 }
 
-/* 首行之外每个字段行都带一条分隔线，四行（两个开关、两个字体）于是有同一个节奏。 */
+/* 首行之外每个字段行都带一条分隔线，各行于是有同一个节奏。 */
 .${exports.CARD_CLASS.row}:not(:first-child),
 .${exports.CARD_CLASS.field}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* 两条自定义字体栈是「自带字体」那一行的下属，不是并列的第三、第四项：它们缩进一档、左侧挂一条
+   同粗的竖线，与上面那一行连成一组。**组内不画横线**——横线一画，三项就又读成彼此独立了；
+   组的边界交给上面那条线（它本来就分隔「自带字体」与它前一行）和这条竖线。 */
+.${exports.CARD_CLASS.subfields} {
+  margin-left: 2px;
+  padding-left: 14px;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.${exports.CARD_CLASS.subfields} .${exports.CARD_CLASS.field} {
+  border-top: none;
 }
 
 .${exports.CARD_CLASS.fieldHead} {
@@ -3880,7 +3881,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
     __registry["settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_TOKEN_FADE = exports.SEND_FLIGHT_MS_MAX = exports.SEND_FLIGHT_MS_MIN = exports.DEFAULT_SEND_FLIGHT_MS = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -3909,18 +3910,6 @@ exports.DEFAULT_CARET_MOTION = 'typing';
  * 默认关着，理由与那一处相同：这一段还在调，卡片上标着 beta，读者自己打开才算数。
  */
 exports.DEFAULT_SEND_FLIGHT = false;
-/**
- * 发送气泡起飞时长的默认值（毫秒）。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认 200：实测过的那一段——短到读者不等它，长到看得清路径。
- */
-exports.DEFAULT_SEND_FLIGHT_MS = 200;
-/**
- * 起飞时长可填的范围。host 侧 schema 的 `min` / `max` 是同一对数：这里是给输入框的即时提示，
- * 那边是「越界的值写不进来」的保证。
- */
-exports.SEND_FLIGHT_MS_MIN = 80;
-exports.SEND_FLIGHT_MS_MAX = 1200;
 /**
  * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *

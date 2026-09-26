@@ -43,20 +43,6 @@ export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 export const DEFAULT_SEND_FLIGHT = false
 
 /**
- * 发送气泡起飞时长的默认值（毫秒）。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认 200：实测过的那一段——短到读者不等它，长到看得清路径。
- */
-export const DEFAULT_SEND_FLIGHT_MS = 200
-
-/**
- * 起飞时长可填的范围。host 侧 schema 的 `min` / `max` 是同一对数：这里是给输入框的即时提示，
- * 那边是「越界的值写不进来」的保证。
- */
-export const SEND_FLIGHT_MS_MIN = 80
-export const SEND_FLIGHT_MS_MAX = 1200
-
-/**
  * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
@@ -75,10 +61,8 @@ export interface ChatUxSection {
   fontSans?: string
   /** 自定义等宽字体栈；空串用自带的。 */
   fontCode?: string
-  /** 提交之后气泡是否从输入框起飞；默认关着。 */
+  /** 提交之后气泡是否从输入框起飞；默认关着。时长不是一个设置项，见 `send-flight.ts` 的 `FLIGHT_MS`。 */
   sendFlight?: boolean
-  /** 提交之后气泡起飞的那一段时长（毫秒）。 */
-  sendFlightMs?: number
   /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
   tokenFade?: boolean
 }

@@ -16,8 +16,8 @@
  *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
  *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
  *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
- *             曲线的函数。整段时长是插件管理页上的一个设置项，每一段起飞开始时现读一次；
- *             曲线是阻尼弹簧，三个参数不开放（见下面那一段）。
+ *             曲线的函数。整段时长固定在 `FLIGHT_MS`，曲线是阻尼弹簧，四个数都在下面写着、
+ *             不开放给读者调。
  *
  *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
  *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
@@ -45,6 +45,17 @@ import { CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SU
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
 
+/**
+ * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
+ * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。270 是选定值——短到读者不等它，
+ * 长到看得清路径与落定那一下的回弹。
+ *
+ * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
+ * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
+ * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
+ */
+export const FLIGHT_MS = 270
+
 /** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
 
@@ -59,7 +70,7 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
  * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
  * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
  *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 2.8%，再落回目标——落定那一下的弹性就是它。
+ * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 1.5%，再落回目标——落定那一下的弹性就是它。
  *
  * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
  * 气泡的样子，剩下那段上升里形状不再有可见变化。
@@ -74,8 +85,15 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
  */
 const ACROSS_OMEGA = 16
 
-/** 纵向弹簧的阻尼比。临界是 1；0.75 让落定时冲过去约 2.8% 再回来。 */
-const RISE_DAMPING = 0.75
+/**
+ * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
+ * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
+ *
+ * 现在这个 0.8 冲过去约 **1.5%**：几百像素的行程上是十来个像素，看得见「放上去」那一下，又不会像弹球。
+ * 它是照着 iMessage 收了一档来的——那一边本来就有回弹，只是比这里原来的 0.75（约 2.8%）更收敛。
+ * **要自己再调就改这一个数**，改完 `npm run build`、Ctrl+F5 刷新页面看落定那一瞬。
+ */
+const RISE_DAMPING = 0.8
 
 /** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
 const RISE_OMEGA = 7.5
@@ -111,11 +129,9 @@ const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR
  * 给整页装上发送气泡的起飞。
  * @param readEnabled - 现读开关；关着时一次都不动手。闸门放在抓起点那一步：开关关着的这段时间里，
  * 页面上连一次测量都不会发生，看到的完全是 dsh 原来的样子。
- * @param readMs - 现读的整段时长（毫秒）。每一段起飞开始时读一次，所以运行期改设置只影响下一段，
- * 不会打断正在飞的那一段。
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
-export function installSendFlight(readEnabled: () => boolean, readMs: () => number): () => void {
+export function installSendFlight(readEnabled: () => boolean): () => void {
   // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
 
@@ -183,21 +199,20 @@ export function installSendFlight(readEnabled: () => boolean, readMs: () => numb
     if (!sameScreen(card.top, box.top, window.innerHeight)) return
     const ghost = createGhost(target.bubble, box)
     if (ghost === null) return
-    const ms = readMs()
     echo.setAttribute(FLYING_ATTRIBUTE, '')
     flight = {
       draft,
       shell: ghost.shell,
       content: ghost.content,
       startedAt: performance.now(),
-      ms,
+      ms: FLIGHT_MS,
       previous: lastUserRow(),
       hidden: echo,
       target,
     }
     placeGhost(flight, 0)
     rowWatcher.observe(document.body, { childList: true, subtree: true })
-    rescue = window.setTimeout(settle, ms + RESCUE_MARGIN_MS)
+    rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
     requestAnimationFrame(tick)
   }
 
@@ -301,7 +316,7 @@ interface Flight {
   /** 壳里挂着的那条克隆气泡（底色摘掉了，交给壳）。 */
   readonly content: HTMLElement
   readonly startedAt: number
-  /** 这一段的整段时长。起飞那一刻定下来，飞行中改设置不改它。 */
+  /** 这一段的整段时长，取自 `FLIGHT_MS`。起飞那一刻定下来，那一段飞行全程认这一个值。 */
   readonly ms: number
   /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
   readonly previous: HTMLElement | null

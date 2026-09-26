@@ -53,18 +53,6 @@ export const DEFAULT_CARET_MOTION = 'typing';
  */
 export const DEFAULT_SEND_FLIGHT = false;
 /**
- * 发送气泡起飞的时长默认值（毫秒）。前端有一份同样的常量（`client/settings-scope.ts`），
- * 改一处就要改另一处。
- *
- * 默认 200：就是实测过的那一段——短到读者不等它，长到看得清路径。
- */
-export const DEFAULT_SEND_FLIGHT_MS = 200;
-/**
- * 起飞时长可填的范围。前端输入框按同一对数给提示，schema 这里是第二道：越界的值写不进来。
- */
-export const SEND_FLIGHT_MS_MIN = 80;
-export const SEND_FLIGHT_MS_MAX = 1200;
-/**
  * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
  * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
@@ -86,7 +74,6 @@ export const Config = Schema.object({
     fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
-    sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
     tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
 });
 /**

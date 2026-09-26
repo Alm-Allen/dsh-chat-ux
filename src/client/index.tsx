@@ -28,7 +28,7 @@ import { installSendFlight } from './send-flight'
 import { ChatUxConfigCard } from './settings-card'
 import {
   DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS, DEFAULT_TOKEN_FADE,
+  DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { ALL_CSS, STYLE_ID } from './styles'
@@ -71,7 +71,6 @@ export function apply(ctx: ClientContext): void {
     caret: DEFAULT_CARET_MOTION,
     font: { embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY },
     sendOn: DEFAULT_SEND_FLIGHT,
-    sendMs: DEFAULT_SEND_FLIGHT_MS,
     tokenFade: DEFAULT_TOKEN_FADE,
   }
 
@@ -87,7 +86,6 @@ export function apply(ctx: ClientContext): void {
     settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
     settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
     settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
-    settings.sendMs = value?.sendFlightMs ?? DEFAULT_SEND_FLIGHT_MS
     settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
     applyFontChoice(settings.font)
     caret.resync()
@@ -100,9 +98,10 @@ export function apply(ctx: ClientContext): void {
 
   // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
   // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
-  // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。
+  // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长不是一个
+  // 设置项，它是 send-flight 里的 FLIGHT_MS。
   ctx.effect(
-    () => installSendFlight(() => settings.sendOn, () => settings.sendMs),
+    () => installSendFlight(() => settings.sendOn),
     'dsh-chat-ux: send flight',
   )
 
@@ -167,8 +166,6 @@ interface ChatUxSettings {
   font: FontChoice
   /** 聊天气泡动效开着没有，每一段起手前现读。 */
   sendOn: boolean
-  /** 发送动效那一段的时长（毫秒），每一段起飞开始时现读。 */
-  sendMs: number
   /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
   tokenFade: boolean
 }

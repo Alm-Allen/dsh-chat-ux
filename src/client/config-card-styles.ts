@@ -31,6 +31,7 @@ export const CARD_CLASS = {
   input: 'dsh-chat-ux-card-input',
   invalid: 'dsh-chat-ux-card-invalid',
   segment: 'dsh-chat-ux-card-segment',
+  subfields: 'dsh-chat-ux-card-subfields',
 } as const
 
 /**
@@ -128,10 +129,23 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   padding: 12px 0;
 }
 
-/* 首行之外每个字段行都带一条分隔线，四行（两个开关、两个字体）于是有同一个节奏。 */
+/* 首行之外每个字段行都带一条分隔线，各行于是有同一个节奏。 */
 .${CARD_CLASS.row}:not(:first-child),
 .${CARD_CLASS.field}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* 两条自定义字体栈是「自带字体」那一行的下属，不是并列的第三、第四项：它们缩进一档、左侧挂一条
+   同粗的竖线，与上面那一行连成一组。**组内不画横线**——横线一画，三项就又读成彼此独立了；
+   组的边界交给上面那条线（它本来就分隔「自带字体」与它前一行）和这条竖线。 */
+.${CARD_CLASS.subfields} {
+  margin-left: 2px;
+  padding-left: 14px;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.${CARD_CLASS.subfields} .${CARD_CLASS.field} {
+  border-top: none;
 }
 
 .${CARD_CLASS.fieldHead} {
