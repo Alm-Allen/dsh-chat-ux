@@ -28,7 +28,7 @@ import { installSendFlight } from './send-flight'
 import { ChatUxConfigCard } from './settings-card'
 import {
   DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS,
+  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 import { ALL_CSS, STYLE_ID } from './styles'
@@ -72,11 +72,13 @@ export function apply(ctx: ClientContext): void {
     font: { embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY },
     sendOn: DEFAULT_SEND_FLIGHT,
     sendMs: DEFAULT_SEND_FLIGHT_MS,
+    tokenFade: DEFAULT_TOKEN_FADE,
   }
 
   // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
   // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
   const caret = installCaretMotion(() => settings.caret)
+  const tokenMotion = installTokenMotion(() => settings.tokenFade)
   const syncSettings = (): void => {
     const value = scope.getSnapshot().value
     settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
@@ -86,8 +88,10 @@ export function apply(ctx: ClientContext): void {
     settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
     settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
     settings.sendMs = value?.sendFlightMs ?? DEFAULT_SEND_FLIGHT_MS
+    settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
     applyFontChoice(settings.font)
     caret.resync()
+    tokenMotion.resync()
   }
   syncSettings()
   ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
@@ -102,8 +106,9 @@ export function apply(ctx: ClientContext): void {
     'dsh-chat-ux: send flight',
   )
 
-  // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
-  ctx.effect(() => installTokenMotion(), 'dsh-chat-ux: token reveal')
+  // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
+  // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
+  ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal')
 
   // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
   // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
@@ -164,6 +169,8 @@ interface ChatUxSettings {
   sendOn: boolean
   /** 发送动效那一段的时长（毫秒），每一段起飞开始时现读。 */
   sendMs: number
+  /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
+  tokenFade: boolean
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

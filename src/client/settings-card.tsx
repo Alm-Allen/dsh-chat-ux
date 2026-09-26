@@ -28,12 +28,13 @@ import { CARD_CLASS } from './config-card-styles'
 import { isFontFamilyValue } from './font-override'
 import {
   DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS, SEND_FLIGHT_MS_MAX, SEND_FLIGHT_MS_MIN,
+  DEFAULT_SEND_FLIGHT, DEFAULT_SEND_FLIGHT_MS, DEFAULT_TOKEN_FADE, SEND_FLIGHT_MS_MAX, SEND_FLIGHT_MS_MIN,
 } from './settings-scope'
 import type { ChatUxSection, ConfigForm, LocaleLike } from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow'
+const TOKEN_FADE_FIELD = 'tokenFade'
 const CARET_FIELD = 'caretMotion'
 const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
@@ -49,6 +50,8 @@ interface Copy {
   summary: (followOn: boolean) => string
   followLabel: string
   followHint: string
+  tokenLabel: string
+  tokenHint: string
   caretLabel: string
   caretHint: string
   caretOff: string
@@ -84,6 +87,10 @@ const ZH_COPY: Copy = {
   followHint:
     '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
     + '读者自己滚动离开底部的那段时间一概不动手——那一段交给你。',
+  tokenLabel: 'token 淡入',
+  tokenHint:
+    '流式回复里新出现的字符先淡后实，渐变的颜色就是字符自己的颜色。关掉之后字符直接以本色出现，'
+    + '页面上也不再挂那二十几条档位规则——排查性能问题时可以拿它当对照。',
   caretLabel: '光标动效',
   caretHint:
     '把浏览器那根插入符换成自绘的，位移走 80 ms 过渡。「移动时」只在方向键、点击这类显式移动上放过渡，'
@@ -129,6 +136,11 @@ const EN_COPY: Copy = {
   followHint:
     'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
     + 'begins), which fixes the occasional lost follow. A reader who scrolls away from the bottom is left alone.',
+  tokenLabel: 'Token fade-in',
+  tokenHint:
+    'Characters that arrive in a streaming reply fade in instead of appearing at full strength. Turning this off '
+    + 'shows them at full strength and drops the whole set of highlight rules — useful as a control when you are '
+    + 'chasing a performance problem.',
   caretLabel: 'Caret motion',
   caretHint:
     'Redraw the caret so it slides over 80 ms. "On move" animates explicit moves only — arrow keys, clicks — and '
@@ -205,6 +217,7 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
   const fieldId = useId()
 
   const followOn = storedFollow(snapshot.value)
+  const tokenFadeOn = storedTokenFade(snapshot.value)
   const sendOn = storedSendOn(snapshot.value)
   const caretMode = storedCaret(snapshot.value)
   const fontsOn = storedFonts(snapshot.value)
@@ -307,6 +320,14 @@ export function ChatUxConfigCard({ scope, locale, view }: ChatUxConfigCardProps)
           disabled={controlsDisabled}
           label={copy.followLabel}
           onChange={(next: boolean) => void writeField(FOLLOW_FIELD, next, storedFollow)}
+        />
+      ))}
+      {rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, (
+        <Switch
+          checked={tokenFadeOn}
+          disabled={controlsDisabled}
+          label={copy.tokenLabel}
+          onChange={(next: boolean) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade)}
         />
       ))}
       {rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, (
@@ -461,6 +482,11 @@ function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): Rea
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value: ChatUxSection | undefined): boolean {
   return value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+}
+
+/** 从 host 的值里读 token 淡入的开关。 */
+function storedTokenFade(value: ChatUxSection | undefined): boolean {
+  return value?.tokenFade ?? DEFAULT_TOKEN_FADE
 }
 
 /** 从 host 的值里读聊天气泡动效的开关。 */

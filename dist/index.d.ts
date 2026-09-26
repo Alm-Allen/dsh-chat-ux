@@ -53,6 +53,13 @@ export declare const DEFAULT_SEND_FLIGHT_MS = 200;
 export declare const SEND_FLIGHT_MS_MIN = 80;
 export declare const SEND_FLIGHT_MS_MAX = 1200;
 /**
+ * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
+ * 规则——所以它同时是排查性能问题时的一根对照杆。
+ */
+export declare const DEFAULT_TOKEN_FADE = true;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
@@ -64,6 +71,7 @@ export interface Config {
     fontCode: Volatile<string>;
     sendFlight: Volatile<boolean>;
     sendFlightMs: Volatile<number>;
+    tokenFade: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -77,6 +85,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     sendFlightMs: Schema<number, number, "volatile-defined">;
+    tokenFade: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
@@ -85,6 +94,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     sendFlightMs: Schema<number, number, "volatile-defined">;
+    tokenFade: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。

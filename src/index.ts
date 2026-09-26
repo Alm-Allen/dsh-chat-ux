@@ -86,6 +86,14 @@ export const SEND_FLIGHT_MS_MIN = 80
 export const SEND_FLIGHT_MS_MAX = 1200
 
 /**
+ * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
+ * 规则——所以它同时是排查性能问题时的一根对照杆。
+ */
+export const DEFAULT_TOKEN_FADE = true
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -107,6 +115,8 @@ export interface Config {
   // 提交之后气泡从输入框起飞的那一段时长，单位毫秒。曲线不开放：那两个幂次是量出来的，
   // 见 `client/send-flight.ts` 里那一段说明。
   sendFlightMs: Volatile<number>
+  // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
+  tokenFade: Volatile<boolean>
 }
 
 /**
@@ -121,6 +131,7 @@ export const Config = Schema.object({
   fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
   sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
   sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
+  tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
 })
 
 /**

@@ -65,6 +65,13 @@ export const DEFAULT_SEND_FLIGHT_MS = 200;
 export const SEND_FLIGHT_MS_MIN = 80;
 export const SEND_FLIGHT_MS_MAX = 1200;
 /**
+ * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
+ * 规则——所以它同时是排查性能问题时的一根对照杆。
+ */
+export const DEFAULT_TOKEN_FADE = true;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts';
@@ -80,6 +87,7 @@ export const Config = Schema.object({
     fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     sendFlightMs: Schema.number().step(1).min(SEND_FLIGHT_MS_MIN).max(SEND_FLIGHT_MS_MAX).default(DEFAULT_SEND_FLIGHT_MS).volatile(),
+    tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
 });
 /**
  * host 侧入口。

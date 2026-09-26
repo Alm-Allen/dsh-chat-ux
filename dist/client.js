@@ -93,10 +93,12 @@ function apply(ctx) {
         font: { embedded: settings_scope_1.DEFAULT_EMBEDDED_FONTS, sans: settings_scope_1.DEFAULT_FONT_FAMILY, code: settings_scope_1.DEFAULT_FONT_FAMILY },
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
         sendMs: settings_scope_1.DEFAULT_SEND_FLIGHT_MS,
+        tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
+    const tokenMotion = (0, token_motion_1.installTokenMotion)(() => settings.tokenFade);
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.follow = value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
@@ -106,8 +108,10 @@ function apply(ctx) {
         settings.font.code = value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.sendMs = value?.sendFlightMs ?? settings_scope_1.DEFAULT_SEND_FLIGHT_MS;
+        settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
+        tokenMotion.resync();
     };
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
@@ -117,8 +121,9 @@ function apply(ctx) {
     // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
     // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。
     ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn, () => settings.sendMs), 'dsh-chat-ux: send flight');
-    // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。
-    ctx.effect(() => (0, token_motion_1.installTokenMotion)(), 'dsh-chat-ux: token reveal');
+    // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
+    // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
+    ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal');
     // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
     // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
     ctx.effect(() => (0, reasoning_fold_1.installReasoningFold)(), 'dsh-chat-ux: reasoning reveal');
@@ -3411,6 +3416,7 @@ const font_override_1 = require("./font-override");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow';
+const TOKEN_FADE_FIELD = 'tokenFade';
 const CARET_FIELD = 'caretMotion';
 const FONTS_FIELD = 'fonts';
 const FONT_SANS_FIELD = 'fontSans';
@@ -3422,6 +3428,9 @@ const ZH_COPY = {
     followLabel: '增强跟随',
     followHint: '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
         + '读者自己滚动离开底部的那段时间一概不动手——那一段交给你。',
+    tokenLabel: 'token 淡入',
+    tokenHint: '流式回复里新出现的字符先淡后实，渐变的颜色就是字符自己的颜色。关掉之后字符直接以本色出现，'
+        + '页面上也不再挂那二十几条档位规则——排查性能问题时可以拿它当对照。',
     caretLabel: '光标动效',
     caretHint: '把浏览器那根插入符换成自绘的，位移走 80 ms 过渡。「移动时」只在方向键、点击这类显式移动上放过渡，'
         + '打字瞬时；「无论何时」连打字也滑过去。关掉就用回浏览器原来的那根。',
@@ -3459,6 +3468,10 @@ const EN_COPY = {
     followLabel: 'Enhanced follow',
     followHint: 'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
         + 'begins), which fixes the occasional lost follow. A reader who scrolls away from the bottom is left alone.',
+    tokenLabel: 'Token fade-in',
+    tokenHint: 'Characters that arrive in a streaming reply fade in instead of appearing at full strength. Turning this off '
+        + 'shows them at full strength and drops the whole set of highlight rules — useful as a control when you are '
+        + 'chasing a performance problem.',
     caretLabel: 'Caret motion',
     caretHint: 'Redraw the caret so it slides over 80 ms. "On move" animates explicit moves only — arrow keys, clicks — and '
         + 'leaves typing instant; "On typing" animates every keystroke too. Off keeps the browser\'s own caret.',
@@ -3511,6 +3524,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [sendMsDraft, setSendMsDraft] = (0, react_1.useState)(null);
     const fieldId = (0, react_1.useId)();
     const followOn = storedFollow(snapshot.value);
+    const tokenFadeOn = storedTokenFade(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const fontsOn = storedFonts(snapshot.value);
@@ -3575,7 +3589,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-send-ms', label: copy.sendMsLabel, hint: sendOn ? copy.sendMsHint : copy.sendOffHint, invalidHint: copy.sendMsInvalid, value: sendMs, invalid: sendMsInvalid, overridden: userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD), disabled: controlsDisabled || !sendOn, copy: copy, onEdit: setSendMsDraft, onCommit: () => void commitSendMs(), onReset: () => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD); } }), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-send-ms', label: copy.sendMsLabel, hint: sendOn ? copy.sendMsHint : copy.sendOffHint, invalidHint: copy.sendMsInvalid, value: sendMs, invalid: sendMsInvalid, overridden: userLayerHasField(snapshot.user, SEND_FLIGHT_MS_FIELD), disabled: controlsDisabled || !sendOn, copy: copy, onEdit: setSendMsDraft, onCommit: () => void commitSendMs(), onReset: () => { setSendMsDraft(null); void reset(SEND_FLIGHT_MS_FIELD); } }), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
@@ -3606,6 +3620,10 @@ function overrideBadges(copy, disabled, onReset) {
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value) {
     return value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
+}
+/** 从 host 的值里读 token 淡入的开关。 */
+function storedTokenFade(value) {
+    return value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
 }
 /** 从 host 的值里读聊天气泡动效的开关。 */
 function storedSendOn(value) {
@@ -3862,7 +3880,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
     __registry["settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SEND_FLIGHT_MS_MAX = exports.SEND_FLIGHT_MS_MIN = exports.DEFAULT_SEND_FLIGHT_MS = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_TOKEN_FADE = exports.SEND_FLIGHT_MS_MAX = exports.SEND_FLIGHT_MS_MIN = exports.DEFAULT_SEND_FLIGHT_MS = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -3903,6 +3921,12 @@ exports.DEFAULT_SEND_FLIGHT_MS = 200;
  */
 exports.SEND_FLIGHT_MS_MIN = 80;
 exports.SEND_FLIGHT_MS_MAX = 1200;
+/**
+ * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
+ */
+exports.DEFAULT_TOKEN_FADE = true;
     };
 
     __registry["styles.js"] = function (module, exports, require) {
@@ -4257,13 +4281,46 @@ const STAGGER_DIVISOR = 50;
 const MIN_STAGGER_MS = 1;
 const MAX_STAGGER_MS = 8;
 /**
- * 给整页安装淡入效果。
+ * 给整页装上淡入效果，并且跟着设置里的开关装卸。
  *
- * 引擎没有 Highlight API、或者读者开了「减少动态效果」时都能安全调用：这两种情况都返回一个
- * 什么都不做的 disposer。
- * @returns disposer：断开 observer，并清掉全部 highlight。
+ * 开关关着时它**一次都不装**——档位规则表、扫描观察者、绘制帧一个都不存在，页面上看不出这个插件
+ * 在这一块做过任何事；打开就是原样装回来。设置一改由调用方调一次 `resync` 重落。
+ *
+ * 引擎没有 Highlight API、或者读者开了「减少动态效果」时都能安全调用：那两种情况会装出一个
+ * 什么都不做的实例。
+ * @param readEnabled - 现读一次开关；`true` 表示要淡入。
+ * @returns 一个 `resync` / `dispose` 的把柄。
  */
-function installTokenMotion() {
+function installTokenMotion(readEnabled) {
+    /** 装出来的那个引擎的 disposer；`null` 表示现在没装。 */
+    let teardown = null;
+    const resync = () => {
+        if (readEnabled()) {
+            if (teardown === null)
+                teardown = runTokenMotion();
+            return;
+        }
+        if (teardown === null)
+            return;
+        teardown();
+        teardown = null;
+    };
+    resync();
+    return {
+        resync,
+        dispose: () => {
+            if (teardown === null)
+                return;
+            teardown();
+            teardown = null;
+        },
+    };
+}
+/**
+ * 真正把那套引擎装上：档位规则表、扫描与绘制。
+ * @returns disposer：断开 observer、清掉全部 highlight、撤掉规则表。
+ */
+function runTokenMotion() {
     const registry = globalThis.CSS?.highlights;
     if (registry === undefined)
         return () => { };
@@ -4284,22 +4341,32 @@ function installTokenMotion() {
     const textSnapshots = new WeakMap();
     /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
     const foldQuietUntil = new WeakMap();
+    /** 上一次扫描时在页面上的流式容器；这一趟不在的那些，区间与快照一起丢掉。 */
+    let liveContainers = [];
     /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
     const writtenColors = new WeakMap();
+    /** 最近一批字符开始淡入的时刻；`0` 表示装上之后还没有过。 */
+    let lastBornAt = 0;
+    /** 档位规则现在开着吗。关着的那些时刻，它们不参与任何一次样式重算。 */
+    let revealRulesOn = false;
     /** 排队中的绘制帧句柄；0 表示没有排队。 */
     let scheduledFrame = 0;
-    // 档位规则单独一张样式表，挂上就一直生效。
+    // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
     //
-    // 它曾经按需插拔：没有流式容器时整张 `disabled`，有新字符要淡入时再启用。那样省下的是「阅读期
-    // 每一次全量重算」，代价却出在另一头：`disabled` 的翻转会让整篇文档的样式失效，于是紧接着的那
-    // 一次样式计算从「只算新节点」升级成「整页重算」。六千节点上实测，翻转后的一次重算约三十八毫秒，
-    // 而不翻转的插入四百个节点只要三点五毫秒——也就是说这一下翻转**凭空造出**了一次整页重算，还正好
-    // 造在读者按下提交的那一帧上（新字符到达、流式刚开头）。同值写入是零代价的（Blink 会短路），
-    // 贵的是值真的变了。
+    // 翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」（六千节点上
+    // 实测约三十八毫秒），所以这两下翻转都绑在**本来就要重算的那一帧**上：启用发生在 `scan` 认出
+    // 第一批新字符的时候，收起发生在之后某一次 mutation 上（时隔 `IDLE_REVEAL_MS` 之后的第一趟
+    // 扫描）——读者打字、页面吐字、滚动挂载，那些 mutation 自己都要重算。谁也没凭空造出一次重算。
+    //
+    // 换来的正是最贵的那一刻：提交后新消息挂载会让聊天列大范围失效。同一个 4664 节点的会话上实测，
+    // 提交之后三秒里的 `UpdateLayoutTree` 在规则常驻时是 146 毫秒（最长一帧 117 毫秒），收起时只有
+    // 21 毫秒（最长一帧 50 毫秒），而提交帧正是这几百毫秒里的头一帧。
     const revealStyleElement = document.createElement('style');
     revealStyleElement.id = REVEAL_STYLE_ID;
     revealStyleElement.textContent = revealCss;
     document.head.append(revealStyleElement);
+    // 挂上之后才谈得上 `disabled`：元素还没进文档时它还没有自己的样式表，那时候赋值会被丢掉。
+    revealStyleElement.disabled = true;
     /** 清掉全部档位的 highlight。 */
     const clearHighlights = () => {
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
@@ -4371,19 +4438,23 @@ function installTokenMotion() {
                 run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now;
             }
         }
+        /** 每一档本帧已经画出来的那一段；后一个区间与它接得上就并进去，不再单独建一个。 */
+        const drawn = new Array(exports.REVEAL_STEPS).fill(null);
         const buckets = [];
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
             buckets.push([]);
-        for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+        /** 活下来的区间就地往前压：splice 每去掉一个都要搬动后面的元素，一批上千个就是平方级。 */
+        let kept = 0;
+        for (let index = 0; index < liveRuns.length; index += 1) {
             const run = liveRuns[index];
             if (run === undefined)
                 continue;
             const age = now - run.bornAt - run.delay;
             // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
-            if (age >= exports.REVEAL_MS) {
-                liveRuns.splice(index, 1);
+            if (age >= exports.REVEAL_MS)
                 continue;
-            }
+            liveRuns[kept] = run;
+            kept += 1;
             // 排队这些区间的扫描顺手建好了快照，而之后的每一次 mutation 都会先经过一次新的扫描才轮到
             // 这一帧绘制，所以缓存里就是屏幕上那份文本。在这里重新走一遍容器，等于给每一帧都塞进一个
             // O(整条消息) 的 TreeWalker。
@@ -4414,8 +4485,7 @@ function installTokenMotion() {
                 continue;
             if (firstEntry.start >= end)
                 continue;
-            const range = document.createRange();
-            range.setStart(firstEntry.node, Math.max(0, run.start - firstEntry.start));
+            const start = Math.max(0, run.start - firstEntry.start);
             let lastNode = firstEntry.node;
             let lastEnd = Math.min(firstEntry.node.data.length, end - firstEntry.start);
             for (let next = firstIndex + 1; next < snapshot.entries.length; next += 1) {
@@ -4427,15 +4497,14 @@ function installTokenMotion() {
                 lastNode = entry.node;
                 lastEnd = Math.min(entry.node.data.length, end - entry.start);
             }
-            range.setEnd(lastNode, lastEnd);
-            // 元素是从 range 反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
+            // 元素是从区间所在的文本节点反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
             // （重新解析 `**bold`、折叠某一行），区间所在的元素被换掉之后，旧元素上的颜色再也没人渲染，
             // 真正在渲染的新元素会回退到页面默认色——于是闪一下正文色，而不是淡入。
             //
             // 但只在**元素真的换了**才去读它的颜色。`publishRunColor` 的第一步是 `getComputedStyle`，
             // 而它是一次强制样式结算——一帧里几百个区间各读一次，等于把整页的样式重算拖进 rAF 里。元素
             // 没换的那些帧（绝大多数）只需要一次比较。
-            const element = range.startContainer.parentElement;
+            const element = firstEntry.node.parentElement;
             if (element !== run.colorElement) {
                 publishRunColor(element);
                 run.colorElement = element;
@@ -4446,13 +4515,30 @@ function installTokenMotion() {
             const bucket = buckets[step];
             if (bucket === undefined)
                 continue;
-            bucket.push(range);
+            // 同一个文本节点里、偏移接得上的相邻字符，这一帧本来就落在同一档——画出来是同一段文字，
+            // 合成一个区间就够：区间数于是从「字符数」降到「段数」。
+            const previous = drawn[step] ?? null;
+            if (previous !== null && lastNode === firstEntry.node && previous.node === firstEntry.node && previous.end === start) {
+                previous.end = lastEnd;
+                continue;
+            }
+            const segment = { node: firstEntry.node, start, end: lastEnd };
+            drawn[step] = segment;
+            bucket.push(segment);
         }
+        liveRuns.length = kept;
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
-            const ranges = buckets[step];
-            if (ranges === undefined || ranges.length === 0) {
+            const list = buckets[step];
+            if (list === undefined || list.length === 0) {
                 registry.delete(exports.HIGHLIGHT_PREFIX + step);
                 continue;
+            }
+            const ranges = [];
+            for (const segment of list) {
+                const range = document.createRange();
+                range.setStart(segment.node, segment.start);
+                range.setEnd(segment.node, segment.end);
+                ranges.push(range);
             }
             registry.set(exports.HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges));
         }
@@ -4460,11 +4546,40 @@ function installTokenMotion() {
             scheduledFrame = requestAnimationFrame(paint);
     };
     /** 把每个流式容器与上一次的快照对比，然后把新出现的那一段排成区间。 */
-    const scan = () => {
-        const containers = document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR);
-        if (containers.length === 0)
+    /**
+     * 这一批没有新字符要淡入、上一批又已经过去很久：把档位规则收起来。
+     *
+     * 只在**确定这一趟没有新字符**的路径上调用。同一趟扫描里先收再开会让整篇文档失效两次——两次
+     * 全量重算全压在「思考的第一个字上屏」那一帧上，比一直挂着还贵。
+     * @param now - 这一趟扫描开始的时间戳。
+     */
+    const idleOut = (now) => {
+        if (!revealRulesOn)
             return;
+        if (now - lastBornAt <= IDLE_REVEAL_MS)
+            return;
+        revealStyleElement.disabled = true;
+        revealRulesOn = false;
+    };
+    const scan = () => {
         const now = performance.now();
+        const containers = [...document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR)];
+        // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
+        // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
+        for (const gone of liveContainers) {
+            if (containers.includes(gone))
+                continue;
+            textSnapshots.delete(gone);
+            for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+                if (liveRuns[index]?.container === gone)
+                    liveRuns.splice(index, 1);
+            }
+        }
+        liveContainers = containers;
+        if (containers.length === 0) {
+            idleOut(now);
+            return;
+        }
         /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
         const createdRuns = [];
         for (const container of containers) {
@@ -4589,6 +4704,14 @@ function installTokenMotion() {
                 addedRanges.push({ start: rangeStart + prefix, end: newMiddle.length + prefix });
             if (addedRanges.length === 0)
                 continue;
+            // 一批到的字太多就不淡入：几千个字一起淡，读者看到的是一片糊，而区间数就是字符数、直接乘在
+            // 每一帧上（每帧每个区间一个 Range）。实测一万五千字符一块到达就能把单帧推到七百毫秒，而且
+            // 帧间隔补偿会不断给这些区间续命、自己缓不过来。真实流式的单批增量中位十几个字符。
+            let addedLength = 0;
+            for (const range of addedRanges)
+                addedLength += range.end - range.start;
+            if (addedLength > BURST_LIMIT)
+                continue;
             // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
             // `styles.ts` 正是从这个元素读淡入用的颜色，一个节点的文本总是渲染在一个元素里。
             // 同一个节点里的字符出生时间相同，相位在遍历完之后按位次统一分配——一到屏幕就整块变亮的
@@ -4646,8 +4769,16 @@ function installTokenMotion() {
         // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
         // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
         // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
-        if (createdRuns.length === 0)
+        if (createdRuns.length === 0) {
+            idleOut(now);
             return;
+        }
+        // 有字符要淡入了：把规则挂上。这一帧本来就在插新字符，本来就要重算。
+        lastBornAt = now;
+        if (!revealRulesOn) {
+            revealStyleElement.disabled = false;
+            revealRulesOn = true;
+        }
         if (scheduledFrame !== 0) {
             cancelAnimationFrame(scheduledFrame);
             scheduledFrame = 0;
@@ -4699,6 +4830,9 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
  * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量），所以这里不额外多生成任何一档。
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
+ *
+ * 条数只在**规则生效的那些时刻**才有代价：没有东西要淡入时整张表是 `disabled` 的，所以阅读期
+ * 与提交那一刻的样式重算都不必评估它们（见 `installTokenMotion` 里翻转那一段）。
  */
 const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
     const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
@@ -4717,6 +4851,28 @@ const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
  * React 的重渲染和它产生的那批 mutation；又够短，让点击之后立刻续上的流仍然有动效。
  */
 const FOLD_QUIET_MS = 400;
+/**
+ * 一批字符淡完之后，档位规则还要在页面上留多久。
+ *
+ * 收起它们的那一下翻转会让整篇文档的样式失效，所以不能刚淡完就收——那一刻页面可能正安静下来，
+ * 也可能下一秒又吐一批。收起只发生在**下一次 mutation** 上（`scan` 是唯一检查它的地方），而那次
+ * mutation 本来就要触发重算。
+ *
+ * 取十秒，因为一秒盖不住一整轮：思考转到正文、或者思考中间的长停顿，间隔常常超过一秒，那样一轮
+ * 回答里会「收起—启用」来回好几趟，每趟都是一次全量重算，读者在「思考的第一个字上屏」那一刻就
+ * 能感到一下顿。十秒把一整轮（含中间停顿）圈在一起，于是通常一轮只翻两次：开头启用一次，收尾那
+ * 次留给之后某次 mutation。而读者真要往一个**停下来的**会话里发消息时，上一批淡入早就过去不止
+ * 十秒了，该收的还是收着。
+ */
+const IDLE_REVEAL_MS = 10000;
+/**
+ * 一批里最多认多少字符。
+ *
+ * 区间数就是这批的字符数，而它直接乘在每一帧上（每帧每个区间一个 Range）：实测一万五千字符一块
+ * 到达就能把单帧推到七百毫秒，而且帧间隔补偿会一直给这些区间续命，页面自己缓不过来。真实流式的
+ * 单批增量中位十几个字符、最大几十个，所以这道闸门平时一次都不碰它。
+ */
+const BURST_LIMIT = 10000;
 /**
  * 一个刚冒出来的流式容器最多带多少字符，还算「刚开头的一轮回答」。
  *

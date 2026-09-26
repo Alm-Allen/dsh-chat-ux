@@ -56,6 +56,13 @@ export const DEFAULT_SEND_FLIGHT_MS = 200
 export const SEND_FLIGHT_MS_MIN = 80
 export const SEND_FLIGHT_MS_MAX = 1200
 
+/**
+ * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
+ */
+export const DEFAULT_TOKEN_FADE = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
   /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
@@ -72,6 +79,8 @@ export interface ChatUxSection {
   sendFlight?: boolean
   /** 提交之后气泡起飞的那一段时长（毫秒）。 */
   sendFlightMs?: number
+  /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
+  tokenFade?: boolean
 }
 
 /**
