@@ -1,6 +1,6 @@
 {
   "name": "@alm-allen/dsh-chat-ux",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Chat-area UX plugin for the DeepSeek Harness (dsh) web GUI.",
   "type": "module",
   "license": "MIT",
@@ -52,8 +52,9 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "clean": "node -e \"const fs=require('node:fs');for(const d of ['dist','build'])fs.rmSync(d,{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/wrap-client.cjs",
+    "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "fonts": "python scripts/subset-fonts.py"
   },
@@ -71,6 +72,7 @@
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "react": "^18.2.0",
+    "tsdown": "^0.23.0",
     "typescript": "^5.9.0"
   },
   "engines": {

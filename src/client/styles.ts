@@ -14,6 +14,7 @@ import { FILE_MUTATION_CSS } from './file-mutation-styles'
 import { FOLD_MOTION_CSS } from './fold-motion-styles'
 import { FONT_CSS } from './font-styles'
 import { SEND_FLIGHT_CSS } from './send-flight-styles'
+import { THEME_ATTRIBUTE } from './dom-contract'
 import { RUN_COLOR_VAR } from './token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
@@ -27,7 +28,7 @@ body {
   ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #0f1115);
 }
 
-body[data-ds-dark-theme] {
+body[${THEME_ATTRIBUTE}] {
   /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */
   ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
 }

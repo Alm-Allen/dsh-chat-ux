@@ -40,7 +40,7 @@ dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 
 ### Install from the GitHub repository
 
-You can also install straight from the repository — the build output is committed, so no build approval is required:
+You can also install straight from the repository — the build output (`dist/`) is committed, so the installer needs no build environment:
 
 ```sh
 dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux
@@ -73,7 +73,23 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 
 ## About this repository
 
-This repository carries the plugin's source and release notes. Build scripts and internal design docs are not part of it, so a fresh clone cannot run `npm run build`; install the package from npm instead.
+This repository carries the plugin's source and release notes. Internal design docs are not part of it.
+
+The build pipeline is, using DSH's own client bundler [tsdown](https://tsdown.dev):
+
+```sh
+npm install
+npm run build      # both halves: dist/index.js (host) and dist/client.js (browser)
+npm run dev        # rebuild on change
+npm run typecheck  # tsc over both halves
+```
+
+`dist/` is **committed on purpose**: the repository supports direct installs via
+`github:Alm-Allen/dsh-chat-ux`, and those users have no build environment. The cost is that a source
+change needs `npm run build` before committing, or the shipped artifacts fall behind `src/`.
+
+A performance benchmark lives in [`bench/`](./bench), with a deterministic clock and a self-check;
+run it before changing anything for speed.
 
 ## License
 

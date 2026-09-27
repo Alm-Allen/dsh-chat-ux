@@ -40,7 +40,7 @@ dsh plugin --profile web remove @alm-allen/dsh-chat-ux
 
 ### 从 GitHub 仓库安装
 
-也可以直接从仓库装 —— 仓库里带了构建产物，所以不需要任何构建授权：
+也可以直接从仓库装 —— 仓库里带了构建产物（`dist/`），所以装的人不需要构建环境：
 
 ```sh
 dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux
@@ -73,7 +73,21 @@ dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
 
 ## 关于本仓库
 
-这里是插件的源码与发行说明。构建脚本、内部设计文档不在本仓库内，因此 clone 之后不能直接 `npm run build`；需要用插件请直接安装 npm 上的包。
+这里是插件的源码与发行说明。内部设计文档不在本仓库内。
+
+构建链路在仓库里，用 DSH 自己的客户端构建器 [tsdown](https://tsdown.dev)：
+
+```sh
+npm install
+npm run build      # 两半产物：dist/index.js（host）与 dist/client.js（浏览器）
+npm run dev        # 监听重建
+npm run typecheck  # 两半各跑一遍 tsc
+```
+
+`dist/` 是**故意提交**的：仓库要支持 `github:Alm-Allen/dsh-chat-ux` 这种直装，装的人没有构建环境。
+代价是改完源码要 `npm run build` 之后再提交，否则仓库里的产物会落后于 `src/`。
+
+性能基准在 [`bench/`](./bench)，含确定性时钟与自检，改性能前先跑它。
 
 ## 许可
 

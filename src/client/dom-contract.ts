@@ -82,3 +82,12 @@ export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
 
 /** 过程组体里的内容层；组体滚的就是它。 */
 export const PROCESS_CONTENT_SELECTOR = '[data-step-process-content]'
+
+/**
+ * dsh 深色主题的标记，挂在 `body` 上（见 ui-theme 的 `document.body.toggleAttribute`）。
+ *
+ * 两处用到它，所以放这里而不是各自就地拼字符串：`styles.ts` 拿它写深色下的兜底色，
+ * `token-motion.ts` 拿它当颜色缓存的失效条件——主题一翻，整套 `--dsw-alias-*` 令牌重解析，
+ * 所有元素的颜色都可能变。
+ */
+export const THEME_ATTRIBUTE = 'data-ds-dark-theme'

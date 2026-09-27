@@ -1,5 +1,6 @@
-import type { Context, Volatile } from '@deepseek-ai/cordis';
-import Schema from '@deepseek-ai/schemastery';
+import Schema from "@deepseek-ai/schemastery";
+import { Context, Volatile } from "@deepseek-ai/cordis";
+//#region src/index.d.ts
 export declare const name = "dsh-chat-ux";
 /**
  * 前端绑定 config form 用的那个字符串。设置服务按 **profile 条目 id** 标识一份表单，而这个 id 就是
@@ -52,37 +53,38 @@ export declare const DEFAULT_TOKEN_FADE = true;
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
 export interface Config {
-    enhancedFollow: Volatile<boolean>;
-    caretMotion: Volatile<CaretMotionMode>;
-    fonts: Volatile<boolean>;
-    fontSans: Volatile<string>;
-    fontCode: Volatile<string>;
-    sendFlight: Volatile<boolean>;
-    tokenFade: Volatile<boolean>;
+  enhancedFollow: Volatile<boolean>;
+  caretMotion: Volatile<CaretMotionMode>;
+  fonts: Volatile<boolean>;
+  fontSans: Volatile<string>;
+  fontCode: Volatile<string>;
+  sendFlight: Volatile<boolean>;
+  tokenFade: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
  */
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
-    enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
-    caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
-    fonts: Schema<boolean, boolean, "volatile-defined">;
-    fontSans: Schema<string, string, "volatile-defined">;
-    fontCode: Schema<string, string, "volatile-defined">;
-    sendFlight: Schema<boolean, boolean, "volatile-defined">;
-    tokenFade: Schema<boolean, boolean, "volatile-defined">;
+  enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
+  caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
+  fonts: Schema<boolean, boolean, "volatile-defined">;
+  fontSans: Schema<string, string, "volatile-defined">;
+  fontCode: Schema<string, string, "volatile-defined">;
+  sendFlight: Schema<boolean, boolean, "volatile-defined">;
+  tokenFade: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
-    enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
-    caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
-    fonts: Schema<boolean, boolean, "volatile-defined">;
-    fontSans: Schema<string, string, "volatile-defined">;
-    fontCode: Schema<string, string, "volatile-defined">;
-    sendFlight: Schema<boolean, boolean, "volatile-defined">;
-    tokenFade: Schema<boolean, boolean, "volatile-defined">;
+  enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
+  caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
+  fonts: Schema<boolean, boolean, "volatile-defined">;
+  fontSans: Schema<string, string, "volatile-defined">;
+  fontCode: Schema<string, string, "volatile-defined">;
+  sendFlight: Schema<boolean, boolean, "volatile-defined">;
+  tokenFade: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。
  * @param ctx - host 根 context。
  */
 export declare function apply(ctx: Context): void;
+//#endregion

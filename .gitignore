@@ -5,13 +5,19 @@ build/
 .DS_Store
 
 # dist/ 是故意提交的：仓库要支持 `github:Alm-Allen/dsh-chat-ux` 这种直装，
-# 而构建脚本（scripts/）不在仓库里，安装时没法现场重新构建。
+# 装的人没有构建环境，所以产物随仓库发。
 # 代价：改完源码要 `npm run build` 之后再提交，否则仓库里的产物会落后于 src/。
 
-# 只留在本机，不进公开仓库：写作笔记、协作说明、构建脚本与本机包管理配置
+# bench 的产物与运行输出不进仓库：
+#   ab/  两份约 200 KB 的对照产物，可用 bench/setup-ab.mjs 从 git 历史与当前构建重新生成
+#   *.txt 基准的运行结果，跑一次就有
+# 基准源码本身（clock/harness/loader/shims/bench/...）是随仓库发的。
+bench/ab/
+bench/*.txt
+
+# 只留在本机，不进公开仓库：写作笔记、协作说明与本机包管理配置
 文档/
 AGENTS.md
-scripts/
 pnpm-lock.yaml
 pnpm-workspace.yaml
 .probe/
