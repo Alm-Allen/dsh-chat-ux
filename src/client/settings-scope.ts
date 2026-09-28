@@ -61,7 +61,7 @@ export interface ChatUxSection {
   fontSans?: string
   /** 自定义等宽字体栈；空串用自带的。 */
   fontCode?: string
-  /** 提交之后气泡是否从输入框起飞；默认关着。时长不是一个设置项，见 `send-flight.ts` 的 `FLIGHT_MS`。 */
+  /** 提交之后气泡是否从输入框起飞；默认关着。时长不是一个设置项，见 `send-morph.ts` 的 `FLIGHT_MS`。 */
   sendFlight?: boolean
   /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
   tokenFade?: boolean

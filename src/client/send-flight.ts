@@ -5,28 +5,16 @@
  * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到——动画挂在这两条
  * 节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
  *
- * 所以这里自己画一个替身。它是**两层**：外面那层壳就是输入框的形状（尺寸、圆角、底色都从输入卡片
- * 现读），里面挂着克隆下来的那条气泡（底色摘掉，交给壳），于是同一个元素从「一条输入框」连续地
- * 长成「一条气泡」：
+ * 所以这里自己画一个替身：输入卡片原样浮起来一份，一边飞一边收成那条气泡。替身怎么搭、形变怎么
+ * 算，全在 `send-morph.ts`；这个模块管什么时候起飞、飞向哪一行、什么时候落定：
  *
- *   抓起点    提交的 capture 阶段量下三样东西：草稿的位置与颜色、输入卡片的矩形、卡片的底色与圆角。
- *             全都早于 React 清空草稿。
+ *   抓起点    提交的捕获阶段把整张输入卡片抓下来（克隆、几何、外观），全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
- *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
- *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
- *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
- *             曲线的函数。整段时长固定在 `FLIGHT_MS`，曲线是阻尼弹簧，四个数都在下面写着、
- *             不开放给读者调。
- *
- *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
- *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
- *             布局结算拖进每一帧里来。
- *
- *             **位移不在主线程上。** 起手那一刻把两条曲线采成一段 `transform` 关键帧，交给
- *             `Element.animate` 去跑，合成器线程负责插值——dsh 解析一批响应占住主线程那几十毫秒时
- *             轨迹照样在走（改造前是每帧写一次 `transform`，主线程一忙它就冻住）。主线程每帧只剩
- *             形变与"终点移动了多少"这两件事，后者写在外层，动它不会把里层那段合成动画顶掉。
+ *   立替身    替身挂到页面上、整段动画交给合成器；真实的那一行挂属性藏起来（保留布局盒，终点每帧都
+ *             量得到）。
+ *   逐帧补    **这一帧里只有一件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行），补到替身的
+ *             最外层上。形状、颜色、位置、字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时
+ *             照样在走。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 五条边界（前两条是实测踩出来的）：
@@ -35,83 +23,19 @@
  *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
  *   认行不在帧里  「当场」不等于「每帧」。回显被正式那一行换掉，同一个 observer 会在本帧渲染之前
  *                 同步认出来；帧里再查一遍是白花的——长会话里光那两句全文档查询就够吃掉半帧。
- *                 量外形也一样：内边距、圆角、底色都属于同一个气泡，跟着行换一次就够。
- *   宽度要写死      克隆出来的气泡离开原来的弹性上下文后会摊成整行，所以宽度取量到的那一份；而
- *                 `getBoundingClientRect` 给的是 border-box 宽，`box-sizing` 必须跟着写成 border-box，
- *                 否则内边距会再叠一次（右边胖出一截）。
  *   抓不到就不做    起点抓不到（快捷键、程序化提交）时这一次不动手，读者看到的还是 dsh 原来的样子。
  *   藏起来必须还    真实行被藏着的这会儿，读者看不见那条消息。所以除了正常落定，还有一条定时器
  *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
+ *   只飞同一屏    起终点有一头已经在屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
  *
  * @module dsh-chat-ux/client/send-flight
  */
 import { CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR } from './dom-contract'
+import { alphaOf, FLIGHT_MS, snapshotComposer, startMorph } from './send-morph'
+import type { ComposerSnapshot, Morph } from './send-morph'
 
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
-
-/**
- * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
- * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。270 是选定值——短到读者不等它，
- * 长到看得清路径与落定那一下的回弹。
- *
- * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
- * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
- * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
- */
-export const FLIGHT_MS = 300
-
-/** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
-const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
-
-/**
- * 三道缓动。**两条轴都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，
- * 走过了头还会弹回来一点点。
- *
- * **横向的角频率给得很大，于是它早早收完**：两成时间走掉八成三、四成走掉九成九，之后剩下的位移小到
- * 看不见。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开。
- *
- * 上一版是三次 ease-out 配二次 ease-in：两条导数互补，路径**始终在拐**、方向从起手平滑转到收尾，
- * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
- * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
- *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 1.5%，再落回目标——落定那一下的弹性就是它。
- *
- * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
- * 气泡的样子，剩下那段上升里形状不再有可见变化。
- *
- * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
- * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
- * 右移实现，宽度收得越早、左边缘到位就越早——两头不可兼得，这里选形状早点定死。
- *
- * 这三个数**不开放给读者调**：它们是照着「横向早早到位、上升占住后段、落定时回冲一下」量出来的
- * （逐帧对照见 `文档/业务/发送动效.md`）。换一组也画得出来——阻尼比取 1 就没有回冲，角频率取小
- * 就成了一条慢吞吞的直线——但那是另一种东西，不该由卡片上的一个开关决定。
- */
-const ACROSS_OMEGA = 16
-
-/**
- * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
- * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
- *
- * 现在这个 0.8 冲过去约 **1.5%**：几百像素的行程上是十来个像素，看得见「放上去」那一下，又不会像弹球。
- * 它是照着 iMessage 收了一档来的——那一边本来就有回弹，只是比这里原来的 0.75（约 2.8%）更收敛。
- * **要自己再调就改这一个数**，改完 `npm run build`、Ctrl+F5 刷新页面看落定那一瞬。
- */
-const RISE_DAMPING = 0.75
-
-/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
-const RISE_OMEGA = 7.5
-
-/**
- * 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。
- *
- * 它同时决定**"右侧那块空白"的窗口有多大**。位移跑在合成器上、形变由主线程每帧写，主线程被
- * dsh 的响应解析占住那几十毫秒时，位置会跑到形变前面——壳已经落到终点的横坐标、宽度却还没收完，
- * 右边于是多出一块底色，等主线程回来才闪回去。形变收得越早，这个窗口越短：0.85 是 230 ms，
- * 实测那类长任务（50–120 ms）几乎总能落在里面；0.45 是 121 ms，基本落在它外面。
- */
-const MORPH_END = 0.45
 
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
 const ORIGIN_TTL_MS = 1500
@@ -172,8 +96,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
     row.setAttribute(FLYING_ATTRIBUTE, '')
     current.hidden = row
-    current.target = measureTarget(row)
-    placeGhost(current, performance.now() - current.startedAt)
+    current.bubble = findBubble(row)
+    followTarget(current)
   })
 
   /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
@@ -185,56 +109,43 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     window.clearTimeout(rescue)
     rescue = 0
     current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-    current.travel.cancel()
-    current.wrapper.remove()
+    for (const animation of current.morph.animations) animation.cancel()
+    current.morph.wrapper.remove()
   }
 
-  /** 帧里只画。认行与量外形都交给上面那个 observer——它们不是每帧都有新答案的事。 */
+  /** 帧里只补终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。 */
   const tick = (): void => {
     const current = flight
     if (current === null) return
-    const elapsed = performance.now() - current.startedAt
-    if (elapsed >= current.ms) {
+    if (performance.now() - current.startedAt >= FLIGHT_MS) {
       settle()
       return
     }
-    placeGhost(current, elapsed)
+    followTarget(current)
     requestAnimationFrame(tick)
   }
 
-  /** 起一段飞行：立替身、藏真实行、把第一帧摆好。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+  /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
   const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
-    const target = measureTarget(echo)
-    if (target === null) return
-    const box = target.bubble.getBoundingClientRect()
-    const card = draft.card.box
+    const bubble = findBubble(echo)
+    if (bubble === null) return
+    const box = bubble.getBoundingClientRect()
+    const card = draft.snapshot.box
     if (!sameScreen(card.left, box.left, window.innerWidth)) return
     if (!sameScreen(card.top, box.top, window.innerHeight)) return
-    const ghost = createGhost(target.bubble, box, { left: card.left, top: card.top })
-    if (ghost === null) return
+    const morph = startMorph(draft.snapshot, bubble, box)
+    if (morph === null) return
     echo.setAttribute(FLYING_ATTRIBUTE, '')
-    // 位移整段交给合成器：主线程被响应解析占住那几十毫秒时，轨迹照样在走。
-    const travel = ghost.shell.animate(flightKeyframes(box.left - card.left, box.top - card.top), {
-      duration: FLIGHT_MS,
-      easing: 'linear',
-      fill: 'forwards',
-    })
     flight = {
-      draft,
-      wrapper: ghost.wrapper,
-      shell: ghost.shell,
-      content: ghost.content,
-      travel,
+      morph,
       startedAt: performance.now(),
-      ms: FLIGHT_MS,
       targetAt: { left: box.left, top: box.top },
       shiftedX: 0,
       shiftedY: 0,
       previous: lastUserRow(),
       hidden: echo,
-      target,
+      bubble,
     }
-    placeGhost(flight, 0)
     rowWatcher.observe(document.body, { childList: true, subtree: true })
     rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
     requestAnimationFrame(tick)
@@ -270,21 +181,11 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     if (!(input instanceof HTMLElement)) return
     const card = input.closest(COMPOSER_CARD_SELECTOR)
     if (!(card instanceof HTMLElement)) return
-    const range = document.createRange()
-    range.selectNodeContents(input)
-    const box = range.getBoundingClientRect()
-    if (box.width === 0 || box.height === 0) return
-    const cardStyle = getComputedStyle(card)
-    origin = {
-      capturedAt: performance.now(),
-      box,
-      color: getComputedStyle(input).color,
-      card: {
-        box: card.getBoundingClientRect(),
-        background: cardStyle.backgroundColor,
-        radius: pixel(cardStyle.borderTopLeftRadius),
-      },
-    }
+    // 空草稿不会提交出一条消息；量它只是白花一次克隆。
+    if ((input.textContent ?? '').trim() === '') return
+    const snapshot = snapshotComposer(input, card)
+    if (snapshot === null) return
+    origin = { capturedAt: performance.now(), snapshot }
     echoWatcher.observe(document.body, { childList: true, subtree: true })
   }
 
@@ -317,35 +218,17 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
   }
 }
 
-/** 草稿起飞前的那一刻：文字在哪儿、什么颜色，以及那条输入卡片长什么样。 */
+/** 草稿起飞前的那一刻：整张输入卡片的快照。 */
 interface DraftOrigin {
   readonly capturedAt: number
-  readonly box: DOMRect
-  readonly color: string
-  readonly card: CardShape
-}
-
-/** 输入卡片的外形。壳的起点就是它。 */
-interface CardShape {
-  readonly box: DOMRect
-  readonly background: string
-  readonly radius: number
+  readonly snapshot: ComposerSnapshot
 }
 
 /** 一段正在飞的动画。`hidden` 会在回显被换掉时改指新来的那一行。 */
 interface Flight {
-  readonly draft: DraftOrigin
-  /** 外层：终点的移动（滚动、回显换正式行）补在它身上，动它不会打断里层的合成动画。 */
-  readonly wrapper: HTMLElement
-  /** 替身的壳：输入卡片的形状从这里长成气泡。位移那段合成动画挂在它身上。 */
-  readonly shell: HTMLElement
-  /** 壳里挂着的那条克隆气泡（底色摘掉了，交给壳）。 */
-  readonly content: HTMLElement
-  /** 跑在合成器线程上的那一段位移。主线程忙的时候它照走。 */
-  readonly travel: Animation
+  /** 替身与它身上跑着的全部合成动画。 */
+  readonly morph: Morph
   readonly startedAt: number
-  /** 这一段的整段时长，取自 `FLIGHT_MS`。起飞那一刻定下来，那一段飞行全程认这一个值。 */
-  readonly ms: number
   /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
   readonly targetAt: { readonly left: number; readonly top: number }
   /** 已经补到外层上的差值；没变就不写样式。 */
@@ -354,22 +237,29 @@ interface Flight {
   /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
   readonly previous: HTMLElement | null
   hidden: HTMLElement | null
-  /** 终点。跟着 `hidden` 一起换；量不到时留 null，这一帧就不画。 */
-  target: FlightTarget | null
+  /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
+  bubble: HTMLElement | null
 }
 
 /**
- * 终点：气泡在哪儿，以及它长什么样。
+ * 把终点动了多少补到替身的最外层上。
  *
- * 位置每一帧都得重量（它会随滚动走），外形不用——内边距、圆角、底色都属于同一个气泡，飞行期间
- * 不会有第二个值。分成两半存就是为了这个：一半每帧读，一半只读一次。
+ * 这是每帧唯一的 JS：一次矩形读、至多一次样式写。飞行期间终点通常只动几十像素（提交后 dsh 自己会
+ * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
  */
-interface FlightTarget {
-  /** 那一行里真正画了底色的元素，替身一路长成它。 */
-  readonly bubble: HTMLElement
-  readonly padding: { readonly top: number; readonly left: number }
-  readonly radius: number
-  readonly background: string
+function followTarget(value: Flight): void {
+  const bubble = value.bubble
+  if (bubble === null) return
+  const box = bubble.getBoundingClientRect()
+  // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
+  // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+  if (box.width === 0) return
+  const shiftX = box.left - value.targetAt.left
+  const shiftY = box.top - value.targetAt.top
+  if (shiftX === value.shiftedX && shiftY === value.shiftedY) return
+  value.shiftedX = shiftX
+  value.shiftedY = shiftY
+  value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)'
 }
 
 /**
@@ -423,23 +313,6 @@ function findBubble(row: HTMLElement): HTMLElement | null {
 }
 
 /**
- * 量一次终点：气泡在哪儿（每帧现读）、长什么样（只读这一次）。
- * @param row - 此刻藏着的那一行。
- * @returns 终点；这一行里找不到画了底色的元素时为 null。
- */
-function measureTarget(row: HTMLElement): FlightTarget | null {
-  const bubble = findBubble(row)
-  if (bubble === null) return null
-  const style = getComputedStyle(bubble)
-  return {
-    bubble,
-    padding: { top: pixel(style.paddingTop), left: pixel(style.paddingLeft) },
-    radius: pixel(style.borderTopLeftRadius),
-    background: style.backgroundColor,
-  }
-}
-
-/**
  * 这一批 DOM 变化里有没有碰用户行或回显行。
  *
  * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
@@ -473,177 +346,4 @@ function isRowNode(node: Node): boolean {
  */
 function sameScreen(start: number, end: number, viewportExtent: number): boolean {
   return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent)
-}
-
-/**
- * 立一个替身：壳 + 壳里的克隆气泡。
- *
- * 克隆而不是自绘：主题、字体、圆角、内边距全跟着它走，连暗色主题都自动对得上。两处必须写死——
- * 宽度（它原来靠一个靠右对齐的弹性上下文撑着，一挪到 body 上就会摊成整行）与 `box-sizing`
- * （`getBoundingClientRect` 量到的是 border-box 宽，不声明的话内边距会再叠一次）。底色摘掉交给壳，
- * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
- * @param bubble - 克隆的源头。
- * @param box - 已经量好的气泡矩形。调用方本来就要它，这里不再重量一次。
- * @param origin - 输入卡片左上角：外层就摆在它上面，位移从零开始。
- * @returns 外层、壳与内容；气泡量不到尺寸时为 null。
- */
-function createGhost(
-  bubble: HTMLElement,
-  box: DOMRect,
-  origin: { left: number; top: number },
-): { wrapper: HTMLElement; shell: HTMLElement; content: HTMLElement } | null {
-  if (box.width === 0 || box.height === 0) return null
-  const content = bubble.cloneNode(true) as HTMLElement
-  content.removeAttribute('id')
-  content.style.position = 'absolute'
-  content.style.left = '0px'
-  content.style.top = '0px'
-  content.style.width = box.width + 'px'
-  content.style.boxSizing = 'border-box'
-  content.style.margin = '0px'
-  content.style.backgroundColor = 'transparent'
-  const shell = document.createElement('div')
-  shell.style.position = 'absolute'
-  shell.style.left = '0px'
-  shell.style.top = '0px'
-  shell.style.margin = '0px'
-  shell.style.overflow = 'hidden'
-  shell.style.pointerEvents = 'none'
-  // 壳的尺寸每帧都在变。圈成一块独立的布局与绘制区域，那些变化就不会外溢到聊天区去。
-  shell.style.contain = 'layout paint'
-  // 光有关键帧还不够：没有自己的合成层时，Blink 会把它当普通动画留在主线程上，dsh 一忙就停。
-  // 这个提示让壳拿到自己的层（它只活一段飞行，层跟着一起消失）。
-  shell.style.willChange = 'transform'
-  shell.appendChild(content)
-  // 两层是分开放的：位移动画挂在里层的壳上，而"终点动了多少"写在外层。合在一层的话，每补一次
-  // 终点位移都会把那段合成动画顶掉——那正是主线程忙时最不该丢掉的东西。
-  const wrapper = document.createElement('div')
-  wrapper.setAttribute(GHOST_ATTRIBUTE, '')
-  wrapper.setAttribute('aria-hidden', 'true')
-  wrapper.style.position = 'fixed'
-  wrapper.style.left = origin.left + 'px'
-  wrapper.style.top = origin.top + 'px'
-  wrapper.style.width = '0px'
-  wrapper.style.height = '0px'
-  wrapper.style.margin = '0px'
-  wrapper.style.pointerEvents = 'none'
-  // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
-  wrapper.style.zIndex = '2147483000'
-  wrapper.appendChild(shell)
-  document.body.appendChild(wrapper)
-  return { wrapper, shell, content }
-}
-
-/**
- * 把替身摆到进度处。
- *
- * **位移不在这里。** 它是一条 `transform` 关键帧动画，跑在**合成器线程**上——主线程被 dsh 解析
- * 响应占住那几十毫秒时，读者看到的仍然是一条在走的轨迹。这里是每帧唯一的 JS：形变（尺寸、圆角、
- * 底色）写到壳上，终点移动了多少补到外层，内容保持自己的相对位置。
- *
- * 形变留在主线程是有意的：它到 `MORPH_END` 就定死，之后再没有可见变化，而且它只是几次样式写、
- * 一次布局读都没有。外形从 `target` 里拿，不在这里读计算样式。
- */
-function placeGhost(value: Flight, elapsed: number): void {
-  const target = value.target
-  if (target === null) return
-  const box = target.bubble.getBoundingClientRect()
-  // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不画，
-  // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
-  if (box.width === 0) return
-  const card = value.draft.card
-  const progressed = Math.min(1, elapsed / value.ms)
-  const morph = springProgress(Math.min(1, progressed / MORPH_END), 1, ACROSS_OMEGA)
-  const shell = value.shell
-  const content = value.content
-  // 终点动了多少就补多少。飞行期间它通常只动几十像素（提交后 dsh 自己会滚到底、回显会被正式行
-  // 换掉），所以这条"整体补差"与原来"每帧按曲线重算位置"看起来是同一件事。
-  const shiftX = box.left - value.targetAt.left
-  const shiftY = box.top - value.targetAt.top
-  if (shiftX !== value.shiftedX || shiftY !== value.shiftedY) {
-    value.shiftedX = shiftX
-    value.shiftedY = shiftY
-    value.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)'
-  }
-  shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px'
-  shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px'
-  shell.style.borderRadius = (card.radius + (target.radius - card.radius) * morph) + 'px'
-  shell.style.backgroundColor = mixColor(card.background, target.background, morph)
-  content.style.transform = 'translate('
-    + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
-    + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)'
-}
-
-/** 位移采样的段数。弹簧是连续曲线，拿折线去逼近它——段数够密就看不出折点。 */
-const FLIGHT_KEYFRAMES = 48
-
-/**
- * 把两条弹簧曲线采成一段 `transform` 关键帧：横向临界阻尼（早早收完），纵向欠阻尼（收尾回冲）。
- * 采样点之间是线性插值，所以动画自己不用 easing——曲线已经在关键帧里。
- * @param dx - 起点到终点的横向位移。
- * @param dy - 起点到终点的纵向位移。
- * @returns 可以直接交给 `Element.animate` 的关键帧数组。
- */
-function flightKeyframes(dx: number, dy: number): Keyframe[] {
-  const frames: Keyframe[] = []
-  for (let step = 0; step <= FLIGHT_KEYFRAMES; step += 1) {
-    const u = step / FLIGHT_KEYFRAMES
-    const x = dx * springProgress(u, 1, ACROSS_OMEGA)
-    const y = dy * springProgress(u, RISE_DAMPING, RISE_OMEGA)
-    frames.push({ transform: 'translate(' + x + 'px, ' + y + 'px)', offset: u })
-  }
-  return frames
-}
-
-/**
- * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
- *
- * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
- * 就是它。`u` 超出 1 的部分由调用方夹住。
- * @param u - 时间占比，0 到 1。
- * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
- * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
- * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
- */
-function springProgress(u: number, damping: number, omega: number): number {
-  if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
-  const damped = omega * Math.sqrt(1 - damping * damping)
-  return 1 - Math.exp(-damping * omega * u)
-    * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u))
-}
-
-/** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
-function mixColor(from: string, to: string, progress: number): string {
-  const start = colorParts(from)
-  const end = colorParts(to)
-  if (start === null || end === null) return to
-  const channel = (index: number): number => Math.round(
-    (start[index] ?? 0) + ((end[index] ?? 0) - (start[index] ?? 0)) * progress,
-  )
-  const alpha = (start[3] ?? 1) + ((end[3] ?? 1) - (start[3] ?? 1)) * progress
-  return 'rgba(' + channel(0) + ', ' + channel(1) + ', ' + channel(2) + ', ' + alpha + ')'
-}
-
-/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
-function pixel(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
-function alphaOf(color: string): number {
-  const parts = colorParts(color)
-  if (parts === null) return 0
-  return parts[3] ?? 1
-}
-
-/** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
-function colorParts(color: string): number[] | null {
-  const match = /^rgba?\(([^)]+)\)$/.exec(color.trim())
-  if (match === null) return null
-  const raw = match[1]
-  if (raw === undefined) return null
-  const parts = raw.split(',').map(part => Number.parseFloat(part))
-  if (parts.length < 3 || parts.some(part => !Number.isFinite(part))) return null
-  return parts
 }
