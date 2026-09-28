@@ -36,6 +36,17 @@
  * 因此不会有动画；本插件的自动开合派发的也是真正的 click、走的是同一条捕获路径，所以它另外被
  * isProgrammaticToggle() 认出来放过——那些场合内容本来就该自然生长。
  *
+ * 门是一整扇，不是几扇。展开体常常是一列 flex（工具行的 `.bodyWrap`、文件变更行的展开体），高度被
+ * 压着的时候 flex 会先去挤能缩的那个子元素——自带滚动的卡片（run_code 的代码卡片）自动最小高度是
+ * 0，于是它先被挤没，不能缩的输出卡片占满门框：读者看到的是输出先拉出来、代码再从它上面长出来，
+ * 收起时反过来，一扇门走成了两段。所以门在走的时候给子元素一律 `flex: none`（见
+ * `fold-motion-styles.ts`），每一张卡片都按自己的自然高度排好，门框只负责裁。
+ *
+ * 门也不跟着主线程跳。高度动画在主线程上走，卡住多久它就停多久，而 WAAPI 按墙上时间算进度，卡完那一帧
+ * 会一口气跳到「本该到的地方」。展开 run_code 时恰好有这么一下：代码卡片一露头就被
+ * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
+ * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
+ *
  * @module dsh-chat-ux/client/fold-glide
  */
 
@@ -80,6 +91,23 @@ const FOLD_WATCH_TTL_MS = INTENT_TTL_MS + ROLL_MS + FOLLOW_LOOK_TOTAL_MS
 
 /** 卷帘门跑完之后再多算一会儿「位置归动画管」，免得收尾那一帧跟跟随守护撞上。 */
 const FOLD_BUSY_GRACE_MS = 50
+
+/**
+ * 卷帘门正在走的那个真身带着这个标记，`fold-motion-styles.ts` 见到它就让子元素一律 `flex: none`：
+ * 门框压着高度时，flex 不能把某一张卡片先挤没。
+ */
+export const ROLLING_ATTRIBUTE = 'data-chat-ux-rolling'
+
+/**
+ * 两帧的时间戳隔得超过这么久，就认为中间主线程被占住过。
+ *
+ * 比卡住的时长本身要短：长任务之后的第一帧带的还是卡住之前排好的那个时间戳，跳变落在再下一帧上，
+ * 实测四十毫秒的长任务只在时间戳上留下三十七毫秒左右的间隔。二十五毫秒在 60 Hz 下约等于掉了半帧。
+ */
+const FRAME_GAP_LIMIT_MS = 25
+
+/** 还没量到这块屏幕的帧间隔时，按 60 Hz 的一帧算。 */
+const NOMINAL_FRAME_MS = 16.7
 
 /**
  * 一次「压高度」式收起要的五样东西。
@@ -288,12 +316,60 @@ export function installFoldGlide(): () => void {
   /**
    * 折叠收尾的入口：动画走完再看一眼跟随。
    *
-   * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来，所以统一等
-   * ROLL_MS——它正好是两条动画的时长。
+   * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画
+   * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
+   * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
+   * ROLL_MS。
    * @param watch - 这一轮折叠的收尾凭证。
+   * @param roll - 展开方向正在走的那条动画；没有时为 null。
    */
-  const settleAfterFold = (watch: FoldWatch): void => {
-    window.setTimeout(() => { handBackFollow(watch) }, ROLL_MS)
+  const settleAfterFold = (watch: FoldWatch, roll: Animation | null = null): void => {
+    if (roll === null) {
+      window.setTimeout(() => { handBackFollow(watch) }, ROLL_MS)
+      return
+    }
+    const settle = (): void => { handBackFollow(watch) }
+    roll.finished.then(settle, settle)
+  }
+
+  /**
+   * 主线程被占住的那几帧不算进卷帘门的时间。
+   *
+   * 高度动画在主线程上走，卡住的那一段它一帧都画不出来，而 WAAPI 按墙上时间算进度：卡完之后的第一帧
+   * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
+   * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
+   * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
+   * 动画管」的时间，跟随守护会多等这么久。
+   *
+   * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
+   * @param roll - 正在走的那条卷帘门动画。
+   */
+  const holdThroughStalls = (roll: Animation): void => {
+    let lastFrameAt = 0
+    let lastTime = 0
+    let frameInterval = NOMINAL_FRAME_MS
+    const timeOf = (): number => {
+      const time = roll.currentTime
+      return typeof time === 'number' ? time : 0
+    }
+    const look = (now: number): void => {
+      if (roll.playState !== 'running') return
+      const gap = lastFrameAt === 0 ? 0 : now - lastFrameAt
+      if (gap > FRAME_GAP_LIMIT_MS) {
+        const resumeAt = lastTime + frameInterval
+        const skipped = timeOf() - resumeAt
+        if (skipped > 0) {
+          roll.currentTime = resumeAt
+          foldBusyUntil += skipped
+        }
+      } else if (gap > 0) {
+        frameInterval = gap
+      }
+      lastFrameAt = now
+      lastTime = timeOf()
+      requestAnimationFrame(look)
+    }
+    requestAnimationFrame(look)
   }
 
   /**
@@ -315,21 +391,24 @@ export function installFoldGlide(): () => void {
   }
 
   /**
-   * 高度动画开工前的两件记账：把裁剪关上，并把 `height` 按 border-box 解释。
+   * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
+   * 标记，让子元素按自然高度排好、不被 flex 挤扁（见模块注释）。
    *
-   * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把这两条内联样式还回去，所以记下的
-   * 旧值与还原动作一起交回来。
+   * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
+   * 一起交回来。
    * @param target - 要压的真身。
-   * @returns 把内联样式还原到开工之前。
+   * @returns 把内联样式与标记还原到开工之前。
    */
   const beginHeightClip = (target: HTMLElement): (() => void) => {
     const previousOverflow = target.style.overflow
     const previousBoxSizing = target.style.boxSizing
     target.style.overflow = 'hidden'
     target.style.boxSizing = 'border-box'
+    target.setAttribute(ROLLING_ATTRIBUTE, '')
     return () => {
       target.style.overflow = previousOverflow
       target.style.boxSizing = previousBoxSizing
+      target.removeAttribute(ROLLING_ATTRIBUTE)
     }
   }
 
@@ -344,11 +423,12 @@ export function installFoldGlide(): () => void {
    * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
    * @param target - 要拉开的真身：展开体自己，或过程组的组根。
    * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
+   * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
    */
-  const rollOpen = (target: HTMLElement, from: number): void => {
+  const rollOpen = (target: HTMLElement, from: number): Animation | null => {
     markFoldBusy()
     const height = target.getBoundingClientRect().height
-    if (height <= from) return
+    if (height <= from) return null
     const travel = Math.max(from, visibleReachOf(target))
     const restore = beginHeightClip(target)
     const growing = target.animate(
@@ -361,10 +441,12 @@ export function installFoldGlide(): () => void {
         ],
       { duration: ROLL_MS, easing: 'ease-out' },
     )
+    holdThroughStalls(growing)
     growing.onfinish = () => {
       growing.cancel()
       restore()
     }
+    return growing
   }
 
   /**
@@ -401,6 +483,7 @@ export function installFoldGlide(): () => void {
         ],
       { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
     )
+    holdThroughStalls(shrinking)
     shrinking.onfinish = () => {
       window.clearTimeout(release)
       replay(fold.control)
@@ -429,8 +512,7 @@ export function installFoldGlide(): () => void {
         watch.stop()
         return
       }
-      rollOpen(current.groupRoot, current.collapsedHeight)
-      settleAfterFold(watch)
+      settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight))
       return
     }
     const body = expandedBodyOf(current.control)
@@ -439,8 +521,7 @@ export function installFoldGlide(): () => void {
       return
     }
     // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
-    rollOpen(body, 0)
-    settleAfterFold(watch)
+    settleAfterFold(watch, rollOpen(body, 0))
   }
 
   const onClick = (event: Event): void => {
