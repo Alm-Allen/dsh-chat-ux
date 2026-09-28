@@ -3537,6 +3537,12 @@ function sameScreen(start, end, viewportExtent) {
  * 主线程上每帧只剩一件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行），写在最外层，见
  * `send-flight.ts`。
  *
+ * **替身凭什么长得像真卡片。** 三条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
+ * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、以及**祖先
+ * 链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照着卡片的
+ * 祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属性另
+ * 有抄法，理由见 `snapshotComposer`。
+ *
  * @module dsh-chat-ux/client/send-morph
  */
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -3614,10 +3620,20 @@ const LINE_HEIGHT_STEP = 0.5;
  * 纹理；超过这个数就把最短的那些段并进前一段——少几次重排，读者看不出来。
  */
 const MAX_TEXT_LAYERS = 14;
-/** 从卡片祖先那里继承下来、克隆必须带上的普通属性。自定义属性另外按差值挑。 */
+/**
+ * 从卡片祖先那里继承下来、克隆必须带上的普通属性。自定义属性另外按差值挑。
+ *
+ * **`font-size` 与 `line-height` 必须在。** dsh 给输入区定的字号挂在**祖先**的选择器上（hero 态一条、
+ * 会话态一条），克隆一离开那条链，这两项就直接掉回 body 的 16px：实测逐路径对齐 37 对元素，有
+ * **26 对字号对不上**（卡片 15px → 替身 16px，输入面 14px/24px → 16px/26px）。这一条不需要任何人
+ * 动样式，**每一段飞行都在发生**。
+ *
+ * 抄在外壳上不会夺走克隆里自己写死的字号：直接命中的规则赢过继承，所以只有那些**没写死**、本来
+ * 靠祖先传下来的元素会被兜住——正是要兜的那批。
+ */
 const INHERITED_PROPERTIES = [
-    'color', 'font-family', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
-    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'line-height', 'letter-spacing', 'word-spacing', 'text-rendering',
     '-webkit-font-smoothing', 'direction',
 ];
 /** 字层要从气泡身上抄的排字属性：少抄一条，折行或字形就会和真实气泡对不上。 */
@@ -3627,11 +3643,42 @@ const TEXT_PROPERTIES = [
     '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
     'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
 ];
-/** 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。 */
+/**
+ * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
+ *
+ * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
+ * 没有第二条路——留或不留，就是它命中或不命中。留下的代价量过：
+ *
+ *   `document.querySelector` 取**文档序第一个**，而替身永远挂在文档最后（见 `startMorph`），
+ *   真卡片与真输入框都在它前面；dsh 自己那几处认卡片（`ModelSelect`、`MenuView`、
+ *   `FeedbackDialog`、`AgentPresetSeat`）要么从真节点往上 `closest`，要么取文档序第一个，
+ *   两条路都够不到替身。而替身只活 `FLIGHT_MS`，`wrapper` 上还写着 `inert`：里面的东西既拿不到
+ *   焦点，也进不了无障碍树。收益是 dsh 与同页别的插件写在这几个属性上的规则在替身上照常生效。
+ *
+ * 所以下面留下的三个是**样式钩子**：`data-composer-card`、`data-composer-input`、
+ * `data-input-scroll`（它们从清单里删掉了，不是被忽略）。而 `id` 必须摘——文档里多一个同 id 的
+ * 节点，`getElementById`、`label[for]`、页内锚点全会认错人，这是兜不了底的坏；`contenteditable`
+ * 与 `tabindex` / `autofocus` 是可编辑性与焦点序，不是外观；`data-lexical-editor` 与
+ * `data-chat-ux-caret` 是两套运行时的把手（Lexical 的编辑器根、本插件插入符的让位标记），替身
+ * 里没有对应的运行时，留着只会让找的人认错。
+ */
 const IDENTITY_ATTRIBUTES = [
-    'id', 'contenteditable', 'data-composer-card', 'data-composer-input', 'data-input-scroll',
-    'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
+    'id', 'contenteditable', 'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
 ];
+/**
+ * 模拟祖先链最多几层。
+ *
+ * 超过就**整条不套**，不做截断：链是从卡片往上数的，被截掉的正是最外面那几层，而 `.hero .input`
+ * 这类选择器认的恰好是外层——留着半条链，外层没了、内层照匹配，选择器会错配到链上别的元素上，
+ * 比完全没有链更坏。
+ *
+ * **这个数实测过，别照着直觉往回改。** dsh 的输入卡片到 body 是 **15 层**（hero 空态与提交后的
+ * 会话语态一致，两次独立会话一致），其中七层是没有语义的空 `div` 与 `[data-slot]` 座位——当初估
+ * 「七八层」正是漏掉了这些。取 **24**：留一倍余量给 dsh 以后加容器，同时仍然挡得住病态深度——
+ * 到了那个量级，多半是某个插件把整棵树包进了自己的布局容器里，那种情况下把链照搬过去反而会把
+ * 它的容器样式一起带进来。
+ */
+const MAX_ANCESTOR_LINKS = 24;
 /**
  * 抓一次输入卡片：几何、外观、以及整张克隆。
  *
@@ -3690,31 +3737,71 @@ function snapshotComposer(input, card) {
         if (child !== scroll)
             collect(child, [index]);
     });
-    // 继承环境：自定义属性只挑和 body 上不一样的（替身挂在 body 下，一样的本来就继承得到）。
-    const bodyStyle = getComputedStyle(document.body);
+    // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
+    //
+    // 基准取**挂载点**，三种情形都对着验算过：
+    //   变量只定义在中间祖先上（挂载点上没有）→ 那边读出来是空串，两边不同，抄下来；不抄的话替身
+    //     上这个变量根本不存在，`var(--x)` 会掉进它的 fallback，而真卡片上它是有的。
+    //   挂载点与卡片取值相同 → 不抄，替身从挂载点继承到的就是同一个值。
+    //   中间祖先覆盖了挂载点的值、卡片沿用 → 两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
+    //     那一份（覆盖值），替身拿到的与真卡片一致。
+    // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
+    const hostStyle = getComputedStyle(ghostHost());
     const context = [];
     for (let index = 0; index < cardStyle.length; index += 1) {
         const name = cardStyle[index];
         if (name === undefined || !name.startsWith('--'))
             continue;
         const value = cardStyle.getPropertyValue(name);
-        if (value !== bodyStyle.getPropertyValue(name))
+        if (value !== hostStyle.getPropertyValue(name))
             context.push([name, value]);
     }
     for (const name of INHERITED_PROPERTIES)
         context.push([name, cardStyle.getPropertyValue(name)]);
+    // 祖先链：克隆离开父链之后，`.hero .input` 这类后代选择器在它身上全都不匹配，而 dsh 的 hero 态
+    // 最小高度正是这么写的。所以把链记下来，起飞时照着套回去（见 `startMorph`）。只记标签与 class：
+    // 替身要的是**选择器命中**，而 `data-*` 是别人手里的状态把手、抄进链里会被读成过期状态（见
+    // `AncestorMark` 那段），`id` 更是复制过去只会让人认错。
+    // 这一段跑在读者按下回车的那一帧上，所以只读属性：读属性不碰布局，不会把布局结算拖进这一帧。
+    const ancestors = [];
+    let interrupted = false;
+    for (let node = card.parentElement; node !== null && node !== document.body; node = node.parentElement) {
+        // 替身自己的部件不该进链。真卡片的祖先里本来不会有它，这是防御——防的是上一段还没落定就又
+        // 抓了一次起点。链在这里断掉就**整条不要**：少一层的话，外层选择器会错配到内层上去。
+        if (node.hasAttribute(GHOST_ATTRIBUTE)) {
+            interrupted = true;
+            break;
+        }
+        ancestors.push({
+            tag: node.tagName.toLowerCase(),
+            className: node.getAttribute('class') ?? '',
+        });
+    }
+    ancestors.reverse();
     const clone = card.cloneNode(true);
     scrub(clone);
-    clone.style.position = 'absolute';
-    clone.style.left = '0px';
-    clone.style.top = '0px';
-    clone.style.margin = '0px';
-    clone.style.width = box.width + 'px';
-    clone.style.maxWidth = 'none';
-    clone.style.height = box.height + 'px';
-    clone.style.boxSizing = 'border-box';
-    clone.style.background = 'transparent';
-    clone.style.boxShadow = 'none';
+    // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
+    // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
+    // 而那些规则里就有 `!important` 的：实测同页的颜色插件用 `!important` 压过 `[data-composer-card]`。
+    // 普通行内样式**压不住 `!important`**，于是一条 `position: fixed` 配居中的规则就能让克隆当场飞
+    // 到屏幕正中、再随动画掉回来——读者看到的是「聊天框被抬到中间又闪下去」。行内 + `!important` 是
+    // 样式层级的顶格（只输给动画），把定位与尺寸钉在起飞那一刻量到的值上。
+    pin(clone, [
+        ['position', 'absolute'],
+        ['left', '0px'],
+        ['top', '0px'],
+        ['right', 'auto'],
+        ['bottom', 'auto'],
+        ['margin', '0px'],
+        ['width', box.width + 'px'],
+        ['max-width', 'none'],
+        ['height', box.height + 'px'],
+        ['box-sizing', 'border-box'],
+        ['transform', 'none'],
+        ['float', 'none'],
+        ['background', 'transparent'],
+        ['box-shadow', 'none'],
+    ]);
     const draft = clone.children[Array.from(card.children).indexOf(scroll)];
     // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
     // 工具栏会跟着往上跑。
@@ -3741,6 +3828,8 @@ function snapshotComposer(input, card) {
         chrome,
         text,
         context,
+        // 太深、或者中途断开，都整条作废（见 `MAX_ANCESTOR_LINKS`）：null 是「不模拟」，不是「这条链是空的」。
+        ancestors: interrupted || ancestors.length > MAX_ANCESTOR_LINKS ? null : ancestors,
     };
 }
 /**
@@ -3820,7 +3909,29 @@ function startMorph(snapshot, bubble, end) {
     const cardFill = document.createElement('div');
     cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity';
     cardFill.style.backgroundColor = snapshot.background;
-    shell.append(bubbleFill, cardFill, snapshot.clone);
+    shell.append(bubbleFill, cardFill);
+    // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
+    // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
+    // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
+    // 链只要在克隆之上就够；套到 mover 外面会连光晕与壳一起罩进去，而它们两块是替身自己的装饰，
+    // 不是卡片的后代。缺链时（`ancestors` 为 null）克隆直接挂在壳上，与加固之前一样。
+    // `display: contents` 写在**行内**：祖先那一层的 class 规则里就算有 `display`，优先级也压不过
+    // 行内（dsh 的样式里没有 `!important`），链不会因为带上某个 class 就长出盒子来。
+    let cloneHost = shell;
+    for (const mark of snapshot.ancestors ?? []) {
+        const link = document.createElement(mark.tag);
+        // 这里的 `!important` 同样必要，理由和克隆那几条一样：链节点带着祖先的 class，而祖先那层的规则
+        // 里可能就有 `display`（实测同页插件在用 `!important`）。一旦它长出盒子，问题不只是多一层——
+        // 它可能成为克隆的**包含块**，克隆那几条 `left: 0; top: 0` 就会相对它算，位置整体偏掉。
+        link.style.setProperty('display', 'contents', 'important');
+        link.setAttribute('aria-hidden', 'true');
+        // 只带 class：链上**一个 `data-*` 都不写**，理由与实测见 `AncestorMark`。
+        if (mark.className !== '')
+            link.className = mark.className;
+        cloneHost.appendChild(link);
+        cloneHost = link;
+    }
+    cloneHost.appendChild(snapshot.clone);
     // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
     // 自己，其余每段一层。
     const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth);
@@ -3835,7 +3946,9 @@ function startMorph(snapshot, bubble, end) {
     mover.appendChild(halo);
     mover.appendChild(shell);
     wrapper.appendChild(mover);
-    document.body.appendChild(wrapper);
+    // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
+    // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
+    ghostHost().appendChild(wrapper);
     // 克隆要进了文档才能滚到原来的位置。
     if (snapshot.draftScrollTop > 0)
         snapshot.draft.scrollTop = snapshot.draftScrollTop;
@@ -3913,6 +4026,34 @@ function startMorph(snapshot, bubble, end) {
 }
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
+/**
+ * 替身挂在哪儿，以及**它从谁那里继承**。
+ *
+ * 一处两用是刻意的：`snapshotComposer` 拿它当自定义属性的差值基准（替身继承到的就是它的值），
+ * `startMorph` 拿它当挂载点。两处各写一个 `document.body` 也跑得起来，可那样这件耦合就只活在
+ * 注释里了——哪天换挂载点（挂进某个 portal 容器）而漏掉基准那一处，症状是「一部分变量悄悄抄错
+ * 值」，从外观反推回挂载点几乎不可能。
+ *
+ * 挂载点还必须是文档的**最后一个**子节点，理由见 `startMorph` 里那句注释。
+ */
+function ghostHost() {
+    return document.body;
+}
+/**
+ * 把几条声明钉在行内、并带上 `!important`。
+ *
+ * 替身里有两样东西会被**别人的**规则命中：带着卡片 class 与 `data-*` 的克隆（要的就是命中），以及
+ * 套在它外面的模拟祖先链。这些选择器上可能有 `!important` 的规则——实测同页的颜色插件就用它压过
+ * `[data-composer-card]`。普通行内样式压不住 `!important`：一条居中的规则就足以让克隆飞到屏幕
+ * 正中再掉回来。行内 + `!important` 是样式层级的顶格（只输给动画），把"错一下就看得出"的那几项
+ * 钉在起飞时量到的值上。
+ * @param element - 要钉的元素。
+ * @param declarations - 属性名与值，按顺序写。
+ */
+function pin(element, declarations) {
+    for (const [name, value] of declarations)
+        element.style.setProperty(name, value, 'important');
+}
 /**
  * 把形变沿途的每一个宽度都排一遍，折行一样（多行时再加上行高同档）的归成一段。
  *
@@ -4064,7 +4205,10 @@ function stepOpacity(from, until) {
         frames.push({ offset: until, opacity: '0' }, { offset: 1, opacity: '0' });
     return frames;
 }
-/** 把一棵克隆里的身份标记全部摘掉：替身不能被 dsh 或本插件找成输入框、也不能拿到焦点。 */
+/**
+ * 把一棵克隆里的身份标记全部摘掉：替身不能被 dsh 或本插件找成输入框、也不能拿到焦点。
+ * 摘哪些、为什么样式钩子不摘，见 `IDENTITY_ATTRIBUTES`。
+ */
 function scrub(root) {
     const all = [root, ...root.querySelectorAll('*')];
     for (const element of all) {
