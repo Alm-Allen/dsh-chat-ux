@@ -173,6 +173,18 @@ function runTokenMotion(): () => void {
   /** 排队中的「收起档位规则」任务；`0` 表示没有排队。 */
   let collapseHandle = 0
 
+  /**
+   * 上一帧往注册表里写过东西的那些档。
+   *
+   * `::highlight` 的注册表是 maplike，`delete` 一个不存在的键同样要走一次注册表的变更路径。而档位
+   * 是「本帧有区间的就那几个」，其余为空——一个 120 ms 的区间只活约 7 帧，这 7 帧里绝大多数档从来
+   * 没人写过。所以只对**本帧或上一帧真出现过**的档调 delete：保留上一层是为了覆盖「上一帧有、这一帧
+   * 空」的那一次收尾，之后就没人再写它了。
+   *
+   * 档数（`REVEAL_STEPS`）与规则条数都不动：这里去掉的只是空桶写，不是档位本身。
+   */
+  let dirtySteps: number[] = []
+
   // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
   //
   // 翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」（六千节点上
@@ -193,6 +205,8 @@ function runTokenMotion(): () => void {
   /** 清掉全部档位的 highlight。 */
   const clearHighlights = (): void => {
     for (let step = 0; step < REVEAL_STEPS; step += 1) registry.delete(HIGHLIGHT_PREFIX + step)
+    // 注册表被整份清空之后，本模块记的「哪些档写过」跟着归零。
+    dirtySteps = []
   }
 
   /**
@@ -337,12 +351,12 @@ function runTokenMotion(): () => void {
       bucket.push(segment)
     }
     liveRuns.length = kept
+    /** 本帧真有区间的那些档。 */
+    const liveNow: number[] = []
     for (let step = 0; step < REVEAL_STEPS; step += 1) {
       const list = buckets[step]
-      if (list === undefined || list.length === 0) {
-        registry.delete(HIGHLIGHT_PREFIX + step)
-        continue
-      }
+      if (list === undefined || list.length === 0) continue
+      liveNow.push(step)
       const ranges: Range[] = []
       for (const segment of list) {
         const range = document.createRange()
@@ -352,6 +366,10 @@ function runTokenMotion(): () => void {
       }
       registry.set(HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges))
     }
+    // 只收尾本来就有东西的档：本帧还在的那些下面要写，不必删；本帧空掉而上一帧还写着的，这里删一次，
+    // 之后它既不在 liveNow 也不在 dirtySteps 里，不会再有人去写它。
+    for (const step of dirtySteps) if (!liveNow.includes(step)) registry.delete(HIGHLIGHT_PREFIX + step)
+    dirtySteps = liveNow
     if (liveRuns.length > 0) scheduledFrame = requestAnimationFrame(paint)
   }
 
