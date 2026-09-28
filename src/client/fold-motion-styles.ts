@@ -1,5 +1,5 @@
 /**
- * 折叠体的入场动画。
+ * 折叠体的入场动画，以及卷帘门走的时候那扇门的排版。
  *
  * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（`{open && children}`，见
  * ui-primitives/src/DisclosureRow.tsx），所以元素重新插入的那一帧是唯一能挂过渡的时机——
@@ -26,8 +26,15 @@
  *              自然。过程成员由 dsh 自己发的 `data-turn-process-member` 标出来，整棵子树排除；
  *              轮次触发通知（`[data-turn-trigger]`）同理。
  *
+ * 卷帘门那一条（`fold-glide.ts` 在门走的时候挂 `ROLLING_ATTRIBUTE`）：展开体常常是一列 flex，门框
+ * 压着高度时 flex 会先把自带滚动的那张卡片挤没（它的自动最小高度是 0），于是 run_code 那种「代码
+ * 卡片 + 输出卡片」的展开体会走成两段。门走的这两百毫秒里子元素一律 `flex: none`：每一张卡片都按
+ * 自然高度排好，门框只负责裁。门停下来标记就撤，排版回到 dsh 原样——展开体的高度本来就是子元素
+ * 自然高度之和，两种排法在终点上一个像素都不差。`!important` 是因为这两百毫秒里谁也不该改它。
+ *
  * @module dsh-chat-ux/client/fold-motion-styles
  */
+import { ROLLING_ATTRIBUTE } from './fold-glide'
 
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 export const FOLD_MOTION_CSS = `
@@ -46,5 +53,10 @@ export const FOLD_MOTION_CSS = `
   [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
+}
+
+/* 卷帘门走的时候，门里的每一张卡片按自然高度排好，不被 flex 挤扁。 */
+[${ROLLING_ATTRIBUTE}] > * {
+  flex: none !important;
 }
 `

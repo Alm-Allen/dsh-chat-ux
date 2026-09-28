@@ -179,24 +179,35 @@ function clientRevision() {
     __registry["caret-motion.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CARET_VISIBLE_ATTRIBUTE = exports.CARET_LAYER_ATTRIBUTE = exports.CARET_ATTRIBUTE = exports.CARET_BLINK_NAME = void 0;
+exports.CARET_COLOR_PROPERTY = exports.CARET_HOST_ATTRIBUTE = exports.CARET_VISIBLE_ATTRIBUTE = exports.CARET_LAYER_ATTRIBUTE = exports.CARET_ATTRIBUTE = exports.CARET_BLINK_NAME = void 0;
 exports.installCaretMotion = installCaretMotion;
 /**
  * 输入框的插入符动效：把浏览器画的那根换成自己画的，位移走过渡。
  *
  * 浏览器的插入符除了颜色和闪烁，没有任何可以动画的属性，所以「移动时有过渡」只有一条路：
- * 用 `caret-color: transparent` 把它按下去，自己画一根，位置靠折叠 Range 量出来。dsh 的输入框
- * 是 contenteditable，这件事因此比 textarea 省事——坐标是浏览器给的，不用搭镜像层。
+ * 用 `caret-color: transparent` 把它按下去，自己画一根。接管的是输入区座位里的两种面：
  *
- * 三条事实决定了它怎么写，都在真实 Chromium 里量过：
+ *   富文本面  dsh 的主输入框（`[data-composer-input]`），contenteditable。坐标是浏览器给的：
+ *             折叠 Range 量出来就是。
+ *   纯文本面  输入区里的 textarea——提问卡片的作答框、排队消息的行内编辑框（子智能体跑着时追加
+ *             的那几条就在这里改）。textarea 的选区不进 DOM，Range 量不到，只能搭一层镜像：
+ *             把样式抄到一个看不见的 div 上，文本从插入符处断开，量断点那一截的矩形。
  *
- *   挂哪儿   自绘的那根挂在 `[data-composer-input]` 的父元素上，也就是 dsh 的 `.grow`
- *            （`position: relative`）。它和输入框同在一个滚动内容里，输入框内部滚动时两者的视口
- *            坐标一起变、相对坐标恒定——所以滚动同步不需要任何监听。
- *   量得到   折叠 Range 在文本里、在装饰器两侧、在折行处都给得出精确到小数像素的矩形。
+ * 几条事实决定了它怎么写，都在真实 Chromium 里量过：
+ *
+ *   挂哪儿   自绘的那根挂在可编辑面的父元素上（主输入框是 dsh 的 `.grow`）。富文本面和它同在一个
+ *            滚动内容里，输入框内部滚动时两者的视口坐标一起变、相对坐标恒定——所以滚动同步不需要
+ *            任何监听。父元素不是定位上下文时（作答框的 `.field`、排队行都是 static），给它挂一个
+ *            标记，样式表把它变成 `position: relative`：它们都没有绝对定位的后代，这一下不改任何
+ *            布局。textarea 自己是滚动容器，自绘的那根挂不进去，所以它内部滚动时要跟着重量一次，
+ *            滚出可视区的那一截也要自己裁掉。
+ *   量得到   折叠 Range 在文本里、在装饰器两侧、在折行处都给得出精确到小数像素的矩形。镜像那一截
+ *            带着插入符后面的全部文本：软换行按整词走，只放前半截的话，正在打的那个词会留在上一行。
  *   量不到   光标贴着 `<br>` 时 Chromium 给 `0×0` 零矩形，而空段落与软换行正是这条路的常客。
  *            这时量那个换行符自己——它的矩形永远只有一行，高度还正好是字高。量不出来（附近没有
  *            换行符）就把原生插入符还回去：宁可不动手，也不能让读者看不见光标。
+ *   颜色     每一种面的原生插入符颜色不一样（主输入框与作答框是品牌蓝，排队编辑框跟字色走），
+ *            所以接管那一刻先读它自己算出来的 caret-color，自绘的那根照着画。
  *
  * 什么时候动、什么时候不动，由 {@link CaretMotionMode} 的三档决定：
  *
@@ -226,8 +237,23 @@ exports.CARET_ATTRIBUTE = 'data-chat-ux-caret';
 exports.CARET_LAYER_ATTRIBUTE = 'data-chat-ux-caret-layer';
 /** 自绘插入符此刻可见。 */
 exports.CARET_VISIBLE_ATTRIBUTE = 'data-chat-ux-caret-visible';
+/** 挂在不是定位上下文的父元素上：样式表见到它就补一条 `position: relative`。 */
+exports.CARET_HOST_ATTRIBUTE = 'data-chat-ux-caret-host';
+/** 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来。 */
+exports.CARET_COLOR_PROPERTY = '--dsh-chat-ux-caret-color';
 /** 聚焦之后隔多久补看一次。切会话时，聚焦与「选区就绪」之间隔着几帧。 */
 const FOCUS_SETTLE_MS = 120;
+/**
+ * 镜像层要从 textarea 上抄的样式：凡是影响字形宽度与折行位置的都在这里。少抄一条，镜像里的折行
+ * 就和 textarea 里的对不上，插入符会落在别的行上。
+ */
+const MIRRORED_PROPERTIES = [
+    'direction', 'font-family', 'font-size', 'font-size-adjust', 'font-stretch', 'font-style',
+    'font-variant', 'font-weight', 'font-feature-settings', 'font-variation-settings', 'font-kerning',
+    'letter-spacing', 'word-spacing', 'line-height', 'text-align', 'text-indent', 'text-transform',
+    'tab-size', 'white-space', 'word-break', 'overflow-wrap', 'hyphens',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+];
 /**
  * 给整页装上插入符动效。
  * @param read - 现读的档位。每一帧同步时读一次，所以运行期改档不必重新安装。
@@ -250,6 +276,13 @@ function installCaretMotion(read) {
     let disposed = false;
     /** 这一帧里来过一次输入。`move` 档靠它把打字和显式移动分开。 */
     let typed = false;
+    /**
+     * 上一次挪动插入符的是 End 键。
+     *
+     * 软换行处的同一个偏移有两个位置：上一行的行尾与下一行的行首。textarea 不交出「偏向哪一边」，
+     * 而 Chromium 在 End 之后画在行尾、其余时候（打字、方向键、Home）画在行首——所以记住这一下。
+     */
+    let endKeyed = false;
     const queue = () => {
         if (disposed || queued)
             return;
@@ -266,20 +299,42 @@ function installCaretMotion(read) {
     };
     const markTyped = () => {
         typed = true;
+        endKeyed = false;
+    };
+    /** 记下这一次挪窝是不是 End（带 Shift 的是在选字，没有插入符可画）。 */
+    const noteKey = (event) => {
+        if (event.key === 'Shift' || event.key === 'Control' || event.key === 'Meta' || event.key === 'Alt')
+            return;
+        endKeyed = event.key === 'End' && !event.shiftKey;
+    };
+    /** 指针落下去的位置由浏览器自己定，不再沿用上一次 End 的偏向。 */
+    const clearEndKey = () => {
+        endKeyed = false;
+    };
+    /**
+     * 纯文本面自己滚了一下：自绘的那根不在它里面，不会跟着走，得重量。
+     *
+     * scroll 不冒泡，所以这是捕获阶段的监听，页面上每一次滚动都会路过这里——只认已经接管的面。
+     */
+    const followPlainScroll = (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLTextAreaElement) || !layers.has(target))
+            return;
+        queue();
     };
     /**
      * 可编辑面的内容、可编辑性或者身份变了。
      *
      * `selectionchange` 覆盖不了这些静默变化：清空草稿如果没顺带动选区，浏览器一个事件都不发；
      * 切会话时 Lexical 还在绑 editor，`contenteditable` 会短暂变成 false，浏览器随即把焦点收走，
-     * 等它变回来又是一个事件都没有。这里补上那个缺口。
+     * 等它变回来又是一个事件都没有。这里补上那个缺口。纯文本面不走这条：它的内容不在 DOM 里。
      */
     const contentObserver = new MutationObserver(() => {
         if (read() === 'off')
             return;
         queue();
     });
-    /** 盯住一个可编辑面。同一个面盯多次是幂等的，选项以最后一次为准。 */
+    /** 盯住一个富文本面。同一个面盯多次是幂等的，选项以最后一次为准。 */
     const observeComposer = (input) => {
         contentObserver.observe(input, {
             childList: true,
@@ -292,7 +347,7 @@ function installCaretMotion(read) {
     /** 焦点在这个面上，却还没有自绘的那根——切会话留下的空窗就是它。 */
     const needsTakeover = () => {
         const active = document.activeElement;
-        if (!(active instanceof HTMLElement) || !active.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR))
+        if (!(active instanceof HTMLElement) || surfaceOf(active) === null)
             return false;
         return !active.hasAttribute(exports.CARET_ATTRIBUTE);
     };
@@ -366,9 +421,9 @@ function installCaretMotion(read) {
      *
      * 内容盒的第一行开头就是光标该在的地方，但那一行有多高、字盒在行里怎么摆，得从别处问。
      * 探针每帧现建现删，而且**不碰 dsh 的任何容器**——往 `.grow` 里塞节点会惊动 React。
-     * @returns 相对容器的左、上、高；量不出来给 null。
+     * @returns 视口里的左、上、高；量不出来给 null。
      */
-    const emptyLineBox = (input, host) => {
+    const emptyLineBox = (input) => {
         const body = document.body;
         if (body === null)
             return null;
@@ -392,26 +447,138 @@ function installCaretMotion(read) {
             return null;
         // 探针的 padding 与输入框一致，所以这两个差值就是「内容盒起头」到「字盒起头」的距离。
         const inputRect = input.getBoundingClientRect();
-        const hostRect = host.getBoundingClientRect();
         return {
-            left: inputRect.left + (breakRect.left - probeRect.left) - hostRect.left,
-            top: inputRect.top + (breakRect.top - probeRect.top) - hostRect.top,
+            left: inputRect.left + (breakRect.left - probeRect.left),
+            top: inputRect.top + (breakRect.top - probeRect.top),
             height: breakRect.height,
         };
+    };
+    /**
+     * 富文本面上这一处折叠选区的视口矩形。
+     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
+     */
+    const measureRich = (input, range) => {
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0)
+            return { left: rect.left, top: rect.top, height: rect.height };
+        // 零矩形：光标贴着换行符——空段落（`<p><br></p>`）与软换行都是这条路的常客。量那个换行符
+        // 自己，不要量它所在的段落：段落可以是很多行，换行符的矩形却永远只有一行，高度还是字高。
+        const anchor = nearestBreak(range);
+        if (anchor === null) {
+            // 输入框里连一个换行符都没有：没有东西可量，但内容盒的第一行开头就是光标的位置。
+            // 里面有东西却找不到换行符，那是别的形状，不猜，把原生插入符还回去。
+            if (input.firstChild !== null)
+                return null;
+            return emptyLineBox(input);
+        }
+        const breakRect = anchor.lineBreak.getBoundingClientRect();
+        if (anchor.before)
+            return { left: breakRect.left, top: breakRect.top, height: breakRect.height };
+        // 换行符之后是下一行的行首：横向退到段落的内容左边界，纵向走一行。
+        const block = anchor.lineBreak.parentElement;
+        if (block === null)
+            return null;
+        const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight);
+        return {
+            left: block.getBoundingClientRect().left,
+            top: breakRect.top + (Number.isFinite(lineHeight) ? lineHeight : breakRect.height),
+            height: breakRect.height,
+        };
+    };
+    /**
+     * 纯文本面上插入符的视口矩形，靠一层镜像量出来。
+     *
+     * 镜像是一个看不见的 div：样式从 textarea 上抄，宽度取它的内容区（刨掉滚动条），文本在插入符处
+     * 断开——前半截是裸文本，后半截整个包进一个 span。span 第一段行盒的左上角就是插入符。后半截
+     * 必须整段带上：软换行按整词走，只放前半截的话，正在打的那个词会留在上一行。后半截是空的
+     * （插入符在末尾）时放一个零宽空格占位，末尾那个换行符之后的空行才有行盒可量。
+     *
+     * 软换行处的偏移在镜像里天然落在下一行行首；`upstream` 为真（上一下是 End）时改量它前一个字符的
+     * 右缘，也就是上一行的行尾——和原生那根在 End 之后画的位置一致。
+     *
+     * 镜像挂在 body 上、量完就摘，**不碰 dsh 的任何容器**。
+     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
+     */
+    const measurePlain = (input, upstream) => {
+        const body = document.body;
+        if (body === null)
+            return null;
+        const style = getComputedStyle(input);
+        const mirror = document.createElement('div');
+        mirror.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;'
+            + 'margin:0;border:0;box-sizing:content-box;height:auto;overflow:hidden';
+        for (const name of MIRRORED_PROPERTIES)
+            mirror.style.setProperty(name, style.getPropertyValue(name));
+        const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+        mirror.style.width = String(Math.max(0, input.clientWidth - (Number.isFinite(paddingX) ? paddingX : 0))) + 'px';
+        // 调用方只在选区折叠时才来，起点终点是同一处。
+        const caretAt = input.selectionEnd;
+        const marker = document.createElement('span');
+        mirror.textContent = input.value.slice(0, caretAt);
+        marker.textContent = input.value.slice(caretAt) || '\u200b';
+        mirror.appendChild(marker);
+        body.appendChild(mirror);
+        const mirrorRect = mirror.getBoundingClientRect();
+        let spot = marker.getClientRects()[0];
+        let edge = spot?.left;
+        const before = mirror.firstChild;
+        if (upstream && spot !== undefined && before instanceof Text && caretAt > 0 && input.value[caretAt - 1] !== '\n') {
+            const previous = document.createRange();
+            previous.setStart(before, caretAt - 1);
+            previous.setEnd(before, caretAt);
+            const rects = previous.getClientRects();
+            const last = rects[rects.length - 1];
+            // 前一个字符落在更上面的一行，才说明这里是软换行。
+            if (last !== undefined && last.top < spot.top - 1) {
+                spot = last;
+                edge = last.right;
+            }
+        }
+        mirror.remove();
+        if (spot === undefined || edge === undefined)
+            return null;
+        // 镜像没有边框，padding 与 textarea 一致，所以这两个差值就是插入符在 textarea 内边距盒里的
+        // 位置；再扣掉 textarea 自己滚走的那一段。
+        const inputRect = input.getBoundingClientRect();
+        return {
+            left: inputRect.left + input.clientLeft + (edge - mirrorRect.left) - input.scrollLeft,
+            top: inputRect.top + input.clientTop + (spot.top - mirrorRect.top) - input.scrollTop,
+            height: spot.height,
+        };
+    };
+    /**
+     * 把一个视口矩形裁进 textarea 露出来的那一段。自绘的那根不在 textarea 里面，textarea 的裁剪管
+     * 不到它：内部滚动时插入符滚出可视区，原生那根跟着消失，这一根也得自己消失。
+     * @returns 裁剩的矩形；整个被裁掉时为 null。
+     */
+    const clipToField = (input, box) => {
+        const inputRect = input.getBoundingClientRect();
+        const clipTop = inputRect.top + input.clientTop;
+        const clipBottom = clipTop + input.clientHeight;
+        const top = Math.max(box.top, clipTop);
+        const bottom = Math.min(box.top + box.height, clipBottom);
+        if (bottom - top < 1)
+            return null;
+        return { left: box.left, top, height: bottom - top };
     };
     const hide = (layer) => {
         layer.caret.removeAttribute(exports.CARET_VISIBLE_ATTRIBUTE);
         layer.visible = false;
     };
+    /** 把一个面的自绘状态整个撤掉：那一根、让位标记、以及替它补过的定位上下文。 */
+    const release = (input, layer) => {
+        layer.caret.remove();
+        input.removeAttribute(exports.CARET_ATTRIBUTE);
+        if (layer.markedHost)
+            layer.host.removeAttribute(exports.CARET_HOST_ATTRIBUTE);
+    };
     /** 这个可编辑面上的自绘插入符；没有就建一根。 */
     const layerFor = (input) => {
         const host = input.parentElement;
-        // 自绘的那根按容器的矩形定位，容器不是定位上下文时算出来的坐标就是错的：宁可不动手，
-        // 让原生插入符留在原地。
-        if (host === null || getComputedStyle(host).position === 'static')
+        if (host === null)
             return null;
         const known = layers.get(input);
-        if (known !== undefined) {
+        if (known !== undefined && known.host === host) {
             // React 重渲染会把挂上去的那根一起摘掉，重新挂回去，并当作刚露头重新就位。
             if (known.caret.isConnected)
                 return known;
@@ -419,74 +586,57 @@ function installCaretMotion(read) {
             known.visible = false;
             return known;
         }
+        // 父元素换了人：旧的那一份整个撤掉，按新的父元素重建。
+        if (known !== undefined) {
+            release(input, known);
+            layers.delete(input);
+        }
+        // 自绘的那根按容器的内边距盒定位，容器必须是定位上下文。不是的话补一个标记，由样式表把它
+        // 变成 relative——作答框的 `.field` 与排队行都是这样。`display: contents` 的容器自己没有盒子，
+        // 补了也没用：宁可不动手，让原生插入符留在原地。
+        const hostStyle = getComputedStyle(host);
+        if (hostStyle.display === 'contents')
+            return null;
+        const markedHost = hostStyle.position === 'static';
+        if (markedHost)
+            host.setAttribute(exports.CARET_HOST_ATTRIBUTE, '');
         const caret = document.createElement('div');
         caret.setAttribute(exports.CARET_LAYER_ATTRIBUTE, '');
         host.appendChild(caret);
-        observeComposer(input);
-        const layer = { caret, visible: false };
+        if (input.isContentEditable)
+            observeComposer(input);
+        const layer = { caret, visible: false, host, markedHost };
         layers.set(input, layer);
         return layer;
     };
     /**
-     * 把自绘的光标放到这一处选区上。
-     * @param paused - 这一帧不播位移过渡：刚露头，或者 `move` 档下的一次打字。
-     * @returns 放好了没有。没放好时调用方要把原生插入符还回去。
+     * 接管那一刻读下原生插入符的颜色，自绘的那根照着画。
+     *
+     * 只在让位标记还没写上时读得到：写上之后算出来的就是 transparent 了。`auto` 的意思是跟字色走。
      */
-    const place = (input, layer, range, paused) => {
-        const host = input.parentElement ?? input;
-        const hostRect = host.getBoundingClientRect();
-        const rect = range.getBoundingClientRect();
-        let left = 0;
-        let top = 0;
-        let height = 0;
-        if (rect.height > 0) {
-            left = rect.left - hostRect.left;
-            top = rect.top - hostRect.top;
-            height = rect.height;
-        }
-        else {
-            // 零矩形：光标贴着换行符——空段落（`<p><br></p>`）与软换行都是这条路的常客。量那个换行符
-            // 自己，不要量它所在的段落：段落可以是很多行，换行符的矩形却永远只有一行，高度还是字高。
-            const anchor = nearestBreak(range);
-            if (anchor === null) {
-                // 输入框里连一个换行符都没有：没有东西可量，但内容盒的第一行开头就是光标的位置。
-                // 里面有东西却找不到换行符，那是别的形状，不猜，把原生插入符还回去。
-                if (input.firstChild !== null)
-                    return false;
-                const empty = emptyLineBox(input, host);
-                if (empty === null)
-                    return false;
-                left = empty.left;
-                top = empty.top;
-                height = empty.height;
-            }
-            else {
-                const breakRect = anchor.lineBreak.getBoundingClientRect();
-                height = breakRect.height;
-                top = breakRect.top - hostRect.top;
-                left = breakRect.left - hostRect.left;
-                if (!anchor.before) {
-                    // 换行符之后是下一行的行首：横向退到段落的内容左边界，纵向走一行。
-                    const block = anchor.lineBreak.parentElement;
-                    if (block === null)
-                        return false;
-                    const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight);
-                    left = block.getBoundingClientRect().left - hostRect.left;
-                    top += Number.isFinite(lineHeight) ? lineHeight : breakRect.height;
-                }
-            }
-        }
+    const adoptCaretColor = (input, layer) => {
+        const style = getComputedStyle(input);
+        const color = style.caretColor === 'auto' ? style.color : style.caretColor;
+        layer.caret.style.setProperty(exports.CARET_COLOR_PROPERTY, color);
+    };
+    /**
+     * 把自绘的光标放到这个视口矩形上。
+     * @param paused - 这一帧不播位移过渡：刚露头，或者 `move` 档下的一次打字。
+     */
+    const draw = (layer, box, paused) => {
+        // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量。
+        const hostRect = layer.host.getBoundingClientRect();
         // 对齐到整像素。原生插入符就落在像素网格上，而落在分数位置的矩形会被抗锯齿抹开一圈灰边，
         // 看起来和它不是一套。代价是位置最多偏半像素，看不出来。
-        left = Math.round(left);
-        top = Math.round(top);
+        const left = Math.round(box.left - hostRect.left - layer.host.clientLeft + layer.host.scrollLeft);
+        const top = Math.round(box.top - hostRect.top - layer.host.clientTop + layer.host.scrollTop);
         // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来。
         const fresh = !layer.visible;
         const instant = fresh || paused;
         if (instant)
             layer.caret.style.transitionProperty = 'none';
         layer.caret.style.transform = 'translate(' + left + 'px, ' + top + 'px)';
-        layer.caret.style.height = height + 'px';
+        layer.caret.style.height = box.height + 'px';
         if (instant)
             requestAnimationFrame(() => { layer.caret.style.transitionProperty = ''; });
         if (fresh) {
@@ -500,7 +650,6 @@ function installCaretMotion(read) {
             if (animation instanceof CSSAnimation && animation.animationName === exports.CARET_BLINK_NAME)
                 animation.currentTime = 0;
         }
-        return true;
     };
     /**
      * 这一帧的光标归谁。
@@ -510,36 +659,37 @@ function installCaretMotion(read) {
         const mode = read();
         // 「关」是彻底的：自绘的那根和让位标记一起撤掉，原生插入符回来。留着它们只会让读者看不见光标。
         if (mode === 'off') {
-            for (const [input, layer] of layers) {
-                layer.caret.remove();
-                input.removeAttribute(exports.CARET_ATTRIBUTE);
-            }
+            for (const [input, layer] of layers)
+                release(input, layer);
             layers.clear();
             return;
         }
         const selection = document.getSelection();
         const active = document.activeElement;
-        // 焦点落在 composer 面上就先盯住它，哪怕此刻还不可编辑：切会话时 contenteditable 会短暂
+        const kind = active instanceof HTMLElement ? surfaceOf(active) : null;
+        // 焦点落在富文本面上就先盯住它，哪怕此刻还不可编辑：切会话时 contenteditable 会短暂
         // 变成 false，等它变回来的时候，只有盯着属性才等得到那一下。
-        if (active instanceof HTMLElement && active.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR))
+        if (kind === 'rich' && active instanceof HTMLElement)
             observeComposer(active);
         // 光标只出现在**正拿着焦点**的那个可编辑面上：hero 态的输入框没有可编辑面，多会话时也
-        // 只有一个面拿着焦点。
-        const owner = active instanceof HTMLElement && active.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR) && active.isContentEditable
-            ? active
-            : null;
-        // 该落在哪一处：没有焦点、或者选了字（合成中选中候选词也算），都不该有它。
-        const range = owner !== null
-            && selection !== null
-            && selection.isCollapsed
-            && selection.rangeCount > 0
-            ? selection.getRangeAt(0)
-            : null;
-        const target = range !== null && owner !== null && owner.contains(range.startContainer) ? owner : null;
+        // 只有一个面拿着焦点。选了字（合成中选中候选词也算）时不该有它。
+        let target = null;
+        let range = null;
+        if (kind === 'rich' && active instanceof HTMLElement && active.isContentEditable
+            && selection !== null && selection.isCollapsed && selection.rangeCount > 0) {
+            const candidate = selection.getRangeAt(0);
+            if (active.contains(candidate.startContainer)) {
+                target = active;
+                range = candidate;
+            }
+        }
+        if (kind === 'plain' && active instanceof HTMLTextAreaElement && active.selectionStart === active.selectionEnd) {
+            target = active;
+        }
         for (const [input, layer] of layers) {
-            // 切会话会把整个输入区换掉，跟着它走的那根一并撤掉。
+            // 切会话会把整个输入区换掉，提问卡片答完、排队行存完也会整块卸掉，跟着它走的那根一并撤掉。
             if (!input.isConnected) {
-                layer.caret.remove();
+                release(input, layer);
                 layers.delete(input);
                 continue;
             }
@@ -550,18 +700,29 @@ function installCaretMotion(read) {
             hide(layer);
             input.removeAttribute(exports.CARET_ATTRIBUTE);
         }
-        if (target === null || range === null)
+        if (target === null)
             return;
         const layer = layerFor(target);
         if (layer === null)
             return;
+        const measured = target instanceof HTMLTextAreaElement
+            ? measurePlain(target, endKeyed)
+            : range === null ? null : measureRich(target, range);
         // 让位标记只在真正画出一根之后才写。画不出来时把原生插入符还回去——「原生已透明、自绘没画」
         // 是这套动效唯一真正会伤到读者的失效方式，任何一次测量失败都必须退回原点，而不是维持现状。
-        if (!place(target, layer, range, mode === 'move' && typing)) {
+        if (measured === null) {
             target.removeAttribute(exports.CARET_ATTRIBUTE);
             hide(layer);
             return;
         }
+        if (!target.hasAttribute(exports.CARET_ATTRIBUTE))
+            adoptCaretColor(target, layer);
+        // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写。
+        const box = target instanceof HTMLTextAreaElement ? clipToField(target, measured) : measured;
+        if (box === null)
+            hide(layer);
+        else
+            draw(layer, box, mode === 'move' && typing);
         target.setAttribute(exports.CARET_ATTRIBUTE, '');
     };
     document.addEventListener('selectionchange', queue);
@@ -569,6 +730,10 @@ function installCaretMotion(read) {
     document.addEventListener('focusout', syncAfterFocusChange);
     // `move` 档的判据。它先于 `selectionchange` 到达，所以这一帧的挪窝算不算打字，读它比猜位置准。
     document.addEventListener('beforeinput', markTyped);
+    // 软换行处偏向哪一边的判据：上一下是不是 End。捕获阶段听，免得被谁拦在半路。
+    document.addEventListener('keydown', noteKey, true);
+    document.addEventListener('pointerdown', clearEndKey, true);
+    document.addEventListener('scroll', followPlainScroll, { capture: true, passive: true });
     window.addEventListener('resize', queue);
     // 自带的那两份字体是后到的，折行随之变化，光标要重新量一次。
     document.fonts.addEventListener('loadingdone', queue);
@@ -583,16 +748,30 @@ function installCaretMotion(read) {
             document.removeEventListener('focusin', syncAfterFocusChange);
             document.removeEventListener('focusout', syncAfterFocusChange);
             document.removeEventListener('beforeinput', markTyped);
+            document.removeEventListener('keydown', noteKey, true);
+            document.removeEventListener('pointerdown', clearEndKey, true);
+            document.removeEventListener('scroll', followPlainScroll, true);
             window.removeEventListener('resize', queue);
             document.fonts.removeEventListener('loadingdone', queue);
             contentObserver.disconnect();
-            for (const [input, layer] of layers) {
-                layer.caret.remove();
-                input.removeAttribute(exports.CARET_ATTRIBUTE);
-            }
+            for (const [input, layer] of layers)
+                release(input, layer);
             layers.clear();
         },
     };
+}
+/**
+ * 一个元素是不是本模块接管的可编辑面，是哪一种。
+ * @param element - 通常是此刻拿着焦点的那个元素。
+ * @returns `rich` 是主输入框，`plain` 是输入区里可编辑的 textarea，都不是时为 null。
+ */
+function surfaceOf(element) {
+    if (element.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR))
+        return 'rich';
+    if (element instanceof HTMLTextAreaElement && element.matches(dom_contract_1.COMPOSER_TEXTAREA_SELECTOR)) {
+        return element.disabled || element.readOnly ? null : 'plain';
+    }
+    return null;
 }
     };
 
@@ -608,7 +787,7 @@ function installCaretMotion(read) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -649,6 +828,12 @@ exports.FOLLOW_THRESHOLD_PX = 25;
 exports.COMPOSER_SELECTOR = '[data-composer-seat]';
 /** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位，发送气泡按它取起点。 */
 exports.COMPOSER_INPUT_SELECTOR = '[data-composer-input]';
+/**
+ * 输入区里的纯文本框：提问卡片的作答框（`[data-question-key]` 下），以及排队消息的行内编辑框
+ * （`[data-queue-dock]` 下，子智能体跑着时追加的那几条就在这里改）。两者都是 textarea，都住在
+ * 输入区座位里，主会话与侧栏里的子智能体会话都一样。
+ */
+exports.COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea';
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 exports.COMPOSER_CARD_SELECTOR = '[data-composer-card]';
 /**
@@ -1339,9 +1524,21 @@ body {
  * 因此不会有动画；本插件的自动开合派发的也是真正的 click、走的是同一条捕获路径，所以它另外被
  * isProgrammaticToggle() 认出来放过——那些场合内容本来就该自然生长。
  *
+ * 门是一整扇，不是几扇。展开体常常是一列 flex（工具行的 `.bodyWrap`、文件变更行的展开体），高度被
+ * 压着的时候 flex 会先去挤能缩的那个子元素——自带滚动的卡片（run_code 的代码卡片）自动最小高度是
+ * 0，于是它先被挤没，不能缩的输出卡片占满门框：读者看到的是输出先拉出来、代码再从它上面长出来，
+ * 收起时反过来，一扇门走成了两段。所以门在走的时候给子元素一律 `flex: none`（见
+ * `fold-motion-styles.ts`），每一张卡片都按自己的自然高度排好，门框只负责裁。
+ *
+ * 门也不跟着主线程跳。高度动画在主线程上走，卡住多久它就停多久，而 WAAPI 按墙上时间算进度，卡完那一帧
+ * 会一口气跳到「本该到的地方」。展开 run_code 时恰好有这么一下：代码卡片一露头就被
+ * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
+ * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
+ *
  * @module dsh-chat-ux/client/fold-glide
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ROLLING_ATTRIBUTE = void 0;
 exports.isFoldGlideBusy = isFoldGlideBusy;
 exports.installFoldGlide = installFoldGlide;
 const dom_contract_1 = require("./dom-contract");
@@ -1378,6 +1575,20 @@ const SHUT_CONFIRM_FRAMES = 3;
 const FOLD_WATCH_TTL_MS = INTENT_TTL_MS + ROLL_MS + follow_tail_1.FOLLOW_LOOK_TOTAL_MS;
 /** 卷帘门跑完之后再多算一会儿「位置归动画管」，免得收尾那一帧跟跟随守护撞上。 */
 const FOLD_BUSY_GRACE_MS = 50;
+/**
+ * 卷帘门正在走的那个真身带着这个标记，`fold-motion-styles.ts` 见到它就让子元素一律 `flex: none`：
+ * 门框压着高度时，flex 不能把某一张卡片先挤没。
+ */
+exports.ROLLING_ATTRIBUTE = 'data-chat-ux-rolling';
+/**
+ * 两帧的时间戳隔得超过这么久，就认为中间主线程被占住过。
+ *
+ * 比卡住的时长本身要短：长任务之后的第一帧带的还是卡住之前排好的那个时间戳，跳变落在再下一帧上，
+ * 实测四十毫秒的长任务只在时间戳上留下三十七毫秒左右的间隔。二十五毫秒在 60 Hz 下约等于掉了半帧。
+ */
+const FRAME_GAP_LIMIT_MS = 25;
+/** 还没量到这块屏幕的帧间隔时，按 60 Hz 的一帧算。 */
+const NOMINAL_FRAME_MS = 16.7;
 /** 卷帘门排到哪一刻为止；这一段时间里位置归动画管。 */
 let foldBusyUntil = 0;
 /**
@@ -1537,12 +1748,61 @@ function installFoldGlide() {
     /**
      * 折叠收尾的入口：动画走完再看一眼跟随。
      *
-     * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来，所以统一等
-     * ROLL_MS——它正好是两条动画的时长。
+     * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画
+     * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
+     * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
+     * ROLL_MS。
      * @param watch - 这一轮折叠的收尾凭证。
+     * @param roll - 展开方向正在走的那条动画；没有时为 null。
      */
-    const settleAfterFold = (watch) => {
-        window.setTimeout(() => { handBackFollow(watch); }, ROLL_MS);
+    const settleAfterFold = (watch, roll = null) => {
+        if (roll === null) {
+            window.setTimeout(() => { handBackFollow(watch); }, ROLL_MS);
+            return;
+        }
+        const settle = () => { handBackFollow(watch); };
+        roll.finished.then(settle, settle);
+    };
+    /**
+     * 主线程被占住的那几帧不算进卷帘门的时间。
+     *
+     * 高度动画在主线程上走，卡住的那一段它一帧都画不出来，而 WAAPI 按墙上时间算进度：卡完之后的第一帧
+     * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
+     * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
+     * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
+     * 动画管」的时间，跟随守护会多等这么久。
+     *
+     * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
+     * @param roll - 正在走的那条卷帘门动画。
+     */
+    const holdThroughStalls = (roll) => {
+        let lastFrameAt = 0;
+        let lastTime = 0;
+        let frameInterval = NOMINAL_FRAME_MS;
+        const timeOf = () => {
+            const time = roll.currentTime;
+            return typeof time === 'number' ? time : 0;
+        };
+        const look = (now) => {
+            if (roll.playState !== 'running')
+                return;
+            const gap = lastFrameAt === 0 ? 0 : now - lastFrameAt;
+            if (gap > FRAME_GAP_LIMIT_MS) {
+                const resumeAt = lastTime + frameInterval;
+                const skipped = timeOf() - resumeAt;
+                if (skipped > 0) {
+                    roll.currentTime = resumeAt;
+                    foldBusyUntil += skipped;
+                }
+            }
+            else if (gap > 0) {
+                frameInterval = gap;
+            }
+            lastFrameAt = now;
+            lastTime = timeOf();
+            requestAnimationFrame(look);
+        };
+        requestAnimationFrame(look);
     };
     /**
      * 等 React 把这次折叠落到 DOM 上，再撤掉动画与内联样式。
@@ -1562,21 +1822,24 @@ function installFoldGlide() {
         requestAnimationFrame(() => { confirmCollapsed(settled, done, attempt + 1); });
     };
     /**
-     * 高度动画开工前的两件记账：把裁剪关上，并把 `height` 按 border-box 解释。
+     * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
+     * 标记，让子元素按自然高度排好、不被 flex 挤扁（见模块注释）。
      *
-     * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把这两条内联样式还回去，所以记下的
-     * 旧值与还原动作一起交回来。
+     * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
+     * 一起交回来。
      * @param target - 要压的真身。
-     * @returns 把内联样式还原到开工之前。
+     * @returns 把内联样式与标记还原到开工之前。
      */
     const beginHeightClip = (target) => {
         const previousOverflow = target.style.overflow;
         const previousBoxSizing = target.style.boxSizing;
         target.style.overflow = 'hidden';
         target.style.boxSizing = 'border-box';
+        target.setAttribute(exports.ROLLING_ATTRIBUTE, '');
         return () => {
             target.style.overflow = previousOverflow;
             target.style.boxSizing = previousBoxSizing;
+            target.removeAttribute(exports.ROLLING_ATTRIBUTE);
         };
     };
     /**
@@ -1590,12 +1853,13 @@ function installFoldGlide() {
      * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
      * @param target - 要拉开的真身：展开体自己，或过程组的组根。
      * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
+     * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
      */
     const rollOpen = (target, from) => {
         markFoldBusy();
         const height = target.getBoundingClientRect().height;
         if (height <= from)
-            return;
+            return null;
         const travel = Math.max(from, visibleReachOf(target));
         const restore = beginHeightClip(target);
         const growing = target.animate(travel >= height
@@ -1605,10 +1869,12 @@ function installFoldGlide() {
                 { height: String(travel) + 'px', offset: VISIBLE_SHARE, easing: 'linear' },
                 { height: String(height) + 'px', offset: 1 },
             ], { duration: ROLL_MS, easing: 'ease-out' });
+        holdThroughStalls(growing);
         growing.onfinish = () => {
             growing.cancel();
             restore();
         };
+        return growing;
     };
     /**
      * 卷帘门收回：**动真身，不克隆**。
@@ -1641,6 +1907,7 @@ function installFoldGlide() {
                 { height: String(travel) + 'px', offset: 1 - VISIBLE_SHARE, easing: 'ease-out' },
                 { height: String(fold.floor) + 'px', offset: 1 },
             ], { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' });
+        holdThroughStalls(shrinking);
         shrinking.onfinish = () => {
             window.clearTimeout(release);
             replay(fold.control);
@@ -1669,8 +1936,7 @@ function installFoldGlide() {
                 watch.stop();
                 return;
             }
-            rollOpen(current.groupRoot, current.collapsedHeight);
-            settleAfterFold(watch);
+            settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight));
             return;
         }
         const body = expandedBodyOf(current.control);
@@ -1679,8 +1945,7 @@ function installFoldGlide() {
             return;
         }
         // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
-        rollOpen(body, 0);
-        settleAfterFold(watch);
+        settleAfterFold(watch, rollOpen(body, 0));
     };
     const onClick = (event) => {
         // 自己重放的那一次直接放行，交给 React。
@@ -4136,12 +4401,16 @@ exports.CARET_MOTION_CSS = void 0;
 /**
  * 输入框插入符动效的样式。
  *
- * 两条规则：把原生插入符按下去，把自绘的那根画出来。前者只认 `caret-motion.ts` 写在可编辑面上的
- * 标记——脚本半途没跑起来时一条规则都不命中，原生插入符还在。这是这套动效唯一真正会伤人的地方
- * （读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏。
+ * 三条规则：把原生插入符按下去，给挂那根的父元素补定位上下文，把自绘的那根画出来。前两条只认
+ * `caret-motion.ts` 写上的标记——脚本半途没跑起来时一条规则都不命中，原生插入符还在。这是这套
+ * 动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏。
  *
- * 需要压过的是 dsh 自己的 `.input { caret-color: … }`（一个类，0-1-0）；下面这条是两个属性选择器
- * （0-2-0），在真实页面上量到它就是赢的那一条。
+ * 需要压过的是 dsh 自己给每种面定的 caret-color：主输入框的 `.input`、作答框的 `.fieldInput`，
+ * 都是一个类（0-1-0）。下面那两条是两个属性选择器（0-2-0）与「标签 + 属性」（0-1-1），都赢。
+ *
+ * 自绘的那根会落进别人的容器里当子元素，容器给子元素定的规则也会落到它身上——作答框的 `.field > *`
+ * 就给每个子元素写了 grid-area、padding 与一整套字体。所以它自己的规则用两个同名属性选择器抬到
+ * 0-2-0，并且把会改变盒子大小与位置的那几项全部显式写回去。
  *
  * 过渡的是 `transform` 而不是 `top`/`left`：VS Code 那边过渡的是布局属性，这里没有理由跟着付
  * 那份代价。80ms 与它同档，缓动也是它那个默认的 ease。
@@ -4155,31 +4424,48 @@ const CARET_WIDTH = '2px';
 const CARET_TRAVEL_MS = '80ms';
 /** 闪烁周期。Chromium 自己的插入符就是亮五百毫秒、灭五百毫秒。 */
 const CARET_BLINK_PERIOD = '1s';
+/** 自绘那根的选择器，抬到 0-2-0，压过宿主容器给子元素定的规则。 */
+const LAYER = `[${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${caret_motion_1.CARET_LAYER_ATTRIBUTE}]`;
 /**
  * 插入符动效的样式表，由 `styles.ts` 拼进注入的那一张。
  */
 exports.CARET_MOTION_CSS = `
 /* 自绘的那根就位之后，原生插入符才让位。标记由 caret-motion 在挂上光标之后才写。 */
-[data-composer-input][${caret_motion_1.CARET_ATTRIBUTE}] {
+[data-composer-input][${caret_motion_1.CARET_ATTRIBUTE}],
+textarea[${caret_motion_1.CARET_ATTRIBUTE}] {
   caret-color: transparent;
 }
 
-[${caret_motion_1.CARET_LAYER_ATTRIBUTE}] {
+/* 挂那根的父元素原本不是定位上下文时才有这个标记。它们都没有绝对定位的后代，所以这一条不改任何布局。 */
+[${caret_motion_1.CARET_HOST_ATTRIBUTE}] {
+  position: relative;
+}
+
+${LAYER} {
   position: absolute;
   top: 0;
   left: 0;
+  grid-area: auto;
+  box-sizing: content-box;
   width: ${CARET_WIDTH};
+  min-width: 0;
+  max-width: none;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
   visibility: hidden;
   pointer-events: none;
-  /* 颜色取 dsh 给原生插入符定的那一支，主题切换跟着走。 */
-  background: var(--dsw-alias-state-business-primary, currentColor);
+  /* 颜色是接管那一刻从这个面的原生插入符上读下来的；读到之前退回 dsh 给主输入框定的那一支。 */
+  background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
   transition: transform ${CARET_TRAVEL_MS} ease;
   will-change: transform;
   /* 原生那根被按下去了，闪烁得自己来。 */
   animation: ${caret_motion_1.CARET_BLINK_NAME} ${CARET_BLINK_PERIOD} step-end infinite;
 }
 
-[${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
+${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
   visibility: visible;
 }
 
@@ -4189,7 +4475,7 @@ exports.CARET_MOTION_CSS = `
 
 @media (prefers-reduced-motion: reduce) {
   /* 连闪烁一起停：这一档要的是少动，恒亮的光标正好是 VS Code 的 solid 档的样子。 */
-  [${caret_motion_1.CARET_LAYER_ATTRIBUTE}] {
+  ${LAYER} {
     transition: none;
     animation: none;
   }
@@ -4199,8 +4485,10 @@ exports.CARET_MOTION_CSS = `
 
     __registry["fold-motion-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FOLD_MOTION_CSS = void 0;
 /**
- * 折叠体的入场动画。
+ * 折叠体的入场动画，以及卷帘门走的时候那扇门的排版。
  *
  * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（`{open && children}`，见
  * ui-primitives/src/DisclosureRow.tsx），所以元素重新插入的那一帧是唯一能挂过渡的时机——
@@ -4227,10 +4515,15 @@ exports.CARET_MOTION_CSS = `
  *              自然。过程成员由 dsh 自己发的 `data-turn-process-member` 标出来，整棵子树排除；
  *              轮次触发通知（`[data-turn-trigger]`）同理。
  *
+ * 卷帘门那一条（`fold-glide.ts` 在门走的时候挂 `ROLLING_ATTRIBUTE`）：展开体常常是一列 flex，门框
+ * 压着高度时 flex 会先把自带滚动的那张卡片挤没（它的自动最小高度是 0），于是 run_code 那种「代码
+ * 卡片 + 输出卡片」的展开体会走成两段。门走的这两百毫秒里子元素一律 `flex: none`：每一张卡片都按
+ * 自然高度排好，门框只负责裁。门停下来标记就撤，排版回到 dsh 原样——展开体的高度本来就是子元素
+ * 自然高度之和，两种排法在终点上一个像素都不差。`!important` 是因为这两百毫秒里谁也不该改它。
+ *
  * @module dsh-chat-ux/client/fold-motion-styles
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FOLD_MOTION_CSS = void 0;
+const fold_glide_1 = require("./fold-glide");
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 exports.FOLD_MOTION_CSS = `
 @starting-style {
@@ -4248,6 +4541,11 @@ exports.FOLD_MOTION_CSS = `
   [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
+}
+
+/* 卷帘门走的时候，门里的每一张卡片按自然高度排好，不被 flex 挤扁。 */
+[${fold_glide_1.ROLLING_ATTRIBUTE}] > * {
+  flex: none !important;
 }
 `;
     };
@@ -4302,10 +4600,24 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  * 这个颜色也不能是同一个：一段回答里不只有正文，把链接、语法 token 或列表标记在淡入期间涂成
  * 正文色，读起来是高亮闪一下，而不是淡入。
  *
- * 档位规则**常驻，不按需插拔**。禁用与启用之间的那一下翻转会让整篇文档的样式失效，于是下一次
- * 样式计算从「只算新节点」变成「整页重算」——而它恰好落在流式刚开头那一帧，也就是读者按下提交的
- * 同一帧。常驻的代价只是「每次全量重算多几条规则」，而全量重算在阅读期本来就不常发生（见
- * `REVEAL_STEPS`）。
+ * 这个模块和页面上别的东西共用一条主线程、一张样式表集合、一套 DOM，所以它的每一份开销都按
+ * 「会不会叠到别人身上」来收：
+ *
+ *   档位规则  **收在 `[data-streaming]` 底下，常驻不插拔**。不带作用域的 `::highlight()` 规则
+ *             对每个元素都要试一遍，二十四条在五千六百节点上实测给每一次全量样式重算添二十五毫秒——
+ *             别的插件每触发一次全量重算，都要替这些规则付一次钱；而为了躲这笔钱去翻 `disabled`，
+ *             翻一次本身又是一次整页失效。收进作用域之后，浏览器用祖先过滤直接跳过流式容器以外的
+ *             元素，同一张页面上实测多出来的是零；dsh 翻 `data-streaming` 那一下也只失效那一条消息。
+ *   区间      **用 StaticRange，不用 Range**。活的 Range 在被回收之前，页面上每一次 DOM 变动都要
+ *             逐个修正它们的边界——绘制帧每帧新建一批，一秒下来上千个等着回收，实测让两千次与它
+ *             无关的 DOM 变动从一毫秒半涨到六十多毫秒，React 与别的插件都在替它付。StaticRange
+ *             不跟踪变动，而这里每帧都从新快照现建区间，本来就用不着它跟踪。
+ *   扫描      **只看流式容器里的变动**。页面上别处的 DOM 变动（别的插件、侧栏、计时器）不触发扫描；
+ *             容器里的变动也只重扫被碰到的那一个。
+ *   内联样式  **继承下来的颜色已经对了就不写**。每写一次就是一次样式失效，还会惊动别人盯着 style
+ *             属性的观察者。
+ *   主线程忙  **让路**。绘制帧一连几帧都隔得很久，说明主线程已经被别的事占满，这时候再给新字符排
+ *             淡入只会把卡顿叠得更重：手上的区间直接落定，接下来一段时间里新字符以本色出现。
  *
  * @module dsh-chat-ux/client/token-motion
  */
@@ -4321,13 +4633,10 @@ const programmatic_toggle_1 = require("./programmatic-toggle");
  * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
  * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `revealCss` 里的一条
- * `::highlight()` 规则，而规则条数直接乘在浏览器每一次强制同步样式重算上。在一个 5800 节点的
- * 会话里，96 条档位规则把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms；只留 1 条时它又回到
- * 18 ms。档数曾经按「多出来的部分不花任何代价」取到 96，那个前提不成立。
- *
- * 常驻就是拿它换来的：页面上每一次全量样式重算都要乘上这个条数，六千节点上实测约四十毫秒。
- * 把它降下来只有两条路——减档，或者让这些规则不参与重算；后者已经试过并撤掉了（见
- * `installTokenMotion`）。
+ * `::highlight()` 规则。不带作用域时规则条数直接乘在浏览器每一次全量样式重算上——在一个 5800
+ * 节点的会话里，96 条把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms。现在的规则收在
+ * `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，这笔账基本清零（见模块注释）；
+ * 档数仍然留在 24，是因为它已经够用，而不是因为更多就付不起。
  */
 exports.REVEAL_STEPS = 24;
 /**
@@ -4426,38 +4735,60 @@ function runTokenMotion() {
     const textSnapshots = new WeakMap();
     /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
     const foldQuietUntil = new WeakMap();
-    /** 上一次扫描时在页面上的流式容器；这一趟不在的那些，区间与快照一起丢掉。 */
+    /** 上一次全量扫描时在页面上的流式容器；不在了的那些，区间与快照一起丢掉。 */
     let liveContainers = [];
     /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
     const writtenColors = new WeakMap();
-    /** 最近一批字符开始淡入的时刻；`0` 表示装上之后还没有过。 */
-    let lastBornAt = 0;
-    /** 档位规则现在开着吗。关着的那些时刻，它们不参与任何一次样式重算。 */
-    let revealRulesOn = false;
     /** 排队中的绘制帧句柄；0 表示没有排队。 */
     let scheduledFrame = 0;
-    /** 排队中的「收起档位规则」任务；`0` 表示没有排队。 */
-    let collapseHandle = 0;
-    // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
-    //
-    // 翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」（六千节点上
-    // 实测约三十八毫秒），所以这两下翻转都绑在**本来就要重算的那一帧**上：启用发生在 `scan` 认出
-    // 第一批新字符的时候，收起发生在之后某一次 mutation 上（时隔 `IDLE_REVEAL_MS` 之后的第一趟
-    // 扫描）——读者打字、页面吐字、滚动挂载，那些 mutation 自己都要重算。谁也没凭空造出一次重算。
-    //
-    // 换来的正是最贵的那一刻：提交后新消息挂载会让聊天列大范围失效。同一个 4664 节点的会话上实测，
-    // 提交之后三秒里的 `UpdateLayoutTree` 在规则常驻时是 146 毫秒（最长一帧 117 毫秒），收起时只有
-    // 21 毫秒（最长一帧 50 毫秒），而提交帧正是这几百毫秒里的头一帧。
+    /** 每一档一个 highlight：注册一次，之后每帧只换里面的区间。null 表示这一档此刻没有注册。 */
+    const highlights = new Array(exports.REVEAL_STEPS).fill(null);
+    /** 绘制帧一连隔得很久的帧数；攒够 `SLOW_FRAME_RUN` 就让路。 */
+    let slowFrames = 0;
+    /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
+    let yieldUntil = 0;
+    // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
+    // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
+    // 一次整页的样式失效（见模块注释）。
     const revealStyleElement = document.createElement('style');
     revealStyleElement.id = REVEAL_STYLE_ID;
     revealStyleElement.textContent = revealCss;
     document.head.append(revealStyleElement);
-    // 挂上之后才谈得上 `disabled`：元素还没进文档时它还没有自己的样式表，那时候赋值会被丢掉。
-    revealStyleElement.disabled = true;
-    /** 清掉全部档位的 highlight。 */
+    /** 注销全部档位的 highlight。 */
     const clearHighlights = () => {
-        for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
+        for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
+            if (highlights[step] === null)
+                continue;
             registry.delete(exports.HIGHLIGHT_PREFIX + step);
+            highlights[step] = null;
+        }
+    };
+    /**
+     * 把这一档画的区间换成这一批。
+     *
+     * 注册表只在一档第一次用到时写一次，之后只换 highlight 里的区间：每帧对二十四个名字各注销、
+     * 注册一遍，浏览器要为每一次都重排一遍 highlight 的标记。这一档这一帧空着就清掉，但不注销——
+     * 下一帧多半还要用它。
+     * @param step - 档位。
+     * @param ranges - 这一帧落在这一档的区间。
+     */
+    const showStep = (step, ranges) => {
+        let highlight = highlights[step] ?? null;
+        if (ranges.length === 0) {
+            if (highlight !== null && highlight.size > 0)
+                highlight.clear();
+            return;
+        }
+        if (highlight === null) {
+            highlight = new HighlightConstructor();
+            highlights[step] = highlight;
+            registry.set(exports.HIGHLIGHT_PREFIX + step, highlight);
+        }
+        else {
+            highlight.clear();
+        }
+        for (const range of ranges)
+            highlight.add(range);
     };
     /**
      * 把一个元素自己的颜色发布到 `RUN_COLOR_VAR` 上。
@@ -4465,15 +4796,21 @@ function runTokenMotion() {
      * 读的是算出来的颜色，而不是记下来的颜色：要紧的是 Markdown 层实际画出来的那个颜色——
      * 链接的令牌、语法 token、列表标记——而不是本模块上一次写进去的东西。元素上仍然带着记给它的
      * 那个颜色时跳过这次读取，而这正是第一帧之后每一帧的常见情况。
+     *
+     * 从祖先那里继承下来的值已经就是它的颜色时（段落里的加粗、列表项里的正文），不写：一次内联
+     * 样式就是一次样式失效，还会惊动页面上别人盯着 style 属性的观察者。
      * @param element - 区间文字渲染所在的元素。
      */
     const publishRunColor = (element) => {
         if (element === null)
             return;
-        const color = window.getComputedStyle(element).color;
+        const style = window.getComputedStyle(element);
+        const color = style.color;
         if (writtenColors.get(element) === color)
             return;
         writtenColors.set(element, color);
+        if (style.getPropertyValue(exports.RUN_COLOR_VAR).trim() === color)
+            return;
         const styled = element;
         styled.style.setProperty(exports.RUN_COLOR_VAR, color);
     };
@@ -4505,8 +4842,29 @@ function runTokenMotion() {
         for (const container of target.querySelectorAll(dom_contract_1.STREAMING_SELECTOR))
             foldQuietUntil.set(container, until);
     };
-    /** 按当前年龄重画每一个还活着的区间，然后排下一帧。 */
-    const paint = (now) => {
+    /**
+     * 主线程已经被占满：手上的区间直接落定，接下来一段时间里新字符以本色出现。
+     *
+     * 这时候淡入本来也画不顺——每一档都要在帧里停好几十毫秒——而它每帧的那份活又叠在别人的卡顿
+     * 上。让出来比硬撑强：文字照常到达，只是少了那一下渐变。
+     */
+    const yieldToBusyThread = () => {
+        yieldUntil = performance.now() + YIELD_MS;
+        slowFrames = 0;
+        lastFrameAt = 0;
+        liveRuns.length = 0;
+        clearHighlights();
+    };
+    /** 排下一个绘制帧。 */
+    const scheduleFrame = () => {
+        scheduledFrame = requestAnimationFrame((now) => { paint(now, true); });
+    };
+    /**
+     * 按当前年龄重画每一个还活着的区间，然后排下一帧。
+     * @param now - 这一帧的时间戳。
+     * @param fromFrame - 由绘制帧调起，而不是扫描时同步补画的那一次：只有这种帧间隔才说明主线程忙不忙。
+     */
+    const paint = (now, fromFrame) => {
         scheduledFrame = 0;
         if (liveRuns.length === 0) {
             clearHighlights();
@@ -4518,6 +4876,16 @@ function runTokenMotion() {
         const previousFrameAt = lastFrameAt;
         lastFrameAt = now;
         const gap = previousFrameAt === 0 ? 0 : now - previousFrameAt;
+        // 一连好几帧都这么慢，那不是一次偶发的卡顿，是主线程被占满了：让路。页面藏起来那种长达
+        // 好几秒的空白不算——那是没人在看，不是忙。
+        if (fromFrame && gap > SLOW_FRAME_MS && gap < HIDDEN_GAP_MS)
+            slowFrames += 1;
+        else if (fromFrame && gap > 0)
+            slowFrames = 0;
+        if (slowFrames >= SLOW_FRAME_RUN) {
+            yieldToBusyThread();
+            return;
+        }
         if (gap > FRAME_GAP_LIMIT_MS) {
             const unspent = gap - NOMINAL_FRAME_MS;
             for (const run of liveRuns) {
@@ -4615,74 +4983,55 @@ function runTokenMotion() {
         }
         liveRuns.length = kept;
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
-            const list = buckets[step];
-            if (list === undefined || list.length === 0) {
-                registry.delete(exports.HIGHLIGHT_PREFIX + step);
-                continue;
-            }
-            const ranges = [];
-            for (const segment of list) {
-                const range = document.createRange();
-                range.setStart(segment.node, segment.start);
-                range.setEnd(segment.node, segment.end);
-                ranges.push(range);
-            }
-            registry.set(exports.HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges));
+            const list = buckets[step] ?? [];
+            // StaticRange 不跟踪 DOM 变动：每帧都从新快照现建，用不着它跟踪；活的 Range 在被回收之前
+            // 会让页面上每一次 DOM 变动都替它修正边界（见模块注释）。
+            const ranges = list.map(segment => new StaticRange({
+                startContainer: segment.node,
+                startOffset: segment.start,
+                endContainer: segment.node,
+                endOffset: segment.end,
+            }));
+            showStep(step, ranges);
         }
         if (liveRuns.length > 0)
-            scheduledFrame = requestAnimationFrame(paint);
+            scheduleFrame();
+        else
+            clearHighlights();
     };
-    /** 把每个流式容器与上一次的快照对比，然后把新出现的那一段排成区间。 */
     /**
-     * 这一批没有新字符要淡入、上一批又已经过去很久：把档位规则收起来。
-     *
-     * 只在**确定这一趟没有新字符**的路径上调用。同一趟扫描里先收再开会让整篇文档失效两次——两次
-     * 全量重算全压在「思考的第一个字上屏」那一帧上，比一直挂着还贵。
-     *
-     * 收起那一下翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」
-     * （四千七百节点上实测约六十五毫秒，掉三到四帧）。绑在「下一次 mutation」上还不够：那次
-     * mutation 可能正落在读者滚动、气泡起飞或思考行收起的动画里——实测收录起的那一刻，相邻两帧
-     * 之间隔了一百一十七毫秒。所以交给浏览器挑它认为不影响交互的空当去做：这段动效由合成器线程
-     * 扛着，主线程里的空白正是付这笔钱的地方。超时兜底，浏览器一直忙就照做，只是晚一点。
-     * @param now - 这一趟扫描开始的时间戳。
+     * 把流式容器与上一次的快照对比，然后把新出现的那一段排成区间。
+     * @param only - 只看这几个容器（这一批变动碰到的）；null 表示把页面上的流式容器全看一遍，
+     *   并清掉已经不在的那些。
      */
-    const idleOut = (now) => {
-        if (!revealRulesOn)
-            return;
-        if (now - lastBornAt <= IDLE_REVEAL_MS)
-            return;
-        if (collapseHandle !== 0)
-            return;
-        collapseHandle = window.requestIdleCallback(() => {
-            collapseHandle = 0;
-            if (!revealRulesOn)
-                return;
-            // 排队这段时间里又来了新字符：这一轮还没讲完，继续挂着。
-            if (performance.now() - lastBornAt <= IDLE_REVEAL_MS)
-                return;
-            revealStyleElement.disabled = true;
-            revealRulesOn = false;
-        }, { timeout: IDLE_COLLAPSE_TIMEOUT_MS });
-    };
-    const scan = () => {
+    const scan = (only) => {
         const now = performance.now();
-        const containers = [...document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR)];
-        // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
-        // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
-        for (const gone of liveContainers) {
-            if (containers.includes(gone))
-                continue;
-            textSnapshots.delete(gone);
-            for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-                if (liveRuns[index]?.container === gone)
-                    liveRuns.splice(index, 1);
+        let containers;
+        if (only === null) {
+            containers = [...document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR)];
+            // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
+            // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
+            for (const gone of liveContainers) {
+                if (containers.includes(gone))
+                    continue;
+                textSnapshots.delete(gone);
+                for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+                    if (liveRuns[index]?.container === gone)
+                        liveRuns.splice(index, 1);
+                }
             }
+            liveContainers = containers;
         }
-        liveContainers = containers;
-        if (containers.length === 0) {
-            idleOut(now);
+        else {
+            containers = [...only].filter(container => container.isConnected && container.matches(dom_contract_1.STREAMING_SELECTOR));
+            for (const container of containers)
+                if (!liveContainers.includes(container))
+                    liveContainers.push(container);
+        }
+        if (containers.length === 0)
             return;
-        }
+        /** 主线程正忙、正在让路：快照照常更新，只是这一段新字符不排淡入。 */
+        const yielding = now < yieldUntil;
         /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
         const createdRuns = [];
         for (const container of containers) {
@@ -4736,6 +5085,8 @@ function runTokenMotion() {
                 }
                 liveRuns.splice(index, 1);
             }
+            if (yielding)
+                continue;
             // 读者刚折叠或展开过：这一次变化是那一下重排引起的，不是模型在吐字。
             const quietUntil = foldQuietUntil.get(container);
             if (quietUntil !== undefined && now <= quietUntil)
@@ -4849,9 +5200,9 @@ function runTokenMotion() {
                             bornAt: now,
                             delay: 0,
                             // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
-                            // 就是一次强制样式结算，而这一次读取恰好落在档位规则刚挂上、整篇文档样式刚失效的
-                            // 那一帧——实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）
-                            // 绘制帧的那次比较仍然会发现，颜色照旧补上。
+                            // 就是一次强制样式结算，而这一次读取恰好落在新字符刚插进来、样式刚失效的那一帧——
+                            // 实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）绘制帧的
+                            // 那次比较仍然会发现，颜色照旧补上。
                             colorElement: element,
                         };
                         liveRuns.push(run);
@@ -4873,28 +5224,53 @@ function runTokenMotion() {
                 run.delay = (slot - batchStart) * step;
             }
         }
+        if (createdRuns.length === 0)
+            return;
         // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
         // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
         // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
-        if (createdRuns.length === 0) {
-            idleOut(now);
-            return;
-        }
-        // 有字符要淡入了：把规则挂上。这一帧本来就在插新字符，本来就要重算。
-        lastBornAt = now;
-        if (!revealRulesOn) {
-            revealStyleElement.disabled = false;
-            revealRulesOn = true;
-        }
         if (scheduledFrame !== 0) {
             cancelAnimationFrame(scheduledFrame);
             scheduledFrame = 0;
         }
-        paint(performance.now());
+        paint(performance.now(), false);
     };
-    const observer = new MutationObserver(scan);
-    // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div 补上
-    // 这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
+    // 只看流式容器里的变动：页面上别处的 DOM 变动（别的插件、侧栏、计时器、输入框）一次扫描都不
+    // 触发，流式容器里的变动也只重扫被碰到的那一个。整页重看只留给容器本身出现、消失或者换了
+    // `data-streaming` 的那几种变动。
+    const observer = new MutationObserver((records) => {
+        let everything = false;
+        const touched = new Set();
+        for (const record of records) {
+            // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div
+            // 补上这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
+            if (record.type === 'attributes') {
+                everything = true;
+                continue;
+            }
+            const target = record.target;
+            const element = target instanceof Element ? target : target.parentElement;
+            const container = element?.closest(dom_contract_1.STREAMING_SELECTOR) ?? null;
+            if (container !== null)
+                touched.add(container);
+            if (record.type !== 'childList' || everything)
+                continue;
+            for (const added of record.addedNodes) {
+                if (!(added instanceof Element))
+                    continue;
+                if (added.matches(dom_contract_1.STREAMING_SELECTOR) || added.querySelector(dom_contract_1.STREAMING_SELECTOR) !== null)
+                    everything = true;
+            }
+            for (const removed of record.removedNodes) {
+                if (liveContainers.some(live => live === removed || removed.contains(live)))
+                    everything = true;
+            }
+        }
+        if (everything)
+            scan(null);
+        else if (touched.size > 0)
+            scan(touched);
+    });
     observer.observe(document.body, {
         subtree: true,
         childList: true,
@@ -4904,7 +5280,7 @@ function runTokenMotion() {
     });
     document.addEventListener('click', rememberReaderFold, true);
     document.addEventListener('keydown', rememberReaderFold, true);
-    scan();
+    scan(null);
     return () => {
         observer.disconnect();
         document.removeEventListener('click', rememberReaderFold, true);
@@ -4912,9 +5288,6 @@ function runTokenMotion() {
         if (scheduledFrame !== 0)
             cancelAnimationFrame(scheduledFrame);
         scheduledFrame = 0;
-        if (collapseHandle !== 0)
-            window.cancelIdleCallback(collapseHandle);
-        collapseHandle = 0;
         liveRuns.length = 0;
         clearHighlights();
         revealStyleElement.remove();
@@ -4937,18 +5310,20 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
  * `color-mix(in srgb, C p%, transparent)` 的语义正好是它：与 `transparent` 混合会把结果的
  * alpha 按 `p` 加权，色相不变。
  *
- * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量），所以这里不额外多生成任何一档。
+ * 每一条都收在 `[data-streaming]` 底下，两个选择器各管一种：容器自己直属的文本，与容器里任意
+ * 一层元素里的文本。淡入只发生在流式容器里，作用域不丢任何东西；换来的是流式容器以外的元素在
+ * 样式匹配时被祖先过滤直接跳过——同一张五千六百节点的页面上，不带作用域的二十四条给每次全量
+ * 重算添二十五毫秒，带上之后实测是零。
+ *
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
- *
- * 条数只在**规则生效的那些时刻**才有代价：没有东西要淡入时整张表是 `disabled` 的，所以阅读期
- * 与提交那一刻的样式重算都不必评估它们（见 `installTokenMotion` 里翻转那一段）。
  */
 const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
     const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
     const alpha = Number((ratio * 100).toFixed(2));
+    const name = exports.HIGHLIGHT_PREFIX + step;
     return [
-        '::highlight(' + exports.HIGHLIGHT_PREFIX + step + ') {',
+        dom_contract_1.STREAMING_SELECTOR + '::highlight(' + name + '), ' + dom_contract_1.STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
         '  color: color-mix(in srgb, var(' + exports.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
         '}',
     ].join('\n');
@@ -4961,27 +5336,6 @@ const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
  * React 的重渲染和它产生的那批 mutation；又够短，让点击之后立刻续上的流仍然有动效。
  */
 const FOLD_QUIET_MS = 400;
-/**
- * 一批字符淡完之后，档位规则还要在页面上留多久。
- *
- * 收起它们的那一下翻转会让整篇文档的样式失效，所以不能刚淡完就收——那一刻页面可能正安静下来，
- * 也可能下一秒又吐一批。收起只发生在**下一次 mutation** 上（`scan` 是唯一检查它的地方），而那次
- * mutation 本来就要触发重算。
- *
- * 取十秒，因为一秒盖不住一整轮：思考转到正文、或者思考中间的长停顿，间隔常常超过一秒，那样一轮
- * 回答里会「收起—启用」来回好几趟，每趟都是一次全量重算，读者在「思考的第一个字上屏」那一刻就
- * 能感到一下顿。十秒把一整轮（含中间停顿）圈在一起，于是通常一轮只翻两次：开头启用一次，收尾那
- * 次留给之后某次 mutation。而读者真要往一个**停下来的**会话里发消息时，上一批淡入早就过去不止
- * 十秒了，该收的还是收着。
- */
-const IDLE_REVEAL_MS = 10000;
-/**
- * 收起那一下最多等多久。
- *
- * `requestIdleCallback` 只在浏览器自己认定的空当里跑；页面一直忙（长会话里滚动挂载、流式
- * 不断吐字）时它会一直等下去，所以给一个上限：到点了照做，只是不再挑时机。
- */
-const IDLE_COLLAPSE_TIMEOUT_MS = 4000;
 /**
  * 一批里最多认多少字符。
  *
@@ -5001,6 +5355,17 @@ const FIRST_SIGHT_LIMIT = 200;
 const FRAME_GAP_LIMIT_MS = 40;
 /** 正常的一帧有多长（按 60 Hz 算）；补偿时从空白里扣掉它，区间就接着上一帧的位置往下走。 */
 const NOMINAL_FRAME_MS = 16.7;
+/**
+ * 绘制帧之间隔得超过这么久，算一帧「慢帧」：不到二十帧每秒，淡入的每一档都要停好几十毫秒，
+ * 已经画不顺了。
+ */
+const SLOW_FRAME_MS = 50;
+/** 连着这么多个慢帧才让路：一次偶发的长任务（React 挂一条大消息）不该把淡入关掉。 */
+const SLOW_FRAME_RUN = 4;
+/** 帧间隔长到这个程度，是页面被藏起来了（rAF 停摆），不是主线程忙。 */
+const HIDDEN_GAP_MS = 1000;
+/** 让路之后多久再给新字符排淡入。 */
+const YIELD_MS = 3000;
 /**
  * 一次改写里最多认几个新字符。
  *

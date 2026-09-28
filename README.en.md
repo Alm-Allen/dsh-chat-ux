@@ -8,14 +8,14 @@ With it installed, model output fades in token by token instead of appearing in 
 
 ## What it does
 
-- **Token fade-in**: every token fades in, for both reasoning and answer text.
+- **Token fade-in**: every token fades in, for both reasoning and answer text. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded.
 - **Self-folding reasoning rows**: a reasoning row expands while thinking and folds when it ends; once you touch it yourself, it stops moving.
-- **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions.
+- **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card.
 - **Enhanced follow**: at the moments content jumps—thinking ends, a tool call appears—a reader parked at the bottom is handed back to dsh's own follow. If you scrolled away yourself, it stays out of your way.
 - **Group follow**: inside height-capped process groups (standard / compact), reasoning and tool output keep up, scrolling vertically only.
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area.
 - **Bundled fonts**: HarmonyOS Sans SC for text and Maple Mono NF CN for code, shipped with the plugin—nothing to install, same type on both ends.
-- **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click.
+- **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (beta, off by default): once you turn it on, the submitted bubble rises from the composer into the transcript; the run is a fixed 270 ms.
 
 ## Install
