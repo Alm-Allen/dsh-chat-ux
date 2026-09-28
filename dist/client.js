@@ -116,9 +116,9 @@ function apply(ctx) {
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
     // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
-    // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
-    // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长不是一个
-    // 设置项，它是 send-flight 里的 FLIGHT_MS。
+    // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
+    // 这一项默认关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
+    // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
     // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
     // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
@@ -3170,7 +3170,7 @@ function collectRows(record, into) {
     __registry["send-flight.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.FLIGHT_MS = exports.FLYING_ATTRIBUTE = void 0;
+exports.FLYING_ATTRIBUTE = void 0;
 exports.installSendFlight = installSendFlight;
 /**
  * 发送气泡的起飞。
@@ -3179,28 +3179,16 @@ exports.installSendFlight = installSendFlight;
  * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到——动画挂在这两条
  * 节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
  *
- * 所以这里自己画一个替身。它是**两层**：外面那层壳就是输入框的形状（尺寸、圆角、底色都从输入卡片
- * 现读），里面挂着克隆下来的那条气泡（底色摘掉，交给壳），于是同一个元素从「一条输入框」连续地
- * 长成「一条气泡」：
+ * 所以这里自己画一个替身：输入卡片原样浮起来一份，一边飞一边收成那条气泡。替身怎么搭、形变怎么
+ * 算，全在 `send-morph.ts`；这个模块管什么时候起飞、飞向哪一行、什么时候落定：
  *
- *   抓起点    提交的 capture 阶段量下三样东西：草稿的位置与颜色、输入卡片的矩形、卡片的底色与圆角。
- *             全都早于 React 清空草稿。
+ *   抓起点    提交的捕获阶段把整张输入卡片抓下来（克隆、几何、外观），全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
- *   立替身    壳摆到输入卡片的位置与原尺寸，真实的那一行挂属性藏起来（保留布局盒，终点每帧都量得到）。
- *   逐帧画    位置与形变各走各的曲线：横向那条弹簧早早收完（前两成时间走掉九成），纵向那条拖满
- *             全程、收尾带一点回冲，形变再压进前一段里先收住。于是读者先看到气泡横着离开输入卡片、
- *             再看到它上升落定，形状却早早定死——位置、尺寸、圆角、底色、内容的相对位置都是这几条
- *             曲线的函数。整段时长固定在 `FLIGHT_MS`，曲线是阻尼弹簧，四个数都在下面写着、
- *             不开放给读者调。
- *
- *             **这一帧里只有纯计算和几次样式写。** 认行、量外形都不在这儿——那是 DOM 事件的活儿
- *             （见下面那条边界）。这里是每秒六十次的地方，任何一次查询或计算样式，都会把整页的
- *             布局结算拖进每一帧里来。
- *
- *             **位移不在主线程上。** 起手那一刻把两条曲线采成一段 `transform` 关键帧，交给
- *             `Element.animate` 去跑，合成器线程负责插值——dsh 解析一批响应占住主线程那几十毫秒时
- *             轨迹照样在走（改造前是每帧写一次 `transform`，主线程一忙它就冻住）。主线程每帧只剩
- *             形变与"终点移动了多少"这两件事，后者写在外层，动它不会把里层那段合成动画顶掉。
+ *   立替身    替身挂到页面上、整段动画交给合成器；真实的那一行挂属性藏起来（保留布局盒，终点每帧都
+ *             量得到）。
+ *   逐帧补    **这一帧里只有一件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行），补到替身的
+ *             最外层上。形状、颜色、位置、字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时
+ *             照样在走。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 五条边界（前两条是实测踩出来的）：
@@ -3209,76 +3197,17 @@ exports.installSendFlight = installSendFlight;
  *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
  *   认行不在帧里  「当场」不等于「每帧」。回显被正式那一行换掉，同一个 observer 会在本帧渲染之前
  *                 同步认出来；帧里再查一遍是白花的——长会话里光那两句全文档查询就够吃掉半帧。
- *                 量外形也一样：内边距、圆角、底色都属于同一个气泡，跟着行换一次就够。
- *   宽度要写死      克隆出来的气泡离开原来的弹性上下文后会摊成整行，所以宽度取量到的那一份；而
- *                 `getBoundingClientRect` 给的是 border-box 宽，`box-sizing` 必须跟着写成 border-box，
- *                 否则内边距会再叠一次（右边胖出一截）。
  *   抓不到就不做    起点抓不到（快捷键、程序化提交）时这一次不动手，读者看到的还是 dsh 原来的样子。
  *   藏起来必须还    真实行被藏着的这会儿，读者看不见那条消息。所以除了正常落定，还有一条定时器
  *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
+ *   只飞同一屏    起终点有一头已经在屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
  *
  * @module dsh-chat-ux/client/send-flight
  */
 const dom_contract_1 = require("./dom-contract");
+const send_morph_1 = require("./send-morph");
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
-/**
- * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
- * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。270 是选定值——短到读者不等它，
- * 长到看得清路径与落定那一下的回弹。
- *
- * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
- * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
- * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
- */
-exports.FLIGHT_MS = 300;
-/** 挂在替身壳上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
-const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
-/**
- * 三道缓动。**两条轴都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，
- * 走过了头还会弹回来一点点。
- *
- * **横向的角频率给得很大，于是它早早收完**：两成时间走掉八成三、四成走掉九成九，之后剩下的位移小到
- * 看不见。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开。
- *
- * 上一版是三次 ease-out 配二次 ease-in：两条导数互补，路径**始终在拐**、方向从起手平滑转到收尾，
- * 中间没有一段是平的。这条规矩是为「别画成直角折线」立的，代价却是横向一路拖到收尾——没有 iMessage
- * 那种「横过去那一下就完了、剩下全交给上升」的分量。这一版按后者重排。
- *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 1.5%，再落回目标——落定那一下的弹性就是它。
- *
- * **形变走横向那条曲线，但压进前 MORPH_END 段。** 于是它更早收住：气泡还没离开输入框就长成了
- * 气泡的样子，剩下那段上升里形状不再有可见变化。
- *
- * 两者分家是有代价的：右边缘会先往左退一截，再随横向回来。退多少不是常量——横向距离越近、气泡
- * 越窄，退得越多，实测在几十像素量级；横向距离够远时它根本不发生。气泡的横向位移本来就靠左边缘
- * 右移实现，宽度收得越早、左边缘到位就越早——两头不可兼得，这里选形状早点定死。
- *
- * 这三个数**不开放给读者调**：它们是照着「横向早早到位、上升占住后段、落定时回冲一下」量出来的
- * （逐帧对照见 `文档/业务/发送动效.md`）。换一组也画得出来——阻尼比取 1 就没有回冲，角频率取小
- * 就成了一条慢吞吞的直线——但那是另一种东西，不该由卡片上的一个开关决定。
- */
-const ACROSS_OMEGA = 16;
-/**
- * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
- * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
- *
- * 现在这个 0.8 冲过去约 **1.5%**：几百像素的行程上是十来个像素，看得见「放上去」那一下，又不会像弹球。
- * 它是照着 iMessage 收了一档来的——那一边本来就有回弹，只是比这里原来的 0.75（约 2.8%）更收敛。
- * **要自己再调就改这一个数**，改完 `npm run build`、Ctrl+F5 刷新页面看落定那一瞬。
- */
-const RISE_DAMPING = 0.75;
-/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
-const RISE_OMEGA = 7.5;
-/**
- * 形变收尾的位置。比横向早：气泡早点长成气泡，剩下那段上升里形状不再变。
- *
- * 它同时决定**"右侧那块空白"的窗口有多大**。位移跑在合成器上、形变由主线程每帧写，主线程被
- * dsh 的响应解析占住那几十毫秒时，位置会跑到形变前面——壳已经落到终点的横坐标、宽度却还没收完，
- * 右边于是多出一块底色，等主线程回来才闪回去。形变收得越早，这个窗口越短：0.85 是 230 ms，
- * 实测那类长任务（50–120 ms）几乎总能落在里面；0.45 是 121 ms，基本落在它外面。
- */
-const MORPH_END = 0.45;
 /** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
 const ORIGIN_TTL_MS = 1500;
 /**
@@ -3333,8 +3262,8 @@ function installSendFlight(readEnabled) {
         current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
         row.setAttribute(exports.FLYING_ATTRIBUTE, '');
         current.hidden = row;
-        current.target = measureTarget(row);
-        placeGhost(current, performance.now() - current.startedAt);
+        current.bubble = findBubble(row);
+        followTarget(current);
     });
     /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
     const settle = () => {
@@ -3346,61 +3275,49 @@ function installSendFlight(readEnabled) {
         window.clearTimeout(rescue);
         rescue = 0;
         current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
-        current.travel.cancel();
-        current.wrapper.remove();
+        for (const animation of current.morph.animations)
+            animation.cancel();
+        current.morph.wrapper.remove();
     };
-    /** 帧里只画。认行与量外形都交给上面那个 observer——它们不是每帧都有新答案的事。 */
+    /** 帧里只补终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。 */
     const tick = () => {
         const current = flight;
         if (current === null)
             return;
-        const elapsed = performance.now() - current.startedAt;
-        if (elapsed >= current.ms) {
+        if (performance.now() - current.startedAt >= send_morph_1.FLIGHT_MS) {
             settle();
             return;
         }
-        placeGhost(current, elapsed);
+        followTarget(current);
         requestAnimationFrame(tick);
     };
-    /** 起一段飞行：立替身、藏真实行、把第一帧摆好。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+    /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
     const startFlight = (echo, draft) => {
-        const target = measureTarget(echo);
-        if (target === null)
+        const bubble = findBubble(echo);
+        if (bubble === null)
             return;
-        const box = target.bubble.getBoundingClientRect();
-        const card = draft.card.box;
+        const box = bubble.getBoundingClientRect();
+        const card = draft.snapshot.box;
         if (!sameScreen(card.left, box.left, window.innerWidth))
             return;
         if (!sameScreen(card.top, box.top, window.innerHeight))
             return;
-        const ghost = createGhost(target.bubble, box, { left: card.left, top: card.top });
-        if (ghost === null)
+        const morph = (0, send_morph_1.startMorph)(draft.snapshot, bubble, box);
+        if (morph === null)
             return;
         echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
-        // 位移整段交给合成器：主线程被响应解析占住那几十毫秒时，轨迹照样在走。
-        const travel = ghost.shell.animate(flightKeyframes(box.left - card.left, box.top - card.top), {
-            duration: exports.FLIGHT_MS,
-            easing: 'linear',
-            fill: 'forwards',
-        });
         flight = {
-            draft,
-            wrapper: ghost.wrapper,
-            shell: ghost.shell,
-            content: ghost.content,
-            travel,
+            morph,
             startedAt: performance.now(),
-            ms: exports.FLIGHT_MS,
             targetAt: { left: box.left, top: box.top },
             shiftedX: 0,
             shiftedY: 0,
             previous: lastUserRow(),
             hidden: echo,
-            target,
+            bubble,
         };
-        placeGhost(flight, 0);
         rowWatcher.observe(document.body, { childList: true, subtree: true });
-        rescue = window.setTimeout(settle, exports.FLIGHT_MS + RESCUE_MARGIN_MS);
+        rescue = window.setTimeout(settle, send_morph_1.FLIGHT_MS + RESCUE_MARGIN_MS);
         requestAnimationFrame(tick);
     };
     /**
@@ -3436,22 +3353,13 @@ function installSendFlight(readEnabled) {
         const card = input.closest(dom_contract_1.COMPOSER_CARD_SELECTOR);
         if (!(card instanceof HTMLElement))
             return;
-        const range = document.createRange();
-        range.selectNodeContents(input);
-        const box = range.getBoundingClientRect();
-        if (box.width === 0 || box.height === 0)
+        // 空草稿不会提交出一条消息；量它只是白花一次克隆。
+        if ((input.textContent ?? '').trim() === '')
             return;
-        const cardStyle = getComputedStyle(card);
-        origin = {
-            capturedAt: performance.now(),
-            box,
-            color: getComputedStyle(input).color,
-            card: {
-                box: card.getBoundingClientRect(),
-                background: cardStyle.backgroundColor,
-                radius: pixel(cardStyle.borderTopLeftRadius),
-            },
-        };
+        const snapshot = (0, send_morph_1.snapshotComposer)(input, card);
+        if (snapshot === null)
+            return;
+        origin = { capturedAt: performance.now(), snapshot };
         echoWatcher.observe(document.body, { childList: true, subtree: true });
     };
     /**
@@ -3482,6 +3390,29 @@ function installSendFlight(readEnabled) {
         origin = null;
         settle();
     };
+}
+/**
+ * 把终点动了多少补到替身的最外层上。
+ *
+ * 这是每帧唯一的 JS：一次矩形读、至多一次样式写。飞行期间终点通常只动几十像素（提交后 dsh 自己会
+ * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
+ */
+function followTarget(value) {
+    const bubble = value.bubble;
+    if (bubble === null)
+        return;
+    const box = bubble.getBoundingClientRect();
+    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
+    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+    if (box.width === 0)
+        return;
+    const shiftX = box.left - value.targetAt.left;
+    const shiftY = box.top - value.targetAt.top;
+    if (shiftX === value.shiftedX && shiftY === value.shiftedY)
+        return;
+    value.shiftedX = shiftX;
+    value.shiftedY = shiftY;
+    value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)';
 }
 /**
  * 取一条还没认过的回显行。
@@ -3529,29 +3460,12 @@ function findBubble(row) {
         const current = queue.shift();
         if (current === undefined)
             break;
-        if (current instanceof HTMLElement && alphaOf(getComputedStyle(current).backgroundColor) > 0)
+        if (current instanceof HTMLElement && (0, send_morph_1.alphaOf)(getComputedStyle(current).backgroundColor) > 0)
             return current;
         for (const child of current.children)
             queue.push(child);
     }
     return null;
-}
-/**
- * 量一次终点：气泡在哪儿（每帧现读）、长什么样（只读这一次）。
- * @param row - 此刻藏着的那一行。
- * @returns 终点；这一行里找不到画了底色的元素时为 null。
- */
-function measureTarget(row) {
-    const bubble = findBubble(row);
-    if (bubble === null)
-        return null;
-    const style = getComputedStyle(bubble);
-    return {
-        bubble,
-        padding: { top: pixel(style.paddingTop), left: pixel(style.paddingLeft) },
-        radius: pixel(style.borderTopLeftRadius),
-        background: style.backgroundColor,
-    };
 }
 /**
  * 这一批 DOM 变化里有没有碰用户行或回显行。
@@ -3588,120 +3502,573 @@ function isRowNode(node) {
 function sameScreen(start, end, viewportExtent) {
     return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent);
 }
+    };
+
+    __registry["send-morph.js"] = function (module, exports, require) {
+"use strict";
 /**
- * 立一个替身：壳 + 壳里的克隆气泡。
+ * 发送气泡的形变：从「一整张输入卡片」连续地长成「一条气泡」，整段在起飞那一刻算好、交给合成器。
  *
- * 克隆而不是自绘：主题、字体、圆角、内边距全跟着它走，连暗色主题都自动对得上。两处必须写死——
- * 宽度（它原来靠一个靠右对齐的弹性上下文撑着，一挪到 body 上就会摊成整行）与 `box-sizing`
- * （`getBoundingClientRect` 量到的是 border-box 宽，不声明的话内边距会再叠一次）。底色摘掉交给壳，
- * 否则起点会看到「一个大输入框里贴着一小块气泡色」。
- * @param bubble - 克隆的源头。
- * @param box - 已经量好的气泡矩形。调用方本来就要它，这里不再重量一次。
- * @param origin - 输入卡片左上角：外层就摆在它上面，位移从零开始。
- * @returns 外层、壳与内容；气泡量不到尺寸时为 null。
+ * 读者看到的是：提交的那一下，输入卡片原样浮起来一份——底色、圆角、描边与阴影、工具栏、草稿
+ * 里的字一样不差；它一边飞，一边把多出来的东西收掉（工具栏两组各自贴着最近的那个角缩小、淡出，
+ * 描边与阴影跟着形状缩、跟着淡），外形收成气泡，字跟着变窄的形状一行一行重新排，落地时正好就是
+ * 那条真实的气泡。真实的输入框留在原地、已经清空，替身从它身上离开。
+ *
+ * **为什么全部预先算好。** 提交那一刻 dsh 的主线程很重（新会话从 hero 切到对话、空闲会话第一次
+ * 挂消息，都是几十到一百多毫秒的长任务），这段动画要是有任何一件事留在主线程上，它就会在那里卡住。
+ * 形状、位置、透明度都是合成器能跑的属性（在真实 Chromium 里量过：主线程被整块占住四百毫秒，
+ * `clip-path: inset(... round)`、`transform`、`opacity` 照样逐帧在走，`width` 纹丝不动）。唯一绕不开
+ * 布局的是「字跟着形状重新排」——但折行只在一串离散的宽度上变化，所以把它也提前做掉：
+ *
+ *   形状    一个壳，`clip-path` 的圆角矩形从卡片的尺寸收到气泡的尺寸，圆角跟着 `round` 一起插值，
+ *           不会像缩放那样被压扁。底色是壳里两层实色（卡片的、气泡的）靠透明度交叉淡换——
+ *           `clip-path` 与 `background-color` 写进同一段关键帧时两个都会掉回主线程，实测主线程一占住，
+ *           形状与颜色一起定格。
+ *   描边    `clip-path` 会连元素自己的阴影一起裁掉，所以卡片的阴影与那一圈发丝描边挂在壳后面一个
+ *           单独的「光晕」上：透明的盒子、原样的 box-shadow，跟着壳的外框缩放，一路淡掉。
+ *   工具栏  卡片整张克隆下来（去掉底色与阴影，交给壳和光晕），工具栏左右两组各自贴着壳上最近的
+ *           那个角走，边缩小边淡出——右边那组跟着右下角往里收，左边那组跟着底边往上收。
+ *   字      起飞前先把「气泡的正文」在形变沿途的每一个宽度上排一遍，折行一样的归成一段，每段一层
+ *           预先排好的字；时间到了哪一段就亮哪一层（`opacity` 的阶跃，合成器上切换）。多行时行高也
+ *           要从输入框的 24 走到气泡的 22，行高按半像素分档，同样归进层里。第一段用的是输入框里那份
+ *           草稿自己的克隆（引用、技能那些小块在输入框里另有样式），形变过半才换成气泡的写法。最后
+ *           一层就是气泡自己的排版，交接时一个像素都不跳。
+ *
+ * 主线程上每帧只剩一件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行），写在最外层，见
+ * `send-flight.ts`。
+ *
+ * @module dsh-chat-ux/client/send-morph
  */
-function createGhost(bubble, box, origin) {
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FLIGHT_MS = void 0;
+exports.snapshotComposer = snapshotComposer;
+exports.startMorph = startMorph;
+exports.pixel = pixel;
+exports.alphaOf = alphaOf;
+/**
+ * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
+ * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。
+ *
+ * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
+ * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
+ * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
+ */
+exports.FLIGHT_MS = 300;
+/**
+ * 两道缓动，**都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，走过了头
+ * 还会弹回来一点点。
+ *
+ * **形变一道，横向也走它。** 外框的左右两条边各自从卡片的边走到气泡的边：宽度收多少、往哪边收，都是
+ * 这一条曲线的函数，两条边都单调，不会冲出消息列，也不会先往回退一截。上一版横向单独走一条很快的
+ * 弹簧（两成时间走掉八成三），形状一慢下来，宽着的外框就会被它甩出列的右边；而形变要是跟着那么快，
+ * 工具栏在三帧之内就没了，读者看不到它是怎么收掉的。临界阻尼，不过冲：形状不该弹。
+ *
+ * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 1.5%，再落回目标——落定那一下的弹性就是它。
+ *
+ * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
+ */
+const MORPH_OMEGA = 7;
+/**
+ * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
+ * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
+ */
+const RISE_DAMPING = 0.75;
+/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
+const RISE_OMEGA = 7.5;
+/**
+ * 形变收尾的位置（占整段的比例）。
+ *
+ * 形变曾经每帧由主线程写，那时它必须早收（0.45）：位移在合成器上、形变在主线程，主线程一忙，
+ * 位置就跑到形状前面、右边拖出一块底色。现在两者都在合成器上、同一条时间线，不会再错开，所以它
+ * 按「看得清输入卡片是怎么收成气泡的」来取：工具栏收走、字重新排，都要占得住一段读者看得见的时间。
+ * 配上 `MORPH_OMEGA`，六十毫秒走掉六成、九十毫秒八成，两百毫秒上下定形，剩下那一段只有上升与落定。
+ */
+const MORPH_END = 0.7;
+/** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
+const SAMPLES = 60;
+/** 工具栏在形变进度走到这里时收完、淡完（九十毫秒上下）。比形状早：多出来的东西先走，剩下的才是气泡。 */
+const CHROME_GONE_AT = 0.8;
+/** 工具栏收到最小时的缩放。不收到零：它是淡掉的，缩放只负责「往角里退」的那个方向感。 */
+const CHROME_MIN_SCALE = 0.55;
+/** 光晕（卡片的阴影与描边）在形变进度走到这里时淡完。气泡没有阴影，比工具栏晚一点走。 */
+const HALO_GONE_AT = 0.9;
+/** 输入框那份草稿克隆最晚亮到这里就换成气泡的写法：引用、技能那些小块在两边的样式不一样。 */
+const DRAFT_HANDOFF_AT = 0.5;
+/** 行高分档的粒度。多行时行距从 24 走到 22，每半像素一档。 */
+const LINE_HEIGHT_STEP = 0.5;
+/**
+ * 字最多分几层。折行在一串离散的宽度上变化，一段很长的正文可能变上几十次，每一层都是一张合成层
+ * 纹理；超过这个数就把最短的那些段并进前一段——少几次重排，读者看不出来。
+ */
+const MAX_TEXT_LAYERS = 14;
+/** 从卡片祖先那里继承下来、克隆必须带上的普通属性。自定义属性另外按差值挑。 */
+const INHERITED_PROPERTIES = [
+    'color', 'font-family', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction',
+];
+/** 字层要从气泡身上抄的排字属性：少抄一条，折行或字形就会和真实气泡对不上。 */
+const TEXT_PROPERTIES = [
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
+    'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
+];
+/** 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。 */
+const IDENTITY_ATTRIBUTES = [
+    'id', 'contenteditable', 'data-composer-card', 'data-composer-input', 'data-input-scroll',
+    'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
+];
+/**
+ * 抓一次输入卡片：几何、外观、以及整张克隆。
+ *
+ * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
+ * `cloneNode`，放在读者按下回车的那一刻不会让它等。
+ * @param input - 草稿的可编辑面。
+ * @param card - 输入卡片。
+ * @returns 抓到的快照；卡片量不到尺寸、或者草稿区不在卡片里时为 null。
+ */
+function snapshotComposer(input, card) {
+    const box = card.getBoundingClientRect();
     if (box.width === 0 || box.height === 0)
         return null;
-    const content = bubble.cloneNode(true);
-    content.removeAttribute('id');
-    content.style.position = 'absolute';
-    content.style.left = '0px';
-    content.style.top = '0px';
-    content.style.width = box.width + 'px';
-    content.style.boxSizing = 'border-box';
-    content.style.margin = '0px';
-    content.style.backgroundColor = 'transparent';
-    const shell = document.createElement('div');
-    shell.style.position = 'absolute';
-    shell.style.left = '0px';
-    shell.style.top = '0px';
-    shell.style.margin = '0px';
-    shell.style.overflow = 'hidden';
-    shell.style.pointerEvents = 'none';
-    // 壳的尺寸每帧都在变。圈成一块独立的布局与绘制区域，那些变化就不会外溢到聊天区去。
-    shell.style.contain = 'layout paint';
-    // 光有关键帧还不够：没有自己的合成层时，Blink 会把它当普通动画留在主线程上，dsh 一忙就停。
-    // 这个提示让壳拿到自己的层（它只活一段飞行，层跟着一起消失）。
-    shell.style.willChange = 'transform';
-    shell.appendChild(content);
-    // 两层是分开放的：位移动画挂在里层的壳上，而"终点动了多少"写在外层。合在一层的话，每补一次
-    // 终点位移都会把那段合成动画顶掉——那正是主线程忙时最不该丢掉的东西。
+    const scroll = input.closest('[data-input-scroll]');
+    if (scroll === null || scroll.parentElement !== card)
+        return null;
+    const cardStyle = getComputedStyle(card);
+    const inputStyle = getComputedStyle(input);
+    const inputBox = input.getBoundingClientRect();
+    const text = {
+        left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
+        top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
+        right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
+        lineHeight: pixel(inputStyle.lineHeight),
+    };
+    // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
+    // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
+    const paths = [];
+    const rectOf = (element) => {
+        const r = element.getBoundingClientRect();
+        return [r.left - box.left, r.top - box.top, r.width, r.height];
+    };
+    const collect = (element, path) => {
+        const [, , width, height] = rectOf(element);
+        if (width * height === 0) {
+            if (getComputedStyle(element).display !== 'contents')
+                return;
+            Array.from(element.children).forEach((child, index) => { collect(child, [...path, index]); });
+            return;
+        }
+        const groups = Array.from(element.children).filter((child) => {
+            const [, , w, h] = rectOf(child);
+            return w * h > 0;
+        });
+        if (width >= box.width * 0.9 && groups.length >= 2) {
+            Array.from(element.children).forEach((child, index) => {
+                const rect = rectOf(child);
+                if (rect[2] * rect[3] > 0)
+                    paths.push({ path: [...path, index], rect });
+            });
+            return;
+        }
+        paths.push({ path, rect: rectOf(element) });
+    };
+    Array.from(card.children).forEach((child, index) => {
+        if (child !== scroll)
+            collect(child, [index]);
+    });
+    // 继承环境：自定义属性只挑和 body 上不一样的（替身挂在 body 下，一样的本来就继承得到）。
+    const bodyStyle = getComputedStyle(document.body);
+    const context = [];
+    for (let index = 0; index < cardStyle.length; index += 1) {
+        const name = cardStyle[index];
+        if (name === undefined || !name.startsWith('--'))
+            continue;
+        const value = cardStyle.getPropertyValue(name);
+        if (value !== bodyStyle.getPropertyValue(name))
+            context.push([name, value]);
+    }
+    for (const name of INHERITED_PROPERTIES)
+        context.push([name, cardStyle.getPropertyValue(name)]);
+    const clone = card.cloneNode(true);
+    scrub(clone);
+    clone.style.position = 'absolute';
+    clone.style.left = '0px';
+    clone.style.top = '0px';
+    clone.style.margin = '0px';
+    clone.style.width = box.width + 'px';
+    clone.style.maxWidth = 'none';
+    clone.style.height = box.height + 'px';
+    clone.style.boxSizing = 'border-box';
+    clone.style.background = 'transparent';
+    clone.style.boxShadow = 'none';
+    const draft = clone.children[Array.from(card.children).indexOf(scroll)];
+    // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
+    // 工具栏会跟着往上跑。
+    const scrollBox = scroll.getBoundingClientRect();
+    draft.style.height = scrollBox.height + 'px';
+    draft.style.minHeight = '0px';
+    draft.style.maxHeight = 'none';
+    const chrome = [];
+    for (const { path, rect } of paths) {
+        let element = clone;
+        for (const index of path)
+            element = element?.children[index];
+        if (element instanceof HTMLElement)
+            chrome.push({ element, rect });
+    }
+    return {
+        box,
+        background: cardStyle.backgroundColor,
+        radius: pixel(cardStyle.borderTopLeftRadius),
+        shadow: cardStyle.boxShadow,
+        clone,
+        draft,
+        draftScrollTop: scroll.scrollTop,
+        chrome,
+        text,
+        context,
+    };
+}
+/**
+ * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
+ * @param snapshot - 起飞前抓下来的输入卡片。
+ * @param bubble - 终点那条气泡（此刻已经在布局里、被藏着）。
+ * @param end - 气泡的视口矩形。
+ * @returns 起好的形变；气泡量不到尺寸时为 null。
+ */
+function startMorph(snapshot, bubble, end) {
+    if (end.width === 0 || end.height === 0)
+        return null;
+    const start = snapshot.box;
+    const style = getComputedStyle(bubble);
+    const W0 = start.width;
+    const H0 = start.height;
+    const W1 = end.width;
+    const H1 = end.height;
+    const R0 = snapshot.radius;
+    const R1 = pixel(style.borderTopLeftRadius);
+    const from = snapshot.text;
+    const to = {
+        left: bubble.clientLeft + pixel(style.paddingLeft),
+        top: bubble.clientTop + pixel(style.paddingTop),
+        right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
+        lineHeight: pixel(style.lineHeight),
+    };
+    const boxWidth = Math.max(W0, W1);
+    const boxHeight = Math.max(H0, H1);
+    // 整段时间线：每个采样点上的形变进度，以及由它推出来的外框、内边距、行高、可排字的宽度。
+    const samples = [];
+    for (let step = 0; step <= SAMPLES; step += 1) {
+        const u = step / SAMPLES;
+        const m = morphProgress(u);
+        const width = W0 + (W1 - W0) * m;
+        const left = from.left + (to.left - from.left) * m;
+        const right = from.right + (to.right - from.right) * m;
+        samples.push({
+            u,
+            m,
+            width,
+            height: H0 + (H1 - H0) * m,
+            radius: R0 + (R1 - R0) * m,
+            left,
+            top: from.top + (to.top - from.top) * m,
+            content: Math.max(1, width - left - right),
+            lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
+        });
+    }
     const wrapper = document.createElement('div');
     wrapper.setAttribute(GHOST_ATTRIBUTE, '');
     wrapper.setAttribute('aria-hidden', 'true');
-    wrapper.style.position = 'fixed';
-    wrapper.style.left = origin.left + 'px';
-    wrapper.style.top = origin.top + 'px';
-    wrapper.style.width = '0px';
-    wrapper.style.height = '0px';
-    wrapper.style.margin = '0px';
-    wrapper.style.pointerEvents = 'none';
-    // 比消息列上任何一层都高：它是从输入框一路飞过去的东西。
-    wrapper.style.zIndex = '2147483000';
-    wrapper.appendChild(shell);
+    wrapper.inert = true;
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000';
+    wrapper.style.left = start.left + 'px';
+    wrapper.style.top = start.top + 'px';
+    const mover = document.createElement('div');
+    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform';
+    const halo = document.createElement('div');
+    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity';
+    halo.style.width = W0 + 'px';
+    halo.style.height = H0 + 'px';
+    halo.style.borderRadius = R0 + 'px';
+    halo.style.boxShadow = snapshot.shadow;
+    const shell = document.createElement('div');
+    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;will-change:transform';
+    shell.style.width = boxWidth + 'px';
+    shell.style.height = boxHeight + 'px';
+    for (const [name, value] of snapshot.context)
+        shell.style.setProperty(name, value);
+    // 底色是两层实色叠着淡，不是 `background-color` 动画：它和 `clip-path` 写在同一段关键帧里时，两个都
+    // 会掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的
+    // 那条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
+    const bubbleFill = document.createElement('div');
+    bubbleFill.style.cssText = 'position:absolute;inset:0';
+    bubbleFill.style.backgroundColor = style.backgroundColor;
+    const cardFill = document.createElement('div');
+    cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity';
+    cardFill.style.backgroundColor = snapshot.background;
+    shell.append(bubbleFill, cardFill, snapshot.clone);
+    // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
+    // 自己，其余每段一层。
+    const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth);
+    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding);
+    const layers = bubbleWindows.map((window) => {
+        const layer = textLayer(bubble, style);
+        layer.style.width = window.width + 'px';
+        layer.style.lineHeight = window.lineHeight + 'px';
+        shell.appendChild(layer);
+        return { layer, window };
+    });
+    mover.appendChild(halo);
+    mover.appendChild(shell);
+    wrapper.appendChild(mover);
     document.body.appendChild(wrapper);
-    return { wrapper, shell, content };
-}
-/**
- * 把替身摆到进度处。
- *
- * **位移不在这里。** 它是一条 `transform` 关键帧动画，跑在**合成器线程**上——主线程被 dsh 解析
- * 响应占住那几十毫秒时，读者看到的仍然是一条在走的轨迹。这里是每帧唯一的 JS：形变（尺寸、圆角、
- * 底色）写到壳上，终点移动了多少补到外层，内容保持自己的相对位置。
- *
- * 形变留在主线程是有意的：它到 `MORPH_END` 就定死，之后再没有可见变化，而且它只是几次样式写、
- * 一次布局读都没有。外形从 `target` 里拿，不在这里读计算样式。
- */
-function placeGhost(value, elapsed) {
-    const target = value.target;
-    if (target === null)
-        return;
-    const box = target.bubble.getBoundingClientRect();
-    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不画，
-    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
-    if (box.width === 0)
-        return;
-    const card = value.draft.card;
-    const progressed = Math.min(1, elapsed / value.ms);
-    const morph = springProgress(Math.min(1, progressed / MORPH_END), 1, ACROSS_OMEGA);
-    const shell = value.shell;
-    const content = value.content;
-    // 终点动了多少就补多少。飞行期间它通常只动几十像素（提交后 dsh 自己会滚到底、回显会被正式行
-    // 换掉），所以这条"整体补差"与原来"每帧按曲线重算位置"看起来是同一件事。
-    const shiftX = box.left - value.targetAt.left;
-    const shiftY = box.top - value.targetAt.top;
-    if (shiftX !== value.shiftedX || shiftY !== value.shiftedY) {
-        value.shiftedX = shiftX;
-        value.shiftedY = shiftY;
-        value.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)';
+    // 克隆要进了文档才能滚到原来的位置。
+    if (snapshot.draftScrollTop > 0)
+        snapshot.draft.scrollTop = snapshot.draftScrollTop;
+    const timing = { duration: exports.FLIGHT_MS, easing: 'linear', fill: 'forwards' };
+    const animations = [];
+    const run = (element, frames) => {
+        const animation = element.animate(frames, timing);
+        animations.push(animation);
+        return animation;
+    };
+    // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
+    // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
+    const between = (from, until, frame) => {
+        const frames = [];
+        for (const sample of samples) {
+            if (sample.u < from || sample.u > until)
+                continue;
+            frames.push({ ...frame(sample), offset: sample.u });
+        }
+        const first = frames[0];
+        const last = frames.at(-1);
+        if (first !== undefined && (first.offset ?? 0) > 0)
+            frames.unshift({ ...first, offset: 0 });
+        if (last !== undefined && (last.offset ?? 1) < 1)
+            frames.push({ ...last, offset: 1 });
+        return frames;
+    };
+    const dx = end.left - start.left;
+    const dy = end.top - start.top;
+    // 横向走形变那条曲线：左边从卡片的左边走到气泡的左边，右边（左边加宽度）同理，两条边都单调。
+    const travel = run(mover, samples.map(sample => ({
+        offset: sample.u,
+        transform: 'translate(' + dx * sample.m + 'px, ' + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
+    })));
+    // 形状这一条只放 `clip-path`：和别的属性合在一段关键帧里，它就不上合成器了。
+    run(shell, between(0, MORPH_END, sample => ({
+        clipPath: 'inset(0px ' + (boxWidth - sample.width) + 'px ' + (boxHeight - sample.height) + 'px 0px round '
+            + sample.radius + 'px)',
+    })));
+    run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) })));
+    run(halo, between(0, MORPH_END, sample => ({
+        transform: 'scale(' + sample.width / W0 + ', ' + sample.height / H0 + ')',
+        opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
+    })));
+    for (const piece of snapshot.chrome) {
+        const [x, y, width, height] = piece.rect;
+        // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
+        const anchorRight = x + width / 2 > W0 / 2;
+        const anchorBottom = y + height / 2 > H0 / 2;
+        piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%');
+        run(piece.element, between(0, MORPH_END, (sample) => {
+            const gone = Math.min(1, sample.m / CHROME_GONE_AT);
+            const shiftX = anchorRight ? sample.width - W0 : 0;
+            const shiftY = anchorBottom ? sample.height - H0 : 0;
+            return {
+                transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
+                opacity: String(1 - gone),
+            };
+        }));
     }
-    shell.style.width = (card.box.width + (box.width - card.box.width) * morph) + 'px';
-    shell.style.height = (card.box.height + (box.height - card.box.height) * morph) + 'px';
-    shell.style.borderRadius = (card.radius + (target.radius - card.radius) * morph) + 'px';
-    shell.style.backgroundColor = mixColor(card.background, target.background, morph);
-    content.style.transform = 'translate('
-        + ((value.draft.box.left - card.box.left - target.padding.left) * (1 - morph)) + 'px, '
-        + ((value.draft.box.top - card.box.top - target.padding.top) * (1 - morph)) + 'px)';
+    // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
+    const draftUntil = draftWindow === undefined ? 1 : draftWindow.until;
+    run(snapshot.draft, between(0, draftUntil, sample => ({
+        transform: 'translate(' + (sample.left - from.left) + 'px, '
+            + (sample.top - from.top + (sample.lineHeight - from.lineHeight) / 2) + 'px)',
+    })));
+    run(snapshot.draft, stepOpacity(0, draftUntil));
+    for (const { layer, window } of layers) {
+        run(layer, between(window.from, window.until, sample => ({
+            transform: 'translate(' + sample.left + 'px, ' + (sample.top + (sample.lineHeight - window.lineHeight) / 2) + 'px)',
+        })));
+        run(layer, stepOpacity(window.from, window.until));
+    }
+    return { wrapper, travel, animations };
 }
-/** 位移采样的段数。弹簧是连续曲线，拿折线去逼近它——段数够密就看不出折点。 */
-const FLIGHT_KEYFRAMES = 48;
+/** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
+const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
 /**
- * 把两条弹簧曲线采成一段 `transform` 关键帧：横向临界阻尼（早早收完），纵向欠阻尼（收尾回冲）。
- * 采样点之间是线性插值，所以动画自己不用 easing——曲线已经在关键帧里。
- * @param dx - 起点到终点的横向位移。
- * @param dy - 起点到终点的纵向位移。
- * @returns 可以直接交给 `Element.animate` 的关键帧数组。
+ * 把形变沿途的每一个宽度都排一遍，折行一样（多行时再加上行高同档）的归成一段。
+ *
+ * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
+ * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
+ * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
+ * @param bottomPadding - 气泡正文到底边的距离，字撑高外框时用。
+ * @returns 按时间排好的段；第一段的内容由草稿克隆负责，这里只给它时间窗。
  */
-function flightKeyframes(dx, dy) {
+function textWindows(bubble, style, samples, finalLineHeight, bottomPadding) {
+    const probeHost = document.createElement('div');
+    probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none';
+    const probe = textLayer(bubble, style);
+    probe.style.position = 'static';
+    probeHost.appendChild(probe);
+    document.body.appendChild(probeHost);
+    const layouts = new Map();
+    const layoutAt = (width) => {
+        // 宽度原样用，不取整：气泡是按字的宽度收缩的，它的内容区就是最长那一行的宽度，往下舍哪怕
+        // 零点几像素，最后那一行都会被挤到下一行去。
+        const key = width;
+        const known = layouts.get(key);
+        if (known !== undefined)
+            return known;
+        probe.style.width = key + 'px';
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        const tops = new Set();
+        const parts = [];
+        for (const rect of range.getClientRects()) {
+            tops.add(Math.round(rect.top));
+            parts.push(Math.round(rect.top) + ':' + Math.round(rect.right));
+        }
+        const layout = { signature: parts.join(','), lines: tops.size };
+        layouts.set(key, layout);
+        return layout;
+    };
+    // 每一格按这一格里最窄的那一刻排：外框在这五毫秒里还在收，按起点排的话，字会在这一格的后半截
+    // 顶进右边的内边距、甚至顶出外框（实测形变最快那一段，一格能收十几像素）。第一格按卡片自己的
+    // 宽度排——它就是输入框里原样的折行，而弹簧起手的那一格几乎没动。
+    const widths = samples.map((sample, index) => {
+        const next = samples[index + 1];
+        return index === 0 || next === undefined ? sample.content : Math.min(sample.content, next.content);
+    });
+    // 不必每一格都排：默认的折行是贪心的，两个宽度排出来一模一样，夹在中间的每一个宽度也一样
+    // （每一行能放下的，至少是窄的那边放下的、至多是宽的那边放下的，两边相同就只能是它）。所以只在
+    // 两头不一样的地方二分下去——一段长正文从四十来次排版降到十来次。
+    const perSample = new Array(widths.length);
+    const fill = (from, to) => {
+        if (to - from <= 1)
+            return;
+        const left = perSample[from];
+        const right = perSample[to];
+        if (left !== undefined && right !== undefined && left.signature === right.signature) {
+            for (let index = from + 1; index < to; index += 1)
+                perSample[index] = left;
+            return;
+        }
+        const middle = (from + to) >> 1;
+        perSample[middle] = layoutAt(widths[middle] ?? 0);
+        fill(from, middle);
+        fill(middle, to);
+    };
+    const lastIndex = widths.length - 1;
+    perSample[0] = layoutAt(widths[0] ?? 0);
+    perSample[lastIndex] = layoutAt(widths[lastIndex] ?? 0);
+    fill(0, lastIndex);
+    const windows = [];
+    samples.forEach((sample, index) => {
+        const width = widths[index] ?? sample.content;
+        const layout = perSample[index] ?? layoutAt(width);
+        // 窄下来之后行数变多，字要是比外框还高，外框跟着长——自适应高度的气泡本来就是这样。
+        const needed = sample.top + layout.lines * sample.lineHeight + bottomPadding;
+        if (needed > sample.height)
+            sample.height = needed;
+        // 单行时行高不影响字形的位置（上下的差由平移补上），不必为它分层。
+        const lineHeight = layout.lines > 1
+            ? Math.round(sample.lineHeight / LINE_HEIGHT_STEP) * LINE_HEIGHT_STEP
+            : finalLineHeight;
+        const key = layout.signature + '|' + lineHeight;
+        const last = windows.at(-1);
+        if (last !== undefined)
+            last.until = sample.u;
+        if (last !== undefined && last.key === key)
+            return;
+        windows.push({ key, from: sample.u, until: sample.u, width, lineHeight });
+    });
+    probeHost.remove();
+    const lastWindow = windows.at(-1);
+    if (lastWindow !== undefined)
+        lastWindow.until = 1;
+    // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
+    const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1;
+    const first = windows[0];
+    if (first !== undefined && first.until > handoff) {
+        windows.splice(1, 0, { key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight });
+        first.until = handoff;
+    }
+    // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
+    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
+    while (windows.length > MAX_TEXT_LAYERS) {
+        let shortest = 2;
+        for (let index = 3; index < windows.length - 1; index += 1) {
+            const window = windows[index];
+            const best = windows[shortest];
+            if (window === undefined || best === undefined)
+                continue;
+            if (window.until - window.from < best.until - best.from)
+                shortest = index;
+        }
+        const removed = windows[shortest];
+        const following = windows[shortest + 1];
+        if (removed === undefined || following === undefined)
+            break;
+        following.from = removed.from;
+        windows.splice(shortest, 1);
+    }
+    return windows;
+}
+/**
+ * 一层预先排好的正文：气泡里的内容原样克隆，排字属性从气泡上抄。
+ * @param bubble - 终点那条气泡。
+ * @param style - 它的计算样式。
+ * @returns 还没定宽的字层。
+ */
+function textLayer(bubble, style) {
+    const layer = document.createElement('div');
+    layer.style.cssText = 'position:absolute;left:0;top:0;margin:0;padding:0;border:0;box-sizing:content-box;will-change:transform,opacity';
+    for (const name of TEXT_PROPERTIES)
+        layer.style.setProperty(name, style.getPropertyValue(name));
+    for (const node of bubble.childNodes) {
+        const copy = node.cloneNode(true);
+        if (copy instanceof Element)
+            scrub(copy);
+        layer.appendChild(copy);
+    }
+    return layer;
+}
+/**
+ * 一段只在 `[from, until)` 里亮着的透明度：两头是阶跃，合成器上切换。
+ * @returns 关键帧；同一个 offset 出现两次，就是在那一刻跳变。
+ */
+function stepOpacity(from, until) {
     const frames = [];
-    for (let step = 0; step <= FLIGHT_KEYFRAMES; step += 1) {
-        const u = step / FLIGHT_KEYFRAMES;
-        const x = dx * springProgress(u, 1, ACROSS_OMEGA);
-        const y = dy * springProgress(u, RISE_DAMPING, RISE_OMEGA);
-        frames.push({ transform: 'translate(' + x + 'px, ' + y + 'px)', offset: u });
-    }
+    if (from > 0)
+        frames.push({ offset: 0, opacity: '0' }, { offset: from, opacity: '0' });
+    frames.push({ offset: from, opacity: '1' }, { offset: until, opacity: '1' });
+    if (until < 1)
+        frames.push({ offset: until, opacity: '0' }, { offset: 1, opacity: '0' });
     return frames;
+}
+/** 把一棵克隆里的身份标记全部摘掉：替身不能被 dsh 或本插件找成输入框、也不能拿到焦点。 */
+function scrub(root) {
+    const all = [root, ...root.querySelectorAll('*')];
+    for (const element of all) {
+        for (const name of IDENTITY_ATTRIBUTES)
+            element.removeAttribute(name);
+    }
+    for (const layer of root.querySelectorAll('[data-chat-ux-caret-layer]'))
+        layer.remove();
+}
+/**
+ * 形变进度：一条临界阻尼的弹簧，压进前 `MORPH_END` 段。弹簧在窗口末端还差一点点没到（ω=7 时差
+ * 0.7%），整条按末端的值归一，终点严丝合缝、中间也不跳。
+ */
+function morphProgress(u) {
+    if (u >= MORPH_END)
+        return 1;
+    return springProgress(u / MORPH_END, 1, MORPH_OMEGA) / springProgress(1, 1, MORPH_OMEGA);
 }
 /**
  * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
@@ -3719,16 +4086,6 @@ function springProgress(u, damping, omega) {
     const damped = omega * Math.sqrt(1 - damping * damping);
     return 1 - Math.exp(-damping * omega * u)
         * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
-}
-/** 两个颜色之间取一个中间色。任一头认不出来就用终点色——总比画错强。 */
-function mixColor(from, to, progress) {
-    const start = colorParts(from);
-    const end = colorParts(to);
-    if (start === null || end === null)
-        return to;
-    const channel = (index) => Math.round((start[index] ?? 0) + ((end[index] ?? 0) - (start[index] ?? 0)) * progress);
-    const alpha = (start[3] ?? 1) + ((end[3] ?? 1) - (start[3] ?? 1)) * progress;
-    return 'rgba(' + channel(0) + ', ' + channel(1) + ', ' + channel(2) + ', ' + alpha + ')';
 }
 /** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
 function pixel(value) {
@@ -3811,8 +4168,8 @@ const ZH_COPY = {
     caretMove: '移动时',
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
-    sendHint: '提交之后那条气泡从输入框飞上来、落进消息列，路径、形变与落位都是新调出来的。这一段还在收，'
-        + '标着 beta，默认关着。整段时长固定，不给用户配置。',
+    sendHint: '提交之后，输入框原样浮起来一份，工具栏收进两边的角里淡掉，外形收成气泡、字跟着重新排版，'
+        + '一路飞进消息列。整段跑在合成器上，dsh 忙的时候也不掉帧。标着 beta，默认关着；整段时长固定，不给用户配置。',
     fontsLabel: '自带字体',
     fontsHint: '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
         + '关掉就回到 dsh 自己的字体栈，下面两项随之停用。',
@@ -3847,8 +4204,9 @@ const EN_COPY = {
     caretMove: 'On move',
     caretTyping: 'On typing',
     sendLabel: 'Chat bubble motion',
-    sendHint: 'The bubble rises from the composer into the transcript after you submit. This stretch is still settling, '
-        + 'so it is marked beta and off by default. The run has a fixed length; the duration is not configurable.',
+    sendHint: 'After you submit, a copy of the composer lifts off: its toolbar shrinks into the corners and fades, the card '
+        + 'narrows into the bubble while the text re-wraps, and it lands in the transcript. It runs on the compositor, so '
+        + 'it keeps its frame rate while dsh is busy. Marked beta, off by default; the duration is fixed.',
     fontsLabel: 'Bundled fonts',
     fontsHint: 'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '
         + 'code. Turning this off restores dsh\'s own font stacks and disables the two fields below.',
