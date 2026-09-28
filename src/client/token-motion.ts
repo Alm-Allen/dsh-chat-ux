@@ -27,10 +27,24 @@
  * 这个颜色也不能是同一个：一段回答里不只有正文，把链接、语法 token 或列表标记在淡入期间涂成
  * 正文色，读起来是高亮闪一下，而不是淡入。
  *
- * 档位规则**常驻，不按需插拔**。禁用与启用之间的那一下翻转会让整篇文档的样式失效，于是下一次
- * 样式计算从「只算新节点」变成「整页重算」——而它恰好落在流式刚开头那一帧，也就是读者按下提交的
- * 同一帧。常驻的代价只是「每次全量重算多几条规则」，而全量重算在阅读期本来就不常发生（见
- * `REVEAL_STEPS`）。
+ * 这个模块和页面上别的东西共用一条主线程、一张样式表集合、一套 DOM，所以它的每一份开销都按
+ * 「会不会叠到别人身上」来收：
+ *
+ *   档位规则  **收在 `[data-streaming]` 底下，常驻不插拔**。不带作用域的 `::highlight()` 规则
+ *             对每个元素都要试一遍，二十四条在五千六百节点上实测给每一次全量样式重算添二十五毫秒——
+ *             别的插件每触发一次全量重算，都要替这些规则付一次钱；而为了躲这笔钱去翻 `disabled`，
+ *             翻一次本身又是一次整页失效。收进作用域之后，浏览器用祖先过滤直接跳过流式容器以外的
+ *             元素，同一张页面上实测多出来的是零；dsh 翻 `data-streaming` 那一下也只失效那一条消息。
+ *   区间      **用 StaticRange，不用 Range**。活的 Range 在被回收之前，页面上每一次 DOM 变动都要
+ *             逐个修正它们的边界——绘制帧每帧新建一批，一秒下来上千个等着回收，实测让两千次与它
+ *             无关的 DOM 变动从一毫秒半涨到六十多毫秒，React 与别的插件都在替它付。StaticRange
+ *             不跟踪变动，而这里每帧都从新快照现建区间，本来就用不着它跟踪。
+ *   扫描      **只看流式容器里的变动**。页面上别处的 DOM 变动（别的插件、侧栏、计时器）不触发扫描；
+ *             容器里的变动也只重扫被碰到的那一个。
+ *   内联样式  **继承下来的颜色已经对了就不写**。每写一次就是一次样式失效，还会惊动别人盯着 style
+ *             属性的观察者。
+ *   主线程忙  **让路**。绘制帧一连几帧都隔得很久，说明主线程已经被别的事占满，这时候再给新字符排
+ *             淡入只会把卡顿叠得更重：手上的区间直接落定，接下来一段时间里新字符以本色出现。
  *
  * @module dsh-chat-ux/client/token-motion
  */
@@ -45,13 +59,10 @@ import { isProgrammaticToggle } from './programmatic-toggle'
  * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
  * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `revealCss` 里的一条
- * `::highlight()` 规则，而规则条数直接乘在浏览器每一次强制同步样式重算上。在一个 5800 节点的
- * 会话里，96 条档位规则把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms；只留 1 条时它又回到
- * 18 ms。档数曾经按「多出来的部分不花任何代价」取到 96，那个前提不成立。
- *
- * 常驻就是拿它换来的：页面上每一次全量样式重算都要乘上这个条数，六千节点上实测约四十毫秒。
- * 把它降下来只有两条路——减档，或者让这些规则不参与重算；后者已经试过并撤掉了（见
- * `installTokenMotion`）。
+ * `::highlight()` 规则。不带作用域时规则条数直接乘在浏览器每一次全量样式重算上——在一个 5800
+ * 节点的会话里，96 条把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms。现在的规则收在
+ * `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，这笔账基本清零（见模块注释）；
+ * 档数仍然留在 24，是因为它已经够用，而不是因为更多就付不起。
  */
 export const REVEAL_STEPS = 24
 
@@ -145,7 +156,7 @@ export function installTokenMotion(readEnabled: () => boolean): TokenMotionHandl
 function runTokenMotion(): () => void {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
   if (registry === undefined) return () => {}
-  const HighlightConstructor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
+  const HighlightConstructor = (globalThis as unknown as { Highlight?: new () => HighlightLike }).Highlight
   if (HighlightConstructor === undefined) return () => {}
   if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return () => {}
 
@@ -160,39 +171,59 @@ function runTokenMotion(): () => void {
   const textSnapshots = new WeakMap<Element, TextSnapshot>()
   /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
   const foldQuietUntil = new WeakMap<Element, number>()
-  /** 上一次扫描时在页面上的流式容器；这一趟不在的那些，区间与快照一起丢掉。 */
+  /** 上一次全量扫描时在页面上的流式容器；不在了的那些，区间与快照一起丢掉。 */
   let liveContainers: Element[] = []
   /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
   const writtenColors = new WeakMap<Element, string>()
-  /** 最近一批字符开始淡入的时刻；`0` 表示装上之后还没有过。 */
-  let lastBornAt = 0
-  /** 档位规则现在开着吗。关着的那些时刻，它们不参与任何一次样式重算。 */
-  let revealRulesOn = false
   /** 排队中的绘制帧句柄；0 表示没有排队。 */
   let scheduledFrame = 0
-  /** 排队中的「收起档位规则」任务；`0` 表示没有排队。 */
-  let collapseHandle = 0
+  /** 每一档一个 highlight：注册一次，之后每帧只换里面的区间。null 表示这一档此刻没有注册。 */
+  const highlights: (HighlightLike | null)[] = new Array<HighlightLike | null>(REVEAL_STEPS).fill(null)
+  /** 绘制帧一连隔得很久的帧数；攒够 `SLOW_FRAME_RUN` 就让路。 */
+  let slowFrames = 0
+  /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
+  let yieldUntil = 0
 
-  // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
-  //
-  // 翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」（六千节点上
-  // 实测约三十八毫秒），所以这两下翻转都绑在**本来就要重算的那一帧**上：启用发生在 `scan` 认出
-  // 第一批新字符的时候，收起发生在之后某一次 mutation 上（时隔 `IDLE_REVEAL_MS` 之后的第一趟
-  // 扫描）——读者打字、页面吐字、滚动挂载，那些 mutation 自己都要重算。谁也没凭空造出一次重算。
-  //
-  // 换来的正是最贵的那一刻：提交后新消息挂载会让聊天列大范围失效。同一个 4664 节点的会话上实测，
-  // 提交之后三秒里的 `UpdateLayoutTree` 在规则常驻时是 146 毫秒（最长一帧 117 毫秒），收起时只有
-  // 21 毫秒（最长一帧 50 毫秒），而提交帧正是这几百毫秒里的头一帧。
+  // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
+  // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
+  // 一次整页的样式失效（见模块注释）。
   const revealStyleElement = document.createElement('style')
   revealStyleElement.id = REVEAL_STYLE_ID
   revealStyleElement.textContent = revealCss
   document.head.append(revealStyleElement)
-  // 挂上之后才谈得上 `disabled`：元素还没进文档时它还没有自己的样式表，那时候赋值会被丢掉。
-  revealStyleElement.disabled = true
 
-  /** 清掉全部档位的 highlight。 */
+  /** 注销全部档位的 highlight。 */
   const clearHighlights = (): void => {
-    for (let step = 0; step < REVEAL_STEPS; step += 1) registry.delete(HIGHLIGHT_PREFIX + step)
+    for (let step = 0; step < REVEAL_STEPS; step += 1) {
+      if (highlights[step] === null) continue
+      registry.delete(HIGHLIGHT_PREFIX + step)
+      highlights[step] = null
+    }
+  }
+
+  /**
+   * 把这一档画的区间换成这一批。
+   *
+   * 注册表只在一档第一次用到时写一次，之后只换 highlight 里的区间：每帧对二十四个名字各注销、
+   * 注册一遍，浏览器要为每一次都重排一遍 highlight 的标记。这一档这一帧空着就清掉，但不注销——
+   * 下一帧多半还要用它。
+   * @param step - 档位。
+   * @param ranges - 这一帧落在这一档的区间。
+   */
+  const showStep = (step: number, ranges: readonly StaticRange[]): void => {
+    let highlight = highlights[step] ?? null
+    if (ranges.length === 0) {
+      if (highlight !== null && highlight.size > 0) highlight.clear()
+      return
+    }
+    if (highlight === null) {
+      highlight = new HighlightConstructor()
+      highlights[step] = highlight
+      registry.set(HIGHLIGHT_PREFIX + step, highlight)
+    } else {
+      highlight.clear()
+    }
+    for (const range of ranges) highlight.add(range)
   }
 
   /**
@@ -201,13 +232,18 @@ function runTokenMotion(): () => void {
    * 读的是算出来的颜色，而不是记下来的颜色：要紧的是 Markdown 层实际画出来的那个颜色——
    * 链接的令牌、语法 token、列表标记——而不是本模块上一次写进去的东西。元素上仍然带着记给它的
    * 那个颜色时跳过这次读取，而这正是第一帧之后每一帧的常见情况。
+   *
+   * 从祖先那里继承下来的值已经就是它的颜色时（段落里的加粗、列表项里的正文），不写：一次内联
+   * 样式就是一次样式失效，还会惊动页面上别人盯着 style 属性的观察者。
    * @param element - 区间文字渲染所在的元素。
    */
   const publishRunColor = (element: Element | null): void => {
     if (element === null) return
-    const color = window.getComputedStyle(element).color
+    const style = window.getComputedStyle(element)
+    const color = style.color
     if (writtenColors.get(element) === color) return
     writtenColors.set(element, color)
+    if (style.getPropertyValue(RUN_COLOR_VAR).trim() === color) return
     const styled = element as HTMLElement
     styled.style.setProperty(RUN_COLOR_VAR, color)
   }
@@ -236,8 +272,31 @@ function runTokenMotion(): () => void {
     for (const container of target.querySelectorAll(STREAMING_SELECTOR)) foldQuietUntil.set(container, until)
   }
 
-  /** 按当前年龄重画每一个还活着的区间，然后排下一帧。 */
-  const paint = (now: number): void => {
+  /**
+   * 主线程已经被占满：手上的区间直接落定，接下来一段时间里新字符以本色出现。
+   *
+   * 这时候淡入本来也画不顺——每一档都要在帧里停好几十毫秒——而它每帧的那份活又叠在别人的卡顿
+   * 上。让出来比硬撑强：文字照常到达，只是少了那一下渐变。
+   */
+  const yieldToBusyThread = (): void => {
+    yieldUntil = performance.now() + YIELD_MS
+    slowFrames = 0
+    lastFrameAt = 0
+    liveRuns.length = 0
+    clearHighlights()
+  }
+
+  /** 排下一个绘制帧。 */
+  const scheduleFrame = (): void => {
+    scheduledFrame = requestAnimationFrame((now) => { paint(now, true) })
+  }
+
+  /**
+   * 按当前年龄重画每一个还活着的区间，然后排下一帧。
+   * @param now - 这一帧的时间戳。
+   * @param fromFrame - 由绘制帧调起，而不是扫描时同步补画的那一次：只有这种帧间隔才说明主线程忙不忙。
+   */
+  const paint = (now: number, fromFrame: boolean): void => {
     scheduledFrame = 0
     if (liveRuns.length === 0) {
       clearHighlights()
@@ -249,6 +308,14 @@ function runTokenMotion(): () => void {
     const previousFrameAt = lastFrameAt
     lastFrameAt = now
     const gap = previousFrameAt === 0 ? 0 : now - previousFrameAt
+    // 一连好几帧都这么慢，那不是一次偶发的卡顿，是主线程被占满了：让路。页面藏起来那种长达
+    // 好几秒的空白不算——那是没人在看，不是忙。
+    if (fromFrame && gap > SLOW_FRAME_MS && gap < HIDDEN_GAP_MS) slowFrames += 1
+    else if (fromFrame && gap > 0) slowFrames = 0
+    if (slowFrames >= SLOW_FRAME_RUN) {
+      yieldToBusyThread()
+      return
+    }
     if (gap > FRAME_GAP_LIMIT_MS) {
       const unspent = gap - NOMINAL_FRAME_MS
       for (const run of liveRuns) {
@@ -338,68 +405,48 @@ function runTokenMotion(): () => void {
     }
     liveRuns.length = kept
     for (let step = 0; step < REVEAL_STEPS; step += 1) {
-      const list = buckets[step]
-      if (list === undefined || list.length === 0) {
-        registry.delete(HIGHLIGHT_PREFIX + step)
-        continue
-      }
-      const ranges: Range[] = []
-      for (const segment of list) {
-        const range = document.createRange()
-        range.setStart(segment.node, segment.start)
-        range.setEnd(segment.node, segment.end)
-        ranges.push(range)
-      }
-      registry.set(HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges))
+      const list = buckets[step] ?? []
+      // StaticRange 不跟踪 DOM 变动：每帧都从新快照现建，用不着它跟踪；活的 Range 在被回收之前
+      // 会让页面上每一次 DOM 变动都替它修正边界（见模块注释）。
+      const ranges = list.map(segment => new StaticRange({
+        startContainer: segment.node,
+        startOffset: segment.start,
+        endContainer: segment.node,
+        endOffset: segment.end,
+      }))
+      showStep(step, ranges)
     }
-    if (liveRuns.length > 0) scheduledFrame = requestAnimationFrame(paint)
+    if (liveRuns.length > 0) scheduleFrame()
+    else clearHighlights()
   }
 
-  /** 把每个流式容器与上一次的快照对比，然后把新出现的那一段排成区间。 */
   /**
-   * 这一批没有新字符要淡入、上一批又已经过去很久：把档位规则收起来。
-   *
-   * 只在**确定这一趟没有新字符**的路径上调用。同一趟扫描里先收再开会让整篇文档失效两次——两次
-   * 全量重算全压在「思考的第一个字上屏」那一帧上，比一直挂着还贵。
-   *
-   * 收起那一下翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」
-   * （四千七百节点上实测约六十五毫秒，掉三到四帧）。绑在「下一次 mutation」上还不够：那次
-   * mutation 可能正落在读者滚动、气泡起飞或思考行收起的动画里——实测收录起的那一刻，相邻两帧
-   * 之间隔了一百一十七毫秒。所以交给浏览器挑它认为不影响交互的空当去做：这段动效由合成器线程
-   * 扛着，主线程里的空白正是付这笔钱的地方。超时兜底，浏览器一直忙就照做，只是晚一点。
-   * @param now - 这一趟扫描开始的时间戳。
+   * 把流式容器与上一次的快照对比，然后把新出现的那一段排成区间。
+   * @param only - 只看这几个容器（这一批变动碰到的）；null 表示把页面上的流式容器全看一遍，
+   *   并清掉已经不在的那些。
    */
-  const idleOut = (now: number): void => {
-    if (!revealRulesOn) return
-    if (now - lastBornAt <= IDLE_REVEAL_MS) return
-    if (collapseHandle !== 0) return
-    collapseHandle = window.requestIdleCallback(() => {
-      collapseHandle = 0
-      if (!revealRulesOn) return
-      // 排队这段时间里又来了新字符：这一轮还没讲完，继续挂着。
-      if (performance.now() - lastBornAt <= IDLE_REVEAL_MS) return
-      revealStyleElement.disabled = true
-      revealRulesOn = false
-    }, { timeout: IDLE_COLLAPSE_TIMEOUT_MS })
-  }
-
-  const scan = (): void => {
+  const scan = (only: ReadonlySet<Element> | null): void => {
     const now = performance.now()
-    const containers = [...document.querySelectorAll(STREAMING_SELECTOR)]
-    // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
-    // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
-    for (const gone of liveContainers) {
-      if (containers.includes(gone)) continue
-      textSnapshots.delete(gone)
-      for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-        if (liveRuns[index]?.container === gone) liveRuns.splice(index, 1)
+    let containers: Element[]
+    if (only === null) {
+      containers = [...document.querySelectorAll(STREAMING_SELECTOR)]
+      // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
+      // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
+      for (const gone of liveContainers) {
+        if (containers.includes(gone)) continue
+        textSnapshots.delete(gone)
+        for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+          if (liveRuns[index]?.container === gone) liveRuns.splice(index, 1)
+        }
       }
+      liveContainers = containers
+    } else {
+      containers = [...only].filter(container => container.isConnected && container.matches(STREAMING_SELECTOR))
+      for (const container of containers) if (!liveContainers.includes(container)) liveContainers.push(container)
     }
-    liveContainers = containers
-    if (containers.length === 0) {
-      idleOut(now)
-      return
-    }
+    if (containers.length === 0) return
+    /** 主线程正忙、正在让路：快照照常更新，只是这一段新字符不排淡入。 */
+    const yielding = now < yieldUntil
     /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
     const createdRuns: LiveRun[] = []
     for (const container of containers) {
@@ -452,6 +499,8 @@ function runTokenMotion(): () => void {
         }
         liveRuns.splice(index, 1)
       }
+
+      if (yielding) continue
 
       // 读者刚折叠或展开过：这一次变化是那一下重排引起的，不是模型在吐字。
       const quietUntil = foldQuietUntil.get(container)
@@ -556,9 +605,9 @@ function runTokenMotion(): () => void {
               bornAt: now,
               delay: 0,
               // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
-              // 就是一次强制样式结算，而这一次读取恰好落在档位规则刚挂上、整篇文档样式刚失效的
-              // 那一帧——实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）
-              // 绘制帧的那次比较仍然会发现，颜色照旧补上。
+              // 就是一次强制样式结算，而这一次读取恰好落在新字符刚插进来、样式刚失效的那一帧——
+              // 实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）绘制帧的
+              // 那次比较仍然会发现，颜色照旧补上。
               colorElement: element,
             }
             liveRuns.push(run)
@@ -579,29 +628,46 @@ function runTokenMotion(): () => void {
         run.delay = (slot - batchStart) * step
       }
     }
+    if (createdRuns.length === 0) return
     // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
     // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
     // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
-    if (createdRuns.length === 0) {
-      idleOut(now)
-      return
-    }
-    // 有字符要淡入了：把规则挂上。这一帧本来就在插新字符，本来就要重算。
-    lastBornAt = now
-    if (!revealRulesOn) {
-      revealStyleElement.disabled = false
-      revealRulesOn = true
-    }
     if (scheduledFrame !== 0) {
       cancelAnimationFrame(scheduledFrame)
       scheduledFrame = 0
     }
-    paint(performance.now())
+    paint(performance.now(), false)
   }
 
-  const observer = new MutationObserver(scan)
-  // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div 补上
-  // 这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
+  // 只看流式容器里的变动：页面上别处的 DOM 变动（别的插件、侧栏、计时器、输入框）一次扫描都不
+  // 触发，流式容器里的变动也只重扫被碰到的那一个。整页重看只留给容器本身出现、消失或者换了
+  // `data-streaming` 的那几种变动。
+  const observer = new MutationObserver((records) => {
+    let everything = false
+    const touched = new Set<Element>()
+    for (const record of records) {
+      // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div
+      // 补上这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
+      if (record.type === 'attributes') {
+        everything = true
+        continue
+      }
+      const target = record.target
+      const element = target instanceof Element ? target : target.parentElement
+      const container = element?.closest(STREAMING_SELECTOR) ?? null
+      if (container !== null) touched.add(container)
+      if (record.type !== 'childList' || everything) continue
+      for (const added of record.addedNodes) {
+        if (!(added instanceof Element)) continue
+        if (added.matches(STREAMING_SELECTOR) || added.querySelector(STREAMING_SELECTOR) !== null) everything = true
+      }
+      for (const removed of record.removedNodes) {
+        if (liveContainers.some(live => live === removed || removed.contains(live))) everything = true
+      }
+    }
+    if (everything) scan(null)
+    else if (touched.size > 0) scan(touched)
+  })
   observer.observe(document.body, {
     subtree: true,
     childList: true,
@@ -611,7 +677,7 @@ function runTokenMotion(): () => void {
   })
   document.addEventListener('click', rememberReaderFold, true)
   document.addEventListener('keydown', rememberReaderFold, true)
-  scan()
+  scan(null)
 
   return () => {
     observer.disconnect()
@@ -619,8 +685,6 @@ function runTokenMotion(): () => void {
     document.removeEventListener('keydown', rememberReaderFold, true)
     if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame)
     scheduledFrame = 0
-    if (collapseHandle !== 0) window.cancelIdleCallback(collapseHandle)
-    collapseHandle = 0
     liveRuns.length = 0
     clearHighlights()
     revealStyleElement.remove()
@@ -645,18 +709,20 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal'
  * `color-mix(in srgb, C p%, transparent)` 的语义正好是它：与 `transparent` 混合会把结果的
  * alpha 按 `p` 加权，色相不变。
  *
- * 条数就是 `REVEAL_STEPS`，而条数是有代价的（见那个常量），所以这里不额外多生成任何一档。
+ * 每一条都收在 `[data-streaming]` 底下，两个选择器各管一种：容器自己直属的文本，与容器里任意
+ * 一层元素里的文本。淡入只发生在流式容器里，作用域不丢任何东西；换来的是流式容器以外的元素在
+ * 样式匹配时被祖先过滤直接跳过——同一张五千六百节点的页面上，不带作用域的二十四条给每次全量
+ * 重算添二十五毫秒，带上之后实测是零。
+ *
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
- *
- * 条数只在**规则生效的那些时刻**才有代价：没有东西要淡入时整张表是 `disabled` 的，所以阅读期
- * 与提交那一刻的样式重算都不必评估它们（见 `installTokenMotion` 里翻转那一段）。
  */
 const revealCss = Array.from({ length: REVEAL_STEPS }, (_, step) => {
   const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
   const alpha = Number((ratio * 100).toFixed(2))
+  const name = HIGHLIGHT_PREFIX + step
   return [
-    '::highlight(' + HIGHLIGHT_PREFIX + step + ') {',
+    STREAMING_SELECTOR + '::highlight(' + name + '), ' + STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
     '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
     '}',
   ].join('\n')
@@ -670,28 +736,6 @@ const revealCss = Array.from({ length: REVEAL_STEPS }, (_, step) => {
  * React 的重渲染和它产生的那批 mutation；又够短，让点击之后立刻续上的流仍然有动效。
  */
 const FOLD_QUIET_MS = 400
-/**
- * 一批字符淡完之后，档位规则还要在页面上留多久。
- *
- * 收起它们的那一下翻转会让整篇文档的样式失效，所以不能刚淡完就收——那一刻页面可能正安静下来，
- * 也可能下一秒又吐一批。收起只发生在**下一次 mutation** 上（`scan` 是唯一检查它的地方），而那次
- * mutation 本来就要触发重算。
- *
- * 取十秒，因为一秒盖不住一整轮：思考转到正文、或者思考中间的长停顿，间隔常常超过一秒，那样一轮
- * 回答里会「收起—启用」来回好几趟，每趟都是一次全量重算，读者在「思考的第一个字上屏」那一刻就
- * 能感到一下顿。十秒把一整轮（含中间停顿）圈在一起，于是通常一轮只翻两次：开头启用一次，收尾那
- * 次留给之后某次 mutation。而读者真要往一个**停下来的**会话里发消息时，上一批淡入早就过去不止
- * 十秒了，该收的还是收着。
- */
-const IDLE_REVEAL_MS = 10000
-
-/**
- * 收起那一下最多等多久。
- *
- * `requestIdleCallback` 只在浏览器自己认定的空当里跑；页面一直忙（长会话里滚动挂载、流式
- * 不断吐字）时它会一直等下去，所以给一个上限：到点了照做，只是不再挑时机。
- */
-const IDLE_COLLAPSE_TIMEOUT_MS = 4000
 
 /**
  * 一批里最多认多少字符。
@@ -715,6 +759,21 @@ const FRAME_GAP_LIMIT_MS = 40
 
 /** 正常的一帧有多长（按 60 Hz 算）；补偿时从空白里扣掉它，区间就接着上一帧的位置往下走。 */
 const NOMINAL_FRAME_MS = 16.7
+
+/**
+ * 绘制帧之间隔得超过这么久，算一帧「慢帧」：不到二十帧每秒，淡入的每一档都要停好几十毫秒，
+ * 已经画不顺了。
+ */
+const SLOW_FRAME_MS = 50
+
+/** 连着这么多个慢帧才让路：一次偶发的长任务（React 挂一条大消息）不该把淡入关掉。 */
+const SLOW_FRAME_RUN = 4
+
+/** 帧间隔长到这个程度，是页面被藏起来了（rAF 停摆），不是主线程忙。 */
+const HIDDEN_GAP_MS = 1000
+
+/** 让路之后多久再给新字符排淡入。 */
+const YIELD_MS = 3000
 
 /** 一个正在淡入的字符区间。 */
 interface LiveRun {
@@ -770,9 +829,17 @@ interface TextSnapshot {
 
 /** 浏览器的 highlight 注册表，放宽类型以免跟着 lib.dom 的版本漂移。 */
 interface HighlightRegistryLike {
-  set(name: string, highlight: unknown): void
+  set(name: string, highlight: HighlightLike): void
   delete(name: string): void
 }
+
+/** 一个 highlight：一组区间。放宽类型的理由同上。 */
+interface HighlightLike {
+  add(range: AbstractRange): unknown
+  clear(): void
+  readonly size: number
+}
+
 /** 新文本里的一段字符偏移，左闭右开。 */
 interface OffsetRange {
   readonly start: number
@@ -794,4 +861,3 @@ const LOCAL_REWRITE_LIMIT = 64
  * 认为这是整块重写，一个字符都不动。
  */
 const REWRITE_DIFF_BUDGET = 4096
-
