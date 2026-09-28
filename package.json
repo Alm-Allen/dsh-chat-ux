@@ -53,10 +53,10 @@
   ],
   "scripts": {
     "clean": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsdown",
+    "build": "tsdown && npm run build:types",
+    "build:types": "tsc -p tsconfig.client.json --emitDeclarationOnly && node scripts/copy-client-dts.mjs",
     "dev": "tsdown --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "fonts": "python scripts/subset-fonts.py"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",

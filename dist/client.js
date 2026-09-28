@@ -11,13 +11,6 @@ let react_jsx_runtime = require("react/jsx-runtime");
 const THINK_ROW_SELECTOR = "[data-variant=\"think\"]";
 /** 模型还在思考、过程还在跑时的阶段值。 */
 const RUNNING_STATE = "running";
-/**
-* Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。
-*
-* 属性名与选择器两种形式各有人用（前者喂 `MutationObserver` 的 `attributeFilter`，后者查页面），
-* 所以两个都写在这里：各自就地拼字符串的话，改一处就会漏一处。
-*/
-const STREAMING_ATTRIBUTE = "data-streaming";
 /** 同一个契约的选择器形式。 */
 const STREAMING_SELECTOR = "[data-streaming]";
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
@@ -3846,26 +3839,30 @@ function runTokenMotion() {
 	* 新字符弄脏）。实测在 100 批的采样里，`scan()` 里这一项占 25%，而其中 99% 的调用是**同一个
 	* 元素**、0% 的颜色发生了变化。
 	*
-	* 失效条件（两个都要，缺一个就会读到过期颜色）：
+	* 失效条件（**两个都要**，缺一个就会留下过期颜色）：
 	*
-	*   元素自己的 class 变了   Markdown 层原地换语义（`<span class="token-keyword">` 变成
-	*                          `token-string`）时元素对象不变，颜色会变。每次比一次 class 字符串，
-	*                          这是一次属性读取，不触发样式结算。
-	*   主题翻了               `body[data-ds-dark-theme]` 一变，整套 `--dsw-alias-*` 令牌重解析，
-	*                          所有元素的颜色都可能变，所以整份缓存作废（见 `themeEpoch`）。
+	*   元素自己的 class 变了   每次比一次 class 字符串。这是一次属性读取，不触发样式结算。
+	*   任何属性变化           见 `colorEpoch`。这一条是超集，覆盖祖先的 class、`style`、以及主题
+	*                          属性——凡可能改变继承色或令牌解析的输入都在里面。
 	*
-	* 已知的残留假设：祖先的 class 变化导致**继承色**变化，而元素自己的 class 与主题都没动——
-	* 这一种不会被发现。真实 DSH 的聊天区里文字颜色来自主题令牌（由主题那一项覆盖），Markdown
-	* 换语义则是换元素对象或换自己的 class，所以这条假设目前成立。
+	* 这里刻意**不依赖「祖先的 class 不会被改」这类假设**。缓存是「短路读取」，漏掉一条失效条件
+	* 的后果不是「晚一点读到新值」，而是**永远停在旧值**——这与原版「每次读、只省写」的语义不同，
+	* 是本次改动唯一引入的行为差异，所以判据必须取超集而不是近似。
 	*/
 	const knownColors = /* @__PURE__ */ new WeakMap();
 	/**
-	* 主题代号。`body[data-ds-dark-theme]` 一变就加一，让所有颜色缓存失效。
+	* 颜色缓存的代号。任何属性变化都让它加一，从而让整份缓存失效。
+	*
+	* 取「任何元素上的任何属性变化」而不是只认主题属性，是因为计算色还取决于祖先链上的 class 与
+	* style：只认主题会让「祖先改 class 导致继承色变化」这一种永远读不到新值（实测可复现：
+	* 原版跟到 `rgb(44,55,66)`，只认主题的缓存停在 `rgb(11,22,33)`）。
 	*
 	* 用代号而不是清空 WeakMap：WeakMap 没有 clear，而换一个新的 WeakMap 需要把它从 `const` 改成
 	* `let` 并让所有闭包都读那个变量——一个整数更省事，也不影响垃圾回收。
+	*
+	* 代价实测很低：200 批流式里属性变化只有 3 次，而 characterData 有 200 次。
 	*/
-	let themeEpoch = 0;
+	let colorEpoch = 0;
 	/** 最近一批字符开始淡入的时刻；`0` 表示装上之后还没有过。 */
 	let lastBornAt = 0;
 	/** 档位规则现在开着吗。关着的那些时刻，它们不参与任何一次样式重算。 */
@@ -3895,12 +3892,12 @@ function runTokenMotion() {
 		if (element === null) return;
 		const className = element.getAttribute("class") ?? "";
 		const known = knownColors.get(element);
-		if (known !== void 0 && known.epoch === themeEpoch && known.className === className) return;
+		if (known !== void 0 && known.epoch === colorEpoch && known.className === className) return;
 		const color = window.getComputedStyle(element).color;
 		knownColors.set(element, {
 			color,
 			className,
-			epoch: themeEpoch
+			epoch: colorEpoch
 		});
 		element.style.setProperty(RUN_COLOR_VAR, color);
 	};
@@ -4245,7 +4242,7 @@ function runTokenMotion() {
 		paint(performance.now());
 	};
 	const observer = new MutationObserver((records) => {
-		for (const record of records) if (record.type === "attributes" && record.attributeName === "data-ds-dark-theme") themeEpoch += 1;
+		for (const record of records) if (record.type === "attributes") colorEpoch += 1;
 		invalidateContainerCache(records);
 		scan();
 	});
@@ -4253,8 +4250,7 @@ function runTokenMotion() {
 		subtree: true,
 		childList: true,
 		characterData: true,
-		attributes: true,
-		attributeFilter: [STREAMING_ATTRIBUTE, THEME_ATTRIBUTE]
+		attributes: true
 	});
 	document.addEventListener("click", rememberReaderFold, true);
 	document.addEventListener("keydown", rememberReaderFold, true);

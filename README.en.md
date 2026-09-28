@@ -16,7 +16,7 @@ With it installed, model output fades in token by token instead of appearing in 
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area.
 - **Bundled fonts**: HarmonyOS Sans SC for text and Maple Mono NF CN for code, shipped with the plugin—nothing to install, same type on both ends.
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click.
-- **Chat bubble motion** (beta, off by default): once you turn it on, the submitted bubble rises from the composer into the transcript; the run is a fixed 270 ms.
+- **Chat bubble motion** (beta, off by default): once you turn it on, the submitted bubble rises from the composer into the transcript; the run is a fixed 300 ms.
 
 ## Install
 

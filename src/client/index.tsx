@@ -1,9 +1,10 @@
 /**
  * dsh-chat-ux —— 浏览器半区。
  *
- * DSH 通过 `exports["./client"]` 加载这个模块。产物由 `tsc -p tsconfig.client.json` 加上
- * `scripts/wrap-client.cjs` 生成，后者把 CommonJS 产物包成客户端模块加载器要求的那个单文件
- * `window.__ModuleLoader__.load({...})` bundle。
+ * DSH 通过 `exports["./client"]` 加载这个模块。产物由 `tsdown` 生成（见 `tsdown.config.ts`），
+ * 它把 CommonJS 产物包成客户端模块加载器要求的那个单文件 `window.__ModuleLoader__.load({...})`
+ * bundle。声明另由 `tsc -p tsconfig.client.json --emitDeclarationOnly` 出——不能让 tsdown 的
+ * banner/footer 裹住声明，那样 `dist/client.d.ts` 就不再是合法模块。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
  * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞，以及插件管理页渲染的配置

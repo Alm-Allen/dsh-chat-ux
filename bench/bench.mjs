@@ -31,6 +31,11 @@ export const DEFAULT_SCENARIO = { turns: 40, markdownNodes: 120, preGrowChars: 0
 export async function run(bundlePath, {
   turns = 40, markdownNodes = 120, preGrowChars = 0, batches = 100, charsPerBatch = 8,
   withPlugin = true, countRanges = false, containerChurn = false,
+  // 下面三个用来**真的走到颜色缓存的两条失效分支**（审查者指出原场景覆盖不到）：
+  //   themeFlipAt     第几批翻转 body 的主题属性
+  //   classChurnAt    第几批给正文所在元素换一个 class
+  //   ancestorAt      第几批给一个**祖先**加属性（模拟继承色变化）
+  themeFlipAt = -1, classChurnAt = -1, ancestorAt = -1, countColors = false,
 } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
     url: 'http://127.0.0.1:3081/', pretendToBeVisual: true,
@@ -42,6 +47,31 @@ export async function run(bundlePath, {
 
   const textNode = fillMarkdown(win, chat.streaming, markdownNodes)
   if (preGrowChars > 0) textNode.data += 'y'.repeat(preGrowChars)
+
+  // 让「属性变化 → 计算色变化」这条链在 jsdom 里真的成立。
+  //
+  // jsdom 没有 CSS 层叠，所以给它加属性不会改变 getComputedStyle 的结果——那样上面那些
+  // themeFlipAt / classChurnAt / ancestorAt 场景就是**空等价**（两边都没变色，比了个寂寞）。
+  // 这里按属性模拟一个计算色：主题、元素自己的 class、祖先属性三者任一变化都会改变它。
+  const colourSource = { theme: 'light', elClass: '', ancestorTone: 'a' }
+  const realGCS = win.getComputedStyle.bind(win)
+  win.getComputedStyle = function (el, ...rest) {
+    const cs = realGCS(el, ...rest)
+    if (el === textNode.parentElement) {
+      const c = colourSource.theme === 'dark' ? '249, 250, 251'
+        : colourSource.elClass !== '' ? '44, 55, 66'
+        : colourSource.ancestorTone === 'b' ? '77, 88, 99'
+        : '15, 17, 21'
+      return { color: 'rgb(' + c + ')', getPropertyValue: (n) => cs.getPropertyValue(n) }
+    }
+    return cs
+  }
+  /** 把场景里的属性改动同步到 colourSource。 */
+  const syncColourSource = () => {
+    colourSource.theme = win.document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
+    colourSource.elClass = textNode.parentElement?.getAttribute('class') ?? ''
+    colourSource.ancestorTone = win.document.body.getAttribute('data-ancestor-tone') ?? 'a'
+  }
 
   const counter = makeCounter()
   const restoreInstrument = instrument(win, counter)
@@ -80,8 +110,17 @@ export async function run(bundlePath, {
     rangeFrames.push([...covered].sort().join(','))
   }
 
+  // 记录每批发布到正文元素上的颜色（用于验证缓存的失效分支）。
+  const colourFrames = []
+  const snapColour = () => {
+    if (!countColors) return
+    const el = textNode.parentElement
+    colourFrames.push(el === null ? '' : el.style.getPropertyValue('--dsh-chat-ux-run-color'))
+  }
+
   let plugin = null
   try {
+    syncColourSource()
     if (withPlugin) plugin = loadPlugin(win, bundlePath)
 
     // 预热：让 JIT 与插件内部状态进入稳态，这一段不计入结果
@@ -97,6 +136,13 @@ export async function run(bundlePath, {
     let churn = null
     for (let b = 0; b < batches; b += 1) {
       textNode.data += 'x'.repeat(charsPerBatch)
+      // 主题翻转：命中「任何属性变化」这条失效分支
+      if (b === themeFlipAt) win.document.body.toggleAttribute('data-ds-dark-theme', true)
+      // 元素自己的 class 变化：命中 class 比较这条分支
+      if (b === classChurnAt) textNode.parentElement.setAttribute('class', 'token-string')
+      // 祖先属性变化：只认主题的旧实现会在这里留下陈旧颜色
+      if (b === ancestorAt) win.document.body.setAttribute('data-ancestor-tone', 'b')
+      syncColourSource()
       if (containerChurn && b % 10 === 0) {
         const blk = win.document.createElement('div')
         blk.setAttribute('data-chat-flow-key', 'churn-' + b)
@@ -113,13 +159,15 @@ export async function run(bundlePath, {
       }
       await stepper.frame()
       if (countRanges) snapRanges()
+      snapColour()
     }
     // 收尾：把剩下的存活区间跑完
-    for (let f = 0; f < 12; f += 1) { await stepper.frame(); if (countRanges) snapRanges() }
+    for (let f = 0; f < 12; f += 1) { await stepper.frame(); if (countRanges) snapRanges(); snapColour() }
     const total = Number(process.hrtime.bigint()) / 1e6 - t0
 
     const out = { ...counter, total, dataReads, parentReads, elements: win.document.querySelectorAll('*').length }
     if (countRanges) out.rangeFrames = rangeFrames
+    if (countColors) out.colourFrames = colourFrames
     return out
   } finally {
     if (plugin) plugin.dispose()
