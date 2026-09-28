@@ -61,6 +61,13 @@ export const COMPOSER_SELECTOR = '[data-composer-seat]'
 /** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位，发送气泡按它取起点。 */
 export const COMPOSER_INPUT_SELECTOR = '[data-composer-input]'
 
+/**
+ * 输入区里的纯文本框：提问卡片的作答框（`[data-question-key]` 下），以及排队消息的行内编辑框
+ * （`[data-queue-dock]` 下，子智能体跑着时追加的那几条就在这里改）。两者都是 textarea，都住在
+ * 输入区座位里，主会话与侧栏里的子智能体会话都一样。
+ */
+export const COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea'
+
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 export const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
 
