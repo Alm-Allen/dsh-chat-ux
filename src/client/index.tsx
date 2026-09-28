@@ -97,9 +97,9 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
 
   // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
-  // 输入框里那句话升上来的那一段：起点在清空草稿之前抓，终点由 dsh 自己那条气泡决定。这一项默认
-  // 关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长不是一个
-  // 设置项，它是 send-flight 里的 FLIGHT_MS。
+  // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
+  // 这一项默认关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
+  // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
   ctx.effect(
     () => installSendFlight(() => settings.sendOn),
     'dsh-chat-ux: send flight',

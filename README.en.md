@@ -16,7 +16,7 @@ With it installed, model output fades in token by token instead of appearing in 
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area.
 - **Bundled fonts**: HarmonyOS Sans SC for text and Maple Mono NF CN for code, shipped with the plugin—nothing to install, same type on both ends.
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
-- **Chat bubble motion** (beta, off by default): once you turn it on, the submitted bubble rises from the composer into the transcript; the run is a fixed 270 ms.
+- **Chat bubble motion** (beta, off by default): once you turn it on, a copy of the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
 
 ## Install
 
@@ -61,7 +61,7 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Enhanced follow | on | When off, a bottom-parked reader is no longer handed back to dsh's follow at thinking-end / tool-call moments. |
 | Group follow | follows "Enhanced follow" | Not a row of its own: the card has one "Enhanced follow" switch, which also governs whether reasoning and tool output keep up inside height-capped process groups. |
 | Caret motion | always | Three steps: off / on move / always. |
-| Chat bubble motion | off (beta) | When on, the submitted bubble rises from the composer into the transcript. |
+| Chat bubble motion | off (beta) | When on, the composer lifts off on submit, morphs into the bubble, and lands in the transcript. |
 | Bundled fonts | on | When off, the system font stack is used. |
 | Custom text font | empty | Your own font stack, overriding the bundled text font. |
 | Custom mono font | empty | Same, for the bundled code font. |

@@ -95,8 +95,8 @@ const ZH_COPY: Copy = {
   caretTyping: '无论何时',
   sendLabel: '聊天气泡动效',
   sendHint:
-    '提交之后那条气泡从输入框飞上来、落进消息列，路径、形变与落位都是新调出来的。这一段还在收，'
-    + '标着 beta，默认关着。整段时长固定，不给用户配置。',
+    '提交之后，输入框原样浮起来一份，工具栏收进两边的角里淡掉，外形收成气泡、字跟着重新排版，'
+    + '一路飞进消息列。整段跑在合成器上，dsh 忙的时候也不掉帧。标着 beta，默认关着；整段时长固定，不给用户配置。',
   fontsLabel: '自带字体',
   fontsHint:
     '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
@@ -139,8 +139,9 @@ const EN_COPY: Copy = {
   caretTyping: 'On typing',
   sendLabel: 'Chat bubble motion',
   sendHint:
-    'The bubble rises from the composer into the transcript after you submit. This stretch is still settling, '
-    + 'so it is marked beta and off by default. The run has a fixed length; the duration is not configurable.',
+    'After you submit, a copy of the composer lifts off: its toolbar shrinks into the corners and fades, the card '
+    + 'narrows into the bubble while the text re-wraps, and it lands in the transcript. It runs on the compositor, so '
+    + 'it keeps its frame rate while dsh is busy. Marked beta, off by default; the duration is fixed.',
   fontsLabel: 'Bundled fonts',
   fontsHint:
     'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '

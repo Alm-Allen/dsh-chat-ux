@@ -97,7 +97,7 @@ export interface Config {
   // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
   fontCode: Volatile<string>
   // 提交之后气泡是否从输入框起飞。标着 beta 的那一项，默认关着。整段时长不是一个设置项，
-  // 固定在前端 `client/send-flight.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
+  // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
   sendFlight: Volatile<boolean>
   // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
   tokenFade: Volatile<boolean>
