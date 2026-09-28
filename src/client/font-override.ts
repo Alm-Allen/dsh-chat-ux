@@ -47,7 +47,7 @@ export function applyFontChoice(choice: FontChoice): void {
     clearFontChoice()
     return
   }
-  document.body.setAttribute(FONT_ATTRIBUTE, '')
+  setAttributeIfChanged(document.body, FONT_ATTRIBUTE, '')
   applyFamily(SANS_VARIABLE, choice.sans, EMBEDDED_SANS)
   applyFamily(CODE_VARIABLE, choice.code, EMBEDDED_MONO)
   applyFamily(MONO_VARIABLE, choice.code, EMBEDDED_MONO)
@@ -59,10 +59,25 @@ export function applyFontChoice(choice: FontChoice): void {
  */
 export function clearFontChoice(): void {
   const { body } = document
-  body.removeAttribute(FONT_ATTRIBUTE)
-  body.style.removeProperty(SANS_VARIABLE)
-  body.style.removeProperty(CODE_VARIABLE)
-  body.style.removeProperty(MONO_VARIABLE)
+  if (body.hasAttribute(FONT_ATTRIBUTE)) body.removeAttribute(FONT_ATTRIBUTE)
+  removePropertyIfSet(body.style, SANS_VARIABLE)
+  removePropertyIfSet(body.style, CODE_VARIABLE)
+  removePropertyIfSet(body.style, MONO_VARIABLE)
+}
+
+/** 属性已经是这个值就不再写：同值写入是 no-op，但每次写都会让整篇文档的样式失效一次。 */
+function setAttributeIfChanged(element: Element, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value)
+}
+
+/** 自定义属性已经是这个值就不再写，理由同上。 */
+function setPropertyIfChanged(style: CSSStyleDeclaration, property: string, value: string): void {
+  if (style.getPropertyValue(property) !== value) style.setProperty(property, value)
+}
+
+/** 自定义属性本来就没有就不必删。 */
+function removePropertyIfSet(style: CSSStyleDeclaration, property: string): void {
+  if (style.getPropertyValue(property) !== '') style.removeProperty(property)
 }
 
 /**
@@ -94,8 +109,8 @@ function hasPairedQuotes(value: string): boolean {
  */
 function applyFamily(variable: string, custom: string, embedded: string): void {
   if (!isFontFamilyValue(custom)) {
-    document.body.style.removeProperty(variable)
+    removePropertyIfSet(document.body.style, variable)
     return
   }
-  document.body.style.setProperty(variable, custom.trim() + ', ' + embedded)
+  setPropertyIfChanged(document.body.style, variable, custom.trim() + ', ' + embedded)
 }

@@ -1953,7 +1953,18 @@ function isReaderScrollIntent(event) {
  * 窗口里，结算时位置早已离底，跟随就此关掉。读者一下都没碰过键鼠。交还本身怎么做、为什么是
  * 「先钉底、再点按钮」这两步，见 `follow-tail.ts`。
  *
- * 这一处只负责**挑时刻**：
+ * 这一处有两层。
+ *
+ *   按住     跟随还开着的时候，把位置一直维持在地线上（`holdFloor`）。dsh 结算那个五百毫秒窗口时
+ *            看到的就是「贴着底」，跟随根本不会关——这是预防。窗口里 dsh 的 `onResize` 直接返回、
+ *            `processContent` 也不跟随，而内容在这五百毫秒里能长出一百多像素，结算那一刻的位置早
+ *            不是触发时刻的位置，所以纯事后交还补不完这件事。
+ *            闸门是 dsh 自己发的 `data-chat-following-tail`：它开着表示 dsh 认领了跟随，我们把位置
+ *            维持在地线上正合它意；它关着（跳转/分页中，或读者在看上面）一步都不动，免得把 dsh 自己
+ *            的程序化跳转踩掉。
+ *
+ *   挑时刻   下面这些时刻里跟随已经被关掉了，就把它交还回去。这是兜底，覆盖按住那层判断不成立的
+ *            情形（列还没挂上、或属性比内容早半步消失）：
  *
  *   结构时刻   新插入的流块（`[data-chat-flow-key]`）或工具调用行（`[data-chat-call-id]`）；
  *              思考行的 `data-state` 从 `running` 停下来。工具调用不一定自成流块——它住在
@@ -1995,6 +2006,13 @@ const ACTIVITY_GRACE_MS = 2000;
 const FOLD_WAIT_MS = 150;
 const FOLD_WAIT_ATTEMPTS = 4;
 /**
+ * 重新对一次「按住」那层观察目标的间隔。
+ *
+ * 会话切换会把整个聊天列换掉，所以不能只认一次；与 `process-follow.ts` 的 `SYNC_INTERVAL_MS`
+ * 同一套做法。
+ */
+const HOLD_SYNC_INTERVAL_MS = 500;
+/**
  * 给整页安装跟随守护。
  * @param readEnabled - 读此刻生效的开关；关着时一次都不动手。
  * @returns disposer：断开 observer 并摘掉意图监听。
@@ -2012,6 +2030,14 @@ function installFollowGuard(readEnabled) {
     /** 这一批变化里有结构事件 / 跟随被关掉。 */
     let structureSeen = false;
     let guardSeen = false;
+    /** dsh 此刻有没有认领跟随。由 observer 维护，`syncHold` 每五百毫秒兜一次底。 */
+    let followingNow = false;
+    /** 我们自己正在写位置：那一轮 scroll 事件不该被当成新情况再处理一遍。 */
+    let holding = false;
+    /** 聊天列的生长观察者；它在「按住」那层里是唯一的触发源。 */
+    let holdObserver = null;
+    /** 已观察的聊天列；换会话时它会被换掉，所以每轮核一次。 */
+    let holdTarget = null;
     /**
      * 读者是不是正在上面看。
      *
@@ -2109,12 +2135,64 @@ function installFollowGuard(readEnabled) {
             return;
         readerTookOver = true;
     };
+    /**
+     * 把位置维持在地线上。
+     *
+     * 只在 dsh 认领跟随、读者没在接管、折叠动画没在跑、且位置真的离开地线时才写。绝大多数帧在第二、
+     * 三个判断上就返回了，所以这个函数本身很轻。
+     */
+    const holdFloor = () => {
+        if (holding || !readEnabled())
+            return;
+        if (!followingNow)
+            return;
+        if ((0, fold_glide_1.isFoldGlideBusy)())
+            return;
+        if (readerAway())
+            return;
+        const scroller = (0, follow_tail_1.conversationScroller)();
+        if (scroller === null)
+            return;
+        if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 0.5)
+            return;
+        holding = true;
+        try {
+            scroller.scrollTop = scroller.scrollHeight;
+        }
+        finally {
+            holding = false;
+        }
+    };
+    /**
+     * 盯住聊天列的生长，并顺手刷新一次跟随属性。
+     *
+     * 生长是上述窗口里位置离开地线的唯一来源，所以观察它就是按住那层的触发源。列被换掉时重新对表，
+     * 否则新会话的位置再也不会被按住。
+     */
+    const syncHold = () => {
+        followingNow = document.querySelector(dom_contract_1.FOLLOWING_TAIL_SELECTOR) !== null;
+        const column = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
+        if (column === holdTarget)
+            return;
+        holdTarget = column;
+        holdObserver?.disconnect();
+        holdObserver = null;
+        if (column === null || typeof ResizeObserver === 'undefined')
+            return;
+        holdObserver = new ResizeObserver(() => { holdFloor(); });
+        holdObserver.observe(column);
+    };
     const observer = new MutationObserver((records) => {
         for (const record of records) {
             if (record.type === 'attributes') {
                 // 跟随从有到无：dsh 刚刚把它关掉。
                 if (record.attributeName === dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE) {
-                    if (record.target instanceof Element && !record.target.hasAttribute(dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE))
+                    if (!(record.target instanceof Element))
+                        continue;
+                    // 属性回来了也记下来：按住那层靠它决定动不动手，而它也可能被 dsh 重新点亮（我们自己
+                    // 钉底、读者滚回底部、或点那个按钮都会），不能只在消失时更新。
+                    followingNow = record.target.hasAttribute(dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE);
+                    if (!followingNow)
                         guardSeen = true;
                     continue;
                 }
@@ -2141,6 +2219,14 @@ function installFollowGuard(readEnabled) {
     for (const type of INTENT_TYPES) {
         document.addEventListener(type, noteReaderIntent, { capture: true, passive: true });
     }
+    // 挂在 window 的捕获阶段：同一个滚动事件我们先于 dsh 挂在滚动元素上的冒泡监听收到。我们先把
+    // 位置钉回地线，dsh 随后读到的几何就是贴底的，于是它走「读者到底」那一支，而不是把位置记成
+    // 读者移动、挂出那个五百毫秒的采样窗口。
+    //
+    // 直接改滚动位置会派发滚动事件，忽略它之后就成回声，holding 就是那道闸。
+    window.addEventListener('scroll', holdFloor, { capture: true, passive: true });
+    const holdTimer = window.setInterval(syncHold, HOLD_SYNC_INTERVAL_MS);
+    syncHold();
     observer.observe(document.body ?? document.documentElement, {
         subtree: true,
         childList: true,
@@ -2150,6 +2236,9 @@ function installFollowGuard(readEnabled) {
     });
     return () => {
         observer.disconnect();
+        window.removeEventListener('scroll', holdFloor, true);
+        window.clearInterval(holdTimer);
+        holdObserver?.disconnect();
         for (const type of INTENT_TYPES)
             document.removeEventListener(type, noteReaderIntent, true);
     };
@@ -2197,7 +2286,7 @@ function applyFontChoice(choice) {
         clearFontChoice();
         return;
     }
-    document.body.setAttribute(font_styles_1.FONT_ATTRIBUTE, '');
+    setAttributeIfChanged(document.body, font_styles_1.FONT_ATTRIBUTE, '');
     applyFamily(font_styles_1.SANS_VARIABLE, choice.sans, font_styles_1.EMBEDDED_SANS);
     applyFamily(font_styles_1.CODE_VARIABLE, choice.code, font_styles_1.EMBEDDED_MONO);
     applyFamily(font_styles_1.MONO_VARIABLE, choice.code, font_styles_1.EMBEDDED_MONO);
@@ -2208,10 +2297,26 @@ function applyFontChoice(choice) {
  */
 function clearFontChoice() {
     const { body } = document;
-    body.removeAttribute(font_styles_1.FONT_ATTRIBUTE);
-    body.style.removeProperty(font_styles_1.SANS_VARIABLE);
-    body.style.removeProperty(font_styles_1.CODE_VARIABLE);
-    body.style.removeProperty(font_styles_1.MONO_VARIABLE);
+    if (body.hasAttribute(font_styles_1.FONT_ATTRIBUTE))
+        body.removeAttribute(font_styles_1.FONT_ATTRIBUTE);
+    removePropertyIfSet(body.style, font_styles_1.SANS_VARIABLE);
+    removePropertyIfSet(body.style, font_styles_1.CODE_VARIABLE);
+    removePropertyIfSet(body.style, font_styles_1.MONO_VARIABLE);
+}
+/** 属性已经是这个值就不再写：同值写入是 no-op，但每次写都会让整篇文档的样式失效一次。 */
+function setAttributeIfChanged(element, name, value) {
+    if (element.getAttribute(name) !== value)
+        element.setAttribute(name, value);
+}
+/** 自定义属性已经是这个值就不再写，理由同上。 */
+function setPropertyIfChanged(style, property, value) {
+    if (style.getPropertyValue(property) !== value)
+        style.setProperty(property, value);
+}
+/** 自定义属性本来就没有就不必删。 */
+function removePropertyIfSet(style, property) {
+    if (style.getPropertyValue(property) !== '')
+        style.removeProperty(property);
 }
 /**
  * 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat UX
@@ -2243,10 +2348,10 @@ function hasPairedQuotes(value) {
  */
 function applyFamily(variable, custom, embedded) {
     if (!isFontFamilyValue(custom)) {
-        document.body.style.removeProperty(variable);
+        removePropertyIfSet(document.body.style, variable);
         return;
     }
-    document.body.style.setProperty(variable, custom.trim() + ', ' + embedded);
+    setPropertyIfChanged(document.body.style, variable, custom.trim() + ', ' + embedded);
 }
     };
 
@@ -2363,9 +2468,10 @@ body[${exports.FONT_ATTRIBUTE}] {
  *
  * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。
  *
- * 这一处不改 dsh 的状态，只在它旁边补一件事：落后超过 CATCH_UP_GAP_PX 才接管，把位置直接补到
- * 组体的底（`scrollTop = scrollHeight`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
- * 平滑滚动，追得上的时候它是好看的；只有它追不回来时才由这一处兜住，免得最新那两行一直悬着。
+ * 这一处不改 dsh 的状态，只在它旁边补一件事：位置一离开地线就补回去，直接补到组体的底
+ * （`scrollTop = scrollHeight`，即时）。阈值只留 CATCH_UP_GAP_PX（2px）——够吸收子像素舍入，
+ * 又不留出可感知的落后。原先取 40、把阈值以内让给 dsh 的平滑滚动，那一让是无效的，理由见
+ * CATCH_UP_GAP_PX 的说明。
  * 读者一旦在这个组体里滚过就让位，直到他自己滚回组体的底为止。
  *
  * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
@@ -2382,11 +2488,16 @@ const RELEASE_THRESHOLD_PX = 4;
 /**
  * 落后超过它才接管。
  *
- * 阈值以内归 dsh 的平滑滚动——它追得上的正是这一截，追得上的时候它是好看的。实测流式输出时它
- * 的稳态落后在二三十到五十像素之间，40 卡在中间：让大部分平滑滚动获得自由，又能在真的掉队之前
- * 兜住。
+ * 原来取 40，把 2–40px 这一截留给 dsh 的平滑滚动。复核 dsh 的实现后，那次让位是无效的：
+ * 我们的写是即时的，而 dsh 的 `toBottom` 是**单发**的（use-scroll-follow 里
+ * `if (this.target === null)` 才发起新滚动），一次即时写入会把它的动画目标清掉
+ * （`jump` 里 `this.target = null`，且正在动画时走 `scrollTo({ behavior: 'instant' })`）。
+ * 于是「让位一截、再打断一次」的循环只是把稳态落后从恒定变成周期性，一帧真正的平滑都没换到。
+ *
+ * 取 2 之后行为统一：位置始终贴在地线上，读者看到的正是最新那一行。这个值不能再小——留下
+ * 亚像素舍入的余量，免得跟在舍入误差后面每帧都写一次。
  */
-const CATCH_UP_GAP_PX = 40;
+const CATCH_UP_GAP_PX = 2;
 /** 同步被观察组体的间隔；会话切换与过程组增减都靠它跟上。 */
 const SYNC_INTERVAL_MS = 500;
 /**
@@ -2417,7 +2528,7 @@ function installProcessFollow(readEnabled) {
     };
     /** 离组体自己的底还差多远。 */
     const gapOf = (body) => body.scrollHeight - body.clientHeight - body.scrollTop;
-    /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
+    /** 位置离开地线就补回去，直接补到组体的底。 */
     const catchUp = (body) => {
         if (!readEnabled())
             return;
@@ -4438,6 +4549,17 @@ function runTokenMotion() {
     let scheduledFrame = 0;
     /** 排队中的「收起档位规则」任务；`0` 表示没有排队。 */
     let collapseHandle = 0;
+    /**
+     * 上一帧往注册表里写过东西的那些档。
+     *
+     * `::highlight` 的注册表是 maplike，`delete` 一个不存在的键同样要走一次注册表的变更路径。而档位
+     * 是「本帧有区间的就那几个」，其余为空——一个 120 ms 的区间只活约 7 帧，这 7 帧里绝大多数档从来
+     * 没人写过。所以只对**本帧或上一帧真出现过**的档调 delete：保留上一层是为了覆盖「上一帧有、这一帧
+     * 空」的那一次收尾，之后就没人再写它了。
+     *
+     * 档数（`REVEAL_STEPS`）与规则条数都不动：这里去掉的只是空桶写，不是档位本身。
+     */
+    let dirtySteps = [];
     // 档位规则单独一张样式表，**闲着的时候整张 `disabled`**，认出有新字符要淡入时再启用。
     //
     // 翻转会让整篇文档的样式失效，下一次样式计算于是从「只算新节点」升级成「整页重算」（六千节点上
@@ -4458,6 +4580,8 @@ function runTokenMotion() {
     const clearHighlights = () => {
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
             registry.delete(exports.HIGHLIGHT_PREFIX + step);
+        // 注册表被整份清空之后，本模块记的「哪些档写过」跟着归零。
+        dirtySteps = [];
     };
     /**
      * 把一个元素自己的颜色发布到 `RUN_COLOR_VAR` 上。
@@ -4614,12 +4738,13 @@ function runTokenMotion() {
             bucket.push(segment);
         }
         liveRuns.length = kept;
+        /** 本帧真有区间的那些档。 */
+        const liveNow = [];
         for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
             const list = buckets[step];
-            if (list === undefined || list.length === 0) {
-                registry.delete(exports.HIGHLIGHT_PREFIX + step);
+            if (list === undefined || list.length === 0)
                 continue;
-            }
+            liveNow.push(step);
             const ranges = [];
             for (const segment of list) {
                 const range = document.createRange();
@@ -4629,6 +4754,12 @@ function runTokenMotion() {
             }
             registry.set(exports.HIGHLIGHT_PREFIX + step, new HighlightConstructor(...ranges));
         }
+        // 只收尾本来就有东西的档：本帧还在的那些下面要写，不必删；本帧空掉而上一帧还写着的，这里删一次，
+        // 之后它既不在 liveNow 也不在 dirtySteps 里，不会再有人去写它。
+        for (const step of dirtySteps)
+            if (!liveNow.includes(step))
+                registry.delete(exports.HIGHLIGHT_PREFIX + step);
+        dirtySteps = liveNow;
         if (liveRuns.length > 0)
             scheduledFrame = requestAnimationFrame(paint);
     };

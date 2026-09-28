@@ -12,9 +12,10 @@
  *
  * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。
  *
- * 这一处不改 dsh 的状态，只在它旁边补一件事：落后超过 CATCH_UP_GAP_PX 才接管，把位置直接补到
- * 组体的底（`scrollTop = scrollHeight`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
- * 平滑滚动，追得上的时候它是好看的；只有它追不回来时才由这一处兜住，免得最新那两行一直悬着。
+ * 这一处不改 dsh 的状态，只在它旁边补一件事：位置一离开地线就补回去，直接补到组体的底
+ * （`scrollTop = scrollHeight`，即时）。阈值只留 CATCH_UP_GAP_PX（2px）——够吸收子像素舍入，
+ * 又不留出可感知的落后。原先取 40、把阈值以内让给 dsh 的平滑滚动，那一让是无效的，理由见
+ * CATCH_UP_GAP_PX 的说明。
  * 读者一旦在这个组体里滚过就让位，直到他自己滚回组体的底为止。
  *
  * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
@@ -32,11 +33,16 @@ const RELEASE_THRESHOLD_PX = 4
 /**
  * 落后超过它才接管。
  *
- * 阈值以内归 dsh 的平滑滚动——它追得上的正是这一截，追得上的时候它是好看的。实测流式输出时它
- * 的稳态落后在二三十到五十像素之间，40 卡在中间：让大部分平滑滚动获得自由，又能在真的掉队之前
- * 兜住。
+ * 原来取 40，把 2–40px 这一截留给 dsh 的平滑滚动。复核 dsh 的实现后，那次让位是无效的：
+ * 我们的写是即时的，而 dsh 的 `toBottom` 是**单发**的（use-scroll-follow 里
+ * `if (this.target === null)` 才发起新滚动），一次即时写入会把它的动画目标清掉
+ * （`jump` 里 `this.target = null`，且正在动画时走 `scrollTo({ behavior: 'instant' })`）。
+ * 于是「让位一截、再打断一次」的循环只是把稳态落后从恒定变成周期性，一帧真正的平滑都没换到。
+ *
+ * 取 2 之后行为统一：位置始终贴在地线上，读者看到的正是最新那一行。这个值不能再小——留下
+ * 亚像素舍入的余量，免得跟在舍入误差后面每帧都写一次。
  */
-const CATCH_UP_GAP_PX = 40
+const CATCH_UP_GAP_PX = 2
 
 /** 同步被观察组体的间隔；会话切换与过程组增减都靠它跟上。 */
 const SYNC_INTERVAL_MS = 500
@@ -71,7 +77,7 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
   /** 离组体自己的底还差多远。 */
   const gapOf = (body: HTMLElement): number => body.scrollHeight - body.clientHeight - body.scrollTop
 
-  /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
+  /** 位置离开地线就补回去，直接补到组体的底。 */
   const catchUp = (body: HTMLElement): void => {
     if (!readEnabled()) return
     if (takenOver.has(body)) return
