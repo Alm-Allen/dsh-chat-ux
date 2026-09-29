@@ -13,6 +13,13 @@ export declare const SETTINGS_NAMESPACE = "dsh-chat-ux";
  */
 export declare const DEFAULT_ENHANCED_FOLLOW = true;
 /**
+ * 自动开合默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：思考行与过程组自己开合是这个插件的主效果之一。关掉时两块都整块不装，读者自己点开收起
+ * 照常——卷帘门过渡仍留给手动点击。
+ */
+export declare const DEFAULT_AUTO_FOLD = true;
+/**
  * 自带字体是否默认接管界面。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
  * 默认开着：装插件的人不必自己装字体，两端看到的也是同一套字。
@@ -36,10 +43,9 @@ export declare const DEFAULT_CARET_MOTION: CaretMotionMode;
 /**
  * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认关着：这一段还在调，卡片上标着 beta，读者自己打开才算数。关着时页面上一次都不动手，
- * 看到的就是 dsh 原来的样子。
+ * 默认开着：这一段已经调定，卡片上不再标 beta。关着时页面上一次都不动手，看到的就是 dsh 原来的样子。
  */
-export declare const DEFAULT_SEND_FLIGHT = false;
+export declare const DEFAULT_SEND_FLIGHT = true;
 /**
  * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
@@ -53,6 +59,7 @@ export declare const DEFAULT_TOKEN_FADE = true;
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
 export interface Config {
     enhancedFollow: Volatile<boolean>;
+    autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
     fonts: Volatile<boolean>;
     fontSans: Volatile<string>;
@@ -66,6 +73,7 @@ export interface Config {
  */
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
+    autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;
@@ -74,6 +82,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
+    autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     fonts: Schema<boolean, boolean, "volatile-defined">;
     fontSans: Schema<string, string, "volatile-defined">;

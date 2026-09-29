@@ -27,13 +27,14 @@ import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
 import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
-    DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
     DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow'
+const AUTO_FOLD_FIELD = 'autoFold'
 const TOKEN_FADE_FIELD = 'tokenFade'
 const CARET_FIELD = 'caretMotion'
 const FONTS_FIELD = 'fonts'
@@ -46,6 +47,8 @@ interface Copy {
     summary: (followOn: boolean) => string
     followLabel: string
     followHint: string
+    autoFoldLabel: string
+    autoFoldHint: string
     tokenLabel: string
     tokenHint: string
     caretLabel: string
@@ -74,91 +77,96 @@ interface Copy {
 
 const ZH_COPY: Copy = {
     summary: (followOn) =>
-        '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、发送动效、自带字体与你自己填的字体栈也在这里调。',
+        '跟随守护：' + (followOn ? '开' : '关') + '。光标、气泡动效与字体也在这里调。',
     followLabel: '增强跟随',
     followHint:
-        '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
-        + '读者自己滚动离开底部的那段时间一概不动手——那一段交给你。',
+        '回复还在继续时，聊天区自动待在最新内容上，不用手动往下拖。'
+        + '你往上翻看历史的那段时间，它不会来抢你的位置。',
+    autoFoldLabel: '自动开合',
+    autoFoldHint:
+        '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
+        + '你自己动手折叠过的，它不再打扰。',
     tokenLabel: 'token 淡入',
     tokenHint:
-        '流式回复里新出现的字符先淡后实，渐变的颜色就是字符自己的颜色。关掉之后字符直接以本色出现，'
-        + '页面上也不再挂那二十几条档位规则——排查性能问题时可以拿它当对照。',
+        '回复逐字出现时，新出现的文字轻轻浮现，读起来更顺。关掉就直接显示。'
+        + '若与其它插件一起使用时明显卡顿，可以关掉这一项。',
     caretLabel: '光标动效',
     caretHint:
-        '把浏览器那根插入符换成自绘的，位移走 80 ms 过渡。「移动时」只在方向键、点击这类显式移动上放过渡，'
-        + '打字瞬时；「无论何时」连打字也滑过去。关掉就用回浏览器原来的那根。',
+        '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
+        + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
     caretOff: '关',
     caretMove: '移动时',
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
-    sendHint:
-        '提交之后，输入框原样浮起来一份，工具栏收进两边的角里淡掉，外形收成气泡、字跟着重新排版，'
-        + '一路飞进消息列。整段跑在合成器上，dsh 忙的时候也不掉帧。标着 beta，默认关着；整段时长固定，不给用户配置。',
+    sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
     fontsLabel: '自带字体',
     fontsHint:
-        '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
-        + '关掉就回到 dsh 自己的字体栈，下面两项随之停用。',
-    fontsOffHint: '自带字体关着，这一项现在不生效。',
+        '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
+        + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
+    fontsOffHint: '自带字体已关，这一项暂时不生效。',
     sansLabel: '正文字体',
     sansHint:
-        '填你想要的字体名，它会排在整个字体栈的最前面；系统里没有的名字由自带字体接住，写错了也不会比不填更差。'
-        + '留空用自带的。',
+        '填一个你喜欢的字体名，界面会优先用它。这台机器上没有这个名字时自动回到自带字体，'
+        + '填错也不会更糟。留空即用自带的。',
     sansPlaceholder: '例如 Microsoft YaHei, sans-serif',
     codeLabel: '代码字体',
-    codeHint: '等宽字体，代码块、行内代码与界面里的等宽文本都用它。留空用自带的。',
+    codeHint: '代码块与代码样式文字使用的字体。留空即用自带的。',
     codePlaceholder: '例如 JetBrains Mono, monospace',
-    fontInvalid: '这不是一个合法的字体名，回车不会保存。',
+    fontInvalid: '这不是一个有效的字体名，回车不会保存。',
     overridden: '已覆盖',
     reset: '重置',
     failed: '保存未生效，请重试。',
-    unavailable: '当前 dsh 没有向这个页面提供 dsh-chat-ux 的配置：这一行可能没在这个 profile 里启用，或者连接把偏好留在页面进程里。',
-    readOnly: '当前设置文档是只读的，改动无法保存。',
+    unavailable: '这个页面暂时读不到本插件的配置，设置改不了。请确认插件已在当前环境启用，然后重新打开这一页。',
+    readOnly: '当前设置不可修改，改动无法保存。',
 }
 
 const EN_COPY: Copy = {
     summary: (followOn) =>
-        'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret motion, the send flight, the bundled fonts and your own font stacks are adjustable here.',
+        'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret, bubble motion, and fonts are adjustable here.',
     followLabel: 'Enhanced follow',
     followHint:
-        'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
-        + 'begins), which fixes the occasional lost follow. A reader who scrolls away from the bottom is left alone.',
+        'While a reply is still streaming, the transcript stays on the newest content, so you never have to drag it '
+        + 'down by hand. It leaves you alone while you scroll back through history.',
+    autoFoldLabel: 'Automatic folding',
+    autoFoldHint:
+        'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
+        + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
     tokenLabel: 'Token fade-in',
     tokenHint:
-        'Characters that arrive in a streaming reply fade in instead of appearing at full strength. Turning this off '
-        + 'shows them at full strength and drops the whole set of highlight rules — useful as a control when you are '
-        + 'chasing a performance problem.',
+        'New text fades in as a reply streams, which is easier to read. Turning it off shows the text immediately. '
+        + 'If the page stutters noticeably alongside other plugins, turn this off.',
     caretLabel: 'Caret motion',
     caretHint:
-        'Redraw the caret so it slides over 80 ms. "On move" animates explicit moves only — arrow keys, clicks — and '
-        + 'leaves typing instant; "On typing" animates every keystroke too. Off keeps the browser\'s own caret.',
+        'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
+        + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
     caretOff: 'Off',
     caretMove: 'On move',
     caretTyping: 'On typing',
     sendLabel: 'Chat bubble motion',
     sendHint:
-        'After you submit, a copy of the composer lifts off: its toolbar shrinks into the corners and fades, the card '
-        + 'narrows into the bubble while the text re-wraps, and it lands in the transcript. It runs on the compositor, so '
-        + 'it keeps its frame rate while dsh is busy. Marked beta, off by default; the duration is fixed.',
+        'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
+        + 'so a send is something you can see.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
-        'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '
-        + 'code. Turning this off restores dsh\'s own font stacks and disables the two fields below.',
+        'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
+        + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
     fontsOffHint: 'Bundled fonts are off, so this field has no effect right now.',
     sansLabel: 'Text font',
     sansHint:
-        'A family you want, placed at the very front of the stack. A name this machine lacks falls through to the '
-        + 'bundled fonts, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
+        'A family you would like the interface to prefer. If this machine does not have it, the bundled font takes '
+        + 'over, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
     sansPlaceholder: 'e.g. Georgia, serif',
     codeLabel: 'Code font',
-    codeHint: 'The monospace family used by code blocks, inline code, and monospace text in the interface. Leave blank to use the bundled one.',
+    codeHint: 'The font used by code blocks and code-styled text. Leave blank to use the bundled one.',
     codePlaceholder: 'e.g. JetBrains Mono, monospace',
     fontInvalid: 'That is not a valid font family, so Enter will not save it.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
     unavailable:
-        'This dsh does not expose dsh-chat-ux configuration to this page: the entry may be disabled in this profile, or the connection keeps preferences inside the page process.',
-    readOnly: 'The settings document is read-only, so changes cannot be saved.',
+        'This page cannot read the plugin configuration right now, so settings cannot be changed. Check that the '
+        + 'plugin is enabled in this environment, then open this page again.',
+    readOnly: 'These settings cannot be changed, so edits cannot be saved.',
 }
 
 /** 插件管理页为一条 `plugins.bundle.config` 记录绑定的 props。 */
@@ -203,6 +211,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const fieldId = useId()
 
     const followOn = storedFollow(snapshot.value)
+    const autoFoldOn = storedAutoFold(snapshot.value)
     const tokenFadeOn = storedTokenFade(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
@@ -265,20 +274,17 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
     /**
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
-     * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
      */
     const rowChrome = (
         field: string,
         label: string,
         hint: string,
         control: ReactElement,
-        badge?: ReactElement,
     ): ReactElement => (
         <div className={CARD_CLASS.row}>
             <div className={CARD_CLASS.rowText}>
                 <div className={CARD_CLASS.labelLine}>
                     <span className={CARD_CLASS.label}>{label}</span>
-                    {badge}
                 </div>
                 <p className={CARD_CLASS.hint}>{hint}</p>
             </div>
@@ -296,6 +302,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.followLabel}
                     onChange={(next: boolean) => void writeField(FOLLOW_FIELD, next, storedFollow)}
+                />
+            ))}
+            {rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, (
+                <Switch
+                    checked={autoFoldOn}
+                    disabled={controlsDisabled}
+                    label={copy.autoFoldLabel}
+                    onChange={(next: boolean) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold)}
                 />
             ))}
             {rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, (
@@ -324,7 +338,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     label={copy.sendLabel}
                     onChange={(next: boolean) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn)}
                 />
-            ), <Tag tone="info">beta</Tag>)}
+            ))}
             {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
                 <Switch
                     checked={fontsOn}
@@ -456,6 +470,11 @@ function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): Rea
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value: ChatUxSection | undefined): boolean {
     return value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+}
+
+/** 从 host 的值里读自动开合的开关。 */
+function storedAutoFold(value: ChatUxSection | undefined): boolean {
+    return value?.autoFold ?? DEFAULT_AUTO_FOLD
 }
 
 /** 从 host 的值里读 token 淡入的开关。 */

@@ -6,9 +6,9 @@
  * `window.__ModuleLoader__.load({...})` bundle。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞，以及插件管理页渲染的配置
- * 卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页上改的值就是这样到达效果里的，
- * 不用刷新。
+ * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞、网页端「工作步骤展示」的
+ * 默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
+ * 上改的值就是这样到达效果里的，不用刷新。
  *
  * @module dsh-chat-ux/client
  */
@@ -27,10 +27,11 @@ import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
-    DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
     DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
+import {applyTranscriptViewDefault} from './settings/transcript-default'
 import {ALL_CSS, STYLE_ID} from './styles'
 import {installTokenMotion} from './chat/token-motion'
 
@@ -68,6 +69,7 @@ export function apply(ctx: ClientContext): void {
     const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
     const settings: ChatUxSettings = {
         follow: DEFAULT_ENHANCED_FOLLOW,
+        autoFold: DEFAULT_AUTO_FOLD,
         caret: DEFAULT_CARET_MOTION,
         font: {embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY},
         sendOn: DEFAULT_SEND_FLIGHT,
@@ -78,9 +80,27 @@ export function apply(ctx: ClientContext): void {
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = installCaretMotion(() => settings.caret)
     const tokenMotion = installTokenMotion(() => settings.tokenFade)
+    // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
+    // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
+    let autoFoldDispose: (() => void) | null = null
+    const syncAutoFold = (): void => {
+        if (!settings.autoFold) {
+            autoFoldDispose?.()
+            autoFoldDispose = null
+            return
+        }
+        if (autoFoldDispose !== null) return
+        const disposeReasoning = installReasoningFold()
+        const disposeProcess = installProcessFold()
+        autoFoldDispose = () => {
+            disposeReasoning()
+            disposeProcess()
+        }
+    }
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
         settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
+        settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
         settings.font.embedded = value?.fonts ?? DEFAULT_EMBEDDED_FONTS
         settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
@@ -90,15 +110,21 @@ export function apply(ctx: ClientContext): void {
         applyFontChoice(settings.font)
         caret.resync()
         tokenMotion.resync()
+        syncAutoFold()
     }
     syncSettings()
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion')
     ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
 
+    // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组
+    // 行为是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」——读者选过
+    // 之后一次都不再动手。
+    ctx.effect(() => applyTranscriptViewDefault(services.configForms), 'dsh-chat-ux: work details default')
+
     // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
     // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-    // 这一项默认关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
+    // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(
         () => installSendFlight(() => settings.sendOn),
@@ -109,13 +135,17 @@ export function apply(ctx: ClientContext): void {
     // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
     ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal')
 
-    // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
-    // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
-    ctx.effect(() => installReasoningFold(), 'dsh-chat-ux: reasoning reveal')
-
-    // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
-    // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
-    ctx.effect(() => installProcessFold(), 'dsh-chat-ux: process groups')
+    // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
+    // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
+    // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
+    // syncAutoFold 里，读者在卡片上关掉就一起停。
+    ctx.effect(() => {
+        syncAutoFold()
+        return () => {
+            autoFoldDispose?.()
+            autoFoldDispose = null
+        }
+    }, 'dsh-chat-ux: auto fold')
 
     // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
     // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
@@ -169,6 +199,8 @@ export function apply(ctx: ClientContext): void {
 interface ChatUxSettings {
     /** 增强跟随。 */
     follow: boolean
+    /** 思考行与过程组是否自己开合；改一次就得重落一次。 */
+    autoFold: boolean
     /** 插入符动效的档位。 */
     caret: CaretMotionMode
     /** 字体那三项，原样交给 `applyFontChoice`。 */

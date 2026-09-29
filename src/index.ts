@@ -39,6 +39,14 @@ export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
 export const DEFAULT_ENHANCED_FOLLOW = true
 
 /**
+ * 自动开合默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：思考行与过程组自己开合是这个插件的主效果之一。关掉时两块都整块不装，读者自己点开收起
+ * 照常——卷帘门过渡仍留给手动点击。
+ */
+export const DEFAULT_AUTO_FOLD = true
+
+/**
  * 自带字体是否默认接管界面。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
  * 默认开着：装插件的人不必自己装字体，两端看到的也是同一套字。
@@ -66,10 +74,9 @@ export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 /**
  * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认关着：这一段还在调，卡片上标着 beta，读者自己打开才算数。关着时页面上一次都不动手，
- * 看到的就是 dsh 原来的样子。
+ * 默认开着：这一段已经调定，卡片上不再标 beta。关着时页面上一次都不动手，看到的就是 dsh 原来的样子。
  */
-export const DEFAULT_SEND_FLIGHT = false
+export const DEFAULT_SEND_FLIGHT = true
 
 /**
  * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
@@ -88,6 +95,8 @@ export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
 export interface Config {
     // 思考结束、出现工具调用这些时刻，是否刻意把聊天区交还给 dsh 的跟随。
     enhancedFollow: Volatile<boolean>
+    // 思考行与过程组是否自己开合。关掉时两块都整块不装，读者自己点开收起照常。
+    autoFold: Volatile<boolean>
     // 插入符动效的档位。
     caretMotion: Volatile<CaretMotionMode>
     // 是否用插件自带的两套字体接管界面。关掉时 dsh 自己在 :root 上声明的字体栈原样生效。
@@ -96,7 +105,7 @@ export interface Config {
     fontSans: Volatile<string>
     // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
     fontCode: Volatile<string>
-    // 提交之后气泡是否从输入框起飞。标着 beta 的那一项，默认关着。整段时长不是一个设置项，
+    // 提交之后气泡是否从输入框起飞，默认开着。整段时长不是一个设置项，
     // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
     sendFlight: Volatile<boolean>
     // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
@@ -109,6 +118,7 @@ export interface Config {
  */
 export const Config = Schema.object({
     enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
+    autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(['off', 'move', 'typing'] as const).default(DEFAULT_CARET_MOTION).volatile(),
     fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
     fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),

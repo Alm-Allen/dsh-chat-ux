@@ -73,7 +73,7 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-/* 标签那一行：标签后面可以跟一个小标（beta）。用行内 flex，标才不会把说明挤下去。 */
+/* 标签那一行：行内 flex，标签后面再跟什么小标都不会把说明挤下去。 */
 .${CARD_CLASS.labelLine} {
   display: flex;
   align-items: center;
