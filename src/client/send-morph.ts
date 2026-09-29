@@ -8,16 +8,18 @@
  *
  * **为什么全部预先算好。** 提交那一刻 dsh 的主线程很重（新会话从 hero 切到对话、空闲会话第一次
  * 挂消息，都是几十到一百多毫秒的长任务），这段动画要是有任何一件事留在主线程上，它就会在那里卡住。
- * 形状、位置、透明度都是合成器能跑的属性（在真实 Chromium 里量过：主线程被整块占住四百毫秒，
- * `clip-path: inset(... round)`、`transform`、`opacity` 照样逐帧在走，`width` 纹丝不动）。唯一绕不开
- * 布局的是「字跟着形状重新排」——但折行只在一串离散的宽度上变化，所以把它也提前做掉：
+ * 形状、位置、透明度都能交给合成器——**除了 `clip-path`**。那一条是实测否掉的：它单独放一段关键帧
+ * 也一样上不了合成器，读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张还没收窄的
+ * 卡片被平移出消息列。所以形状改走壳上的 `transform: scale`，内容再用一层互为倒数的 `scale` 抵回来
+ * （见 `startMorph` 里的 `scaler`）。唯一绕不开布局的是「字跟着形状重新排」——但折行只在一串离散的
+ * 宽度上变化，所以把它也提前做掉：
  *
- *   形状    一个壳，`clip-path` 的圆角矩形从卡片的尺寸收到气泡的尺寸，圆角跟着 `round` 一起插值，
- *           不会像缩放那样被压扁。底色是壳里两层实色（卡片的、气泡的）靠透明度交叉淡换——
- *           `clip-path` 与 `background-color` 写进同一段关键帧时两个都会掉回主线程，实测主线程一占住，
- *           形状与颜色一起定格。
- *   描边    `clip-path` 会连元素自己的阴影一起裁掉，所以卡片的阴影与那一圈发丝描边挂在壳后面一个
- *           单独的「光晕」上：透明的盒子、原样的 box-shadow，跟着壳的外框缩放，一路淡掉。
+ *   形状    一个壳，`scale` 从卡片尺寸收到气泡尺寸；壳里垫一层反向缩放，内容的视觉尺寸与位置一个像素
+ *           都不变，变的只有 `overflow: hidden` 那个裁剪框。圆角不可合成，单独一层、留在主线程——
+ *           它不参与右边缘。底色是壳里两层实色（卡片的、气泡的）靠透明度交叉淡换：`background-color`
+ *           写进同一段关键帧时会掉回主线程（实测主线程一占住，形状与颜色一起定格），所以只用透明度。
+ *   描边    壳的 `overflow: hidden` 会连元素自己的阴影一起裁掉，所以卡片的阴影与那一圈发丝描边挂在壳
+ *           后面一个单独的「光晕」上：透明的盒子、原样的 box-shadow，跟着壳的外框缩放，一路淡掉。
  *   工具栏  卡片整张克隆下来（去掉底色与阴影，交给壳和光晕），工具栏左右两组各自贴着壳上最近的
  *           那个角走，边缩小边淡出——右边那组跟着右下角往里收，左边那组跟着底边往上收。
  *   字      起飞前先把「气泡的正文」在形变沿途的每一个宽度上排一遍，折行一样的归成一段，每段一层
@@ -26,8 +28,8 @@
  *           草稿自己的克隆（引用、技能那些小块在输入框里另有样式），形变过半才换成气泡的写法。最后
  *           一层就是气泡自己的排版，交接时一个像素都不跳。
  *
- * 主线程上每帧只剩一件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行），写在最外层，见
- * `send-flight.ts`。
+ * 主线程上每帧只剩两件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行）写在最外层；形变段走完
+ * 那一帧把壳归一（见 `startMorph` 里的 `compact`）。两件都在 `send-flight.ts` 的帧循环里。
  *
  * **替身凭什么长得像真卡片。** 三条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
  * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、以及**祖先
@@ -53,22 +55,22 @@ export const FLIGHT_MS = 300
  * 推出来。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开——这是 PR #4 之前那套
  * 标定出来的轨迹，与纵向那条（`RISE_OMEGA`）的比值是 2.98 / 2.11 / 1.61 / 1.32 / 1.15。
  *
- * **位移和形变必须同源，这不是审美取舍，是「卡顿时不甩出列外」的充要条件。** 两者跑在不同的线程上：
- * 位移是 `transform`，在合成器上；外形是 `clip-path`，在主线程上。提交之后 dsh 要在主线程上解析
- * 这一帧响应（实测 8–120 ms），**那段时间里位移照走、形变冻住**。同源时右边缘是
+ * **位移和形变必须同源**——同一条曲线、同一条时间轴。同源时右边缘是
  *
  *     right(u) = start.right + (end.right - start.right) × m(u)
  *
  * 无论哪一头冻住，它都只是这条曲线上的某个值，**恒在 `[start.right, end.right]` 里**。
  *
- * **一旦给位移单独一条更快的曲线就出事**（曾经这么干过，回归成了读者报的「偶尔超出右侧聊天区」）：
- * 卡顿时位移跑在前面、形变还没收，右边缘甩出消息列。超出量
+ * 这条等式今天由「两个 `transform` 关键帧 + 同一个 `FLIGHT_MS`」保证：形状（壳的 `scale`）与位移一起
+ * 跑在合成器上，卡顿时一起停在同一格。**一旦给位移单独一条更快的曲线就出事**（曾经这么干过，回归成了
+ * 读者报的「偶尔超出右侧聊天区」）：卡顿时位移跑在前面、形变还没收，右边缘甩出消息列。超出量
  *
  *     (W0 - W1) × (1 - m_冻结) − dx × (1 - across_当前)
  *
- * 卡在起手那几十毫秒时第一项接近满值。合成器抓帧实测：整张还没收窄的卡片飞到了终点，右边缘顶到
- * 视口最右边（列右之外 59 px 以上），纵向区间还在跟着替身走。**卡得越早、越久，甩得越远**——这正是
- * 「偶尔一点点、偶尔特别多」的来源。
+ * 卡在起手那几十毫秒时第一项接近满值。当时的抓帧实测：一整张还没收窄的卡片飞到了终点，右边缘顶到
+ * 视口最右边（列右之外 59 px 以上）。**卡得越早、越久，甩得越远**——这正是「偶尔一点点、偶尔特别多」
+ * 的来源。同一个理由还写在 `send-flight.ts` 的帧循环里：那里原来是「位移每帧由主线程写、跟着形状那条
+ * 动画的 `currentTime` 走」；两条都上了合成器之后，依据换成了时间轴本身。
  *
  * 临界阻尼，不过冲：形状不该弹。
  *
@@ -98,6 +100,19 @@ const RISE_OMEGA = 7.5
  * 一段只有上升与落定。
  */
 const MORPH_END = 0.45
+
+/**
+ * 内容反向缩放的除数下限（**像素**）。`visible` 被右边缘那道夹子夹到 0 时，倒数会算出 `Infinity`——
+ * 那几帧壳本来就什么都看不见（缩放是 0），给个半像素的下限只为让关键帧里是一个有限数。
+ */
+const MIN_REVERSE_DIVISOR = 0.5
+
+/**
+ * 圆角补偿里的缩放下限（**比值**）。和上面那个不是一回事，别拿来顶替：壳收到最窄时纵轴缩放约 0.45，
+ * 拿 0.5 当比例下限会把补偿算少，圆角在竖直方向被压扁——实测视觉半径从 20 掉到 17.96px，归一那一帧
+ * 再跳回 20（`morph-probe` 逐帧读数）。这里只需要挡住 0，取一个远小于任何真实缩放的数。
+ */
+const MIN_CORNER_SCALE = 0.02
 
 /** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
 const SAMPLES = 60
@@ -197,13 +212,13 @@ export interface Morph {
   /** 最外层：终点动了多少写在它身上（主线程）。 */
   readonly wrapper: HTMLElement
   /**
-   * 把替身摆到进度 `u` 处（0 到 1）。**由主线程每帧调用**，与形变同帧写入——位移要是跑在合成器上，
-   * dsh 卡住那几十毫秒里它会抢先跑完、形状却还停在原处，右边缘就甩出消息列了（见 `ACROSS_OMEGA`）。
+   * 形变段走完之后把壳归一（幂等，每帧调一次即可，见 `startMorph` 里的 `compact`）。
+   * **由主线程在帧里调**：它是一次性的样式写，本来就不属于合成器那条路径。
    */
-  readonly applyProgress: (u: number) => void
-  /** 形状那条动画此刻的进度（0 到 1）。位移必须跟着它走，理由见 `startMorph` 里的 `progress`。 */
+  readonly compact: (u: number) => void
+  /** 位移那条动画此刻的进度（0 到 1）；位移与形状同轴，拿它判「整段走完了没有」。 */
   readonly progress: () => number
-  /** 形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
+  /** 位移、形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
   readonly animations: readonly Animation[]
 }
 
@@ -491,20 +506,31 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
   halo.style.borderRadius = R0 + 'px'
   halo.style.boxShadow = snapshot.shadow
   const shell = document.createElement('div')
-  shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;will-change:transform'
+  shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform'
   shell.style.width = boxWidth + 'px'
   shell.style.height = boxHeight + 'px'
   for (const [name, value] of snapshot.context) shell.style.setProperty(name, value)
-  // 底色是两层实色叠着淡，不是 `background-color` 动画：它和 `clip-path` 写在同一段关键帧里时，两个都
-  // 会掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的
-  // 那条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
+  // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
+  // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
+  // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
+  const scaler = document.createElement('div')
+  scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
+  scaler.style.width = boxWidth + 'px'
+  scaler.style.height = boxHeight + 'px'
+  // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
+  // 半径补偿见下面那段动画。
+  shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight)
+  shell.appendChild(scaler)
+  // 底色是两层实色叠着淡，不是 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会
+  // 掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那
+  // 条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
   const bubbleFill = document.createElement('div')
   bubbleFill.style.cssText = 'position:absolute;inset:0'
   bubbleFill.style.backgroundColor = style.backgroundColor
   const cardFill = document.createElement('div')
   cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity'
   cardFill.style.backgroundColor = snapshot.background
-  shell.append(bubbleFill, cardFill)
+  scaler.append(bubbleFill, cardFill)
   // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
   // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
   // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
@@ -512,7 +538,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
   // 不是卡片的后代。缺链时（`ancestors` 为 null）克隆直接挂在壳上，与加固之前一样。
   // `display: contents` 写在**行内**：祖先那一层的 class 规则里就算有 `display`，优先级也压不过
   // 行内（dsh 的样式里没有 `!important`），链不会因为带上某个 class 就长出盒子来。
-  let cloneHost: HTMLElement = shell
+  let cloneHost: HTMLElement = scaler
   for (const mark of snapshot.ancestors ?? []) {
     const link = document.createElement(mark.tag)
     // 这里的 `!important` 同样必要，理由和克隆那几条一样：链节点带着祖先的 class，而祖先那层的规则
@@ -535,7 +561,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     const layer = textLayer(bubble, style)
     layer.style.width = window.width + 'px'
     layer.style.lineHeight = window.lineHeight + 'px'
-    shell.appendChild(layer)
+    scaler.appendChild(layer)
     return { layer, window }
   })
 
@@ -570,42 +596,85 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     return frames
   }
 
-  // 位移**不**交给合成器：它必须与形变在同一帧、由同一个线程写入，理由见 `ACROSS_OMEGA`。左边从卡片的
-  // 左边走到气泡的左边，右边由宽度决定，两条边都单调。
-  const applyProgress = (u: number): void => {
-    mover.style.transform = 'translate(' + dx * morphProgress(u) + 'px, '
-      + dy * springProgress(u, RISE_DAMPING, RISE_OMEGA) + 'px)'
-  }
+  // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
+  // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
+  // 左边，右边由宽度决定，两条边都单调。
+  const travel = run(mover, samples.map(sample => ({
+    offset: sample.u,
+    transform: 'translate(' + dx * sample.m + 'px, '
+      + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
+  })))
+  // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
+  // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
+  // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
+  const shape = run(shell, between(0, MORPH_END, sample => ({
+    transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
+  })))
+  // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
+  // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
+  const inverse = run(scaler, between(0, MORPH_END, sample => ({
+    transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
+      + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
+  })))
+  // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
+  // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
+  // 壳的 `transform` 照样在合成器上。卡住时半径停在旧值，圆还是圆的。
+  // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
+  const corners = run(shell, between(0, MORPH_END, sample => ({
+    borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
+  })))
 
   /**
-   * 这一刻的进度（0 到 1），取自形状那条动画自己的 `currentTime`。
+   * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
    *
-   * **位移必须跟着它走，不能自己拿 `performance.now()` 算。** WAAPI 动画在起手那一两帧还是 pending
-   * （startTime 没定），这时它按 offset 0 画——也就是**整张输入卡片**；而墙上时钟已经走了十几毫秒，
-   * 位移要是按墙上时钟算，就会在形状还没收窄的时候先窜出去一截。输入卡片比聊天列每边宽 16 px，所以
-   * 那几帧的右边缘必然在列外；而提交后 dsh 要在主线程上解析响应，一卡就是几十到一百多毫秒——那几帧
-   * 就从"看不见"变成"一整张卡片悬在列外"。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘
-   * 已经从 1030 拉到视口最右 1073。
-   *
-   * 读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在起手那一格。
+   * 位移与形状现在由同一条时间轴驱动，本来就不会互相领先；读动画自己的时间而不是墙上时钟，为的是起手
+   * 那一两帧：WAAPI 动画那时还是 pending（`startTime` 没定），按 offset 0 画——也就是**整张输入卡片**，
+   * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
+   * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
+   * 起手那一格。
    * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
    */
   const progress = (): number => {
-    const raw = shape.currentTime
+    const raw = travel.currentTime
     if (typeof raw !== 'number') return 0
     const u = raw / FLIGHT_MS
     if (!(u > 0)) return 0
     return u > 1 ? 1 : u
   }
-  // 形状这一条只放 `clip-path`：和别的属性合在一段关键帧里，它就不上合成器了。它同时是整段的
-  // **时间基准**——位移跟着它的 `currentTime` 走（见 `progress`）。
-  const shape = run(shell, between(0, MORPH_END, sample => ({
-    clipPath: 'inset(0px ' + (boxWidth - sample.visible) + 'px ' + (boxHeight - sample.height) + 'px 0px round '
-      + sample.radius + 'px)',
-  })))
+
+  /** 壳归一了没有（见 `compact`）。 */
+  let normalized = false
+  /**
+   * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
+   *
+   * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
+   * 尺寸做，字就越发虚。归一那一帧里「宽度从 `boxWidth` 改成 `visible`」与「缩放从 `visible / boxWidth`
+   * 归到 1」是等价的（`boxWidth × visible / boxWidth = visible`），所以视觉不跳。
+   *
+   * **必须把两条动画 `cancel` 掉**：它们 `fill: forwards`，会一直按最后一帧写着 `transform`，行内那两条
+   * 归 1 压不过动画。取消之后属性回落到行内，正好是归一后的样子。
+   *
+   * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
+   * 改高，拿整段末尾去比就会在归一时跳一下。
+   * @param u - 这一刻的进度；还没走完形变段就什么都不做。
+   */
+  const compact = (u: number): void => {
+    if (normalized || u < MORPH_END) return
+    const final = samples.find(sample => sample.u >= MORPH_END) ?? samples.at(-1)
+    if (final === undefined) return
+    normalized = true
+    shape.cancel()
+    inverse.cancel()
+    corners.cancel()
+    shell.style.width = final.visible + 'px'
+    shell.style.height = final.height + 'px'
+    shell.style.transform = 'none'
+    shell.style.borderRadius = final.radius + 'px'
+    scaler.style.transform = 'none'
+  }
   run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) })))
-  // 光晕挂在壳**外面**，壳的 `clip-path` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧都越过
-  // 列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
+  // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
+  // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
   const shadow = shadowSpread(snapshot.shadow)
   run(halo, between(0, MORPH_END, sample => ({
     transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
@@ -641,7 +710,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     })))
     run(layer, stepOpacity(window.from, window.until))
   }
-  return { wrapper, applyProgress, progress, animations }
+  return { wrapper, compact, progress, animations }
 }
 
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
@@ -889,6 +958,20 @@ function springProgress(u: number, damping: number, omega: number): number {
   const damped = omega * Math.sqrt(1 - damping * damping)
   return 1 - Math.exp(-damping * omega * u)
     * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u))
+}
+
+/**
+ * 一个圆角半径在非均匀缩放的壳上该怎么写。
+ *
+ * 壳的宽按 `sx` 收、高按 `sy` 收（详情见 `MORPH_END`：宽收得比高快），圆角会跟着被压成椭圆。CSS 的
+ * `border-radius` 支持两个轴各写一个半径（`水平 / 垂直`），所以把缩放除回去，视觉上就还是正圆。
+ * @param radius - 这一刻想要的视觉半径。
+ * @param sx - 壳在横轴上的缩放。
+ * @param sy - 壳在纵轴上的缩放。
+ * @returns 给 `borderRadius` 用的值。
+ */
+function cornerRadius(radius: number, sx: number, sy: number): string {
+  return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px'
 }
 
 /**

@@ -12,9 +12,9 @@
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    替身挂到页面上、整段动画交给合成器；真实的那一行挂属性藏起来（保留布局盒，终点每帧都
  *             量得到）。
- *   逐帧补    **这一帧里只有一件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行），补到替身的
- *             最外层上。形状、颜色、位置、字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时
- *             照样在走。
+ *   逐帧补    **这一帧里只有两件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行）补到替身的
+ *             最外层上；形变段走完那一帧把壳归一（见 `send-morph.ts` 的 `compact`）。位置、形状、颜色、
+ *             字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时照样在走。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
  * 五条边界（前两条是实测踩出来的）：
@@ -118,14 +118,15 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
   }
 
   /**
-   * 帧里两件事：写一次位移，补一次终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。
+   * 帧里三件事：认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。认行交给上面那个
+   * observer——它不是每帧都有新答案的事。
    *
-   * **位移必须在这里写，而且必须跟着形状那条动画的进度走**，两条都不能省。
+   * **位移与形状都不在这里写**：两条关键帧同一条时间轴（同一个 `FLIGHT_MS`、同一批 offset），dsh 解析
+   * 响应占住主线程那几十到一百多毫秒里它们照样一起在走，右边缘的等式（见 `ACROSS_OMEGA`）在整段里都
+   * 成立。这条路径上曾经栽过一次：位移在合成器上、形状留在主线程的 `clip-path` 里，主线程一卡，一整张
+   * 还没收窄的卡片就飞到了终点。
    *
-   * 交给合成器不行：形变是主线程上的动画，dsh 解析响应占住主线程那几十到一百多毫秒里它一步都不走，
-   * 而位移照样冲到底——替身就变成「还没收窄的整张卡片落在终点」，右边缘甩出消息列。
-   * 按墙上时钟每帧算也不行：动画在起手那一两帧还 pending、按 offset 0 画着整张卡片，墙上时钟却已经
-   * 往前走了，位移于是领先，右边缘照样出列。读动画自己的时间，两边就永远在同一格上。
+   * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
    */
   const tick = (): void => {
     const current = flight
@@ -135,7 +136,7 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
       settle()
       return
     }
-    current.morph.applyProgress(u)
+    current.morph.compact(u)
     followTarget(current)
     requestAnimationFrame(tick)
   }
@@ -153,7 +154,6 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     if (!sameScreen(card.top, box.top, window.innerHeight)) return
     const morph = startMorph(draft.snapshot, bubble, box)
     if (morph === null) return
-    morph.applyProgress(0)
     echo.setAttribute(FLYING_ATTRIBUTE, '')
     flight = {
       morph,
