@@ -109,24 +109,42 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     window.clearTimeout(rescue)
     rescue = 0
     current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-    for (const animation of current.morph.animations) animation.cancel()
+    // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
+    // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
+    // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
+    // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
     current.morph.wrapper.remove()
+    for (const animation of current.morph.animations) animation.cancel()
   }
 
-  /** 帧里只补终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。 */
+  /**
+   * 帧里两件事：写一次位移，补一次终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。
+   *
+   * **位移必须在这里写，而且必须跟着形状那条动画的进度走**，两条都不能省。
+   *
+   * 交给合成器不行：形变是主线程上的动画，dsh 解析响应占住主线程那几十到一百多毫秒里它一步都不走，
+   * 而位移照样冲到底——替身就变成「还没收窄的整张卡片落在终点」，右边缘甩出消息列。
+   * 按墙上时钟每帧算也不行：动画在起手那一两帧还 pending、按 offset 0 画着整张卡片，墙上时钟却已经
+   * 往前走了，位移于是领先，右边缘照样出列。读动画自己的时间，两边就永远在同一格上。
+   */
   const tick = (): void => {
     const current = flight
     if (current === null) return
-    if (performance.now() - current.startedAt >= FLIGHT_MS) {
+    const u = current.morph.progress()
+    if (u >= 1) {
       settle()
       return
     }
+    current.morph.applyProgress(u)
     followTarget(current)
     requestAnimationFrame(tick)
   }
 
   /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
   const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
+    // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
+    // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
+    settle()
     const bubble = findBubble(echo)
     if (bubble === null) return
     const box = bubble.getBoundingClientRect()
@@ -135,10 +153,10 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     if (!sameScreen(card.top, box.top, window.innerHeight)) return
     const morph = startMorph(draft.snapshot, bubble, box)
     if (morph === null) return
+    morph.applyProgress(0)
     echo.setAttribute(FLYING_ATTRIBUTE, '')
     flight = {
       morph,
-      startedAt: performance.now(),
       targetAt: { left: box.left, top: box.top },
       shiftedX: 0,
       shiftedY: 0,
@@ -228,7 +246,6 @@ interface DraftOrigin {
 interface Flight {
   /** 替身与它身上跑着的全部合成动画。 */
   readonly morph: Morph
-  readonly startedAt: number
   /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
   readonly targetAt: { readonly left: number; readonly top: number }
   /** 已经补到外层上的差值；没变就不写样式。 */

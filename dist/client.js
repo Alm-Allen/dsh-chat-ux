@@ -3275,24 +3275,42 @@ function installSendFlight(readEnabled) {
         window.clearTimeout(rescue);
         rescue = 0;
         current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
+        // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
+        // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
+        // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
+        current.morph.wrapper.remove();
         for (const animation of current.morph.animations)
             animation.cancel();
-        current.morph.wrapper.remove();
     };
-    /** 帧里只补终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。 */
+    /**
+     * 帧里两件事：写一次位移，补一次终点的移动。认行交给上面那个 observer——它不是每帧都有新答案的事。
+     *
+     * **位移必须在这里写，而且必须跟着形状那条动画的进度走**，两条都不能省。
+     *
+     * 交给合成器不行：形变是主线程上的动画，dsh 解析响应占住主线程那几十到一百多毫秒里它一步都不走，
+     * 而位移照样冲到底——替身就变成「还没收窄的整张卡片落在终点」，右边缘甩出消息列。
+     * 按墙上时钟每帧算也不行：动画在起手那一两帧还 pending、按 offset 0 画着整张卡片，墙上时钟却已经
+     * 往前走了，位移于是领先，右边缘照样出列。读动画自己的时间，两边就永远在同一格上。
+     */
     const tick = () => {
         const current = flight;
         if (current === null)
             return;
-        if (performance.now() - current.startedAt >= send_morph_1.FLIGHT_MS) {
+        const u = current.morph.progress();
+        if (u >= 1) {
             settle();
             return;
         }
+        current.morph.applyProgress(u);
         followTarget(current);
         requestAnimationFrame(tick);
     };
     /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
     const startFlight = (echo, draft) => {
+        // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
+        // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
+        settle();
         const bubble = findBubble(echo);
         if (bubble === null)
             return;
@@ -3305,10 +3323,10 @@ function installSendFlight(readEnabled) {
         const morph = (0, send_morph_1.startMorph)(draft.snapshot, bubble, box);
         if (morph === null)
             return;
+        morph.applyProgress(0);
         echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
         flight = {
             morph,
-            startedAt: performance.now(),
             targetAt: { left: box.left, top: box.top },
             shiftedX: 0,
             shiftedY: 0,
@@ -3561,23 +3579,26 @@ exports.alphaOf = alphaOf;
  */
 exports.FLIGHT_MS = 300;
 /**
- * 两道缓动，**都是阻尼弹簧**——iOS 那套动效的骨架就是它：从静止起手、中段最快、尾段收住，走过了头
- * 还会弹回来一点点。
+ * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
+ * 推出来。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开——这是 PR #4 之前那套
+ * 标定出来的轨迹，与纵向那条（`RISE_OMEGA`）的比值是 2.98 / 2.11 / 1.61 / 1.32 / 1.15。
  *
- * **形变一道，横向也走它。** 外框的左右两条边各自从卡片的边走到气泡的边：宽度收多少、往哪边收，都是
- * 这一条曲线的函数，两条边都单调，不会冲出消息列，也不会先往回退一截。
+ * **位移和形变必须同源，这不是审美取舍，是「卡顿时不甩出列外」的充要条件。** 两者跑在不同的线程上：
+ * 位移是 `transform`，在合成器上；外形是 `clip-path`，在主线程上。提交之后 dsh 要在主线程上解析
+ * 这一帧响应（实测 8–120 ms），**那段时间里位移照走、形变冻住**。同源时右边缘是
  *
- * 横向**不能**单独去走一条更快的曲线。上一版就是这么干的（`ACROSS_OMEGA = 16`，两成时间走掉八成三），
- * 结果是壳已经横着挪出去、宽度却还没收，右边缘被甩出消息列：实测在 46 ms 顶出去最多
- * `(W0 - W1) × 0.246`——短消息 182 px、中消息 123 px，五分之一个列宽，看得见。两条边共用这一条曲线时，
- * 右边缘是 `start.right + (end.right - start.right) × m`，恒在列内、还严格单调。
+ *     right(u) = start.right + (end.right - start.right) × m(u)
  *
- * **这一条同时定着屏幕上那条轨迹。** 横向进度是它，纵向是另一条（`RISE_OMEGA` 那条），两者在时间上的
- * 比值决定了替身是「先横着窜出去、再竖着升上来」（比值从一个较大的数降到 1），还是沿着对角线一路走到底
- * （比值接近常数）。7 的比值是 1.50 / 1.30 / 1.16 / 1.07 / 1.01，几乎不动，轨迹就是那条对角线——
- * 读者会直接说「曲线像直线了」。**11.5 是照着旧版标定的**：3.09 / 2.16 / 1.63 / 1.33 / 1.16，与旧版的
- * 2.98 / 2.11 / 1.61 / 1.32 / 1.15 逐格吻合，而形变仍占得住五十来毫秒。再往上（13）更弯，但看得见的
- * 形变时间就被压得太短了。
+ * 无论哪一头冻住，它都只是这条曲线上的某个值，**恒在 `[start.right, end.right]` 里**。
+ *
+ * **一旦给位移单独一条更快的曲线就出事**（曾经这么干过，回归成了读者报的「偶尔超出右侧聊天区」）：
+ * 卡顿时位移跑在前面、形变还没收，右边缘甩出消息列。超出量
+ *
+ *     (W0 - W1) × (1 - m_冻结) − dx × (1 - across_当前)
+ *
+ * 卡在起手那几十毫秒时第一项接近满值。合成器抓帧实测：整张还没收窄的卡片飞到了终点，右边缘顶到
+ * 视口最右边（列右之外 59 px 以上），纵向区间还在跟着替身走。**卡得越早、越久，甩得越远**——这正是
+ * 「偶尔一点点、偶尔特别多」的来源。
  *
  * 临界阻尼，不过冲：形状不该弹。
  *
@@ -3586,7 +3607,7 @@ exports.FLIGHT_MS = 300;
  *
  * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
  */
-const MORPH_OMEGA = 11.5;
+const ACROSS_OMEGA = 16;
 /**
  * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
  * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
@@ -3595,14 +3616,15 @@ const RISE_DAMPING = 0.75;
 /** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
 const RISE_OMEGA = 7.5;
 /**
- * 形变收尾的位置（占整段的比例）。
+ * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
+ * 形变走的还是同一个弹簧，只是时间轴压到这一段的长度上。
  *
- * 形变曾经每帧由主线程写，那时它必须早收（0.45）：位移在合成器上、形变在主线程，主线程一忙，
- * 位置就跑到形状前面、右边拖出一块底色。现在两者都在合成器上、同一条时间线，不会再错开，所以它
- * 按「看得清输入卡片是怎么收成气泡的」来取：工具栏收走、字重新排，都要占得住一段读者看得见的时间。
- * 配上 `MORPH_OMEGA`，六十毫秒走掉八成四、九十毫秒九成六，百来毫秒就定形，剩下那一段只有上升与落定。
+ * 它曾经压在 0.45 是因为形变每帧由主线程写、必须早收；后来形变搬上合成器，一度放宽到 0.7。现在压回
+ * 0.45，理由换了一条：形变越早收完，宽度就越早收到位，右边缘也就越早退进列内（算式见 `ACROSS_OMEGA`）。
+ * 配上那一条曲线，二十毫秒走掉一半、五十毫秒走掉七成九、百毫秒九成九，一百三十五毫秒就定形，剩下那
+ * 一段只有上升与落定。
  */
-const MORPH_END = 0.7;
+const MORPH_END = 0.45;
 /** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
 const SAMPLES = 60;
 /** 工具栏在形变进度走到这里时收完、淡完（五十五毫秒上下）。比形状早：多出来的东西先走，剩下的才是气泡。 */
@@ -3859,7 +3881,12 @@ function startMorph(snapshot, bubble, end) {
     };
     const boxWidth = Math.max(W0, W1);
     const boxHeight = Math.max(H0, H1);
-    // 整段时间线：每个采样点上的形变进度，以及由它推出来的外框、内边距、行高、可排字的宽度。
+    const dx = end.left - start.left;
+    const dy = end.top - start.top;
+    // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
+    // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
+    const reach = end.right - start.left;
+    // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
     const samples = [];
     for (let step = 0; step <= SAMPLES; step += 1) {
         const u = step / SAMPLES;
@@ -3871,6 +3898,9 @@ function startMorph(snapshot, bubble, end) {
             u,
             m,
             width,
+            // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
+            // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
+            visible: Math.max(0, Math.min(width, reach - dx * m)),
             height: H0 + (H1 - H0) * m,
             radius: R0 + (R1 - R0) * m,
             left,
@@ -3976,21 +4006,46 @@ function startMorph(snapshot, bubble, end) {
             frames.push({ ...last, offset: 1 });
         return frames;
     };
-    const dx = end.left - start.left;
-    const dy = end.top - start.top;
-    // 横向走形变那条曲线：左边从卡片的左边走到气泡的左边，右边（左边加宽度）同理，两条边都单调。
-    const travel = run(mover, samples.map(sample => ({
-        offset: sample.u,
-        transform: 'translate(' + dx * sample.m + 'px, ' + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
-    })));
-    // 形状这一条只放 `clip-path`：和别的属性合在一段关键帧里，它就不上合成器了。
-    run(shell, between(0, MORPH_END, sample => ({
-        clipPath: 'inset(0px ' + (boxWidth - sample.width) + 'px ' + (boxHeight - sample.height) + 'px 0px round '
+    // 位移**不**交给合成器：它必须与形变在同一帧、由同一个线程写入，理由见 `ACROSS_OMEGA`。左边从卡片的
+    // 左边走到气泡的左边，右边由宽度决定，两条边都单调。
+    const applyProgress = (u) => {
+        mover.style.transform = 'translate(' + dx * morphProgress(u) + 'px, '
+            + dy * springProgress(u, RISE_DAMPING, RISE_OMEGA) + 'px)';
+    };
+    /**
+     * 这一刻的进度（0 到 1），取自形状那条动画自己的 `currentTime`。
+     *
+     * **位移必须跟着它走，不能自己拿 `performance.now()` 算。** WAAPI 动画在起手那一两帧还是 pending
+     * （startTime 没定），这时它按 offset 0 画——也就是**整张输入卡片**；而墙上时钟已经走了十几毫秒，
+     * 位移要是按墙上时钟算，就会在形状还没收窄的时候先窜出去一截。输入卡片比聊天列每边宽 16 px，所以
+     * 那几帧的右边缘必然在列外；而提交后 dsh 要在主线程上解析响应，一卡就是几十到一百多毫秒——那几帧
+     * 就从"看不见"变成"一整张卡片悬在列外"。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘
+     * 已经从 1030 拉到视口最右 1073。
+     *
+     * 读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在起手那一格。
+     * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
+     */
+    const progress = () => {
+        const raw = shape.currentTime;
+        if (typeof raw !== 'number')
+            return 0;
+        const u = raw / exports.FLIGHT_MS;
+        if (!(u > 0))
+            return 0;
+        return u > 1 ? 1 : u;
+    };
+    // 形状这一条只放 `clip-path`：和别的属性合在一段关键帧里，它就不上合成器了。它同时是整段的
+    // **时间基准**——位移跟着它的 `currentTime` 走（见 `progress`）。
+    const shape = run(shell, between(0, MORPH_END, sample => ({
+        clipPath: 'inset(0px ' + (boxWidth - sample.visible) + 'px ' + (boxHeight - sample.height) + 'px 0px round '
             + sample.radius + 'px)',
     })));
     run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) })));
+    // 光晕挂在壳**外面**，壳的 `clip-path` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧都越过
+    // 列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
+    const shadow = shadowSpread(snapshot.shadow);
     run(halo, between(0, MORPH_END, sample => ({
-        transform: 'scale(' + sample.width / W0 + ', ' + sample.height / H0 + ')',
+        transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
         opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
     })));
     for (const piece of snapshot.chrome) {
@@ -4001,7 +4056,7 @@ function startMorph(snapshot, bubble, end) {
         piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%');
         run(piece.element, between(0, MORPH_END, (sample) => {
             const gone = Math.min(1, sample.m / CHROME_GONE_AT);
-            const shiftX = anchorRight ? sample.width - W0 : 0;
+            const shiftX = anchorRight ? sample.visible - W0 : 0;
             const shiftY = anchorBottom ? sample.height - H0 : 0;
             return {
                 transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
@@ -4022,7 +4077,7 @@ function startMorph(snapshot, bubble, end) {
         })));
         run(layer, stepOpacity(window.from, window.until));
     }
-    return { wrapper, travel, animations };
+    return { wrapper, applyProgress, progress, animations };
 }
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
@@ -4219,13 +4274,13 @@ function scrub(root) {
         layer.remove();
 }
 /**
- * 形变进度：一条临界阻尼的弹簧，压进前 `MORPH_END` 段。弹簧在窗口末端还差一点点没到（ω=7 时差
- * 0.7%），整条按末端的值归一，终点严丝合缝、中间也不跳。
+ * 形变进度：一条临界阻尼的弹簧，压进前 `MORPH_END` 段。弹簧在窗口末端还差一点点没到，整条按末端的
+ * 值归一，终点严丝合缝、中间也不跳。
  */
 function morphProgress(u) {
     if (u >= MORPH_END)
         return 1;
-    return springProgress(u / MORPH_END, 1, MORPH_OMEGA) / springProgress(1, 1, MORPH_OMEGA);
+    return springProgress(u / MORPH_END, 1, ACROSS_OMEGA) / springProgress(1, 1, ACROSS_OMEGA);
 }
 /**
  * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
@@ -4243,6 +4298,27 @@ function springProgress(u, damping, omega) {
     const damped = omega * Math.sqrt(1 - damping * damping);
     return 1 - Math.exp(-damping * omega * u)
         * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
+}
+/**
+ * 一条 box-shadow 向外扩多少：取各层里最大的 `模糊半径 + 扩散半径`。颜色函数里的数字先剔掉。
+ *
+ * 光晕那一层要用它把阴影的外沿收回可见右边缘以内（见 `startMorph` 里 halo 的缩放）。
+ * @param shadow - 计算样式里的 `box-shadow`。
+ * @returns 像素数；读不出来当 0——阴影小一点，总比画到列外强。
+ */
+function shadowSpread(shadow) {
+    if (shadow === '' || shadow === 'none')
+        return 0;
+    let spread = 0;
+    for (const part of shadow.split(/,(?![^()]*\))/)) {
+        const clean = part.replace(/[a-z-]+\([^)]*\)/gi, ' ');
+        const found = clean.match(/-?\d*\.?\d+px/g);
+        if (found === null)
+            continue;
+        const values = found.map(Number.parseFloat);
+        spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0));
+    }
+    return spread;
 }
 /** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
 function pixel(value) {
