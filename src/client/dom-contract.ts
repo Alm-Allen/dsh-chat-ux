@@ -31,8 +31,13 @@ export const STREAMING_ATTRIBUTE = 'data-streaming'
 /** 同一个契约的选择器形式。 */
 export const STREAMING_SELECTOR = '[' + STREAMING_ATTRIBUTE + ']'
 
-/** TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。 */
-export const SHIMMER_SELECTOR = '[data-text-shimmer]'
+/**
+ * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
+ *
+ * dsh 2026-09 那次更新把这个属性从 `data-text-shimmer` 改名成 `data-shimmer`——实机产物里只剩新名。
+ * 两个都认：桌面端会自己升级，插件不该因为一次改名就静默失效。
+ */
+export const SHIMMER_SELECTOR = '[data-shimmer], [data-text-shimmer]'
 
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
 export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
@@ -83,6 +88,14 @@ export const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'
 
 /** dsh 给每一个过程组放的属性。 */
 export const PROCESS_GROUP_SELECTOR = '[data-step-process]'
+
+/**
+ * 过程组根上：在，就说明这一档不收纳组体（「详细」与「完全展开」两档）。
+ *
+ * 这两档里组头**仍在 DOM**，只是被 dsh 裹进一个带 `hidden` 的壳，所以判档位只能靠它，
+ * 不能再靠「找不到组头」。
+ */
+export const PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode'
 
 /** 过程组体；收起时带 `hidden`。 */
 export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'

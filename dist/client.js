@@ -638,7 +638,9 @@ function installCaretMotion(read) {
         layer.caret.style.transform = 'translate(' + left + 'px, ' + top + 'px)';
         layer.caret.style.height = box.height + 'px';
         if (instant)
-            requestAnimationFrame(() => { layer.caret.style.transitionProperty = ''; });
+            requestAnimationFrame(() => {
+                layer.caret.style.transitionProperty = '';
+            });
         if (fresh) {
             layer.visible = true;
             layer.caret.setAttribute(exports.CARET_VISIBLE_ATTRIBUTE, '');
@@ -787,7 +789,7 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -805,8 +807,13 @@ exports.RUNNING_STATE = 'running';
 exports.STREAMING_ATTRIBUTE = 'data-streaming';
 /** 同一个契约的选择器形式。 */
 exports.STREAMING_SELECTOR = '[' + exports.STREAMING_ATTRIBUTE + ']';
-/** TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。 */
-exports.SHIMMER_SELECTOR = '[data-text-shimmer]';
+/**
+ * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
+ *
+ * dsh 2026-09 那次更新把这个属性从 `data-text-shimmer` 改名成 `data-shimmer`——实机产物里只剩新名。
+ * 两个都认：桌面端会自己升级，插件不该因为一次改名就静默失效。
+ */
+exports.SHIMMER_SELECTOR = '[data-shimmer], [data-text-shimmer]';
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
 exports.CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]';
 /**
@@ -846,6 +853,13 @@ exports.SUBMISSION_ECHO_SELECTOR = '[data-submission-echo]';
 exports.SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 /** dsh 给每一个过程组放的属性。 */
 exports.PROCESS_GROUP_SELECTOR = '[data-step-process]';
+/**
+ * 过程组根上：在，就说明这一档不收纳组体（「详细」与「完全展开」两档）。
+ *
+ * 这两档里组头**仍在 DOM**，只是被 dsh 裹进一个带 `hidden` 的壳，所以判档位只能靠它，
+ * 不能再靠「找不到组头」。
+ */
+exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode';
 /** 过程组体；收起时带 `hidden`。 */
 exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
 /** 过程组体里的内容层；组体滚的就是它。 */
@@ -1611,7 +1625,8 @@ const markFoldBusy = () => {
  */
 function installFoldGlide() {
     if (typeof document === 'undefined' || document.body === null)
-        return () => { };
+        return () => {
+        };
     let intent = null;
     /** 收起动画正在跑：这 200ms 不接受新的点击，免得两次折叠叠在一起。 */
     let shutting = false;
@@ -1742,7 +1757,9 @@ function installFoldGlide() {
         (0, follow_tail_1.ensureFollowTail)({
             // 读者中途自己动了手，这一次交还就作废。
             stillWanted: () => !watch.moved(),
-            onSettled: () => { watch.stop(); },
+            onSettled: () => {
+                watch.stop();
+            },
         });
     };
     /**
@@ -1757,10 +1774,14 @@ function installFoldGlide() {
      */
     const settleAfterFold = (watch, roll = null) => {
         if (roll === null) {
-            window.setTimeout(() => { handBackFollow(watch); }, ROLL_MS);
+            window.setTimeout(() => {
+                handBackFollow(watch);
+            }, ROLL_MS);
             return;
         }
-        const settle = () => { handBackFollow(watch); };
+        const settle = () => {
+            handBackFollow(watch);
+        };
         roll.finished.then(settle, settle);
     };
     /**
@@ -1819,7 +1840,9 @@ function installFoldGlide() {
             done();
             return;
         }
-        requestAnimationFrame(() => { confirmCollapsed(settled, done, attempt + 1); });
+        requestAnimationFrame(() => {
+            confirmCollapsed(settled, done, attempt + 1);
+        });
     };
     /**
      * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
@@ -1891,7 +1914,9 @@ function installFoldGlide() {
         markFoldBusy();
         const height = fold.target.getBoundingClientRect().height;
         // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
-        const release = window.setTimeout(() => { shutting = false; }, ROLL_MS + 200);
+        const release = window.setTimeout(() => {
+            shutting = false;
+        }, ROLL_MS + 200);
         if (height <= fold.floor) {
             window.clearTimeout(release);
             replay(fold.control);
@@ -2317,7 +2342,9 @@ function installFollowGuard(readEnabled) {
         if ((0, fold_glide_1.isFoldGlideBusy)()) {
             if (attempt >= FOLD_WAIT_ATTEMPTS)
                 return;
-            window.setTimeout(() => { ensure(attempt + 1); }, FOLD_WAIT_MS);
+            window.setTimeout(() => {
+                ensure(attempt + 1);
+            }, FOLD_WAIT_MS);
             return;
         }
         const now = performance.now();
@@ -2675,7 +2702,7 @@ function installProcessFollow(readEnabled) {
         if (body.hasAttribute('hidden'))
             return false;
         // 「详细」与「完全展开」不收纳：组体不封顶、没有内层滚动条，也就没有跟随可言。
-        if (body.closest('[data-group-expanded-mode]') !== null)
+        if (body.closest(`[${dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE}]`) !== null)
             return false;
         // 没有可滚的余量时什么都做不了。
         return body.scrollHeight - body.clientHeight > 0;
@@ -2797,13 +2824,17 @@ function installProcessFollow(readEnabled) {
  *
  * dsh 把一轮里相邻的过程内容——思考、工具、命令、写文件——收进一个过程组，组的开合由它自己那个
  * 行内控件管。「简洁」与「标准」两档下组体一开始是收起的，读者得自己点开才看得见模型正在做什么。
- * 「详细」档只给已经结束的轮次画组头，运行中的组体本来就开着；「完全展开」档连组头都不画。后两档
- * 里没有可切换的组，本模块什么都不做。
+ * 「详细」与「完全展开」两档不收纳组体（组体本来就全开着），本模块一概不动手——判据是组根上的
+ * `data-group-expanded-mode`。
  *
- * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂
- * `data-text-shimmer`。判断组体开合看它自己的 `hidden`——dsh 用可搜索的隐藏，收起时设
- * `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围的类名那样跟着每次构建变。
- * 组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
+ * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂 `data-shimmer`
+ * （2026-09 之前叫 `data-text-shimmer`，见 `dom-contract`）。判断组体开合看它自己的 `hidden`——dsh
+ * 用可搜索的隐藏，收起时设 `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围
+ * 的类名那样跟着每次构建变。组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
+ *
+ * 收纳与否也要自己判：新版把组头在「详细」与「完全展开」两档里也留在 DOM 里，只是裹进一个带
+ * `hidden` 的壳，所以「找不到组头」不再等于「这一档没有可折叠的组」——认组根上的
+ * `data-group-expanded-mode`。
  *
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
@@ -2816,8 +2847,6 @@ const dom_contract_1 = require("./dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]';
-/** 组头里的 shimmer：在，就说明这一段过程还没结束。 */
-const RUNNING_SELECTOR = '[data-text-shimmer]';
 /** dsh 把组头标签与实时细节接起来用的分隔符（`message.turnProcess.separator`，中英文都是它）。 */
 const DETAIL_SEPARATOR = ' · ';
 /** 组根上的标记：这个组的组头此刻带着实时细节（标准或详细档，且这一段过程还没结束）。 */
@@ -2860,11 +2889,15 @@ function installProcessFold() {
             // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
             if (!group.isConnected)
                 continue;
+            // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM（dsh 只是把它裹进一个
+            // 带 `hidden` 的壳）。点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到。
+            if (group.hasAttribute(dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE))
+                continue;
             const header = group.querySelector(HEADER_SELECTOR);
             const body = group.querySelector(dom_contract_1.PROCESS_BODY_SELECTOR);
             if (!(header instanceof HTMLElement) || body === null)
                 continue;
-            const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : dom_contract_1.RUNNING_STATE;
+            const phase = header.querySelector(dom_contract_1.SHIMMER_SELECTOR) === null ? CLOSED : dom_contract_1.RUNNING_STATE;
             // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
             // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
             // 写到属性上，样式表在组体展开时用它替掉整段文本。
@@ -2945,7 +2978,7 @@ function installProcessFold() {
         if (group === null)
             return;
         const header = group.querySelector(HEADER_SELECTOR);
-        touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
+        touchedIn.set(group, header !== null && header.querySelector(dom_contract_1.SHIMMER_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
     };
     /**
      * 这一批变化涉及哪些组。
@@ -2976,7 +3009,8 @@ function installProcessFold() {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['data-text-shimmer', 'hidden'],
+        // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍。
+        attributeFilter: ['data-shimmer', 'data-text-shimmer', 'hidden', dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE],
         characterData: true,
     });
     document.addEventListener('click', rememberReaderTouched, true);
@@ -3235,7 +3269,8 @@ const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
 function installSendFlight(readEnabled) {
     // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-        return () => { };
+        return () => {
+        };
     /** 最近一次抓到的草稿起点。 */
     let origin = null;
     /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
@@ -3751,7 +3786,9 @@ function snapshotComposer(input, card) {
         if (width * height === 0) {
             if (getComputedStyle(element).display !== 'contents')
                 return;
-            Array.from(element.children).forEach((child, index) => { collect(child, [...path, index]); });
+            Array.from(element.children).forEach((child, index) => {
+                collect(child, [...path, index]);
+            });
             return;
         }
         const groups = Array.from(element.children).filter((child) => {
@@ -4547,7 +4584,8 @@ const EN_COPY = {
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
     // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文。
-    const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => { }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
+    const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
+    }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
     const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language;
     const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
@@ -4613,7 +4651,13 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => { setSansDraft(null); void reset(FONT_SANS_FIELD); } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => { setCodeDraft(null); void reset(FONT_CODE_FIELD); } })] }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
+                            setSansDraft(null);
+                            void reset(FONT_SANS_FIELD);
+                        } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
+                            setCodeDraft(null);
+                            void reset(FONT_CODE_FIELD);
+                        } })] }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
@@ -4623,7 +4667,9 @@ function DraftField(props) {
     const { copy } = props;
     const inputId = props.id + '-input';
     const hintId = props.id + '-hint';
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.field, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.fieldHead, children: [(0, jsx_runtime_1.jsx)("label", { className: config_card_styles_1.CARD_CLASS.label, htmlFor: inputId, children: props.label }), props.overridden && overrideBadges(copy, props.disabled, props.onReset)] }), (0, jsx_runtime_1.jsx)("input", { id: inputId, className: config_card_styles_1.CARD_CLASS.input, type: "text", autoComplete: "off", spellCheck: false, placeholder: props.placeholder, value: props.value, disabled: props.disabled, "aria-invalid": props.invalid || undefined, "aria-describedby": hintId, onChange: (event) => { props.onEdit(event.target.value); }, onBlur: props.onCommit, onKeyDown: (event) => {
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.field, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.fieldHead, children: [(0, jsx_runtime_1.jsx)("label", { className: config_card_styles_1.CARD_CLASS.label, htmlFor: inputId, children: props.label }), props.overridden && overrideBadges(copy, props.disabled, props.onReset)] }), (0, jsx_runtime_1.jsx)("input", { id: inputId, className: config_card_styles_1.CARD_CLASS.input, type: "text", autoComplete: "off", spellCheck: false, placeholder: props.placeholder, value: props.value, disabled: props.disabled, "aria-invalid": props.invalid || undefined, "aria-describedby": hintId, onChange: (event) => {
+                    props.onEdit(event.target.value);
+                }, onBlur: props.onCommit, onKeyDown: (event) => {
                     if (event.key !== 'Enter')
                         return;
                     event.preventDefault();
@@ -5007,9 +5053,13 @@ body[data-ds-dark-theme] {
 
    替上来的那半截还要自己带流光：动画原本挂在被隐藏的那个元素上，跟着它一起没了。下面这道渐变、
    它的半宽和周期都对着 ui-primitives 的 TextShimmer 抄，只有 keyframes 的名字是自己的——那份样式
-   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。 */
+   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。dsh 2026-09 那次更新把流光的
+   做法换成了蒙版扫动（mask-image 加 translateX，1.5 s、delay 0.3 s），这里仍是自己这一版连续
+   渐变，只共享周期；要换成同一套机制是另一件事。 */
 
-[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-text-shimmer] {
+/* 让位的是 TextShimmer 的**整层**——data-shimmer 那个根上，主内容与那层装饰副本都在里面。这个
+   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer，两个名字都认。 */
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > :is([data-shimmer], [data-text-shimmer]) {
   display: none;
 }
 
@@ -5389,12 +5439,15 @@ function installTokenMotion(readEnabled) {
 function runTokenMotion() {
     const registry = globalThis.CSS?.highlights;
     if (registry === undefined)
-        return () => { };
+        return () => {
+        };
     const HighlightConstructor = globalThis.Highlight;
     if (HighlightConstructor === undefined)
-        return () => { };
+        return () => {
+        };
     if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
-        return () => { };
+        return () => {
+        };
     /** 还没有停稳的字符区间。 */
     const liveRuns = [];
     /** 安装那一刻就已经在页面上的流式容器：它们是历史，不重播淡入。 */
@@ -5529,7 +5582,9 @@ function runTokenMotion() {
     };
     /** 排下一个绘制帧。 */
     const scheduleFrame = () => {
-        scheduledFrame = requestAnimationFrame((now) => { paint(now, true); });
+        scheduledFrame = requestAnimationFrame((now) => {
+            paint(now, true);
+        });
     };
     /**
      * 按当前年龄重画每一个还活着的区间，然后排下一帧。

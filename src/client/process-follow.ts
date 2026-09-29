@@ -23,7 +23,7 @@
  * @module dsh-chat-ux/client/process-follow
  */
 
-import {PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR} from './dom-contract'
+import {PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE} from './dom-contract'
 import {isReaderScrollIntent} from './reader-intent'
 
 /** 读者滚回组体底部多近算「看完了」。 */
@@ -63,7 +63,7 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
         // 收起时它整块不可见。
         if (body.hasAttribute('hidden')) return false
         // 「详细」与「完全展开」不收纳：组体不封顶、没有内层滚动条，也就没有跟随可言。
-        if (body.closest('[data-group-expanded-mode]') !== null) return false
+        if (body.closest(`[${PROCESS_EXPANDED_MODE_ATTRIBUTE}]`) !== null) return false
         // 没有可滚的余量时什么都做不了。
         return body.scrollHeight - body.clientHeight > 0
     }

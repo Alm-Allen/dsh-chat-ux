@@ -52,9 +52,13 @@ body[data-ds-dark-theme] {
 
    替上来的那半截还要自己带流光：动画原本挂在被隐藏的那个元素上，跟着它一起没了。下面这道渐变、
    它的半宽和周期都对着 ui-primitives 的 TextShimmer 抄，只有 keyframes 的名字是自己的——那份样式
-   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。 */
+   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。dsh 2026-09 那次更新把流光的
+   做法换成了蒙版扫动（mask-image 加 translateX，1.5 s、delay 0.3 s），这里仍是自己这一版连续
+   渐变，只共享周期；要换成同一套机制是另一件事。 */
 
-[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-text-shimmer] {
+/* 让位的是 TextShimmer 的**整层**——data-shimmer 那个根上，主内容与那层装饰副本都在里面。这个
+   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer，两个名字都认。 */
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > :is([data-shimmer], [data-text-shimmer]) {
   display: none;
 }
 

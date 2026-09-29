@@ -3,13 +3,17 @@
  *
  * dsh 把一轮里相邻的过程内容——思考、工具、命令、写文件——收进一个过程组，组的开合由它自己那个
  * 行内控件管。「简洁」与「标准」两档下组体一开始是收起的，读者得自己点开才看得见模型正在做什么。
- * 「详细」档只给已经结束的轮次画组头，运行中的组体本来就开着；「完全展开」档连组头都不画。后两档
- * 里没有可切换的组，本模块什么都不做。
+ * 「详细」与「完全展开」两档不收纳组体（组体本来就全开着），本模块一概不动手——判据是组根上的
+ * `data-group-expanded-mode`。
  *
- * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂
- * `data-text-shimmer`。判断组体开合看它自己的 `hidden`——dsh 用可搜索的隐藏，收起时设
- * `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围的类名那样跟着每次构建变。
- * 组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
+ * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂 `data-shimmer`
+ * （2026-09 之前叫 `data-text-shimmer`，见 `dom-contract`）。判断组体开合看它自己的 `hidden`——dsh
+ * 用可搜索的隐藏，收起时设 `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围
+ * 的类名那样跟着每次构建变。组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
+ *
+ * 收纳与否也要自己判：新版把组头在「详细」与「完全展开」两档里也留在 DOM 里，只是裹进一个带
+ * `hidden` 的壳，所以「找不到组头」不再等于「这一档没有可折叠的组」——认组根上的
+ * `data-group-expanded-mode`。
  *
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
@@ -17,14 +21,11 @@
  * @module dsh-chat-ux/client/process-fold
  */
 
-import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, RUNNING_STATE} from './dom-contract'
+import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from './dom-contract'
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from './programmatic-toggle'
 
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]'
-
-/** 组头里的 shimmer：在，就说明这一段过程还没结束。 */
-const RUNNING_SELECTOR = '[data-text-shimmer]'
 
 /** dsh 把组头标签与实时细节接起来用的分隔符（`message.turnProcess.separator`，中英文都是它）。 */
 const DETAIL_SEPARATOR = ' · '
@@ -76,10 +77,13 @@ export function installProcessFold(): () => void {
         for (const group of groups) {
             // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
             if (!group.isConnected) continue
+            // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM（dsh 只是把它裹进一个
+            // 带 `hidden` 的壳）。点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到。
+            if (group.hasAttribute(PROCESS_EXPANDED_MODE_ATTRIBUTE)) continue
             const header = group.querySelector(HEADER_SELECTOR)
             const body = group.querySelector(PROCESS_BODY_SELECTOR)
             if (!(header instanceof HTMLElement) || body === null) continue
-            const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING_STATE
+            const phase = header.querySelector(SHIMMER_SELECTOR) === null ? CLOSED : RUNNING_STATE
             // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
             // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
             // 写到属性上，样式表在组体展开时用它替掉整段文本。
@@ -149,7 +153,7 @@ export function installProcessFold(): () => void {
         const group = target.closest(PROCESS_GROUP_SELECTOR)
         if (group === null) return
         const header = group.querySelector(HEADER_SELECTOR)
-        touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
+        touchedIn.set(group, header !== null && header.querySelector(SHIMMER_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
     }
 
     /**
@@ -179,7 +183,8 @@ export function installProcessFold(): () => void {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['data-text-shimmer', 'hidden'],
+        // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍。
+        attributeFilter: ['data-shimmer', 'data-text-shimmer', 'hidden', PROCESS_EXPANDED_MODE_ATTRIBUTE],
         characterData: true,
     })
     document.addEventListener('click', rememberReaderTouched, true)
