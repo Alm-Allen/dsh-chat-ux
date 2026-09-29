@@ -27,7 +27,7 @@
  * 接管不到的两项：标准字体只在元素完全不指定 font-family 时生效，而 dsh 处处显式指定；
  * 字号同理——dsh 用自己的 --dsh-content-font-size（12–17px），与浏览器的字号设置是两套。
  *
- * @module dsh-chat-ux/client/font-styles
+ * @module dsh-chat-ux/client/chat/fonts/font-styles
  */
 
 /**

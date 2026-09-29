@@ -13,9 +13,9 @@
  * 监听哪些事件类型仍由各处自己定：三处认的集合不同（折叠那一处只认会带来显式位移的那几种，
  * 组体那一处还要 touchmove），那是各自的判断，不是这个契约的一部分。
  *
- * @module dsh-chat-ux/client/reader-intent
+ * @module dsh-chat-ux/client/chat/follow/reader-intent
  */
-import {COMPOSER_SELECTOR, SCROLL_KEYS} from './dom-contract'
+import {COMPOSER_SELECTOR, SCROLL_KEYS} from '../../dom-contract'
 
 /**
  * 一次事件是不是读者接管滚动的意图。

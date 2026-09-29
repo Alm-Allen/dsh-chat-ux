@@ -47,7 +47,7 @@
  * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
  * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
  *
- * @module dsh-chat-ux/client/fold-glide
+ * @module dsh-chat-ux/client/chat/fold/fold-glide
  */
 
 import {
@@ -57,10 +57,10 @@ import {
     PROCESS_BODY_SELECTOR,
     PROCESS_GROUP_SELECTOR,
     THINK_ROW_SELECTOR
-} from './dom-contract'
-import {ensureFollowTail, FOLLOW_LOOK_TOTAL_MS} from './follow-tail'
+} from '../../dom-contract'
+import {ensureFollowTail, FOLLOW_LOOK_TOTAL_MS} from '../follow/follow-tail'
 import {isProgrammaticToggle} from './programmatic-toggle'
-import {isReaderScrollIntent} from './reader-intent'
+import {isReaderScrollIntent} from '../follow/reader-intent'
 
 /** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200

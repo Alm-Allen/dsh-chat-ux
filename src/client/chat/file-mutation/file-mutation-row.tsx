@@ -21,7 +21,7 @@
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
  * 是共享的，行 chrome 本身仍由它们承担）。
  *
- * @module dsh-chat-ux/client/file-mutation-row
+ * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
  */
 import {useCallback, useMemo} from 'react'
 import type {KeyboardEvent, MouseEvent, ReactElement} from 'react'
@@ -66,74 +66,6 @@ interface ToolCallOwnerProps {
 /** 这一行的完整输入。 */
 export interface FileMutationRowProps extends ToolCallOwnerProps {
     t: Translate
-}
-
-/** 调用头：工具名与原始参数 JSON。 */
-interface ToolCallHead {
-    name: string
-    argsRaw: string
-}
-
-/** 参数还在流进来的准备态。 */
-interface PreparingToolCall {
-    phase: 'preparing'
-    callId: string
-    parentCallId?: string | undefined
-    name: string
-}
-
-/** 已派发、仍在跑的那一次调用。 */
-interface StartedToolCall {
-    phase: 'start'
-    callId: string
-    parentCallId?: string | undefined
-    name: string
-    argsRaw: string
-}
-
-/** 结果里的一个内容块；这一行只区分文本与其余。 */
-interface ContentBlock {
-    type: string
-    text?: string | undefined
-}
-
-/** 结构化失败信息。 */
-interface ToolCallError {
-    name: string
-    code: string
-    reason?: unknown
-}
-
-/** 已结算的结果节点。 */
-interface ToolResultNode {
-    kind: 'tool-result'
-    callId: string
-    parentCallId?: string | undefined
-    /** 窗口丢掉了调用头时为 null；结果本身仍可渲染。 */
-    call: ToolCallHead | null
-    content: readonly ContentBlock[]
-    isError: boolean
-    error?: ToolCallError | undefined
-    /** 结果元数据；PTC 子调用不带它。 */
-    meta?: unknown
-}
-
-/** 一次调用的三种形态，按 `kind` 判别是否已结算。 */
-type ToolCallBlock = PreparingToolCall | StartedToolCall | ToolResultNode
-
-/** 行状态，与内置 `ToolRowState` 同名同义。 */
-type RowState = 'preparing' | 'running' | 'ok' | 'error' | 'stopped'
-
-/** 这一行渲染需要的全部派生结果。 */
-interface RowModel {
-    titleKey: string
-    variant: 'edit' | 'write'
-    summary: string
-    filePath: string | undefined
-    bodyRaw: string | null
-    output: string | null
-    errorSummary: string | null
-    state: RowState
 }
 
 /** 座位注册表，收窄到本插件会发出的两次调用。 */
@@ -277,6 +209,74 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     )
 }
 
+/** 调用头：工具名与原始参数 JSON。 */
+interface ToolCallHead {
+    name: string
+    argsRaw: string
+}
+
+/** 参数还在流进来的准备态。 */
+interface PreparingToolCall {
+    phase: 'preparing'
+    callId: string
+    parentCallId?: string | undefined
+    name: string
+}
+
+/** 已派发、仍在跑的那一次调用。 */
+interface StartedToolCall {
+    phase: 'start'
+    callId: string
+    parentCallId?: string | undefined
+    name: string
+    argsRaw: string
+}
+
+/** 结果里的一个内容块；这一行只区分文本与其余。 */
+interface ContentBlock {
+    type: string
+    text?: string | undefined
+}
+
+/** 结构化失败信息。 */
+interface ToolCallError {
+    name: string
+    code: string
+    reason?: unknown
+}
+
+/** 已结算的结果节点。 */
+interface ToolResultNode {
+    kind: 'tool-result'
+    callId: string
+    parentCallId?: string | undefined
+    /** 窗口丢掉了调用头时为 null；结果本身仍可渲染。 */
+    call: ToolCallHead | null
+    content: readonly ContentBlock[]
+    isError: boolean
+    error?: ToolCallError | undefined
+    /** 结果元数据；PTC 子调用不带它。 */
+    meta?: unknown
+}
+
+/** 一次调用的三种形态，按 `kind` 判别是否已结算。 */
+type ToolCallBlock = PreparingToolCall | StartedToolCall | ToolResultNode
+
+/** 行状态，与内置 `ToolRowState` 同名同义。 */
+type RowState = 'preparing' | 'running' | 'ok' | 'error' | 'stopped'
+
+/** 这一行渲染需要的全部派生结果。 */
+interface RowModel {
+    titleKey: string
+    variant: 'edit' | 'write'
+    summary: string
+    filePath: string | undefined
+    bodyRaw: string | null
+    output: string | null
+    errorSummary: string | null
+    state: RowState
+}
+
 /**
  * 派生这一行要展示的改动。
  *
@@ -333,16 +333,16 @@ function appliedHunks(meta: unknown): DiffHunk[] | 'empty' | null {
     const diffs = (meta as Record<string, unknown>).diffs
     if (!Array.isArray(diffs)) return null
     if (diffs.length === 0) return 'empty'
-    const out: DiffHunk[] = []
+    const hunks: DiffHunk[] = []
     for (const hunk of diffs) {
         if (typeof hunk !== 'object' || hunk === null) return null
         const {path, oldText, newText} = hunk as Record<string, unknown>
         if (typeof path !== 'string') return null
         if (oldText !== null && typeof oldText !== 'string') return null
         if (typeof newText !== 'string') return null
-        out.push({path, oldText, newText})
+        hunks.push({path, oldText, newText})
     }
-    return out
+    return hunks
 }
 
 /**
@@ -388,8 +388,11 @@ function rowModel(
 function resultText(node: ToolResultNode): string {
     const parts: string[] = []
     for (const block of node.content) {
-        if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text)
-        else parts.push(JSON.stringify(block, null, 2))
+        if (block.type === 'text' && typeof block.text === 'string') {
+            parts.push(block.text)
+            continue
+        }
+        parts.push(JSON.stringify(block, null, 2))
     }
     if (parts.length === 0 && node.error !== undefined) parts.push(node.error.name + ': ' + node.error.code)
     return parts.join('\n')
@@ -474,8 +477,8 @@ function shortenPath(path: string, cwd: string | undefined, home: string | undef
  * @returns 第一行。
  */
 function firstLine(text: string): string {
-    const nl = text.indexOf('\n')
-    return nl === -1 ? text : text.slice(0, nl)
+    const lineBreakAt = text.indexOf('\n')
+    return lineBreakAt === -1 ? text : text.slice(0, lineBreakAt)
 }
 
 /**

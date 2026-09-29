@@ -20,10 +20,10 @@
  * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
  * 于是重新点亮自己的跟随，并放下那个卡住的动画目标。
  *
- * @module dsh-chat-ux/client/process-follow
+ * @module dsh-chat-ux/client/chat/follow/process-follow
  */
 
-import {PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE} from './dom-contract'
+import {PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE} from '../../dom-contract'
 import {isReaderScrollIntent} from './reader-intent'
 
 /** 读者滚回组体底部多近算「看完了」。 */
@@ -137,15 +137,15 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
             if (content !== null) observer.observe(content)
         }
         for (const [body, content] of [...watched]) {
-            if (present.has(body)) {
-                // 收起过的组体重新展开时，上一次那回让位不该跟过来。
-                if (body.hasAttribute('hidden')) takenOver.delete(body)
+            if (!present.has(body)) {
+                watched.delete(body)
+                takenOver.delete(body)
+                observer.unobserve(body)
+                if (content !== null) observer.unobserve(content)
                 continue
             }
-            watched.delete(body)
-            takenOver.delete(body)
-            observer.unobserve(body)
-            if (content !== null) observer.unobserve(content)
+            // 收起过的组体重新展开时，上一次那回让位不该跟过来。
+            if (body.hasAttribute('hidden')) takenOver.delete(body)
         }
     }
 

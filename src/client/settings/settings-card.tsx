@@ -17,15 +17,15 @@
  * 两个输入框（两条字体栈）多一道提交（回车或失焦才写）：它们要等读者把字打完，
  * 而每敲一个字符都是一次设置文档写入。打完之前那串字只活在这个组件里，不合法的那串一个字都不写。
  *
- * @module dsh-chat-ux/client/settings-card
+ * @module dsh-chat-ux/client/settings/settings-card
  */
 import {useCallback, useId, useState, useSyncExternalStore} from 'react'
 import type {ReactElement} from 'react'
 import {SegmentedControl, Switch, Tag} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {SegmentedControlOption} from '@deepseek-ai/dsh-client-ui-primitives'
-import type {CaretMotionMode} from './caret-motion'
+import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
-import {isFontFamilyValue} from './font-override'
+import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
     DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
     DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
@@ -40,9 +40,6 @@ const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
 const SEND_FLIGHT_FIELD = 'sendFlight'
-
-/** 卡片文案的语种：这一张卡片只有中英两套。 */
-type CopyLanguage = 'zh' | 'en'
 
 /** 一种语言的文案。 */
 interface Copy {
@@ -169,9 +166,9 @@ export interface ChatUxConfigCardProps {
     /** `dsh-chat-ux` 这一行的共享配置表单。 */
     scope: ConfigForm<ChatUxSection>
     /** locale 服务，部署里有的话。 */
-    locale?: LocaleLike
+    locale?: LocaleLike | undefined
     /** `'page'` 是要表单；`'summary'` 是标题下面那一行摘要。 */
-    view?: 'summary' | 'page'
+    view?: 'summary' | 'page' | undefined
 }
 
 /**
@@ -191,7 +188,12 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
         useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
     )
     const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language
-    const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY
+    // dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
+    // （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
+    // 兜底，而不是「非英文即中文」的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
+    // 中文是这套文案的主要读者。
+    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh'
+    const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY
     const [saving, setSaving] = useState(false)
     const [failed, setFailed] = useState(false)
     // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
@@ -484,22 +486,6 @@ function storedSans(value: ChatUxSection | undefined): string {
 /** 从 host 的值里读自定义等宽字体栈。 */
 function storedCode(value: ChatUxSection | undefined): string {
     return value?.fontCode ?? DEFAULT_FONT_FAMILY
-}
-
-/**
- * 定这一张卡片说哪种语言。
- *
- * dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
- * （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
- * 兜底，而不是"非英文即中文"的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
- * 中文是这套文案的主要读者。
- * @param active - locale 服务报的活跃语言 id；服务缺席时是 null。
- * @param browserLanguage - `navigator.language`；非浏览器运行里是 null。
- * @returns 读哪一套文案。
- */
-function resolveCopyLanguage(active: string | null | undefined, browserLanguage: string | null | undefined): CopyLanguage {
-    const language = nonEmpty(active) ?? nonEmpty(browserLanguage) ?? 'zh'
-    return language.toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh'
 }
 
 /**

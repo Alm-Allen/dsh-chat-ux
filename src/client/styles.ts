@@ -8,13 +8,13 @@
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
  */
-import {CARET_MOTION_CSS} from './caret-motion-styles'
-import {CARD_CSS} from './config-card-styles'
-import {FILE_MUTATION_CSS} from './file-mutation-styles'
-import {FOLD_MOTION_CSS} from './fold-motion-styles'
-import {FONT_CSS} from './font-styles'
-import {SEND_FLIGHT_CSS} from './send-flight-styles'
-import {RUN_COLOR_VAR} from './token-motion'
+import {CARET_MOTION_CSS} from './chat/caret/caret-motion-styles'
+import {CARD_CSS} from './settings/config-card-styles'
+import {FILE_MUTATION_CSS} from './chat/file-mutation/file-mutation-styles'
+import {FOLD_MOTION_CSS} from './chat/fold/fold-motion-styles'
+import {FONT_CSS} from './chat/fonts/font-styles'
+import {SEND_FLIGHT_CSS} from './chat/send-flight/send-flight-styles'
+import {RUN_COLOR_VAR} from './chat/token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
 export const STYLE_ID = 'dsh-chat-ux-style'

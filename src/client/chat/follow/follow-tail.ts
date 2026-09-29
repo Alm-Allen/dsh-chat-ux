@@ -20,10 +20,10 @@
  * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
  * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
  *
- * @module dsh-chat-ux/client/follow-tail
+ * @module dsh-chat-ux/client/chat/follow/follow-tail
  */
 
-import {CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR, FOLLOW_THRESHOLD_PX} from './dom-contract'
+import {CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR, FOLLOW_THRESHOLD_PX} from '../../dom-contract'
 
 /** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
 export const FOLLOW_LOOK_ROUNDS = 5
@@ -89,7 +89,11 @@ export function ensureFollowTail(ensure: FollowEnsure = {}): void {
         // 位置钉住了不等于跟随也回来了：归属判定可能比这一次晚一步才把跟随关掉，而那之后它只认
         // 自己那个「回到底部」按钮。
         if (document.querySelector(FOLLOWING_TAIL_SELECTOR) === null) {
-            const button = toBottomButton()
+            // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
+            // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
+            const column = document.querySelector<HTMLElement>(CHAT_FLOW_SELECTOR)
+            const root = column?.parentElement?.parentElement ?? null
+            const button = root?.nextElementSibling?.querySelector<HTMLElement>('button') ?? null
             if (button !== null) {
                 button.click()
                 ensure.onSettled?.()
@@ -99,16 +103,4 @@ export function ensureFollowTail(ensure: FollowEnsure = {}): void {
         window.setTimeout(look, FOLLOW_LOOK_INTERVAL_MS)
     }
     window.setTimeout(look, FOLLOW_LOOK_INTERVAL_MS)
-}
-
-/**
- * dsh 那个「回到底部」按钮。它只在跟随关掉时渲染，位置是聊天列所在那个框的下一个兄弟。
- * @returns 按钮；认不出来时为 null。
- */
-function toBottomButton(): HTMLElement | null {
-    // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
-    // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
-    const column = document.querySelector<HTMLElement>(CHAT_FLOW_SELECTOR)
-    const root = column?.parentElement?.parentElement ?? null
-    return root?.nextElementSibling?.querySelector<HTMLElement>('button') ?? null
 }

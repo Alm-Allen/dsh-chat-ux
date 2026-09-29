@@ -43,9 +43,9 @@
  *             是反过来做的——合成期间把原生插入符还回去——结果是打字的时候读者看到的是另一套
  *             光标：粗细不一样、渲染不一样，而且它不会动。候选框由浏览器自己定位，与这里无关。
  *
- * @module dsh-chat-ux/client/caret-motion
+ * @module dsh-chat-ux/client/chat/caret/caret-motion
  */
-import {COMPOSER_INPUT_SELECTOR, COMPOSER_TEXTAREA_SELECTOR} from './dom-contract'
+import {COMPOSER_INPUT_SELECTOR, COMPOSER_TEXTAREA_SELECTOR} from '../../dom-contract'
 
 /** 闪烁动画的名字。`caret-motion-styles.ts` 用它拼 keyframes，两处必须一字不差。 */
 export const CARET_BLINK_NAME = 'dsh-chat-ux-caret-blink'

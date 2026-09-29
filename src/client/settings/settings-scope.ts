@@ -5,9 +5,9 @@
  * 这里的形状是 `@deepseek-ai/dsh-client-ui-settings` 契约的本地复述，而不是 import：client
  * bundle 必须保持单文件自包含，平台包由模块加载器在运行时解析，不参与编译。
  *
- * @module dsh-chat-ux/client/settings-scope
+ * @module dsh-chat-ux/client/settings/settings-scope
  */
-import type {CaretMotionMode} from './caret-motion'
+import type {CaretMotionMode} from '../chat/caret/caret-motion'
 
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
@@ -108,7 +108,7 @@ export interface ConfigForm<T = ChatUxSection> {
  * 卡片退化成按浏览器语言显示，而不是干脆不挂载。
  */
 export interface LocaleLike {
-    getSnapshot(): { active?: string | null }
+    getSnapshot(): { active?: string | null | undefined }
 
     subscribe(listener: () => void): () => void
 }

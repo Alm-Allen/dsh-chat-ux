@@ -6,7 +6,7 @@
  * 正文刚开头」这样的位置上，静默它等于把读者正在读的那段正文的渐变整段掐掉，所以它必须被认出来
  * 并放过。两个自动开合模块共用这一个计数：谁都不该把对方的程序化点击记成读者的意图。
  *
- * @module dsh-chat-ux/client/programmatic-toggle
+ * @module dsh-chat-ux/client/chat/fold/programmatic-toggle
  */
 
 /** 本插件自己按下折叠控件的深度。 */

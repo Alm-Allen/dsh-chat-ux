@@ -46,11 +46,11 @@
  *   主线程忙  **让路**。绘制帧一连几帧都隔得很久，说明主线程已经被别的事占满，这时候再给新字符排
  *             淡入只会把卡顿叠得更重：手上的区间直接落定，接下来一段时间里新字符以本色出现。
  *
- * @module dsh-chat-ux/client/token-motion
+ * @module dsh-chat-ux/client/chat/token-motion
  */
 
-import {STREAMING_ATTRIBUTE, STREAMING_SELECTOR} from './dom-contract'
-import {isProgrammaticToggle} from './programmatic-toggle'
+import {STREAMING_ATTRIBUTE, STREAMING_SELECTOR} from '../dom-contract'
+import {isProgrammaticToggle} from './fold/programmatic-toggle'
 
 /**
  * 一个字符从极淡到停稳之间有多少档。

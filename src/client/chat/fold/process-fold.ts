@@ -18,10 +18,10 @@
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
  *
- * @module dsh-chat-ux/client/process-fold
+ * @module dsh-chat-ux/client/chat/fold/process-fold
  */
 
-import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from './dom-contract'
+import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from '../../dom-contract'
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from './programmatic-toggle'
 
 /** 组头那个开合控件。 */
@@ -167,7 +167,18 @@ export function installProcessFold(): () => void {
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
     const observer = new MutationObserver((records) => {
         const known = touchedGroups.size
-        for (const record of records) collectGroups(record, touchedGroups)
+        for (const record of records) {
+            // 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
+            const target = record.target
+            const element = target instanceof Element ? target : target.parentElement
+            const group = element?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+            if (group !== null) touchedGroups.add(group)
+            for (const node of record.addedNodes) {
+                if (!(node instanceof HTMLElement)) continue
+                if (node.matches(PROCESS_GROUP_SELECTOR)) touchedGroups.add(node)
+                for (const found of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) touchedGroups.add(found)
+            }
+        }
         // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
         if (touchedGroups.size === known) return
         if (scanQueued) return
@@ -195,24 +206,5 @@ export function installProcessFold(): () => void {
         observer.disconnect()
         document.removeEventListener('click', rememberReaderTouched, true)
         document.removeEventListener('keydown', rememberReaderTouched, true)
-    }
-}
-
-/**
- * 把一条 mutation 涉及到的过程组收进集合。
- *
- * 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
- * @param record - observer 交来的一条变化。
- * @param into - 收集到的组。
- */
-function collectGroups(record: MutationRecord, into: Set<HTMLElement>): void {
-    const target = record.target
-    const element = target instanceof Element ? target : target.parentElement
-    const group = element?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
-    if (group !== null) into.add(group)
-    for (const node of record.addedNodes) {
-        if (!(node instanceof HTMLElement)) continue
-        if (node.matches(PROCESS_GROUP_SELECTOR)) into.add(node)
-        for (const found of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) into.add(found)
     }
 }

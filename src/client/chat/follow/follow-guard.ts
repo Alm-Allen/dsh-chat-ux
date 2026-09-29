@@ -18,11 +18,11 @@
  * 「回到底部」）为止，这一处一概不动手——真正要修的本来就是「读者没碰过键鼠」的那一类丢失。
  * 交还的动作还要再让开折叠动画那两百毫秒，否则卷帘门正拉着，位置跟着动，看起来是抖。
  *
- * @module dsh-chat-ux/client/follow-guard
+ * @module dsh-chat-ux/client/chat/follow/follow-guard
  */
 
-import {FLOW_BLOCK_SELECTOR, FOLLOWING_TAIL_ATTRIBUTE, RUNNING_STATE, SHIMMER_SELECTOR, STREAMING_SELECTOR, THINK_ROW_SELECTOR} from './dom-contract'
-import {isFoldGlideBusy} from './fold-glide'
+import {FLOW_BLOCK_SELECTOR, FOLLOWING_TAIL_ATTRIBUTE, RUNNING_STATE, SHIMMER_SELECTOR, STREAMING_SELECTOR, THINK_ROW_SELECTOR} from '../../dom-contract'
+import {isFoldGlideBusy} from '../fold/fold-glide'
 import {conversationScroller, ensureFollowTail, isAtBottom} from './follow-tail'
 import {isReaderScrollIntent} from './reader-intent'
 

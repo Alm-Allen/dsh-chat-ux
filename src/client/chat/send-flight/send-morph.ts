@@ -37,7 +37,7 @@
  * 祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属性另
  * 有抄法，理由见 `snapshotComposer`。
  *
- * @module dsh-chat-ux/client/send-morph
+ * @module dsh-chat-ux/client/chat/send-flight/send-morph
  */
 
 /**
@@ -435,6 +435,19 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     }
 }
 
+/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
+export function pixel(value: string): number {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
+export function alphaOf(color: string): number {
+    const parts = colorParts(color)
+    if (parts === null) return 0
+    return parts[3] ?? 1
+}
+
 /**
  * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
  * @param snapshot - 起飞前抓下来的输入卡片。
@@ -583,10 +596,10 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
         animations.push(animation)
         return animation
     }
-    // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
+    // 只在 [windowFrom, windowUntil] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
     // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-    const between = (from: number, until: number, frame: (sample: Sample) => Keyframe, stride = 1): Keyframe[] => {
-        const inside = samples.filter(sample => sample.u >= from && sample.u <= until)
+    const between = (windowFrom: number, windowUntil: number, frame: (sample: Sample) => Keyframe, stride = 1): Keyframe[] => {
+        const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil)
         const frames: Keyframe[] = []
         inside.forEach((sample, index) => {
             // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
@@ -1003,19 +1016,6 @@ function shadowSpread(shadow: string): number {
         spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0))
     }
     return spread
-}
-
-/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
-export function pixel(value: string): number {
-    const parsed = Number.parseFloat(value)
-    return Number.isFinite(parsed) ? parsed : 0
-}
-
-/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
-export function alphaOf(color: string): number {
-    const parts = colorParts(color)
-    if (parts === null) return 0
-    return parts[3] ?? 1
 }
 
 /** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */

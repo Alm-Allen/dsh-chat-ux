@@ -32,7 +32,7 @@
  * 自然高度排好，门框只负责裁。门停下来标记就撤，排版回到 dsh 原样——展开体的高度本来就是子元素
  * 自然高度之和，两种排法在终点上一个像素都不差。`!important` 是因为这两百毫秒里谁也不该改它。
  *
- * @module dsh-chat-ux/client/fold-motion-styles
+ * @module dsh-chat-ux/client/chat/fold/fold-motion-styles
  */
 import {ROLLING_ATTRIBUTE} from './fold-glide'
 

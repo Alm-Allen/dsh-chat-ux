@@ -9,7 +9,7 @@
  * 写岔，退回去的就是自带那一套，最坏也不比不填更差。合法性交给浏览器自己判（`CSS.supports`），
  * 也没有拼接字符串带来的注入面：写值走的是 CSSOM。
  *
- * @module dsh-chat-ux/client/font-override
+ * @module dsh-chat-ux/client/chat/fonts/font-override
  */
 import {
     CODE_VARIABLE, EMBEDDED_MONO, EMBEDDED_SANS, FONT_ATTRIBUTE, MONO_VARIABLE, SANS_VARIABLE,
@@ -35,7 +35,20 @@ export interface FontChoice {
  */
 export function isFontFamilyValue(value: string): boolean {
     const text = value.trim()
-    return text !== '' && hasPairedQuotes(text) && CSS.supports('font-family', text)
+    if (text === '') return false
+    // 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat
+    // UX Sans', …` 读成**一个**字体名，那个名字谁的机器上都没有，接在后面的自带字体于是接不住，界面
+    // 掉到浏览器默认字体。这不是假设：实测 Chromium 就是这么解的，而 CSS.supports 认它合法。漏打一个
+    // 后引号是最像样的手误，所以这一道得自己来。它只做配平、不判语法：剩下的交给浏览器，代价是一个
+    // 真在引号里带撇号的名字（`"a'b"`）会被误拒，而那种写法的字体名不值得为它放宽。
+    let singles = 0
+    let doubles = 0
+    for (const character of text) {
+        if (character === "'") singles += 1
+        if (character === '"') doubles += 1
+    }
+    if (singles % 2 !== 0 || doubles % 2 !== 0) return false
+    return CSS.supports('font-family', text)
 }
 
 /**
@@ -63,27 +76,6 @@ export function clearFontChoice(): void {
     body.style.removeProperty(SANS_VARIABLE)
     body.style.removeProperty(CODE_VARIABLE)
     body.style.removeProperty(MONO_VARIABLE)
-}
-
-/**
- * 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat UX
- * Sans', …` 读成**一个**字体名，那个名字谁的机器上都没有，接在后面的自带字体于是接不住，界面掉到
- * 浏览器默认字体。这不是假设：实测 Chromium 就是这么解的，而 CSS.supports 认它合法。漏打一个后
- * 引号是最像样的手误，所以这一道得自己来。
- *
- * 它只做配平，不判语法：剩下的交给浏览器。代价是一个真在引号里带撇号的名字（`"a'b"`）会被误拒，
- * 而那种写法的字体名不值得为它放宽。
- * @param value - 读者填的那串字体名。
- * @returns 单双引号各自成对时为真。
- */
-function hasPairedQuotes(value: string): boolean {
-    let singles = 0
-    let doubles = 0
-    for (const character of value) {
-        if (character === "'") singles += 1
-        else if (character === '"') doubles += 1
-    }
-    return singles % 2 === 0 && doubles % 2 === 0
 }
 
 /**

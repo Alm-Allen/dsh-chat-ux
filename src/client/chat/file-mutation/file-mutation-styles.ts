@@ -6,7 +6,7 @@
  * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
  * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
  *
- * @module dsh-chat-ux/client/file-mutation-styles
+ * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
  */
 
 /** 行根节点。 */

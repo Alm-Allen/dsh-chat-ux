@@ -13,26 +13,26 @@
  * @module dsh-chat-ux/client
  */
 import type {Context as ClientContext} from '@deepseek-ai/cordis'
-import {installCaretMotion} from './caret-motion'
-import type {CaretMotionMode} from './caret-motion'
-import {installFileMutationRow} from './file-mutation-row'
-import type {SlotsService} from './file-mutation-row'
-import {installFoldGlide} from './fold-glide'
-import {installFollowGuard} from './follow-guard'
-import {applyFontChoice, clearFontChoice} from './font-override'
-import type {FontChoice} from './font-override'
-import {installProcessFollow} from './process-follow'
-import {installProcessFold} from './process-fold'
-import {installReasoningFold} from './reasoning-fold'
-import {installSendFlight} from './send-flight'
-import {ChatUxConfigCard} from './settings-card'
+import {installCaretMotion} from './chat/caret/caret-motion'
+import type {CaretMotionMode} from './chat/caret/caret-motion'
+import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
+import type {SlotsService} from './chat/file-mutation/file-mutation-row'
+import {installFoldGlide} from './chat/fold/fold-glide'
+import {installFollowGuard} from './chat/follow/follow-guard'
+import {applyFontChoice, clearFontChoice} from './chat/fonts/font-override'
+import type {FontChoice} from './chat/fonts/font-override'
+import {installProcessFollow} from './chat/follow/process-follow'
+import {installProcessFold} from './chat/fold/process-fold'
+import {installReasoningFold} from './chat/fold/reasoning-fold'
+import {installSendFlight} from './chat/send-flight/send-flight'
+import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
     DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
-} from './settings-scope'
-import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
+} from './settings/settings-scope'
+import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {ALL_CSS, STYLE_ID} from './styles'
-import {installTokenMotion} from './token-motion'
+import {installTokenMotion} from './chat/token-motion'
 
 /**
  * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
@@ -144,16 +144,25 @@ export function apply(ctx: ClientContext): void {
             {
                 name: 'plugins.bundle.config',
                 key: PACKAGE_NAME,
-                inject: () => ({
-                    scope,
-                    locale: services.reflect.get('locale') as LocaleLike | undefined,
-                }),
+                inject: () => {
+                    const locale = services.reflect.get('locale')
+                    return {scope, locale: locale == null ? undefined : locale as LocaleLike}
+                },
             },
             ChatUxConfigCard,
         ),
     )
 
-    console.log('[dsh-chat-ux] client half loaded', {rev: clientRevision() ?? 'unknown'})
+    // 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台
+    // 就知道浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来。
+    const boot = (window as unknown as {
+        __DSH_BOOT__?: {
+            entries?: readonly { id?: string | undefined; rev?: string | undefined }[] | undefined
+        } | undefined
+    }).__DSH_BOOT__
+    console.log('[dsh-chat-ux] client half loaded', {
+        rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? 'unknown',
+    })
 }
 
 /** 这一半读到的配置，镜像在一份可变对象里：跟随那几处每轮现读它，插入符与字体由 `syncSettings` 重落。 */
@@ -190,16 +199,3 @@ const PACKAGE_NAME = '@alm-allen/dsh-chat-ux'
 
 /** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux'
-
-/**
- * 宿主给这个插件的 client 产物算的内容哈希，取自浏览器启动图（\`window.__DSH_BOOT__\` 的 entries）。
- *
- * 开发期这一条最省事：产物一改哈希就变，刷新页面看一眼控制台就知道浏览器拿到的是不是刚构建的那一份。
- * 没有启动图的场合返回 undefined。
- */
-function clientRevision(): string | undefined {
-    const boot = (window as unknown as {
-        __DSH_BOOT__?: { entries?: readonly { id?: string; rev?: string }[] }
-    }).__DSH_BOOT__
-    return boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev
-}

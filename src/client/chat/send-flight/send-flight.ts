@@ -28,9 +28,9 @@
  *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
  *   只飞同一屏    起终点有一头已经在屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
  *
- * @module dsh-chat-ux/client/send-flight
+ * @module dsh-chat-ux/client/chat/send-flight/send-flight
  */
-import {CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR} from './dom-contract'
+import {CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR} from '../../dom-contract'
 import {alphaOf, FLIGHT_MS, snapshotComposer, startMorph} from './send-morph'
 import type {ComposerSnapshot, Morph} from './send-morph'
 
@@ -90,32 +90,32 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
      * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
      */
     const rowWatcher = new MutationObserver((records) => {
-        const current = flight
-        if (current === null || !touchesUserRow(records)) return
-        const row = currentRow(current.previous)
-        if (row === null || row === current.hidden) return
-        current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
+        const activeFlight = flight
+        if (activeFlight === null || !touchesUserRow(records)) return
+        const row = currentRow(activeFlight.previous)
+        if (row === null || row === activeFlight.hidden) return
+        activeFlight.hidden?.removeAttribute(FLYING_ATTRIBUTE)
         row.setAttribute(FLYING_ATTRIBUTE, '')
-        current.hidden = row
-        current.bubble = findBubble(row)
-        followTarget(current)
+        activeFlight.hidden = row
+        activeFlight.bubble = findBubble(row)
+        followTarget(activeFlight)
     })
 
     /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
     const settle = (): void => {
-        const current = flight
-        if (current === null) return
+        const activeFlight = flight
+        if (activeFlight === null) return
         flight = null
         rowWatcher.disconnect()
         window.clearTimeout(rescue)
         rescue = 0
-        current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
+        activeFlight.hidden?.removeAttribute(FLYING_ATTRIBUTE)
         // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
         // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
         // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
         // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
-        current.morph.wrapper.remove()
-        for (const animation of current.morph.animations) animation.cancel()
+        activeFlight.morph.wrapper.remove()
+        for (const animation of activeFlight.morph.animations) animation.cancel()
     }
 
     /**
@@ -130,15 +130,15 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
      * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
      */
     const tick = (): void => {
-        const current = flight
-        if (current === null) return
-        const u = current.morph.progress()
+        const activeFlight = flight
+        if (activeFlight === null) return
+        const u = activeFlight.morph.progress()
         if (u >= 1) {
             settle()
             return
         }
-        current.morph.compact(u)
-        followTarget(current)
+        activeFlight.morph.compact(u)
+        followTarget(activeFlight)
         requestAnimationFrame(tick)
     }
 
@@ -151,8 +151,9 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         if (bubble === null) return
         const box = bubble.getBoundingClientRect()
         const card = draft.snapshot.box
-        if (!sameScreen(card.left, box.left, window.innerWidth)) return
-        if (!sameScreen(card.top, box.top, window.innerHeight)) return
+        const onSameScreen = sameScreen(card.left, box.left, window.innerWidth)
+            && sameScreen(card.top, box.top, window.innerHeight)
+        if (!onSameScreen) return
         const morph = startMorph(draft.snapshot, bubble, box)
         if (morph === null) return
         echo.setAttribute(FLYING_ATTRIBUTE, '')
@@ -322,10 +323,10 @@ function lastUserRow(): HTMLElement | null {
 function findBubble(row: HTMLElement): HTMLElement | null {
     const queue: Element[] = Array.from(row.children)
     while (queue.length > 0) {
-        const current = queue.shift()
-        if (current === undefined) break
-        if (current instanceof HTMLElement && alphaOf(getComputedStyle(current).backgroundColor) > 0) return current
-        for (const child of current.children) queue.push(child)
+        const node = queue.shift()
+        if (node === undefined) break
+        if (node instanceof HTMLElement && alphaOf(getComputedStyle(node).backgroundColor) > 0) return node
+        for (const child of node.children) queue.push(child)
     }
     return null
 }

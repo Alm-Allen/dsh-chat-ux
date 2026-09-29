@@ -15,7 +15,7 @@
  * 过渡的是 `transform` 而不是 `top`/`left`：VS Code 那边过渡的是布局属性，这里没有理由跟着付
  * 那份代价。80ms 与它同档，缓动也是它那个默认的 ease。
  *
- * @module dsh-chat-ux/client/caret-motion-styles
+ * @module dsh-chat-ux/client/chat/caret/caret-motion-styles
  */
 import {
     CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,

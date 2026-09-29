@@ -45,19 +45,19 @@ window.__ModuleLoader__.load({
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.inject = void 0;
 exports.apply = apply;
-const caret_motion_1 = require("./caret-motion");
-const file_mutation_row_1 = require("./file-mutation-row");
-const fold_glide_1 = require("./fold-glide");
-const follow_guard_1 = require("./follow-guard");
-const font_override_1 = require("./font-override");
-const process_follow_1 = require("./process-follow");
-const process_fold_1 = require("./process-fold");
-const reasoning_fold_1 = require("./reasoning-fold");
-const send_flight_1 = require("./send-flight");
-const settings_card_1 = require("./settings-card");
-const settings_scope_1 = require("./settings-scope");
+const caret_motion_1 = require("./chat/caret/caret-motion");
+const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
+const fold_glide_1 = require("./chat/fold/fold-glide");
+const follow_guard_1 = require("./chat/follow/follow-guard");
+const font_override_1 = require("./chat/fonts/font-override");
+const process_follow_1 = require("./chat/follow/process-follow");
+const process_fold_1 = require("./chat/fold/process-fold");
+const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
+const send_flight_1 = require("./chat/send-flight/send-flight");
+const settings_card_1 = require("./settings/settings-card");
+const settings_scope_1 = require("./settings/settings-scope");
 const styles_1 = require("./styles");
-const token_motion_1 = require("./token-motion");
+const token_motion_1 = require("./chat/token-motion");
 /**
  * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
  * 后者由 `@deepseek-ai/dsh-client-ui-settings` 提供，而它自己声明了 `remote` 与 `remote.settings`，
@@ -150,12 +150,17 @@ function apply(ctx) {
     services.slots.inject('plugins.bundle.config', () => services.slots.register({
         name: 'plugins.bundle.config',
         key: PACKAGE_NAME,
-        inject: () => ({
-            scope,
-            locale: services.reflect.get('locale'),
-        }),
+        inject: () => {
+            const locale = services.reflect.get('locale');
+            return { scope, locale: locale == null ? undefined : locale };
+        },
     }, settings_card_1.ChatUxConfigCard));
-    console.log('[dsh-chat-ux] client half loaded', { rev: clientRevision() ?? 'unknown' });
+    // 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台
+    // 就知道浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来。
+    const boot = window.__DSH_BOOT__;
+    console.log('[dsh-chat-ux] client half loaded', {
+        rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? 'unknown',
+    });
 }
 /**
  * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 `plugins.bundle.config` 按 **bundle** 的包名
@@ -164,19 +169,9 @@ function apply(ctx) {
 const PACKAGE_NAME = '@alm-allen/dsh-chat-ux';
 /** 配置条目 id；设置服务按它标识一份表单。 */
 const SETTINGS_NAMESPACE = 'dsh-chat-ux';
-/**
- * 宿主给这个插件的 client 产物算的内容哈希，取自浏览器启动图（\`window.__DSH_BOOT__\` 的 entries）。
- *
- * 开发期这一条最省事：产物一改哈希就变，刷新页面看一眼控制台就知道浏览器拿到的是不是刚构建的那一份。
- * 没有启动图的场合返回 undefined。
- */
-function clientRevision() {
-    const boot = window.__DSH_BOOT__;
-    return boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev;
-}
     };
 
-    __registry["caret-motion.js"] = function (module, exports, require) {
+    __registry["chat/caret/caret-motion.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_COLOR_PROPERTY = exports.CARET_HOST_ATTRIBUTE = exports.CARET_VISIBLE_ATTRIBUTE = exports.CARET_LAYER_ATTRIBUTE = exports.CARET_ATTRIBUTE = exports.CARET_BLINK_NAME = void 0;
@@ -226,9 +221,9 @@ exports.installCaretMotion = installCaretMotion;
  *             是反过来做的——合成期间把原生插入符还回去——结果是打字的时候读者看到的是另一套
  *             光标：粗细不一样、渲染不一样，而且它不会动。候选框由浏览器自己定位，与这里无关。
  *
- * @module dsh-chat-ux/client/caret-motion
+ * @module dsh-chat-ux/client/chat/caret/caret-motion
  */
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 /** 闪烁动画的名字。`caret-motion-styles.ts` 用它拼 keyframes，两处必须一字不差。 */
 exports.CARET_BLINK_NAME = 'dsh-chat-ux-caret-blink';
 /** 挂在可编辑面上的标记：有它，原生插入符才让位。规则在 `caret-motion-styles.ts`。 */
@@ -866,7 +861,7 @@ exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
 exports.PROCESS_CONTENT_SELECTOR = '[data-step-process-content]';
     };
 
-    __registry["file-mutation-row.js"] = function (module, exports, require) {
+    __registry["chat/file-mutation/file-mutation-row.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installFileMutationRow = installFileMutationRow;
@@ -895,7 +890,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
  * 是共享的，行 chrome 本身仍由它们承担）。
  *
- * @module dsh-chat-ux/client/file-mutation-row
+ * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
@@ -1025,7 +1020,7 @@ function appliedHunks(meta) {
         return null;
     if (diffs.length === 0)
         return 'empty';
-    const out = [];
+    const hunks = [];
     for (const hunk of diffs) {
         if (typeof hunk !== 'object' || hunk === null)
             return null;
@@ -1036,9 +1031,9 @@ function appliedHunks(meta) {
             return null;
         if (typeof newText !== 'string')
             return null;
-        out.push({ path, oldText, newText });
+        hunks.push({ path, oldText, newText });
     }
-    return out;
+    return hunks;
 }
 /**
  * 派生整行的展示模型。
@@ -1076,10 +1071,11 @@ function rowModel(toolName, block, args, cwd, home) {
 function resultText(node) {
     const parts = [];
     for (const block of node.content) {
-        if (block.type === 'text' && typeof block.text === 'string')
+        if (block.type === 'text' && typeof block.text === 'string') {
             parts.push(block.text);
-        else
-            parts.push(JSON.stringify(block, null, 2));
+            continue;
+        }
+        parts.push(JSON.stringify(block, null, 2));
     }
     if (parts.length === 0 && node.error !== undefined)
         parts.push(node.error.name + ': ' + node.error.code);
@@ -1167,8 +1163,8 @@ function shortenPath(path, cwd, home) {
  * @returns 第一行。
  */
 function firstLine(text) {
-    const nl = text.indexOf('\n');
-    return nl === -1 ? text : text.slice(0, nl);
+    const lineBreakAt = text.indexOf('\n');
+    return lineBreakAt === -1 ? text : text.slice(0, lineBreakAt);
 }
 /**
  * 摘要那半截的类名：失败与中断各自带自己的状态色。
@@ -1217,7 +1213,7 @@ function diffBlockLabels(t) {
 }
     };
 
-    __registry["file-mutation-styles.js"] = function (module, exports, require) {
+    __registry["chat/file-mutation/file-mutation-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 文件变更行自己的样式表。
@@ -1227,7 +1223,7 @@ function diffBlockLabels(t) {
  * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
  * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
  *
- * @module dsh-chat-ux/client/file-mutation-styles
+ * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
@@ -1498,7 +1494,7 @@ body {
 `;
     };
 
-    __registry["fold-glide.js"] = function (module, exports, require) {
+    __registry["chat/fold/fold-glide.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 折叠时把下方内容推开，展开体自己像卷帘门一样拉下来。
@@ -1549,16 +1545,16 @@ body {
  * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
  * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
  *
- * @module dsh-chat-ux/client/fold-glide
+ * @module dsh-chat-ux/client/chat/fold/fold-glide
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ROLLING_ATTRIBUTE = void 0;
 exports.isFoldGlideBusy = isFoldGlideBusy;
 exports.installFoldGlide = installFoldGlide;
-const dom_contract_1 = require("./dom-contract");
-const follow_tail_1 = require("./follow-tail");
+const dom_contract_1 = require("../../dom-contract");
+const follow_tail_1 = require("../follow/follow-tail");
 const programmatic_toggle_1 = require("./programmatic-toggle");
-const reader_intent_1 = require("./reader-intent");
+const reader_intent_1 = require("../follow/reader-intent");
 /** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200;
 /**
@@ -2062,7 +2058,7 @@ function installFoldGlide() {
 }
     };
 
-    __registry["follow-tail.js"] = function (module, exports, require) {
+    __registry["chat/follow/follow-tail.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 把聊天区的滚动位置交还给 dsh 的跟随。
@@ -2086,14 +2082,14 @@ function installFoldGlide() {
  * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
  * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
  *
- * @module dsh-chat-ux/client/follow-tail
+ * @module dsh-chat-ux/client/chat/follow/follow-tail
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_INTERVAL_MS = exports.FOLLOW_LOOK_ROUNDS = void 0;
 exports.conversationScroller = conversationScroller;
 exports.isAtBottom = isAtBottom;
 exports.ensureFollowTail = ensureFollowTail;
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 /** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
 exports.FOLLOW_LOOK_ROUNDS = 5;
 /** 两眼之间隔多久；五眼正好盖过它那个五百毫秒的采样窗口。 */
@@ -2138,7 +2134,11 @@ function ensureFollowTail(ensure = {}) {
         // 位置钉住了不等于跟随也回来了：归属判定可能比这一次晚一步才把跟随关掉，而那之后它只认
         // 自己那个「回到底部」按钮。
         if (document.querySelector(dom_contract_1.FOLLOWING_TAIL_SELECTOR) === null) {
-            const button = toBottomButton();
+            // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
+            // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
+            const column = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
+            const root = column?.parentElement?.parentElement ?? null;
+            const button = root?.nextElementSibling?.querySelector('button') ?? null;
             if (button !== null) {
                 button.click();
                 ensure.onSettled?.();
@@ -2149,20 +2149,9 @@ function ensureFollowTail(ensure = {}) {
     };
     window.setTimeout(look, exports.FOLLOW_LOOK_INTERVAL_MS);
 }
-/**
- * dsh 那个「回到底部」按钮。它只在跟随关掉时渲染，位置是聊天列所在那个框的下一个兄弟。
- * @returns 按钮；认不出来时为 null。
- */
-function toBottomButton() {
-    // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
-    // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
-    const column = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
-    const root = column?.parentElement?.parentElement ?? null;
-    return root?.nextElementSibling?.querySelector('button') ?? null;
-}
     };
 
-    __registry["programmatic-toggle.js"] = function (module, exports, require) {
+    __registry["chat/fold/programmatic-toggle.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 本插件自己按下的折叠切换的记账。
@@ -2172,7 +2161,7 @@ function toBottomButton() {
  * 正文刚开头」这样的位置上，静默它等于把读者正在读的那段正文的渐变整段掐掉，所以它必须被认出来
  * 并放过。两个自动开合模块共用这一个计数：谁都不该把对方的程序化点击记成读者的意图。
  *
- * @module dsh-chat-ux/client/programmatic-toggle
+ * @module dsh-chat-ux/client/chat/fold/programmatic-toggle
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.beginProgrammaticToggle = beginProgrammaticToggle;
@@ -2197,7 +2186,7 @@ function isProgrammaticToggle() {
 }
     };
 
-    __registry["reader-intent.js"] = function (module, exports, require) {
+    __registry["chat/follow/reader-intent.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReaderScrollIntent = isReaderScrollIntent;
@@ -2216,9 +2205,9 @@ exports.isReaderScrollIntent = isReaderScrollIntent;
  * 监听哪些事件类型仍由各处自己定：三处认的集合不同（折叠那一处只认会带来显式位移的那几种，
  * 组体那一处还要 touchmove），那是各自的判断，不是这个契约的一部分。
  *
- * @module dsh-chat-ux/client/reader-intent
+ * @module dsh-chat-ux/client/chat/follow/reader-intent
  */
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 /**
  * 一次事件是不是读者接管滚动的意图。
  * @param event - 页面上任意一处指针、触摸或按键事件。
@@ -2233,7 +2222,7 @@ function isReaderScrollIntent(event) {
 }
     };
 
-    __registry["follow-guard.js"] = function (module, exports, require) {
+    __registry["chat/follow/follow-guard.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 跟随守护：在「思考结束」「出现工具调用」这些时刻，刻意把聊天区交还给 dsh 的跟随。
@@ -2255,12 +2244,12 @@ function isReaderScrollIntent(event) {
  * 「回到底部」）为止，这一处一概不动手——真正要修的本来就是「读者没碰过键鼠」的那一类丢失。
  * 交还的动作还要再让开折叠动画那两百毫秒，否则卷帘门正拉着，位置跟着动，看起来是抖。
  *
- * @module dsh-chat-ux/client/follow-guard
+ * @module dsh-chat-ux/client/chat/follow/follow-guard
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installFollowGuard = installFollowGuard;
-const dom_contract_1 = require("./dom-contract");
-const fold_glide_1 = require("./fold-glide");
+const dom_contract_1 = require("../../dom-contract");
+const fold_glide_1 = require("../fold/fold-glide");
 const follow_tail_1 = require("./follow-tail");
 const reader_intent_1 = require("./reader-intent");
 /** 工具调用行自己带一个；它住在 assistant 节点内部，不必是新流块。 */
@@ -2448,7 +2437,7 @@ function installFollowGuard(readEnabled) {
 }
     };
 
-    __registry["font-override.js"] = function (module, exports, require) {
+    __registry["chat/fonts/font-override.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isFontFamilyValue = isFontFamilyValue;
@@ -2465,7 +2454,7 @@ exports.clearFontChoice = clearFontChoice;
  * 写岔，退回去的就是自带那一套，最坏也不比不填更差。合法性交给浏览器自己判（`CSS.supports`），
  * 也没有拼接字符串带来的注入面：写值走的是 CSSOM。
  *
- * @module dsh-chat-ux/client/font-override
+ * @module dsh-chat-ux/client/chat/fonts/font-override
  */
 const font_styles_1 = require("./font-styles");
 /**
@@ -2478,7 +2467,24 @@ const font_styles_1 = require("./font-styles");
  */
 function isFontFamilyValue(value) {
     const text = value.trim();
-    return text !== '' && hasPairedQuotes(text) && CSS.supports('font-family', text);
+    if (text === '')
+        return false;
+    // 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat
+    // UX Sans', …` 读成**一个**字体名，那个名字谁的机器上都没有，接在后面的自带字体于是接不住，界面
+    // 掉到浏览器默认字体。这不是假设：实测 Chromium 就是这么解的，而 CSS.supports 认它合法。漏打一个
+    // 后引号是最像样的手误，所以这一道得自己来。它只做配平、不判语法：剩下的交给浏览器，代价是一个
+    // 真在引号里带撇号的名字（`"a'b"`）会被误拒，而那种写法的字体名不值得为它放宽。
+    let singles = 0;
+    let doubles = 0;
+    for (const character of text) {
+        if (character === "'")
+            singles += 1;
+        if (character === '"')
+            doubles += 1;
+    }
+    if (singles % 2 !== 0 || doubles % 2 !== 0)
+        return false;
+    return CSS.supports('font-family', text);
 }
 /**
  * 把当前选择写到 body 上。属性使样式表里那一条命中，三个自定义属性各自覆盖对应的那一条栈。
@@ -2506,28 +2512,6 @@ function clearFontChoice() {
     body.style.removeProperty(font_styles_1.MONO_VARIABLE);
 }
 /**
- * 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat UX
- * Sans', …` 读成**一个**字体名，那个名字谁的机器上都没有，接在后面的自带字体于是接不住，界面掉到
- * 浏览器默认字体。这不是假设：实测 Chromium 就是这么解的，而 CSS.supports 认它合法。漏打一个后
- * 引号是最像样的手误，所以这一道得自己来。
- *
- * 它只做配平，不判语法：剩下的交给浏览器。代价是一个真在引号里带撇号的名字（`"a'b"`）会被误拒，
- * 而那种写法的字体名不值得为它放宽。
- * @param value - 读者填的那串字体名。
- * @returns 单双引号各自成对时为真。
- */
-function hasPairedQuotes(value) {
-    let singles = 0;
-    let doubles = 0;
-    for (const character of value) {
-        if (character === "'")
-            singles += 1;
-        else if (character === '"')
-            doubles += 1;
-    }
-    return singles % 2 === 0 && doubles % 2 === 0;
-}
-/**
  * 写一条自定义属性：读者填的栈排在最前，自带的那条接在后面接住它缺的字。
  * @param variable - 要写的自定义属性名。
  * @param custom - 读者填的栈；空串或不合法的值只是清掉覆盖，样式表里的默认值接手。
@@ -2542,7 +2526,7 @@ function applyFamily(variable, custom, embedded) {
 }
     };
 
-    __registry["font-styles.js"] = function (module, exports, require) {
+    __registry["chat/fonts/font-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 字体接管：让 dsh 用插件自带的两套字体，或者用读者自己填的那一套。
@@ -2573,7 +2557,7 @@ function applyFamily(variable, custom, embedded) {
  * 接管不到的两项：标准字体只在元素完全不指定 font-family 时生效，而 dsh 处处显式指定；
  * 字号同理——dsh 用自己的 --dsh-content-font-size（12–17px），与浏览器的字号设置是两套。
  *
- * @module dsh-chat-ux/client/font-styles
+ * @module dsh-chat-ux/client/chat/fonts/font-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FONT_CSS = exports.EMBEDDED_MONO = exports.EMBEDDED_SANS = exports.MONO_VARIABLE = exports.CODE_VARIABLE = exports.SANS_VARIABLE = exports.FONT_ATTRIBUTE = void 0;
@@ -2639,7 +2623,7 @@ body[${exports.FONT_ATTRIBUTE}] {
 `;
     };
 
-    __registry["process-follow.js"] = function (module, exports, require) {
+    __registry["chat/follow/process-follow.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 组体跟随：封顶的过程组里，思考与工具输出不会掉队。
@@ -2663,11 +2647,11 @@ body[${exports.FONT_ATTRIBUTE}] {
  * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
  * 于是重新点亮自己的跟随，并放下那个卡住的动画目标。
  *
- * @module dsh-chat-ux/client/process-follow
+ * @module dsh-chat-ux/client/chat/follow/process-follow
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installProcessFollow = installProcessFollow;
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 const reader_intent_1 = require("./reader-intent");
 /** 读者滚回组体底部多近算「看完了」。 */
 const RELEASE_THRESHOLD_PX = 4;
@@ -2789,17 +2773,17 @@ function installProcessFollow(readEnabled) {
                 observer.observe(content);
         }
         for (const [body, content] of [...watched]) {
-            if (present.has(body)) {
-                // 收起过的组体重新展开时，上一次那回让位不该跟过来。
-                if (body.hasAttribute('hidden'))
-                    takenOver.delete(body);
+            if (!present.has(body)) {
+                watched.delete(body);
+                takenOver.delete(body);
+                observer.unobserve(body);
+                if (content !== null)
+                    observer.unobserve(content);
                 continue;
             }
-            watched.delete(body);
-            takenOver.delete(body);
-            observer.unobserve(body);
-            if (content !== null)
-                observer.unobserve(content);
+            // 收起过的组体重新展开时，上一次那回让位不该跟过来。
+            if (body.hasAttribute('hidden'))
+                takenOver.delete(body);
         }
     };
     const timer = window.setInterval(sync, SYNC_INTERVAL_MS);
@@ -2817,7 +2801,7 @@ function installProcessFollow(readEnabled) {
 }
     };
 
-    __registry["process-fold.js"] = function (module, exports, require) {
+    __registry["chat/fold/process-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 运行中的过程组默认展开，等这一段过程结束（最终正文该出来了）再收回去。
@@ -2839,11 +2823,11 @@ function installProcessFollow(readEnabled) {
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
  *
- * @module dsh-chat-ux/client/process-fold
+ * @module dsh-chat-ux/client/chat/fold/process-fold
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installProcessFold = installProcessFold;
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]';
@@ -2990,8 +2974,22 @@ function installProcessFold() {
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
     const observer = new MutationObserver((records) => {
         const known = touchedGroups.size;
-        for (const record of records)
-            collectGroups(record, touchedGroups);
+        for (const record of records) {
+            // 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
+            const target = record.target;
+            const element = target instanceof Element ? target : target.parentElement;
+            const group = element?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
+            if (group !== null)
+                touchedGroups.add(group);
+            for (const node of record.addedNodes) {
+                if (!(node instanceof HTMLElement))
+                    continue;
+                if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
+                    touchedGroups.add(node);
+                for (const found of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
+                    touchedGroups.add(found);
+            }
+        }
         // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
         if (touchedGroups.size === known)
             return;
@@ -3022,31 +3020,9 @@ function installProcessFold() {
         document.removeEventListener('keydown', rememberReaderTouched, true);
     };
 }
-/**
- * 把一条 mutation 涉及到的过程组收进集合。
- *
- * 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
- * @param record - observer 交来的一条变化。
- * @param into - 收集到的组。
- */
-function collectGroups(record, into) {
-    const target = record.target;
-    const element = target instanceof Element ? target : target.parentElement;
-    const group = element?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
-    if (group !== null)
-        into.add(group);
-    for (const node of record.addedNodes) {
-        if (!(node instanceof HTMLElement))
-            continue;
-        if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
-            into.add(node);
-        for (const found of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
-            into.add(found);
-    }
-}
     };
 
-    __registry["reasoning-fold.js"] = function (module, exports, require) {
+    __registry["chat/fold/reasoning-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 模型还在思考时让思考行开着，思考一停就把它收回去。
@@ -3062,11 +3038,11 @@ function collectGroups(record, into) {
  * 而不是按行算——读者在模型还在思考时把行折起来又展开，并没有要求「等思考完了也一直开着」，所以
  * `ok` 到来时该收还是收。
  *
- * @module dsh-chat-ux/client/reasoning-fold
+ * @module dsh-chat-ux/client/chat/fold/reasoning-fold
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installReasoningFold = installReasoningFold;
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 /**
  * 给整页安装思考行展开。
@@ -3144,8 +3120,25 @@ function installReasoningFold() {
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
     const observer = new MutationObserver((records) => {
         const known = touchedRows.size;
-        for (const record of records)
-            collectRows(record, touchedRows);
+        for (const record of records) {
+            // 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
+            // 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
+            // 那时行自己就在新增的子树里。
+            const target = record.target;
+            if (target instanceof Element) {
+                const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
+                if (row !== null)
+                    touchedRows.add(row);
+            }
+            for (const node of record.addedNodes) {
+                if (!(node instanceof HTMLElement))
+                    continue;
+                if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
+                    touchedRows.add(node);
+                for (const row of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
+                    touchedRows.add(row);
+            }
+        }
         // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧。
         if (touchedRows.size === known)
             return;
@@ -3174,34 +3167,9 @@ function installReasoningFold() {
         document.removeEventListener('keydown', rememberReaderTouched, true);
     };
 }
-/**
- * 把一条 mutation 涉及到的思考行收进集合。
- *
- * 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
- * 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
- * 那时行自己就在新增的子树里。
- * @param record - observer 交来的一条变化。
- * @param into - 收集到的行。
- */
-function collectRows(record, into) {
-    const target = record.target;
-    if (target instanceof Element) {
-        const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
-        if (row !== null)
-            into.add(row);
-    }
-    for (const node of record.addedNodes) {
-        if (!(node instanceof HTMLElement))
-            continue;
-        if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
-            into.add(node);
-        for (const row of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
-            into.add(row);
-    }
-}
     };
 
-    __registry["send-flight.js"] = function (module, exports, require) {
+    __registry["chat/send-flight/send-flight.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FLYING_ATTRIBUTE = void 0;
@@ -3236,9 +3204,9 @@ exports.installSendFlight = installSendFlight;
  *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
  *   只飞同一屏    起终点有一头已经在屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
  *
- * @module dsh-chat-ux/client/send-flight
+ * @module dsh-chat-ux/client/chat/send-flight/send-flight
  */
-const dom_contract_1 = require("./dom-contract");
+const dom_contract_1 = require("../../dom-contract");
 const send_morph_1 = require("./send-morph");
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
@@ -3288,34 +3256,34 @@ function installSendFlight(readEnabled) {
      * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
      */
     const rowWatcher = new MutationObserver((records) => {
-        const current = flight;
-        if (current === null || !touchesUserRow(records))
+        const activeFlight = flight;
+        if (activeFlight === null || !touchesUserRow(records))
             return;
-        const row = currentRow(current.previous);
-        if (row === null || row === current.hidden)
+        const row = currentRow(activeFlight.previous);
+        if (row === null || row === activeFlight.hidden)
             return;
-        current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
         row.setAttribute(exports.FLYING_ATTRIBUTE, '');
-        current.hidden = row;
-        current.bubble = findBubble(row);
-        followTarget(current);
+        activeFlight.hidden = row;
+        activeFlight.bubble = findBubble(row);
+        followTarget(activeFlight);
     });
     /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
     const settle = () => {
-        const current = flight;
-        if (current === null)
+        const activeFlight = flight;
+        if (activeFlight === null)
             return;
         flight = null;
         rowWatcher.disconnect();
         window.clearTimeout(rescue);
         rescue = 0;
-        current.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
         // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
         // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
         // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
         // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
-        current.morph.wrapper.remove();
-        for (const animation of current.morph.animations)
+        activeFlight.morph.wrapper.remove();
+        for (const animation of activeFlight.morph.animations)
             animation.cancel();
     };
     /**
@@ -3330,16 +3298,16 @@ function installSendFlight(readEnabled) {
      * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
      */
     const tick = () => {
-        const current = flight;
-        if (current === null)
+        const activeFlight = flight;
+        if (activeFlight === null)
             return;
-        const u = current.morph.progress();
+        const u = activeFlight.morph.progress();
         if (u >= 1) {
             settle();
             return;
         }
-        current.morph.compact(u);
-        followTarget(current);
+        activeFlight.morph.compact(u);
+        followTarget(activeFlight);
         requestAnimationFrame(tick);
     };
     /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
@@ -3352,9 +3320,9 @@ function installSendFlight(readEnabled) {
             return;
         const box = bubble.getBoundingClientRect();
         const card = draft.snapshot.box;
-        if (!sameScreen(card.left, box.left, window.innerWidth))
-            return;
-        if (!sameScreen(card.top, box.top, window.innerHeight))
+        const onSameScreen = sameScreen(card.left, box.left, window.innerWidth)
+            && sameScreen(card.top, box.top, window.innerHeight);
+        if (!onSameScreen)
             return;
         const morph = (0, send_morph_1.startMorph)(draft.snapshot, bubble, box);
         if (morph === null)
@@ -3510,12 +3478,12 @@ function lastUserRow() {
 function findBubble(row) {
     const queue = Array.from(row.children);
     while (queue.length > 0) {
-        const current = queue.shift();
-        if (current === undefined)
+        const node = queue.shift();
+        if (node === undefined)
             break;
-        if (current instanceof HTMLElement && (0, send_morph_1.alphaOf)(getComputedStyle(current).backgroundColor) > 0)
-            return current;
-        for (const child of current.children)
+        if (node instanceof HTMLElement && (0, send_morph_1.alphaOf)(getComputedStyle(node).backgroundColor) > 0)
+            return node;
+        for (const child of node.children)
             queue.push(child);
     }
     return null;
@@ -3557,7 +3525,7 @@ function sameScreen(start, end, viewportExtent) {
 }
     };
 
-    __registry["send-morph.js"] = function (module, exports, require) {
+    __registry["chat/send-flight/send-morph.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 发送气泡的形变：从「一整张输入卡片」连续地长成「一条气泡」，整段在起飞那一刻算好、交给合成器。
@@ -3598,14 +3566,14 @@ function sameScreen(start, end, viewportExtent) {
  * 祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属性另
  * 有抄法，理由见 `snapshotComposer`。
  *
- * @module dsh-chat-ux/client/send-morph
+ * @module dsh-chat-ux/client/chat/send-flight/send-morph
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FLIGHT_MS = void 0;
 exports.snapshotComposer = snapshotComposer;
-exports.startMorph = startMorph;
 exports.pixel = pixel;
 exports.alphaOf = alphaOf;
+exports.startMorph = startMorph;
 /**
  * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
  * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。
@@ -3904,6 +3872,18 @@ function snapshotComposer(input, card) {
         ancestors: interrupted || ancestors.length > MAX_ANCESTOR_LINKS ? null : ancestors,
     };
 }
+/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
+function pixel(value) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
+function alphaOf(color) {
+    const parts = colorParts(color);
+    if (parts === null)
+        return 0;
+    return parts[3] ?? 1;
+}
 /**
  * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
  * @param snapshot - 起飞前抓下来的输入卡片。
@@ -4050,10 +4030,10 @@ function startMorph(snapshot, bubble, end) {
         animations.push(animation);
         return animation;
     };
-    // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
+    // 只在 [windowFrom, windowUntil] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
     // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-    const between = (from, until, frame, stride = 1) => {
-        const inside = samples.filter(sample => sample.u >= from && sample.u <= until);
+    const between = (windowFrom, windowUntil, frame, stride = 1) => {
+        const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil);
         const frames = [];
         inside.forEach((sample, index) => {
             // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
@@ -4447,18 +4427,6 @@ function shadowSpread(shadow) {
     }
     return spread;
 }
-/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
-function pixel(value) {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
-function alphaOf(color) {
-    const parts = colorParts(color);
-    if (parts === null)
-        return 0;
-    return parts[3] ?? 1;
-}
 /** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
 function colorParts(color) {
     const match = /^rgba?\(([^)]+)\)$/.exec(color.trim());
@@ -4474,7 +4442,7 @@ function colorParts(color) {
 }
     };
 
-    __registry["settings-card.js"] = function (module, exports, require) {
+    __registry["settings/settings-card.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatUxConfigCard = ChatUxConfigCard;
@@ -4498,12 +4466,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 两个输入框（两条字体栈）多一道提交（回车或失焦才写）：它们要等读者把字打完，
  * 而每敲一个字符都是一次设置文档写入。打完之前那串字只活在这个组件里，不合法的那串一个字都不写。
  *
- * @module dsh-chat-ux/client/settings-card
+ * @module dsh-chat-ux/client/settings/settings-card
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
-const font_override_1 = require("./font-override");
+const font_override_1 = require("../chat/fonts/font-override");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow';
@@ -4596,7 +4564,12 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
     }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
     const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language;
-    const copy = resolveCopyLanguage(activeLanguage, browserLanguage) === 'en' ? EN_COPY : ZH_COPY;
+    // dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
+    // （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
+    // 兜底，而不是「非英文即中文」的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
+    // 中文是这套文案的主要读者。
+    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh';
+    const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [failed, setFailed] = (0, react_1.useState)(false);
     // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
@@ -4725,21 +4698,6 @@ function storedCode(value) {
     return value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
 }
 /**
- * 定这一张卡片说哪种语言。
- *
- * dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
- * （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
- * 兜底，而不是"非英文即中文"的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
- * 中文是这套文案的主要读者。
- * @param active - locale 服务报的活跃语言 id；服务缺席时是 null。
- * @param browserLanguage - `navigator.language`；非浏览器运行里是 null。
- * @returns 读哪一套文案。
- */
-function resolveCopyLanguage(active, browserLanguage) {
-    const language = nonEmpty(active) ?? nonEmpty(browserLanguage) ?? 'zh';
-    return language.toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh';
-}
-/**
  * 只放行非空字符串。
  * @param value - 可能是 null、undefined 或空串的候选。
  * @returns 能用的那串字，或 undefined。
@@ -4763,7 +4721,7 @@ function userLayerHasField(user, field) {
 }
     };
 
-    __registry["config-card-styles.js"] = function (module, exports, require) {
+    __registry["settings/config-card-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 插件配置卡片的样式。写法与插件管理页表达自己的方式一致：同一套设计令牌（`--dsw-*`）、
@@ -4775,7 +4733,7 @@ function userLayerHasField(user, field) {
  *
  * 与聊天区样式表一样保持为纯文本，理由也相同：client bundle 是单文件自包含的，没有资源 URL。
  *
- * @module dsh-chat-ux/client/config-card-styles
+ * @module dsh-chat-ux/client/settings/config-card-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARD_CSS = exports.CARD_CLASS = void 0;
@@ -4966,7 +4924,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 `;
     };
 
-    __registry["settings-scope.js"] = function (module, exports, require) {
+    __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
@@ -5020,13 +4978,13 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
  */
-const caret_motion_styles_1 = require("./caret-motion-styles");
-const config_card_styles_1 = require("./config-card-styles");
-const file_mutation_styles_1 = require("./file-mutation-styles");
-const fold_motion_styles_1 = require("./fold-motion-styles");
-const font_styles_1 = require("./font-styles");
-const send_flight_styles_1 = require("./send-flight-styles");
-const token_motion_1 = require("./token-motion");
+const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
+const config_card_styles_1 = require("./settings/config-card-styles");
+const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
+const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
+const font_styles_1 = require("./chat/fonts/font-styles");
+const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
+const token_motion_1 = require("./chat/token-motion");
 /** 注入样式表的固定 id，用于卸载和排查。 */
 exports.STYLE_ID = 'dsh-chat-ux-style';
 /** 聊天区样式表。 */
@@ -5125,7 +5083,7 @@ body[data-ds-dark-theme] {
 exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
     };
 
-    __registry["caret-motion-styles.js"] = function (module, exports, require) {
+    __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_MOTION_CSS = void 0;
@@ -5146,7 +5104,7 @@ exports.CARET_MOTION_CSS = void 0;
  * 过渡的是 `transform` 而不是 `top`/`left`：VS Code 那边过渡的是布局属性，这里没有理由跟着付
  * 那份代价。80ms 与它同档，缓动也是它那个默认的 ease。
  *
- * @module dsh-chat-ux/client/caret-motion-styles
+ * @module dsh-chat-ux/client/chat/caret/caret-motion-styles
  */
 const caret_motion_1 = require("./caret-motion");
 /** 自绘插入符的宽度。VS Code 的 `cursorWidth` 默认是 0，渲染时按屏幕缩放落到 2px，同档。 */
@@ -5214,7 +5172,7 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
 `;
     };
 
-    __registry["fold-motion-styles.js"] = function (module, exports, require) {
+    __registry["chat/fold/fold-motion-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLD_MOTION_CSS = void 0;
@@ -5252,7 +5210,7 @@ exports.FOLD_MOTION_CSS = void 0;
  * 自然高度排好，门框只负责裁。门停下来标记就撤，排版回到 dsh 原样——展开体的高度本来就是子元素
  * 自然高度之和，两种排法在终点上一个像素都不差。`!important` 是因为这两百毫秒里谁也不该改它。
  *
- * @module dsh-chat-ux/client/fold-motion-styles
+ * @module dsh-chat-ux/client/chat/fold/fold-motion-styles
  */
 const fold_glide_1 = require("./fold-glide");
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
@@ -5281,7 +5239,7 @@ exports.FOLD_MOTION_CSS = `
 `;
     };
 
-    __registry["send-flight-styles.js"] = function (module, exports, require) {
+    __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SEND_FLIGHT_CSS = void 0;
@@ -5300,7 +5258,7 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
 `;
     };
 
-    __registry["token-motion.js"] = function (module, exports, require) {
+    __registry["chat/token-motion.js"] = function (module, exports, require) {
 "use strict";
 /**
  * 流式回答的一次性 token 淡入。
@@ -5350,13 +5308,13 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  *   主线程忙  **让路**。绘制帧一连几帧都隔得很久，说明主线程已经被别的事占满，这时候再给新字符排
  *             淡入只会把卡顿叠得更重：手上的区间直接落定，接下来一段时间里新字符以本色出现。
  *
- * @module dsh-chat-ux/client/token-motion
+ * @module dsh-chat-ux/client/chat/token-motion
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RUN_COLOR_VAR = exports.HIGHLIGHT_PREFIX = exports.REVEAL_MS = exports.TOKEN_MIN_OPACITY = exports.REVEAL_STEPS = void 0;
 exports.installTokenMotion = installTokenMotion;
-const dom_contract_1 = require("./dom-contract");
-const programmatic_toggle_1 = require("./programmatic-toggle");
+const dom_contract_1 = require("../dom-contract");
+const programmatic_toggle_1 = require("./fold/programmatic-toggle");
 /**
  * 一个字符从极淡到停稳之间有多少档。
  *

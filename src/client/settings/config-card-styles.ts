@@ -8,7 +8,7 @@
  *
  * 与聊天区样式表一样保持为纯文本，理由也相同：client bundle 是单文件自包含的，没有资源 URL。
  *
- * @module dsh-chat-ux/client/config-card-styles
+ * @module dsh-chat-ux/client/settings/config-card-styles
  */
 
 /**

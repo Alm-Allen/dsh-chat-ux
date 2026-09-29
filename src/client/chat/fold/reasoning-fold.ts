@@ -12,10 +12,10 @@
  * 而不是按行算——读者在模型还在思考时把行折起来又展开，并没有要求「等思考完了也一直开着」，所以
  * `ok` 到来时该收还是收。
  *
- * @module dsh-chat-ux/client/reasoning-fold
+ * @module dsh-chat-ux/client/chat/fold/reasoning-fold
  */
 
-import {RUNNING_STATE, THINK_ROW_SELECTOR} from './dom-contract'
+import {RUNNING_STATE, THINK_ROW_SELECTOR} from '../../dom-contract'
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from './programmatic-toggle'
 
 /**
@@ -89,7 +89,21 @@ export function installReasoningFold(): () => void {
     // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
     const observer = new MutationObserver((records) => {
         const known = touchedRows.size
-        for (const record of records) collectRows(record, touchedRows)
+        for (const record of records) {
+            // 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
+            // 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
+            // 那时行自己就在新增的子树里。
+            const target = record.target
+            if (target instanceof Element) {
+                const row = target.closest<HTMLElement>(THINK_ROW_SELECTOR)
+                if (row !== null) touchedRows.add(row)
+            }
+            for (const node of record.addedNodes) {
+                if (!(node instanceof HTMLElement)) continue
+                if (node.matches(THINK_ROW_SELECTOR)) touchedRows.add(node)
+                for (const row of node.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR)) touchedRows.add(row)
+            }
+        }
         // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧。
         if (touchedRows.size === known) return
         if (scanQueued) return
@@ -115,27 +129,5 @@ export function installReasoningFold(): () => void {
         observer.disconnect()
         document.removeEventListener('click', rememberReaderTouched, true)
         document.removeEventListener('keydown', rememberReaderTouched, true)
-    }
-}
-
-/**
- * 把一条 mutation 涉及到的思考行收进集合。
- *
- * 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
- * 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
- * 那时行自己就在新增的子树里。
- * @param record - observer 交来的一条变化。
- * @param into - 收集到的行。
- */
-function collectRows(record: MutationRecord, into: Set<HTMLElement>): void {
-    const target = record.target
-    if (target instanceof Element) {
-        const row = target.closest<HTMLElement>(THINK_ROW_SELECTOR)
-        if (row !== null) into.add(row)
-    }
-    for (const node of record.addedNodes) {
-        if (!(node instanceof HTMLElement)) continue
-        if (node.matches(THINK_ROW_SELECTOR)) into.add(node)
-        for (const row of node.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR)) into.add(row)
     }
 }
