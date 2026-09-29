@@ -16,6 +16,11 @@
  * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
  * 或写入失败时可能与实际不符）。
  *
+ * 参数那一侧不再自己校验沙箱升级字段。dsh 在 0.2.1-alpha.1 里把这道校验从客户端删掉了
+ * （c74f39b4dc），理由是它取决于会话沙箱模式、只有 Host 知道，而被拒的调用本来就会以错误结果
+ * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
+ * 所以这一行与内置同序：只看路径与字段类型。
+ *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
@@ -39,6 +44,12 @@ import {
 
 /** 聊天行里 diff 卡片折叠中段前展示的行数；与内置的 `CHAT_DIFF_MAX_LINES` 取同一个值。 */
 const CHAT_DIFF_MAX_LINES = 9
+
+/** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
+const CONTENT_FIELDS = ['content', 'old_string', 'new_string'] as const
+
+/** 一个 KB 的字符数。 */
+const KILOBYTE = 1024
 
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
 const FILE_ICON = <IconEditOutlineRegular size={14}/>
@@ -106,11 +117,18 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const model = useMemo(() => rowModel(toolName, block, args, cwd, home), [args, block, cwd, home, toolName])
     const hunks = useMemo(() => diffHunks(block, args), [args, block])
     const labels = useMemo(() => diffBlockLabels(t), [t])
-    const running = model.state === 'running'
+    // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
+    // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
+    const running = model.state === 'running' || model.state === 'preparing'
     const totals = useMemo(() => (hunks === null ? null : diffTotals(hunks)), [hunks])
     const expandable = hunks !== null || model.output !== null || model.bodyRaw !== null
     const open = expanded && expandable
     const summaryText = model.errorSummary ?? model.summary
+    // 输入大小跨阶段保留，与内置的 `summarySuffix` 同一条规则：有路径才显示，所以准备态还没
+    // 读到路径时它不单独占位。
+    const size = model.kilobytes === null || model.summary === ''
+        ? null
+        : t('tool.preparing.content', {kilobytes: model.kilobytes})
     const status = stateLabel(model.state, t)
     // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
     const linkAvailable = model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped'
@@ -138,15 +156,22 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
           <TextShimmer active={running}>{summaryText}</TextShimmer>
         </span>
             )}
-            {totals !== null && (
+            {(size !== null || totals !== null) && (
                 <span className={FILE_SUFFIX_CLASS}>
-          <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_ADD_CLASS} active={running}>
-            {'+' + totals.added}
-          </TextShimmer>
-          <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_DEL_CLASS} active={running}>
-            {'-' + totals.removed}
-          </TextShimmer>
-        </span>
+                    {size !== null && (
+                        <TextShimmer className={FILE_STAT_CLASS} active={running}>{size}</TextShimmer>
+                    )}
+                    {totals !== null && (
+                        <>
+                            <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_ADD_CLASS} active={running}>
+                                {'+' + totals.added}
+                            </TextShimmer>
+                            <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_DEL_CLASS} active={running}>
+                                {'-' + totals.removed}
+                            </TextShimmer>
+                        </>
+                    )}
+                </span>
             )}
         </>
     )
@@ -215,12 +240,31 @@ interface ToolCallHead {
     argsRaw: string
 }
 
+/**
+ * 参数视图：dsh 自 0.2.1-alpha.1 起在每个阶段都提供它，准备态可能还不完整。
+ *
+ * 这里只复述这一行用到的读法——client bundle 必须自包含，不 import 平台包。旧版 dsh 没有这个
+ * 字段，所以引用处一律走可空兜底。
+ */
+interface ToolArgs {
+    /** 这个字段出现了没有。 */
+    has(key: string): boolean
+    /** 这个字段的收尾定界符到了没有。 */
+    complete(key: string): boolean
+    /** 已解码的字段文本。 */
+    text(key: string): string | undefined
+    /** 已解码的字段长度；`step` 与 `offset` 只影响流式下的变化检测粒度。 */
+    stringLength(key: string, options?: {step?: number; offset?: number}): number | undefined
+}
+
 /** 参数还在流进来的准备态。 */
 interface PreparingToolCall {
     phase: 'preparing'
     callId: string
     parentCallId?: string | undefined
     name: string
+    /** 参数视图；旧版 dsh 没有。 */
+    args?: ToolArgs | undefined
 }
 
 /** 已派发、仍在跑的那一次调用。 */
@@ -230,6 +274,8 @@ interface StartedToolCall {
     parentCallId?: string | undefined
     name: string
     argsRaw: string
+    /** 参数视图；旧版 dsh 没有。 */
+    args?: ToolArgs | undefined
 }
 
 /** 结果里的一个内容块；这一行只区分文本与其余。 */
@@ -250,6 +296,8 @@ interface ToolResultNode {
     kind: 'tool-result'
     callId: string
     parentCallId?: string | undefined
+    /** 参数视图；旧版 dsh 没有。 */
+    args?: ToolArgs | undefined
     /** 窗口丢掉了调用头时为 null；结果本身仍可渲染。 */
     call: ToolCallHead | null
     content: readonly ContentBlock[]
@@ -275,6 +323,8 @@ interface RowModel {
     output: string | null
     errorSummary: string | null
     state: RowState
+    /** 已收到的输入大小（KB）；参数视图缺席或还没有内容字段时为 null。 */
+    kilobytes: number | null
 }
 
 /**
@@ -309,7 +359,6 @@ function intendedHunks(name: string, args: Record<string, unknown> | null): Diff
     if (args === null) return null
     const path = pickString(args, ['path', 'file_path'])
     if (path === undefined) return null
-    if (!validEscalation(args)) return null
     if (name === 'write') {
         const content = args.content
         return typeof content === 'string' ? [{path, oldText: null, newText: content}] : null
@@ -366,7 +415,7 @@ function rowModel(
     const state: RowState = !done
         ? block.phase === 'preparing' ? 'preparing' : 'running'
         : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok'
-    const path = args === null ? undefined : pickString(args, ['path', 'file_path'])
+    const path = argumentPath(block, args)
     const output = done ? resultText(block) || null : null
     return {
         titleKey: toolName === 'write' ? 'tool.title.write' : 'tool.title.edit',
@@ -377,6 +426,7 @@ function rowModel(
         output,
         errorSummary: state === 'error' && output !== null ? firstLine(output) : null,
         state,
+        kilobytes: contentKilobytes(block.args),
     }
 }
 
@@ -439,17 +489,44 @@ function pickString(args: Record<string, unknown>, keys: readonly string[]): str
 }
 
 /**
- * 校验可选的沙箱升级字段对：写文件的行只有在它们成对合法时才画 diff，
- * 否则落回 IN/OUT 卡片（与内置的判据一致）。
- * @param args - 解析后的参数。
- * @returns 字段对是否合法（或都不存在）。
+ * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
+ *
+ * 与内置的文件变更行同一条规则：字段收尾了才算数，解码失败（转义不完整）也当没有。
+ * @param block - 运行中或已结算的调用块。
+ * @param args - 已解析的原始参数；解析不出来时为 null。
+ * @returns 路径，或 undefined。
  */
-function validEscalation(args: Record<string, unknown>): boolean {
-    const permission = args.sandbox_permissions
-    const justification = args.justification
-    if (permission === undefined && justification === undefined) return true
-    if (permission !== 'workspace-write' && permission !== 'danger-full-access') return false
-    return typeof justification === 'string' && justification.trim() !== ''
+function argumentPath(block: ToolCallBlock, args: Record<string, unknown> | null): string | undefined {
+    const view = block.args
+    if (view !== undefined) {
+        for (const key of ['path', 'file_path']) {
+            if (!view.has(key) || !view.complete(key)) continue
+            const text = view.text(key)
+            if (text !== undefined && text !== '') return text
+        }
+    }
+    return args === null ? undefined : pickString(args, ['path', 'file_path'])
+}
+
+/**
+ * 已收到的输入大小（KB）：内容字段的解码长度之和。
+ *
+ * 与内置的文件变更行取同一个口径，所以同一个位置在两边显示同一个数：正在流进来的那一个字段按
+ * 已收到的部分算，已经收完的按整段算。一个内容字段都还没出现时返回 null——行头不摆一个 0KB。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 向上取整的 KB 数，或 null。
+ */
+function contentKilobytes(view: ToolArgs | undefined): number | null {
+    if (view === undefined) return null
+    const open = CONTENT_FIELDS.find(key => view.has(key) && !view.complete(key))
+    const completed = CONTENT_FIELDS.reduce((total, key) => key !== open && view.complete(key)
+        ? total + (view.stringLength(key, {step: KILOBYTE}) ?? 0)
+        : total, 0)
+    if (open === undefined) {
+        return CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
+    }
+    const chars = completed + (view.stringLength(open, {step: KILOBYTE, offset: completed}) ?? 0)
+    return Math.ceil(chars / KILOBYTE)
 }
 
 /**

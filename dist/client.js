@@ -56,6 +56,7 @@ const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
 const send_flight_1 = require("./chat/send-flight/send-flight");
 const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
+const transcript_default_1 = require("./settings/transcript-default");
 const styles_1 = require("./styles");
 const token_motion_1 = require("./chat/token-motion");
 /**
@@ -89,6 +90,7 @@ function apply(ctx) {
     const scope = services.configForms.get(SETTINGS_NAMESPACE);
     const settings = {
         follow: settings_scope_1.DEFAULT_ENHANCED_FOLLOW,
+        autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
         font: { embedded: settings_scope_1.DEFAULT_EMBEDDED_FONTS, sans: settings_scope_1.DEFAULT_FONT_FAMILY, code: settings_scope_1.DEFAULT_FONT_FAMILY },
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
@@ -98,9 +100,28 @@ function apply(ctx) {
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
     const tokenMotion = (0, token_motion_1.installTokenMotion)(() => settings.tokenFade);
+    // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
+    // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
+    let autoFoldDispose = null;
+    const syncAutoFold = () => {
+        if (!settings.autoFold) {
+            autoFoldDispose?.();
+            autoFoldDispose = null;
+            return;
+        }
+        if (autoFoldDispose !== null)
+            return;
+        const disposeReasoning = (0, reasoning_fold_1.installReasoningFold)();
+        const disposeProcess = (0, process_fold_1.installProcessFold)();
+        autoFoldDispose = () => {
+            disposeReasoning();
+            disposeProcess();
+        };
+    };
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.follow = value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
+        settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
         settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
         settings.font.embedded = value?.fonts ?? settings_scope_1.DEFAULT_EMBEDDED_FONTS;
         settings.font.sans = value?.fontSans ?? settings_scope_1.DEFAULT_FONT_FAMILY;
@@ -110,25 +131,35 @@ function apply(ctx) {
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
         tokenMotion.resync();
+        syncAutoFold();
     };
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
+    // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组
+    // 行为是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」——读者选过
+    // 之后一次都不再动手。
+    ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), 'dsh-chat-ux: work details default');
     // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
     // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-    // 这一项默认关着（标着 beta），所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
+    // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
     // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
     // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
     ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal');
-    // dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置，所以这一行自己的控件是唯一的杆。
-    // 模块里写明了「按阶段让位」这套作用域，它让读者自己的折叠不被覆盖。
-    ctx.effect(() => (0, reasoning_fold_1.installReasoningFold)(), 'dsh-chat-ux: reasoning reveal');
-    // 「简洁」与「标准」两档下，运行中的过程组体初始是收起的，读者得自己点开才看得见模型在做什么。
-    // 这一处让它在过程还在跑时开着，这一段过程结束（最终正文该出来了）时收回去。
-    ctx.effect(() => (0, process_fold_1.installProcessFold)(), 'dsh-chat-ux: process groups');
+    // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
+    // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
+    // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
+    // syncAutoFold 里，读者在卡片上关掉就一起停。
+    ctx.effect(() => {
+        syncAutoFold();
+        return () => {
+            autoFoldDispose?.();
+            autoFoldDispose = null;
+        };
+    }, 'dsh-chat-ux: auto fold');
     // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
     // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
     ctx.effect(() => (0, follow_guard_1.installFollowGuard)(() => settings.follow), 'dsh-chat-ux: follow guard');
@@ -885,6 +916,11 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
  * 或写入失败时可能与实际不符）。
  *
+ * 参数那一侧不再自己校验沙箱升级字段。dsh 在 0.2.1-alpha.1 里把这道校验从客户端删掉了
+ * （c74f39b4dc），理由是它取决于会话沙箱模式、只有 Host 知道，而被拒的调用本来就会以错误结果
+ * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
+ * 所以这一行与内置同序：只看路径与字段类型。
+ *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
@@ -897,6 +933,10 @@ const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitive
 const file_mutation_styles_1 = require("./file-mutation-styles");
 /** 聊天行里 diff 卡片折叠中段前展示的行数；与内置的 `CHAT_DIFF_MAX_LINES` 取同一个值。 */
 const CHAT_DIFF_MAX_LINES = 9;
+/** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
+const CONTENT_FIELDS = ['content', 'old_string', 'new_string'];
+/** 一个 KB 的字符数。 */
+const KILOBYTE = 1024;
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
 const FILE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 14 });
 /**
@@ -929,11 +969,18 @@ function FileMutationRow(props) {
     const model = (0, react_1.useMemo)(() => rowModel(toolName, block, args, cwd, home), [args, block, cwd, home, toolName]);
     const hunks = (0, react_1.useMemo)(() => diffHunks(block, args), [args, block]);
     const labels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
-    const running = model.state === 'running';
+    // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
+    // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
+    const running = model.state === 'running' || model.state === 'preparing';
     const totals = (0, react_1.useMemo)(() => (hunks === null ? null : (0, dsh_client_ui_primitives_1.diffTotals)(hunks)), [hunks]);
     const expandable = hunks !== null || model.output !== null || model.bodyRaw !== null;
     const open = expanded && expandable;
     const summaryText = model.errorSummary ?? model.summary;
+    // 输入大小跨阶段保留，与内置的 `summarySuffix` 同一条规则：有路径才显示，所以准备态还没
+    // 读到路径时它不单独占位。
+    const size = model.kilobytes === null || model.summary === ''
+        ? null
+        : t('tool.preparing.content', { kilobytes: model.kilobytes });
     const status = stateLabel(model.state, t);
     // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
     const linkAvailable = model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped';
@@ -949,7 +996,7 @@ function FileMutationRow(props) {
         if (event.key === 'Enter' || event.key === ' ')
             event.stopPropagation();
     }, []);
-    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), totals !== null && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: '+' + totals.added }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: '-' + totals.removed })] }))] }));
+    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: '+' + totals.added }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: '-' + totals.removed })] }))] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -989,8 +1036,6 @@ function intendedHunks(name, args) {
         return null;
     const path = pickString(args, ['path', 'file_path']);
     if (path === undefined)
-        return null;
-    if (!validEscalation(args))
         return null;
     if (name === 'write') {
         const content = args.content;
@@ -1050,7 +1095,7 @@ function rowModel(toolName, block, args, cwd, home) {
     const state = !done
         ? block.phase === 'preparing' ? 'preparing' : 'running'
         : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok';
-    const path = args === null ? undefined : pickString(args, ['path', 'file_path']);
+    const path = argumentPath(block, args);
     const output = done ? resultText(block) || null : null;
     return {
         titleKey: toolName === 'write' ? 'tool.title.write' : 'tool.title.edit',
@@ -1061,6 +1106,7 @@ function rowModel(toolName, block, args, cwd, home) {
         output,
         errorSummary: state === 'error' && output !== null ? firstLine(output) : null,
         state,
+        kilobytes: contentKilobytes(block.args),
     };
 }
 /**
@@ -1123,19 +1169,46 @@ function pickString(args, keys) {
     return undefined;
 }
 /**
- * 校验可选的沙箱升级字段对：写文件的行只有在它们成对合法时才画 diff，
- * 否则落回 IN/OUT 卡片（与内置的判据一致）。
- * @param args - 解析后的参数。
- * @returns 字段对是否合法（或都不存在）。
+ * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
+ *
+ * 与内置的文件变更行同一条规则：字段收尾了才算数，解码失败（转义不完整）也当没有。
+ * @param block - 运行中或已结算的调用块。
+ * @param args - 已解析的原始参数；解析不出来时为 null。
+ * @returns 路径，或 undefined。
  */
-function validEscalation(args) {
-    const permission = args.sandbox_permissions;
-    const justification = args.justification;
-    if (permission === undefined && justification === undefined)
-        return true;
-    if (permission !== 'workspace-write' && permission !== 'danger-full-access')
-        return false;
-    return typeof justification === 'string' && justification.trim() !== '';
+function argumentPath(block, args) {
+    const view = block.args;
+    if (view !== undefined) {
+        for (const key of ['path', 'file_path']) {
+            if (!view.has(key) || !view.complete(key))
+                continue;
+            const text = view.text(key);
+            if (text !== undefined && text !== '')
+                return text;
+        }
+    }
+    return args === null ? undefined : pickString(args, ['path', 'file_path']);
+}
+/**
+ * 已收到的输入大小（KB）：内容字段的解码长度之和。
+ *
+ * 与内置的文件变更行取同一个口径，所以同一个位置在两边显示同一个数：正在流进来的那一个字段按
+ * 已收到的部分算，已经收完的按整段算。一个内容字段都还没出现时返回 null——行头不摆一个 0KB。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 向上取整的 KB 数，或 null。
+ */
+function contentKilobytes(view) {
+    if (view === undefined)
+        return null;
+    const open = CONTENT_FIELDS.find(key => view.has(key) && !view.complete(key));
+    const completed = CONTENT_FIELDS.reduce((total, key) => key !== open && view.complete(key)
+        ? total + (view.stringLength(key, { step: KILOBYTE }) ?? 0)
+        : total, 0);
+    if (open === undefined) {
+        return CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null;
+    }
+    const chars = completed + (view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0);
+    return Math.ceil(chars / KILOBYTE);
 }
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
@@ -3576,7 +3649,7 @@ exports.alphaOf = alphaOf;
 exports.startMorph = startMorph;
 /**
  * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
- * 后来固定下来：这条动效自己标着 beta、默认关着，多一个旋钮不值得。
+ * 后来固定下来：这条动效只留一个开关，多一个旋钮不值得。
  *
  * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
  * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
@@ -4475,6 +4548,7 @@ const font_override_1 = require("../chat/fonts/font-override");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow';
+const AUTO_FOLD_FIELD = 'autoFold';
 const TOKEN_FADE_FIELD = 'tokenFade';
 const CARET_FIELD = 'caretMotion';
 const FONTS_FIELD = 'fonts';
@@ -4482,76 +4556,80 @@ const FONT_SANS_FIELD = 'fontSans';
 const FONT_CODE_FIELD = 'fontCode';
 const SEND_FLIGHT_FIELD = 'sendFlight';
 const ZH_COPY = {
-    summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标动效、发送动效、自带字体与你自己填的字体栈也在这里调。',
+    summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标、气泡动效与字体也在这里调。',
     followLabel: '增强跟随',
-    followHint: '模型开始新的动作（思考结束、发起工具调用）时，把聊天区刻意拉回底部，修掉跟随偶尔的丢失。'
-        + '读者自己滚动离开底部的那段时间一概不动手——那一段交给你。',
+    followHint: '回复还在继续时，聊天区自动待在最新内容上，不用手动往下拖。'
+        + '你往上翻看历史的那段时间，它不会来抢你的位置。',
+    autoFoldLabel: '自动开合',
+    autoFoldHint: '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
+        + '你自己动手折叠过的，它不再打扰。',
     tokenLabel: 'token 淡入',
-    tokenHint: '流式回复里新出现的字符先淡后实，渐变的颜色就是字符自己的颜色。关掉之后字符直接以本色出现，'
-        + '页面上也不再挂那二十几条档位规则——排查性能问题时可以拿它当对照。',
+    tokenHint: '回复逐字出现时，新出现的文字轻轻浮现，读起来更顺。关掉就直接显示。'
+        + '若与其它插件一起使用时明显卡顿，可以关掉这一项。',
     caretLabel: '光标动效',
-    caretHint: '把浏览器那根插入符换成自绘的，位移走 80 ms 过渡。「移动时」只在方向键、点击这类显式移动上放过渡，'
-        + '打字瞬时；「无论何时」连打字也滑过去。关掉就用回浏览器原来的那根。',
+    caretHint: '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
+        + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
     caretOff: '关',
     caretMove: '移动时',
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
-    sendHint: '提交之后，输入框原样浮起来一份，工具栏收进两边的角里淡掉，外形收成气泡、字跟着重新排版，'
-        + '一路飞进消息列。整段跑在合成器上，dsh 忙的时候也不掉帧。标着 beta，默认关着；整段时长固定，不给用户配置。',
+    sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
     fontsLabel: '自带字体',
-    fontsHint: '用插件自带的两套字体接管界面：正文 HarmonyOS Sans SC，等宽 Maple Mono NF CN。'
-        + '关掉就回到 dsh 自己的字体栈，下面两项随之停用。',
-    fontsOffHint: '自带字体关着，这一项现在不生效。',
+    fontsHint: '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
+        + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
+    fontsOffHint: '自带字体已关，这一项暂时不生效。',
     sansLabel: '正文字体',
-    sansHint: '填你想要的字体名，它会排在整个字体栈的最前面；系统里没有的名字由自带字体接住，写错了也不会比不填更差。'
-        + '留空用自带的。',
+    sansHint: '填一个你喜欢的字体名，界面会优先用它。这台机器上没有这个名字时自动回到自带字体，'
+        + '填错也不会更糟。留空即用自带的。',
     sansPlaceholder: '例如 Microsoft YaHei, sans-serif',
     codeLabel: '代码字体',
-    codeHint: '等宽字体，代码块、行内代码与界面里的等宽文本都用它。留空用自带的。',
+    codeHint: '代码块与代码样式文字使用的字体。留空即用自带的。',
     codePlaceholder: '例如 JetBrains Mono, monospace',
-    fontInvalid: '这不是一个合法的字体名，回车不会保存。',
+    fontInvalid: '这不是一个有效的字体名，回车不会保存。',
     overridden: '已覆盖',
     reset: '重置',
     failed: '保存未生效，请重试。',
-    unavailable: '当前 dsh 没有向这个页面提供 dsh-chat-ux 的配置：这一行可能没在这个 profile 里启用，或者连接把偏好留在页面进程里。',
-    readOnly: '当前设置文档是只读的，改动无法保存。',
+    unavailable: '这个页面暂时读不到本插件的配置，设置改不了。请确认插件已在当前环境启用，然后重新打开这一页。',
+    readOnly: '当前设置不可修改，改动无法保存。',
 };
 const EN_COPY = {
-    summary: (followOn) => 'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret motion, the send flight, the bundled fonts and your own font stacks are adjustable here.',
+    summary: (followOn) => 'Follow guard: ' + (followOn ? 'on' : 'off') + '. Caret, bubble motion, and fonts are adjustable here.',
     followLabel: 'Enhanced follow',
-    followHint: 'Pull the transcript back to the bottom when the model starts something new (thinking ends, a tool call '
-        + 'begins), which fixes the occasional lost follow. A reader who scrolls away from the bottom is left alone.',
+    followHint: 'While a reply is still streaming, the transcript stays on the newest content, so you never have to drag it '
+        + 'down by hand. It leaves you alone while you scroll back through history.',
+    autoFoldLabel: 'Automatic folding',
+    autoFoldHint: 'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
+        + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
     tokenLabel: 'Token fade-in',
-    tokenHint: 'Characters that arrive in a streaming reply fade in instead of appearing at full strength. Turning this off '
-        + 'shows them at full strength and drops the whole set of highlight rules — useful as a control when you are '
-        + 'chasing a performance problem.',
+    tokenHint: 'New text fades in as a reply streams, which is easier to read. Turning it off shows the text immediately. '
+        + 'If the page stutters noticeably alongside other plugins, turn this off.',
     caretLabel: 'Caret motion',
-    caretHint: 'Redraw the caret so it slides over 80 ms. "On move" animates explicit moves only — arrow keys, clicks — and '
-        + 'leaves typing instant; "On typing" animates every keystroke too. Off keeps the browser\'s own caret.',
+    caretHint: 'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
+        + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
     caretOff: 'Off',
     caretMove: 'On move',
     caretTyping: 'On typing',
     sendLabel: 'Chat bubble motion',
-    sendHint: 'After you submit, a copy of the composer lifts off: its toolbar shrinks into the corners and fades, the card '
-        + 'narrows into the bubble while the text re-wraps, and it lands in the transcript. It runs on the compositor, so '
-        + 'it keeps its frame rate while dsh is busy. Marked beta, off by default; the duration is fixed.',
+    sendHint: 'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
+        + 'so a send is something you can see.',
     fontsLabel: 'Bundled fonts',
-    fontsHint: 'Take over the interface with the two bundled families: HarmonyOS Sans SC for text, Maple Mono NF CN for '
-        + 'code. Turning this off restores dsh\'s own font stacks and disables the two fields below.',
+    fontsHint: 'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
+        + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
     fontsOffHint: 'Bundled fonts are off, so this field has no effect right now.',
     sansLabel: 'Text font',
-    sansHint: 'A family you want, placed at the very front of the stack. A name this machine lacks falls through to the '
-        + 'bundled fonts, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
+    sansHint: 'A family you would like the interface to prefer. If this machine does not have it, the bundled font takes '
+        + 'over, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
     sansPlaceholder: 'e.g. Georgia, serif',
     codeLabel: 'Code font',
-    codeHint: 'The monospace family used by code blocks, inline code, and monospace text in the interface. Leave blank to use the bundled one.',
+    codeHint: 'The font used by code blocks and code-styled text. Leave blank to use the bundled one.',
     codePlaceholder: 'e.g. JetBrains Mono, monospace',
     fontInvalid: 'That is not a valid font family, so Enter will not save it.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
-    unavailable: 'This dsh does not expose dsh-chat-ux configuration to this page: the entry may be disabled in this profile, or the connection keeps preferences inside the page process.',
-    readOnly: 'The settings document is read-only, so changes cannot be saved.',
+    unavailable: 'This page cannot read the plugin configuration right now, so settings cannot be changed. Check that the '
+        + 'plugin is enabled in this environment, then open this page again.',
+    readOnly: 'These settings cannot be changed, so edits cannot be saved.',
 };
 /**
  * 渲染这个插件的配置：三个开关、光标动效的三档，以及两条自定义字体栈。
@@ -4578,6 +4656,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [codeDraft, setCodeDraft] = (0, react_1.useState)(null);
     const fieldId = (0, react_1.useId)();
     const followOn = storedFollow(snapshot.value);
+    const autoFoldOn = storedAutoFold(snapshot.value);
     const tokenFadeOn = storedTokenFade(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
@@ -4630,10 +4709,9 @@ function ChatUxConfigCard({ scope, locale, view }) {
     };
     /**
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
-     * @param badge - 跟在标签后面的小标；只有 beta 那一行带它。
      */
-    const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
+    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
                             setSansDraft(null);
                             void reset(FONT_SANS_FIELD);
                         } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
@@ -4672,6 +4750,10 @@ function overrideBadges(copy, disabled, onReset) {
 /** 从 host 的值里读增强跟随。 */
 function storedFollow(value) {
     return value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
+}
+/** 从 host 的值里读自动开合的开关。 */
+function storedAutoFold(value) {
+    return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
 }
 /** 从 host 的值里读 token 淡入的开关。 */
 function storedTokenFade(value) {
@@ -4798,7 +4880,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-/* 标签那一行：标签后面可以跟一个小标（beta）。用行内 flex，标才不会把说明挤下去。 */
+/* 标签那一行：行内 flex，标签后面再跟什么小标都不会把说明挤下去。 */
 .${exports.CARD_CLASS.labelLine} {
   display: flex;
   align-items: center;
@@ -4927,13 +5009,19 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着，理由与那一处相同：它修的是读者没碰过键鼠时的那一类丢失。
  */
 exports.DEFAULT_ENHANCED_FOLLOW = true;
+/**
+ * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
+ */
+exports.DEFAULT_AUTO_FOLD = true;
 /**
  * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -4953,15 +5041,69 @@ exports.DEFAULT_CARET_MOTION = 'typing';
 /**
  * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
- * 默认关着，理由与那一处相同：这一段还在调，卡片上标着 beta，读者自己打开才算数。
+ * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
  */
-exports.DEFAULT_SEND_FLIGHT = false;
+exports.DEFAULT_SEND_FLIGHT = true;
 /**
  * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
  */
 exports.DEFAULT_TOKEN_FADE = true;
+    };
+
+    __registry["settings/transcript-default.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.applyTranscriptViewDefault = applyTranscriptViewDefault;
+/** `ui-chat` 这一条的命名空间；dsh 的聊天设置住在它里面。 */
+const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
+/** 「工作步骤展示」那一项的字段名。 */
+const TRANSCRIPT_VIEW_FIELD = 'transcriptView';
+/** 要补的那一档。 */
+const TRANSCRIPT_VIEW_STANDARD = 'standard';
+/**
+ * 补上这一次默认：表单就绪之前等着，就绪之后写一次就撒手。
+ * @param forms - 客户端 context 上的 `configForms` 服务。
+ * @returns 卸下订阅用的函数。
+ */
+function applyTranscriptViewDefault(forms) {
+    const form = forms.get(CHAT_SETTINGS_NAMESPACE);
+    let done = false;
+    const check = () => {
+        if (done)
+            return;
+        if (!needsStandard(form.getSnapshot()))
+            return;
+        done = true;
+        void form.set(TRANSCRIPT_VIEW_FIELD, TRANSCRIPT_VIEW_STANDARD);
+    };
+    // 订阅之前先看一眼：共享表单常常比插件先到，那一次快照变化就不会再来了。
+    check();
+    return form.subscribe(check);
+}
+/**
+ * 这一刻该不该补。
+ * @param snapshot - 共享表单的当前状态。
+ * @returns 表单已就绪、可写，且用户层里没有显式档位时为真。
+ */
+function needsStandard(snapshot) {
+    if (snapshot.status !== 'ready')
+        return false;
+    if (snapshot.writable === false)
+        return false;
+    return savedMode(snapshot.user) === undefined;
+}
+/**
+ * 用户层里显式写下的档位。
+ * @param user - 原始用户分节，形状未知。
+ * @returns 显式写下的值；没写过、或写的是 `null` 时为空。
+ */
+function savedMode(user) {
+    if (typeof user !== 'object' || user === null)
+        return undefined;
+    return user[TRANSCRIPT_VIEW_FIELD] ?? undefined;
+}
     };
 
     __registry["styles.js"] = function (module, exports, require) {

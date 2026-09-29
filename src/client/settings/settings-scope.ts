@@ -17,6 +17,13 @@ import type {CaretMotionMode} from '../chat/caret/caret-motion'
 export const DEFAULT_ENHANCED_FOLLOW = true
 
 /**
+ * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
+ */
+export const DEFAULT_AUTO_FOLD = true
+
+/**
  * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着，理由与那一处相同：两端一致，且装插件的人不必自己装字体。
@@ -38,9 +45,9 @@ export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 /**
  * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
- * 默认关着，理由与那一处相同：这一段还在调，卡片上标着 beta，读者自己打开才算数。
+ * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
  */
-export const DEFAULT_SEND_FLIGHT = false
+export const DEFAULT_SEND_FLIGHT = true
 
 /**
  * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
@@ -53,6 +60,8 @@ export const DEFAULT_TOKEN_FADE = true
 export interface ChatUxSection {
     /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
     enhancedFollow?: boolean
+    /** 思考行与过程组是否自己开合；关掉时两块都整块不装。 */
+    autoFold?: boolean
     /** 插入符动效的档位。 */
     caretMotion?: CaretMotionMode
     /** 自带字体是否接管界面；关掉时 dsh 自己的字体栈原样生效。 */
@@ -61,7 +70,7 @@ export interface ChatUxSection {
     fontSans?: string
     /** 自定义等宽字体栈；空串用自带的。 */
     fontCode?: string
-    /** 提交之后气泡是否从输入框起飞；默认关着。时长不是一个设置项，见 `send-morph.ts` 的 `FLIGHT_MS`。 */
+    /** 提交之后气泡是否从输入框起飞；默认开着。时长不是一个设置项，见 `send-morph.ts` 的 `FLIGHT_MS`。 */
     sendFlight?: boolean
     /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
     tokenFade?: boolean
