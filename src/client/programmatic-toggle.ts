@@ -14,12 +14,12 @@ let depth = 0
 
 /** 标记一段本插件自己的折叠切换，让「读者意图」那几处守卫忽略其间的事件。 */
 export function beginProgrammaticToggle(): void {
-  depth += 1
+    depth += 1
 }
 
 /** 结束一段本插件自己的折叠切换。 */
 export function endProgrammaticToggle(): void {
-  depth = Math.max(0, depth - 1)
+    depth = Math.max(0, depth - 1)
 }
 
 /**
@@ -27,5 +27,5 @@ export function endProgrammaticToggle(): void {
  * @returns 计数大于零时为真。
  */
 export function isProgrammaticToggle(): boolean {
-  return depth > 0
+    return depth > 0
 }

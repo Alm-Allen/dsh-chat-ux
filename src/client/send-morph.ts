@@ -140,35 +140,35 @@ const MAX_TEXT_LAYERS = 14
 
 /** 起飞之前在输入卡片上抓下来的一切。全部在 React 清空草稿之前拿到。 */
 export interface ComposerSnapshot {
-  /** 卡片的视口矩形：替身的起点。 */
-  readonly box: DOMRect
-  readonly background: string
-  readonly radius: number
-  readonly shadow: string
-  /** 整张卡片的克隆：底色与阴影已经摘掉，草稿区的高度钉死。 */
-  readonly clone: HTMLElement
-  /** 克隆里那一块草稿滚动区——第一段字就是它。 */
-  readonly draft: HTMLElement
-  /** 草稿滚动区原来滚到哪儿。克隆要进了文档才能滚，所以先记下来。 */
-  readonly draftScrollTop: number
-  /** 克隆里要收走的那几块（工具栏左右两组，以及别的有面积的东西），带着它们在卡片里的位置。 */
-  readonly chrome: readonly ChromePiece[]
-  /** 草稿的内容区相对卡片的位置：左、上内边距，以及右边还剩多少。 */
-  readonly text: TextFrame
-  /** 卡片的祖先给它的继承环境：自定义属性与字体、颜色。克隆离开原来的树，要把这些带上。 */
-  readonly context: readonly (readonly [string, string])[]
-  /**
-   * 卡片到 `body` 之间的祖先（从外到内，**不含 body**）：替身要照着套一条 `display: contents`
-   * 的链，后代选择器才匹配得上。太深时为 null——整条不模拟（理由见 `MAX_ANCESTOR_LINKS`）。
-   */
-  readonly ancestors: readonly AncestorMark[] | null
+    /** 卡片的视口矩形：替身的起点。 */
+    readonly box: DOMRect
+    readonly background: string
+    readonly radius: number
+    readonly shadow: string
+    /** 整张卡片的克隆：底色与阴影已经摘掉，草稿区的高度钉死。 */
+    readonly clone: HTMLElement
+    /** 克隆里那一块草稿滚动区——第一段字就是它。 */
+    readonly draft: HTMLElement
+    /** 草稿滚动区原来滚到哪儿。克隆要进了文档才能滚，所以先记下来。 */
+    readonly draftScrollTop: number
+    /** 克隆里要收走的那几块（工具栏左右两组，以及别的有面积的东西），带着它们在卡片里的位置。 */
+    readonly chrome: readonly ChromePiece[]
+    /** 草稿的内容区相对卡片的位置：左、上内边距，以及右边还剩多少。 */
+    readonly text: TextFrame
+    /** 卡片的祖先给它的继承环境：自定义属性与字体、颜色。克隆离开原来的树，要把这些带上。 */
+    readonly context: readonly (readonly [string, string])[]
+    /**
+     * 卡片到 `body` 之间的祖先（从外到内，**不含 body**）：替身要照着套一条 `display: contents`
+     * 的链，后代选择器才匹配得上。太深时为 null——整条不模拟（理由见 `MAX_ANCESTOR_LINKS`）。
+     */
+    readonly ancestors: readonly AncestorMark[] | null
 }
 
 /** 一块要收走的装饰。 */
 interface ChromePiece {
-  readonly element: HTMLElement
-  /** 在卡片里的矩形：左、上、宽、高。 */
-  readonly rect: readonly [number, number, number, number]
+    readonly element: HTMLElement
+    /** 在卡片里的矩形：左、上、宽、高。 */
+    readonly rect: readonly [number, number, number, number]
 }
 
 /**
@@ -195,31 +195,31 @@ interface ChromePiece {
  * 而反过来的代价是整页的输入卡片被抬起来一下，比这大得多。
  */
 interface AncestorMark {
-  readonly tag: string
-  readonly className: string
+    readonly tag: string
+    readonly className: string
 }
 
 /** 字的框：内容区离外框左、上、右各多远，行高多少。 */
 interface TextFrame {
-  readonly left: number
-  readonly top: number
-  readonly right: number
-  readonly lineHeight: number
+    readonly left: number
+    readonly top: number
+    readonly right: number
+    readonly lineHeight: number
 }
 
 /** 起好的形变：挂在页面上的最外层，以及它上面跑着的全部动画。 */
 export interface Morph {
-  /** 最外层：终点动了多少写在它身上（主线程）。 */
-  readonly wrapper: HTMLElement
-  /**
-   * 形变段走完之后把壳归一（幂等，每帧调一次即可，见 `startMorph` 里的 `compact`）。
-   * **由主线程在帧里调**：它是一次性的样式写，本来就不属于合成器那条路径。
-   */
-  readonly compact: (u: number) => void
-  /** 位移那条动画此刻的进度（0 到 1）；位移与形状同轴，拿它判「整段走完了没有」。 */
-  readonly progress: () => number
-  /** 位移、形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
-  readonly animations: readonly Animation[]
+    /** 最外层：终点动了多少写在它身上（主线程）。 */
+    readonly wrapper: HTMLElement
+    /**
+     * 形变段走完之后把壳归一（幂等，每帧调一次即可，见 `startMorph` 里的 `compact`）。
+     * **由主线程在帧里调**：它是一次性的样式写，本来就不属于合成器那条路径。
+     */
+    readonly compact: (u: number) => void
+    /** 位移那条动画此刻的进度（0 到 1）；位移与形状同轴，拿它判「整段走完了没有」。 */
+    readonly progress: () => number
+    /** 位移、形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
+    readonly animations: readonly Animation[]
 }
 
 /**
@@ -234,17 +234,17 @@ export interface Morph {
  * 靠祖先传下来的元素会被兜住——正是要兜的那批。
  */
 const INHERITED_PROPERTIES = [
-  'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
-  'font-variation-settings', 'font-kerning', 'line-height', 'letter-spacing', 'word-spacing', 'text-rendering',
-  '-webkit-font-smoothing', 'direction',
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'line-height', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction',
 ] as const
 
 /** 字层要从气泡身上抄的排字属性：少抄一条，折行或字形就会和真实气泡对不上。 */
 const TEXT_PROPERTIES = [
-  'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
-  'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
-  '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
-  'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
+    'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
 ] as const
 
 /**
@@ -267,7 +267,7 @@ const TEXT_PROPERTIES = [
  * 里没有对应的运行时，留着只会让找的人认错。
  */
 const IDENTITY_ATTRIBUTES = [
-  'id', 'contenteditable', 'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
+    'id', 'contenteditable', 'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
 ] as const
 
 /**
@@ -295,142 +295,144 @@ const MAX_ANCESTOR_LINKS = 24
  * @returns 抓到的快照；卡片量不到尺寸、或者草稿区不在卡片里时为 null。
  */
 export function snapshotComposer(input: HTMLElement, card: HTMLElement): ComposerSnapshot | null {
-  const box = card.getBoundingClientRect()
-  if (box.width === 0 || box.height === 0) return null
-  const scroll = input.closest<HTMLElement>('[data-input-scroll]')
-  if (scroll === null || scroll.parentElement !== card) return null
-  const cardStyle = getComputedStyle(card)
-  const inputStyle = getComputedStyle(input)
-  const inputBox = input.getBoundingClientRect()
-  const text: TextFrame = {
-    left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
-    top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
-    right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
-    lineHeight: pixel(inputStyle.lineHeight),
-  }
-
-  // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
-  // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
-  const paths: { path: number[]; rect: [number, number, number, number] }[] = []
-  const rectOf = (element: Element): [number, number, number, number] => {
-    const r = element.getBoundingClientRect()
-    return [r.left - box.left, r.top - box.top, r.width, r.height]
-  }
-  const collect = (element: Element, path: number[]): void => {
-    const [, , width, height] = rectOf(element)
-    if (width * height === 0) {
-      if (getComputedStyle(element).display !== 'contents') return
-      Array.from(element.children).forEach((child, index) => { collect(child, [...path, index]) })
-      return
+    const box = card.getBoundingClientRect()
+    if (box.width === 0 || box.height === 0) return null
+    const scroll = input.closest<HTMLElement>('[data-input-scroll]')
+    if (scroll === null || scroll.parentElement !== card) return null
+    const cardStyle = getComputedStyle(card)
+    const inputStyle = getComputedStyle(input)
+    const inputBox = input.getBoundingClientRect()
+    const text: TextFrame = {
+        left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
+        top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
+        right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
+        lineHeight: pixel(inputStyle.lineHeight),
     }
-    const groups = Array.from(element.children).filter((child) => {
-      const [, , w, h] = rectOf(child)
-      return w * h > 0
+
+    // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
+    // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
+    const paths: { path: number[]; rect: [number, number, number, number] }[] = []
+    const rectOf = (element: Element): [number, number, number, number] => {
+        const r = element.getBoundingClientRect()
+        return [r.left - box.left, r.top - box.top, r.width, r.height]
+    }
+    const collect = (element: Element, path: number[]): void => {
+        const [, , width, height] = rectOf(element)
+        if (width * height === 0) {
+            if (getComputedStyle(element).display !== 'contents') return
+            Array.from(element.children).forEach((child, index) => {
+                collect(child, [...path, index])
+            })
+            return
+        }
+        const groups = Array.from(element.children).filter((child) => {
+            const [, , w, h] = rectOf(child)
+            return w * h > 0
+        })
+        if (width >= box.width * 0.9 && groups.length >= 2) {
+            Array.from(element.children).forEach((child, index) => {
+                const rect = rectOf(child)
+                if (rect[2] * rect[3] > 0) paths.push({path: [...path, index], rect})
+            })
+            return
+        }
+        paths.push({path, rect: rectOf(element)})
+    }
+    Array.from(card.children).forEach((child, index) => {
+        if (child !== scroll) collect(child, [index])
     })
-    if (width >= box.width * 0.9 && groups.length >= 2) {
-      Array.from(element.children).forEach((child, index) => {
-        const rect = rectOf(child)
-        if (rect[2] * rect[3] > 0) paths.push({ path: [...path, index], rect })
-      })
-      return
+
+    // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
+    //
+    // 基准取**挂载点**，三种情形都对着验算过：
+    //   变量只定义在中间祖先上（挂载点上没有）→ 那边读出来是空串，两边不同，抄下来；不抄的话替身
+    //     上这个变量根本不存在，`var(--x)` 会掉进它的 fallback，而真卡片上它是有的。
+    //   挂载点与卡片取值相同 → 不抄，替身从挂载点继承到的就是同一个值。
+    //   中间祖先覆盖了挂载点的值、卡片沿用 → 两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
+    //     那一份（覆盖值），替身拿到的与真卡片一致。
+    // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
+    const hostStyle = getComputedStyle(ghostHost())
+    const context: [string, string][] = []
+    for (let index = 0; index < cardStyle.length; index += 1) {
+        const name = cardStyle[index]
+        if (name === undefined || !name.startsWith('--')) continue
+        const value = cardStyle.getPropertyValue(name)
+        if (value !== hostStyle.getPropertyValue(name)) context.push([name, value])
     }
-    paths.push({ path, rect: rectOf(element) })
-  }
-  Array.from(card.children).forEach((child, index) => {
-    if (child !== scroll) collect(child, [index])
-  })
+    for (const name of INHERITED_PROPERTIES) context.push([name, cardStyle.getPropertyValue(name)])
 
-  // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
-  //
-  // 基准取**挂载点**，三种情形都对着验算过：
-  //   变量只定义在中间祖先上（挂载点上没有）→ 那边读出来是空串，两边不同，抄下来；不抄的话替身
-  //     上这个变量根本不存在，`var(--x)` 会掉进它的 fallback，而真卡片上它是有的。
-  //   挂载点与卡片取值相同 → 不抄，替身从挂载点继承到的就是同一个值。
-  //   中间祖先覆盖了挂载点的值、卡片沿用 → 两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
-  //     那一份（覆盖值），替身拿到的与真卡片一致。
-  // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
-  const hostStyle = getComputedStyle(ghostHost())
-  const context: [string, string][] = []
-  for (let index = 0; index < cardStyle.length; index += 1) {
-    const name = cardStyle[index]
-    if (name === undefined || !name.startsWith('--')) continue
-    const value = cardStyle.getPropertyValue(name)
-    if (value !== hostStyle.getPropertyValue(name)) context.push([name, value])
-  }
-  for (const name of INHERITED_PROPERTIES) context.push([name, cardStyle.getPropertyValue(name)])
-
-  // 祖先链：克隆离开父链之后，`.hero .input` 这类后代选择器在它身上全都不匹配，而 dsh 的 hero 态
-  // 最小高度正是这么写的。所以把链记下来，起飞时照着套回去（见 `startMorph`）。只记标签与 class：
-  // 替身要的是**选择器命中**，而 `data-*` 是别人手里的状态把手、抄进链里会被读成过期状态（见
-  // `AncestorMark` 那段），`id` 更是复制过去只会让人认错。
-  // 这一段跑在读者按下回车的那一帧上，所以只读属性：读属性不碰布局，不会把布局结算拖进这一帧。
-  const ancestors: AncestorMark[] = []
-  let interrupted = false
-  for (let node = card.parentElement; node !== null && node !== document.body; node = node.parentElement) {
-    // 替身自己的部件不该进链。真卡片的祖先里本来不会有它，这是防御——防的是上一段还没落定就又
-    // 抓了一次起点。链在这里断掉就**整条不要**：少一层的话，外层选择器会错配到内层上去。
-    if (node.hasAttribute(GHOST_ATTRIBUTE)) {
-      interrupted = true
-      break
+    // 祖先链：克隆离开父链之后，`.hero .input` 这类后代选择器在它身上全都不匹配，而 dsh 的 hero 态
+    // 最小高度正是这么写的。所以把链记下来，起飞时照着套回去（见 `startMorph`）。只记标签与 class：
+    // 替身要的是**选择器命中**，而 `data-*` 是别人手里的状态把手、抄进链里会被读成过期状态（见
+    // `AncestorMark` 那段），`id` 更是复制过去只会让人认错。
+    // 这一段跑在读者按下回车的那一帧上，所以只读属性：读属性不碰布局，不会把布局结算拖进这一帧。
+    const ancestors: AncestorMark[] = []
+    let interrupted = false
+    for (let node = card.parentElement; node !== null && node !== document.body; node = node.parentElement) {
+        // 替身自己的部件不该进链。真卡片的祖先里本来不会有它，这是防御——防的是上一段还没落定就又
+        // 抓了一次起点。链在这里断掉就**整条不要**：少一层的话，外层选择器会错配到内层上去。
+        if (node.hasAttribute(GHOST_ATTRIBUTE)) {
+            interrupted = true
+            break
+        }
+        ancestors.push({
+            tag: node.tagName.toLowerCase(),
+            className: node.getAttribute('class') ?? '',
+        })
     }
-    ancestors.push({
-      tag: node.tagName.toLowerCase(),
-      className: node.getAttribute('class') ?? '',
-    })
-  }
-  ancestors.reverse()
+    ancestors.reverse()
 
-  const clone = card.cloneNode(true) as HTMLElement
-  scrub(clone)
-  // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
-  // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
-  // 而那些规则里就有 `!important` 的：实测同页的颜色插件用 `!important` 压过 `[data-composer-card]`。
-  // 普通行内样式**压不住 `!important`**，于是一条 `position: fixed` 配居中的规则就能让克隆当场飞
-  // 到屏幕正中、再随动画掉回来——读者看到的是「聊天框被抬到中间又闪下去」。行内 + `!important` 是
-  // 样式层级的顶格（只输给动画），把定位与尺寸钉在起飞那一刻量到的值上。
-  pin(clone, [
-    ['position', 'absolute'],
-    ['left', '0px'],
-    ['top', '0px'],
-    ['right', 'auto'],
-    ['bottom', 'auto'],
-    ['margin', '0px'],
-    ['width', box.width + 'px'],
-    ['max-width', 'none'],
-    ['height', box.height + 'px'],
-    ['box-sizing', 'border-box'],
-    ['transform', 'none'],
-    ['float', 'none'],
-    ['background', 'transparent'],
-    ['box-shadow', 'none'],
-  ])
-  const draft = clone.children[Array.from(card.children).indexOf(scroll)] as HTMLElement
-  // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
-  // 工具栏会跟着往上跑。
-  const scrollBox = scroll.getBoundingClientRect()
-  draft.style.height = scrollBox.height + 'px'
-  draft.style.minHeight = '0px'
-  draft.style.maxHeight = 'none'
-  const chrome: ChromePiece[] = []
-  for (const { path, rect } of paths) {
-    let element: Element | undefined = clone
-    for (const index of path) element = element?.children[index]
-    if (element instanceof HTMLElement) chrome.push({ element, rect })
-  }
-  return {
-    box,
-    background: cardStyle.backgroundColor,
-    radius: pixel(cardStyle.borderTopLeftRadius),
-    shadow: cardStyle.boxShadow,
-    clone,
-    draft,
-    draftScrollTop: scroll.scrollTop,
-    chrome,
-    text,
-    context,
-    // 太深、或者中途断开，都整条作废（见 `MAX_ANCESTOR_LINKS`）：null 是「不模拟」，不是「这条链是空的」。
-    ancestors: interrupted || ancestors.length > MAX_ANCESTOR_LINKS ? null : ancestors,
-  }
+    const clone = card.cloneNode(true) as HTMLElement
+    scrub(clone)
+    // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
+    // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
+    // 而那些规则里就有 `!important` 的：实测同页的颜色插件用 `!important` 压过 `[data-composer-card]`。
+    // 普通行内样式**压不住 `!important`**，于是一条 `position: fixed` 配居中的规则就能让克隆当场飞
+    // 到屏幕正中、再随动画掉回来——读者看到的是「聊天框被抬到中间又闪下去」。行内 + `!important` 是
+    // 样式层级的顶格（只输给动画），把定位与尺寸钉在起飞那一刻量到的值上。
+    pin(clone, [
+        ['position', 'absolute'],
+        ['left', '0px'],
+        ['top', '0px'],
+        ['right', 'auto'],
+        ['bottom', 'auto'],
+        ['margin', '0px'],
+        ['width', box.width + 'px'],
+        ['max-width', 'none'],
+        ['height', box.height + 'px'],
+        ['box-sizing', 'border-box'],
+        ['transform', 'none'],
+        ['float', 'none'],
+        ['background', 'transparent'],
+        ['box-shadow', 'none'],
+    ])
+    const draft = clone.children[Array.from(card.children).indexOf(scroll)] as HTMLElement
+    // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
+    // 工具栏会跟着往上跑。
+    const scrollBox = scroll.getBoundingClientRect()
+    draft.style.height = scrollBox.height + 'px'
+    draft.style.minHeight = '0px'
+    draft.style.maxHeight = 'none'
+    const chrome: ChromePiece[] = []
+    for (const {path, rect} of paths) {
+        let element: Element | undefined = clone
+        for (const index of path) element = element?.children[index]
+        if (element instanceof HTMLElement) chrome.push({element, rect})
+    }
+    return {
+        box,
+        background: cardStyle.backgroundColor,
+        radius: pixel(cardStyle.borderTopLeftRadius),
+        shadow: cardStyle.boxShadow,
+        clone,
+        draft,
+        draftScrollTop: scroll.scrollTop,
+        chrome,
+        text,
+        context,
+        // 太深、或者中途断开，都整条作废（见 `MAX_ANCESTOR_LINKS`）：null 是「不模拟」，不是「这条链是空的」。
+        ancestors: interrupted || ancestors.length > MAX_ANCESTOR_LINKS ? null : ancestors,
+    }
 }
 
 /**
@@ -441,276 +443,276 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
  * @returns 起好的形变；气泡量不到尺寸时为 null。
  */
 export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end: DOMRect): Morph | null {
-  if (end.width === 0 || end.height === 0) return null
-  const start = snapshot.box
-  const style = getComputedStyle(bubble)
-  const W0 = start.width
-  const H0 = start.height
-  const W1 = end.width
-  const H1 = end.height
-  const R0 = snapshot.radius
-  const R1 = pixel(style.borderTopLeftRadius)
-  const from = snapshot.text
-  const to: TextFrame = {
-    left: bubble.clientLeft + pixel(style.paddingLeft),
-    top: bubble.clientTop + pixel(style.paddingTop),
-    right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
-    lineHeight: pixel(style.lineHeight),
-  }
-  const boxWidth = Math.max(W0, W1)
-  const boxHeight = Math.max(H0, H1)
-
-  const dx = end.left - start.left
-  const dy = end.top - start.top
-  // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
-  // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
-  const reach = end.right - start.left
-
-  // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
-  const samples: Sample[] = []
-  for (let step = 0; step <= SAMPLES; step += 1) {
-    const u = step / SAMPLES
-    const m = morphProgress(u)
-    const width = W0 + (W1 - W0) * m
-    const left = from.left + (to.left - from.left) * m
-    const right = from.right + (to.right - from.right) * m
-    samples.push({
-      u,
-      m,
-      width,
-      // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
-      // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
-      visible: Math.max(0, Math.min(width, reach - dx * m)),
-      height: H0 + (H1 - H0) * m,
-      radius: R0 + (R1 - R0) * m,
-      left,
-      top: from.top + (to.top - from.top) * m,
-      content: Math.max(1, width - left - right),
-      lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
-    })
-  }
-
-  const wrapper = document.createElement('div')
-  wrapper.setAttribute(GHOST_ATTRIBUTE, '')
-  wrapper.setAttribute('aria-hidden', 'true')
-  wrapper.inert = true
-  wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
-  wrapper.style.left = start.left + 'px'
-  wrapper.style.top = start.top + 'px'
-  const mover = document.createElement('div')
-  mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform'
-  const halo = document.createElement('div')
-  halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity'
-  halo.style.width = W0 + 'px'
-  halo.style.height = H0 + 'px'
-  halo.style.borderRadius = R0 + 'px'
-  halo.style.boxShadow = snapshot.shadow
-  const shell = document.createElement('div')
-  shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform'
-  shell.style.width = boxWidth + 'px'
-  shell.style.height = boxHeight + 'px'
-  for (const [name, value] of snapshot.context) shell.style.setProperty(name, value)
-  // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
-  // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
-  // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
-  const scaler = document.createElement('div')
-  scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
-  scaler.style.width = boxWidth + 'px'
-  scaler.style.height = boxHeight + 'px'
-  // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
-  // 半径补偿见下面那段动画。
-  shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight)
-  shell.appendChild(scaler)
-  // 底色是两层实色叠着淡，不是 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会
-  // 掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那
-  // 条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
-  const bubbleFill = document.createElement('div')
-  bubbleFill.style.cssText = 'position:absolute;inset:0'
-  bubbleFill.style.backgroundColor = style.backgroundColor
-  const cardFill = document.createElement('div')
-  cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity'
-  cardFill.style.backgroundColor = snapshot.background
-  scaler.append(bubbleFill, cardFill)
-  // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
-  // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
-  // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
-  // 链只要在克隆之上就够；套到 mover 外面会连光晕与壳一起罩进去，而它们两块是替身自己的装饰，
-  // 不是卡片的后代。缺链时（`ancestors` 为 null）克隆直接挂在壳上，与加固之前一样。
-  // `display: contents` 写在**行内**：祖先那一层的 class 规则里就算有 `display`，优先级也压不过
-  // 行内（dsh 的样式里没有 `!important`），链不会因为带上某个 class 就长出盒子来。
-  let cloneHost: HTMLElement = scaler
-  for (const mark of snapshot.ancestors ?? []) {
-    const link = document.createElement(mark.tag)
-    // 这里的 `!important` 同样必要，理由和克隆那几条一样：链节点带着祖先的 class，而祖先那层的规则
-    // 里可能就有 `display`（实测同页插件在用 `!important`）。一旦它长出盒子，问题不只是多一层——
-    // 它可能成为克隆的**包含块**，克隆那几条 `left: 0; top: 0` 就会相对它算，位置整体偏掉。
-    link.style.setProperty('display', 'contents', 'important')
-    link.setAttribute('aria-hidden', 'true')
-    // 只带 class：链上**一个 `data-*` 都不写**，理由与实测见 `AncestorMark`。
-    if (mark.className !== '') link.className = mark.className
-    cloneHost.appendChild(link)
-    cloneHost = link
-  }
-  cloneHost.appendChild(snapshot.clone)
-
-  // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
-  // 自己，其余每段一层。
-  const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
-  const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding)
-  const layers = bubbleWindows.map((window) => {
-    const layer = textLayer(bubble, style)
-    layer.style.width = window.width + 'px'
-    layer.style.lineHeight = window.lineHeight + 'px'
-    scaler.appendChild(layer)
-    return { layer, window }
-  })
-
-  mover.appendChild(halo)
-  mover.appendChild(shell)
-  wrapper.appendChild(mover)
-  // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
-  // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
-  ghostHost().appendChild(wrapper)
-  // 克隆要进了文档才能滚到原来的位置。
-  if (snapshot.draftScrollTop > 0) snapshot.draft.scrollTop = snapshot.draftScrollTop
-
-  const timing: KeyframeAnimationOptions = { duration: FLIGHT_MS, easing: 'linear', fill: 'forwards' }
-  const animations: Animation[] = []
-  const run = (element: HTMLElement, frames: Keyframe[]): Animation => {
-    const animation = element.animate(frames, timing)
-    animations.push(animation)
-    return animation
-  }
-  // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
-  // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-  const between = (from: number, until: number, frame: (sample: Sample) => Keyframe): Keyframe[] => {
-    const frames: Keyframe[] = []
-    for (const sample of samples) {
-      if (sample.u < from || sample.u > until) continue
-      frames.push({ ...frame(sample), offset: sample.u })
+    if (end.width === 0 || end.height === 0) return null
+    const start = snapshot.box
+    const style = getComputedStyle(bubble)
+    const W0 = start.width
+    const H0 = start.height
+    const W1 = end.width
+    const H1 = end.height
+    const R0 = snapshot.radius
+    const R1 = pixel(style.borderTopLeftRadius)
+    const from = snapshot.text
+    const to: TextFrame = {
+        left: bubble.clientLeft + pixel(style.paddingLeft),
+        top: bubble.clientTop + pixel(style.paddingTop),
+        right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
+        lineHeight: pixel(style.lineHeight),
     }
-    const first = frames[0]
-    const last = frames.at(-1)
-    if (first !== undefined && (first.offset ?? 0) > 0) frames.unshift({ ...first, offset: 0 })
-    if (last !== undefined && (last.offset ?? 1) < 1) frames.push({ ...last, offset: 1 })
-    return frames
-  }
+    const boxWidth = Math.max(W0, W1)
+    const boxHeight = Math.max(H0, H1)
 
-  // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
-  // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
-  // 左边，右边由宽度决定，两条边都单调。
-  const travel = run(mover, samples.map(sample => ({
-    offset: sample.u,
-    transform: 'translate(' + dx * sample.m + 'px, '
-      + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
-  })))
-  // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
-  // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
-  // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
-  const shape = run(shell, between(0, MORPH_END, sample => ({
-    transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
-  })))
-  // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
-  // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
-  const inverse = run(scaler, between(0, MORPH_END, sample => ({
-    transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
-      + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
-  })))
-  // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
-  // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
-  // 壳的 `transform` 照样在合成器上。卡住时半径停在旧值，圆还是圆的。
-  // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
-  const corners = run(shell, between(0, MORPH_END, sample => ({
-    borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
-  })))
+    const dx = end.left - start.left
+    const dy = end.top - start.top
+    // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
+    // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
+    const reach = end.right - start.left
 
-  /**
-   * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
-   *
-   * 位移与形状现在由同一条时间轴驱动，本来就不会互相领先；读动画自己的时间而不是墙上时钟，为的是起手
-   * 那一两帧：WAAPI 动画那时还是 pending（`startTime` 没定），按 offset 0 画——也就是**整张输入卡片**，
-   * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
-   * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
-   * 起手那一格。
-   * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
-   */
-  const progress = (): number => {
-    const raw = travel.currentTime
-    if (typeof raw !== 'number') return 0
-    const u = raw / FLIGHT_MS
-    if (!(u > 0)) return 0
-    return u > 1 ? 1 : u
-  }
+    // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
+    const samples: Sample[] = []
+    for (let step = 0; step <= SAMPLES; step += 1) {
+        const u = step / SAMPLES
+        const m = morphProgress(u)
+        const width = W0 + (W1 - W0) * m
+        const left = from.left + (to.left - from.left) * m
+        const right = from.right + (to.right - from.right) * m
+        samples.push({
+            u,
+            m,
+            width,
+            // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
+            // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
+            visible: Math.max(0, Math.min(width, reach - dx * m)),
+            height: H0 + (H1 - H0) * m,
+            radius: R0 + (R1 - R0) * m,
+            left,
+            top: from.top + (to.top - from.top) * m,
+            content: Math.max(1, width - left - right),
+            lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
+        })
+    }
 
-  /** 壳归一了没有（见 `compact`）。 */
-  let normalized = false
-  /**
-   * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
-   *
-   * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
-   * 尺寸做，字就越发虚。归一那一帧里「宽度从 `boxWidth` 改成 `visible`」与「缩放从 `visible / boxWidth`
-   * 归到 1」是等价的（`boxWidth × visible / boxWidth = visible`），所以视觉不跳。
-   *
-   * **必须把两条动画 `cancel` 掉**：它们 `fill: forwards`，会一直按最后一帧写着 `transform`，行内那两条
-   * 归 1 压不过动画。取消之后属性回落到行内，正好是归一后的样子。
-   *
-   * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
-   * 改高，拿整段末尾去比就会在归一时跳一下。
-   * @param u - 这一刻的进度；还没走完形变段就什么都不做。
-   */
-  const compact = (u: number): void => {
-    if (normalized || u < MORPH_END) return
-    const final = samples.find(sample => sample.u >= MORPH_END) ?? samples.at(-1)
-    if (final === undefined) return
-    normalized = true
-    shape.cancel()
-    inverse.cancel()
-    corners.cancel()
-    shell.style.width = final.visible + 'px'
-    shell.style.height = final.height + 'px'
-    shell.style.transform = 'none'
-    shell.style.borderRadius = final.radius + 'px'
-    scaler.style.transform = 'none'
-  }
-  run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) })))
-  // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
-  // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
-  const shadow = shadowSpread(snapshot.shadow)
-  run(halo, between(0, MORPH_END, sample => ({
-    transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
-    opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
-  })))
-  for (const piece of snapshot.chrome) {
-    const [x, y, width, height] = piece.rect
-    // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
-    const anchorRight = x + width / 2 > W0 / 2
-    const anchorBottom = y + height / 2 > H0 / 2
-    piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%')
-    run(piece.element, between(0, MORPH_END, (sample) => {
-      const gone = Math.min(1, sample.m / CHROME_GONE_AT)
-      const shiftX = anchorRight ? sample.visible - W0 : 0
-      const shiftY = anchorBottom ? sample.height - H0 : 0
-      return {
-        transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
-        opacity: String(1 - gone),
-      }
-    }))
-  }
+    const wrapper = document.createElement('div')
+    wrapper.setAttribute(GHOST_ATTRIBUTE, '')
+    wrapper.setAttribute('aria-hidden', 'true')
+    wrapper.inert = true
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
+    wrapper.style.left = start.left + 'px'
+    wrapper.style.top = start.top + 'px'
+    const mover = document.createElement('div')
+    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform'
+    const halo = document.createElement('div')
+    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity'
+    halo.style.width = W0 + 'px'
+    halo.style.height = H0 + 'px'
+    halo.style.borderRadius = R0 + 'px'
+    halo.style.boxShadow = snapshot.shadow
+    const shell = document.createElement('div')
+    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform'
+    shell.style.width = boxWidth + 'px'
+    shell.style.height = boxHeight + 'px'
+    for (const [name, value] of snapshot.context) shell.style.setProperty(name, value)
+    // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
+    // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
+    // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
+    const scaler = document.createElement('div')
+    scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
+    scaler.style.width = boxWidth + 'px'
+    scaler.style.height = boxHeight + 'px'
+    // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
+    // 半径补偿见下面那段动画。
+    shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight)
+    shell.appendChild(scaler)
+    // 底色是两层实色叠着淡，不是 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会
+    // 掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那
+    // 条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
+    const bubbleFill = document.createElement('div')
+    bubbleFill.style.cssText = 'position:absolute;inset:0'
+    bubbleFill.style.backgroundColor = style.backgroundColor
+    const cardFill = document.createElement('div')
+    cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity'
+    cardFill.style.backgroundColor = snapshot.background
+    scaler.append(bubbleFill, cardFill)
+    // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
+    // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
+    // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
+    // 链只要在克隆之上就够；套到 mover 外面会连光晕与壳一起罩进去，而它们两块是替身自己的装饰，
+    // 不是卡片的后代。缺链时（`ancestors` 为 null）克隆直接挂在壳上，与加固之前一样。
+    // `display: contents` 写在**行内**：祖先那一层的 class 规则里就算有 `display`，优先级也压不过
+    // 行内（dsh 的样式里没有 `!important`），链不会因为带上某个 class 就长出盒子来。
+    let cloneHost: HTMLElement = scaler
+    for (const mark of snapshot.ancestors ?? []) {
+        const link = document.createElement(mark.tag)
+        // 这里的 `!important` 同样必要，理由和克隆那几条一样：链节点带着祖先的 class，而祖先那层的规则
+        // 里可能就有 `display`（实测同页插件在用 `!important`）。一旦它长出盒子，问题不只是多一层——
+        // 它可能成为克隆的**包含块**，克隆那几条 `left: 0; top: 0` 就会相对它算，位置整体偏掉。
+        link.style.setProperty('display', 'contents', 'important')
+        link.setAttribute('aria-hidden', 'true')
+        // 只带 class：链上**一个 `data-*` 都不写**，理由与实测见 `AncestorMark`。
+        if (mark.className !== '') link.className = mark.className
+        cloneHost.appendChild(link)
+        cloneHost = link
+    }
+    cloneHost.appendChild(snapshot.clone)
 
-  // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
-  const draftUntil = draftWindow === undefined ? 1 : draftWindow.until
-  run(snapshot.draft, between(0, draftUntil, sample => ({
-    transform: 'translate(' + (sample.left - from.left) + 'px, '
-      + (sample.top - from.top + (sample.lineHeight - from.lineHeight) / 2) + 'px)',
-  })))
-  run(snapshot.draft, stepOpacity(0, draftUntil))
-  for (const { layer, window } of layers) {
-    run(layer, between(window.from, window.until, sample => ({
-      transform: 'translate(' + sample.left + 'px, ' + (sample.top + (sample.lineHeight - window.lineHeight) / 2) + 'px)',
+    // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
+    // 自己，其余每段一层。
+    const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
+    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding)
+    const layers = bubbleWindows.map((window) => {
+        const layer = textLayer(bubble, style)
+        layer.style.width = window.width + 'px'
+        layer.style.lineHeight = window.lineHeight + 'px'
+        scaler.appendChild(layer)
+        return {layer, window}
+    })
+
+    mover.appendChild(halo)
+    mover.appendChild(shell)
+    wrapper.appendChild(mover)
+    // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
+    // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
+    ghostHost().appendChild(wrapper)
+    // 克隆要进了文档才能滚到原来的位置。
+    if (snapshot.draftScrollTop > 0) snapshot.draft.scrollTop = snapshot.draftScrollTop
+
+    const timing: KeyframeAnimationOptions = {duration: FLIGHT_MS, easing: 'linear', fill: 'forwards'}
+    const animations: Animation[] = []
+    const run = (element: HTMLElement, frames: Keyframe[]): Animation => {
+        const animation = element.animate(frames, timing)
+        animations.push(animation)
+        return animation
+    }
+    // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
+    // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
+    const between = (from: number, until: number, frame: (sample: Sample) => Keyframe): Keyframe[] => {
+        const frames: Keyframe[] = []
+        for (const sample of samples) {
+            if (sample.u < from || sample.u > until) continue
+            frames.push({...frame(sample), offset: sample.u})
+        }
+        const first = frames[0]
+        const last = frames.at(-1)
+        if (first !== undefined && (first.offset ?? 0) > 0) frames.unshift({...first, offset: 0})
+        if (last !== undefined && (last.offset ?? 1) < 1) frames.push({...last, offset: 1})
+        return frames
+    }
+
+    // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
+    // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
+    // 左边，右边由宽度决定，两条边都单调。
+    const travel = run(mover, samples.map(sample => ({
+        offset: sample.u,
+        transform: 'translate(' + dx * sample.m + 'px, '
+            + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
     })))
-    run(layer, stepOpacity(window.from, window.until))
-  }
-  return { wrapper, compact, progress, animations }
+    // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
+    // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
+    // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
+    const shape = run(shell, between(0, MORPH_END, sample => ({
+        transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
+    })))
+    // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
+    // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
+    const inverse = run(scaler, between(0, MORPH_END, sample => ({
+        transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
+            + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
+    })))
+    // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
+    // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
+    // 壳的 `transform` 照样在合成器上。卡住时半径停在旧值，圆还是圆的。
+    // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
+    const corners = run(shell, between(0, MORPH_END, sample => ({
+        borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
+    })))
+
+    /**
+     * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
+     *
+     * 位移与形状现在由同一条时间轴驱动，本来就不会互相领先；读动画自己的时间而不是墙上时钟，为的是起手
+     * 那一两帧：WAAPI 动画那时还是 pending（`startTime` 没定），按 offset 0 画——也就是**整张输入卡片**，
+     * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
+     * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
+     * 起手那一格。
+     * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
+     */
+    const progress = (): number => {
+        const raw = travel.currentTime
+        if (typeof raw !== 'number') return 0
+        const u = raw / FLIGHT_MS
+        if (!(u > 0)) return 0
+        return u > 1 ? 1 : u
+    }
+
+    /** 壳归一了没有（见 `compact`）。 */
+    let normalized = false
+    /**
+     * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
+     *
+     * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
+     * 尺寸做，字就越发虚。归一那一帧里「宽度从 `boxWidth` 改成 `visible`」与「缩放从 `visible / boxWidth`
+     * 归到 1」是等价的（`boxWidth × visible / boxWidth = visible`），所以视觉不跳。
+     *
+     * **必须把两条动画 `cancel` 掉**：它们 `fill: forwards`，会一直按最后一帧写着 `transform`，行内那两条
+     * 归 1 压不过动画。取消之后属性回落到行内，正好是归一后的样子。
+     *
+     * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
+     * 改高，拿整段末尾去比就会在归一时跳一下。
+     * @param u - 这一刻的进度；还没走完形变段就什么都不做。
+     */
+    const compact = (u: number): void => {
+        if (normalized || u < MORPH_END) return
+        const final = samples.find(sample => sample.u >= MORPH_END) ?? samples.at(-1)
+        if (final === undefined) return
+        normalized = true
+        shape.cancel()
+        inverse.cancel()
+        corners.cancel()
+        shell.style.width = final.visible + 'px'
+        shell.style.height = final.height + 'px'
+        shell.style.transform = 'none'
+        shell.style.borderRadius = final.radius + 'px'
+        scaler.style.transform = 'none'
+    }
+    run(cardFill, between(0, MORPH_END, sample => ({opacity: String(1 - sample.m)})))
+    // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
+    // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
+    const shadow = shadowSpread(snapshot.shadow)
+    run(halo, between(0, MORPH_END, sample => ({
+        transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
+        opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
+    })))
+    for (const piece of snapshot.chrome) {
+        const [x, y, width, height] = piece.rect
+        // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
+        const anchorRight = x + width / 2 > W0 / 2
+        const anchorBottom = y + height / 2 > H0 / 2
+        piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%')
+        run(piece.element, between(0, MORPH_END, (sample) => {
+            const gone = Math.min(1, sample.m / CHROME_GONE_AT)
+            const shiftX = anchorRight ? sample.visible - W0 : 0
+            const shiftY = anchorBottom ? sample.height - H0 : 0
+            return {
+                transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
+                opacity: String(1 - gone),
+            }
+        }))
+    }
+
+    // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
+    const draftUntil = draftWindow === undefined ? 1 : draftWindow.until
+    run(snapshot.draft, between(0, draftUntil, sample => ({
+        transform: 'translate(' + (sample.left - from.left) + 'px, '
+            + (sample.top - from.top + (sample.lineHeight - from.lineHeight) / 2) + 'px)',
+    })))
+    run(snapshot.draft, stepOpacity(0, draftUntil))
+    for (const {layer, window} of layers) {
+        run(layer, between(window.from, window.until, sample => ({
+            transform: 'translate(' + sample.left + 'px, ' + (sample.top + (sample.lineHeight - window.lineHeight) / 2) + 'px)',
+        })))
+        run(layer, stepOpacity(window.from, window.until))
+    }
+    return {wrapper, compact, progress, animations}
 }
 
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
@@ -727,7 +729,7 @@ const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost'
  * 挂载点还必须是文档的**最后一个**子节点，理由见 `startMorph` 里那句注释。
  */
 function ghostHost(): HTMLElement {
-  return document.body
+    return document.body
 }
 
 /**
@@ -742,36 +744,36 @@ function ghostHost(): HTMLElement {
  * @param declarations - 属性名与值，按顺序写。
  */
 function pin(element: HTMLElement, declarations: readonly (readonly [string, string])[]): void {
-  for (const [name, value] of declarations) element.style.setProperty(name, value, 'important')
+    for (const [name, value] of declarations) element.style.setProperty(name, value, 'important')
 }
 
 /** 时间线上的一个采样点。 */
 interface Sample {
-  /** 时间占比，0 到 1。 */
-  readonly u: number
-  /** 进度，0 到 1。位移、外框、内容区、行高全都由它推出来（见 `ACROSS_OMEGA`）。 */
-  readonly m: number
-  /** 壳的外框。高度可能被字撑高（见 `textWindows`），所以不是只读的。 */
-  readonly width: number
-  /** 这一刻真正画得出来的宽度：外框被位移推出右边缘上限时，从右边裁掉多出来的那一段。 */
-  readonly visible: number
-  height: number
-  readonly radius: number
-  /** 字的内容区起点。 */
-  readonly left: number
-  readonly top: number
-  /** 这一刻可排字的宽度。 */
-  readonly content: number
-  /** 这一刻的行高（连续值）。 */
-  readonly lineHeight: number
+    /** 时间占比，0 到 1。 */
+    readonly u: number
+    /** 进度，0 到 1。位移、外框、内容区、行高全都由它推出来（见 `ACROSS_OMEGA`）。 */
+    readonly m: number
+    /** 壳的外框。高度可能被字撑高（见 `textWindows`），所以不是只读的。 */
+    readonly width: number
+    /** 这一刻真正画得出来的宽度：外框被位移推出右边缘上限时，从右边裁掉多出来的那一段。 */
+    readonly visible: number
+    height: number
+    readonly radius: number
+    /** 字的内容区起点。 */
+    readonly left: number
+    readonly top: number
+    /** 这一刻可排字的宽度。 */
+    readonly content: number
+    /** 这一刻的行高（连续值）。 */
+    readonly lineHeight: number
 }
 
 /** 一段字：从哪一刻亮到哪一刻，按多宽排、行高多少。 */
 interface TextWindow {
-  from: number
-  until: number
-  readonly width: number
-  readonly lineHeight: number
+    from: number
+    until: number
+    readonly width: number
+    readonly lineHeight: number
 }
 
 /**
@@ -784,112 +786,112 @@ interface TextWindow {
  * @returns 按时间排好的段；第一段的内容由草稿克隆负责，这里只给它时间窗。
  */
 function textWindows(
-  bubble: HTMLElement,
-  style: CSSStyleDeclaration,
-  samples: readonly Sample[],
-  finalLineHeight: number,
-  bottomPadding: number,
+    bubble: HTMLElement,
+    style: CSSStyleDeclaration,
+    samples: readonly Sample[],
+    finalLineHeight: number,
+    bottomPadding: number,
 ): TextWindow[] {
-  const probeHost = document.createElement('div')
-  probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none'
-  const probe = textLayer(bubble, style)
-  probe.style.position = 'static'
-  probeHost.appendChild(probe)
-  document.body.appendChild(probeHost)
-  const layouts = new Map<number, { signature: string; lines: number }>()
-  const layoutAt = (width: number): { signature: string; lines: number } => {
-    // 宽度原样用，不取整：气泡是按字的宽度收缩的，它的内容区就是最长那一行的宽度，往下舍哪怕
-    // 零点几像素，最后那一行都会被挤到下一行去。
-    const key = width
-    const known = layouts.get(key)
-    if (known !== undefined) return known
-    probe.style.width = key + 'px'
-    const range = document.createRange()
-    range.selectNodeContents(probe)
-    const tops = new Set<number>()
-    const parts: string[] = []
-    for (const rect of range.getClientRects()) {
-      tops.add(Math.round(rect.top))
-      parts.push(Math.round(rect.top) + ':' + Math.round(rect.right))
+    const probeHost = document.createElement('div')
+    probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none'
+    const probe = textLayer(bubble, style)
+    probe.style.position = 'static'
+    probeHost.appendChild(probe)
+    document.body.appendChild(probeHost)
+    const layouts = new Map<number, { signature: string; lines: number }>()
+    const layoutAt = (width: number): { signature: string; lines: number } => {
+        // 宽度原样用，不取整：气泡是按字的宽度收缩的，它的内容区就是最长那一行的宽度，往下舍哪怕
+        // 零点几像素，最后那一行都会被挤到下一行去。
+        const key = width
+        const known = layouts.get(key)
+        if (known !== undefined) return known
+        probe.style.width = key + 'px'
+        const range = document.createRange()
+        range.selectNodeContents(probe)
+        const tops = new Set<number>()
+        const parts: string[] = []
+        for (const rect of range.getClientRects()) {
+            tops.add(Math.round(rect.top))
+            parts.push(Math.round(rect.top) + ':' + Math.round(rect.right))
+        }
+        const layout = {signature: parts.join(','), lines: tops.size}
+        layouts.set(key, layout)
+        return layout
     }
-    const layout = { signature: parts.join(','), lines: tops.size }
-    layouts.set(key, layout)
-    return layout
-  }
 
-  // 每一格按这一格里最窄的那一刻排：外框在这五毫秒里还在收，按起点排的话，字会在这一格的后半截
-  // 顶进右边的内边距、甚至顶出外框（实测形变最快那一段，一格能收十几像素）。第一格按卡片自己的
-  // 宽度排——它就是输入框里原样的折行，而弹簧起手的那一格几乎没动。
-  const widths = samples.map((sample, index) => {
-    const next = samples[index + 1]
-    return index === 0 || next === undefined ? sample.content : Math.min(sample.content, next.content)
-  })
-  // 不必每一格都排：默认的折行是贪心的，两个宽度排出来一模一样，夹在中间的每一个宽度也一样
-  // （每一行能放下的，至少是窄的那边放下的、至多是宽的那边放下的，两边相同就只能是它）。所以只在
-  // 两头不一样的地方二分下去——一段长正文从四十来次排版降到十来次。
-  const perSample: ({ signature: string; lines: number } | undefined)[] = new Array(widths.length)
-  const fill = (from: number, to: number): void => {
-    if (to - from <= 1) return
-    const left = perSample[from]
-    const right = perSample[to]
-    if (left !== undefined && right !== undefined && left.signature === right.signature) {
-      for (let index = from + 1; index < to; index += 1) perSample[index] = left
-      return
+    // 每一格按这一格里最窄的那一刻排：外框在这五毫秒里还在收，按起点排的话，字会在这一格的后半截
+    // 顶进右边的内边距、甚至顶出外框（实测形变最快那一段，一格能收十几像素）。第一格按卡片自己的
+    // 宽度排——它就是输入框里原样的折行，而弹簧起手的那一格几乎没动。
+    const widths = samples.map((sample, index) => {
+        const next = samples[index + 1]
+        return index === 0 || next === undefined ? sample.content : Math.min(sample.content, next.content)
+    })
+    // 不必每一格都排：默认的折行是贪心的，两个宽度排出来一模一样，夹在中间的每一个宽度也一样
+    // （每一行能放下的，至少是窄的那边放下的、至多是宽的那边放下的，两边相同就只能是它）。所以只在
+    // 两头不一样的地方二分下去——一段长正文从四十来次排版降到十来次。
+    const perSample: ({ signature: string; lines: number } | undefined)[] = new Array(widths.length)
+    const fill = (from: number, to: number): void => {
+        if (to - from <= 1) return
+        const left = perSample[from]
+        const right = perSample[to]
+        if (left !== undefined && right !== undefined && left.signature === right.signature) {
+            for (let index = from + 1; index < to; index += 1) perSample[index] = left
+            return
+        }
+        const middle = (from + to) >> 1
+        perSample[middle] = layoutAt(widths[middle] ?? 0)
+        fill(from, middle)
+        fill(middle, to)
     }
-    const middle = (from + to) >> 1
-    perSample[middle] = layoutAt(widths[middle] ?? 0)
-    fill(from, middle)
-    fill(middle, to)
-  }
-  const lastIndex = widths.length - 1
-  perSample[0] = layoutAt(widths[0] ?? 0)
-  perSample[lastIndex] = layoutAt(widths[lastIndex] ?? 0)
-  fill(0, lastIndex)
+    const lastIndex = widths.length - 1
+    perSample[0] = layoutAt(widths[0] ?? 0)
+    perSample[lastIndex] = layoutAt(widths[lastIndex] ?? 0)
+    fill(0, lastIndex)
 
-  const windows: (TextWindow & { readonly key: string })[] = []
-  samples.forEach((sample, index) => {
-    const width = widths[index] ?? sample.content
-    const layout = perSample[index] ?? layoutAt(width)
-    // 窄下来之后行数变多，字要是比外框还高，外框跟着长——自适应高度的气泡本来就是这样。
-    const needed = sample.top + layout.lines * sample.lineHeight + bottomPadding
-    if (needed > sample.height) sample.height = needed
-    // 单行时行高不影响字形的位置（上下的差由平移补上），不必为它分层。
-    const lineHeight = layout.lines > 1
-      ? Math.round(sample.lineHeight / LINE_HEIGHT_STEP) * LINE_HEIGHT_STEP
-      : finalLineHeight
-    const key = layout.signature + '|' + lineHeight
-    const last = windows.at(-1)
-    if (last !== undefined) last.until = sample.u
-    if (last !== undefined && last.key === key) return
-    windows.push({ key, from: sample.u, until: sample.u, width, lineHeight })
-  })
-  probeHost.remove()
-  const lastWindow = windows.at(-1)
-  if (lastWindow !== undefined) lastWindow.until = 1
-  // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
-  const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1
-  const first = windows[0]
-  if (first !== undefined && first.until > handoff) {
-    windows.splice(1, 0, { key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight })
-    first.until = handoff
-  }
-  // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
-  // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
-  while (windows.length > MAX_TEXT_LAYERS) {
-    let shortest = 2
-    for (let index = 3; index < windows.length - 1; index += 1) {
-      const window = windows[index]
-      const best = windows[shortest]
-      if (window === undefined || best === undefined) continue
-      if (window.until - window.from < best.until - best.from) shortest = index
+    const windows: (TextWindow & { readonly key: string })[] = []
+    samples.forEach((sample, index) => {
+        const width = widths[index] ?? sample.content
+        const layout = perSample[index] ?? layoutAt(width)
+        // 窄下来之后行数变多，字要是比外框还高，外框跟着长——自适应高度的气泡本来就是这样。
+        const needed = sample.top + layout.lines * sample.lineHeight + bottomPadding
+        if (needed > sample.height) sample.height = needed
+        // 单行时行高不影响字形的位置（上下的差由平移补上），不必为它分层。
+        const lineHeight = layout.lines > 1
+            ? Math.round(sample.lineHeight / LINE_HEIGHT_STEP) * LINE_HEIGHT_STEP
+            : finalLineHeight
+        const key = layout.signature + '|' + lineHeight
+        const last = windows.at(-1)
+        if (last !== undefined) last.until = sample.u
+        if (last !== undefined && last.key === key) return
+        windows.push({key, from: sample.u, until: sample.u, width, lineHeight})
+    })
+    probeHost.remove()
+    const lastWindow = windows.at(-1)
+    if (lastWindow !== undefined) lastWindow.until = 1
+    // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
+    const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1
+    const first = windows[0]
+    if (first !== undefined && first.until > handoff) {
+        windows.splice(1, 0, {key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight})
+        first.until = handoff
     }
-    const removed = windows[shortest]
-    const following = windows[shortest + 1]
-    if (removed === undefined || following === undefined) break
-    following.from = removed.from
-    windows.splice(shortest, 1)
-  }
-  return windows
+    // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
+    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
+    while (windows.length > MAX_TEXT_LAYERS) {
+        let shortest = 2
+        for (let index = 3; index < windows.length - 1; index += 1) {
+            const window = windows[index]
+            const best = windows[shortest]
+            if (window === undefined || best === undefined) continue
+            if (window.until - window.from < best.until - best.from) shortest = index
+        }
+        const removed = windows[shortest]
+        const following = windows[shortest + 1]
+        if (removed === undefined || following === undefined) break
+        following.from = removed.from
+        windows.splice(shortest, 1)
+    }
+    return windows
 }
 
 /**
@@ -899,15 +901,15 @@ function textWindows(
  * @returns 还没定宽的字层。
  */
 function textLayer(bubble: HTMLElement, style: CSSStyleDeclaration): HTMLElement {
-  const layer = document.createElement('div')
-  layer.style.cssText = 'position:absolute;left:0;top:0;margin:0;padding:0;border:0;box-sizing:content-box;will-change:transform,opacity'
-  for (const name of TEXT_PROPERTIES) layer.style.setProperty(name, style.getPropertyValue(name))
-  for (const node of bubble.childNodes) {
-    const copy = node.cloneNode(true)
-    if (copy instanceof Element) scrub(copy)
-    layer.appendChild(copy)
-  }
-  return layer
+    const layer = document.createElement('div')
+    layer.style.cssText = 'position:absolute;left:0;top:0;margin:0;padding:0;border:0;box-sizing:content-box;will-change:transform,opacity'
+    for (const name of TEXT_PROPERTIES) layer.style.setProperty(name, style.getPropertyValue(name))
+    for (const node of bubble.childNodes) {
+        const copy = node.cloneNode(true)
+        if (copy instanceof Element) scrub(copy)
+        layer.appendChild(copy)
+    }
+    return layer
 }
 
 /**
@@ -915,11 +917,11 @@ function textLayer(bubble: HTMLElement, style: CSSStyleDeclaration): HTMLElement
  * @returns 关键帧；同一个 offset 出现两次，就是在那一刻跳变。
  */
 function stepOpacity(from: number, until: number): Keyframe[] {
-  const frames: Keyframe[] = []
-  if (from > 0) frames.push({ offset: 0, opacity: '0' }, { offset: from, opacity: '0' })
-  frames.push({ offset: from, opacity: '1' }, { offset: until, opacity: '1' })
-  if (until < 1) frames.push({ offset: until, opacity: '0' }, { offset: 1, opacity: '0' })
-  return frames
+    const frames: Keyframe[] = []
+    if (from > 0) frames.push({offset: 0, opacity: '0'}, {offset: from, opacity: '0'})
+    frames.push({offset: from, opacity: '1'}, {offset: until, opacity: '1'})
+    if (until < 1) frames.push({offset: until, opacity: '0'}, {offset: 1, opacity: '0'})
+    return frames
 }
 
 /**
@@ -927,11 +929,11 @@ function stepOpacity(from: number, until: number): Keyframe[] {
  * 摘哪些、为什么样式钩子不摘，见 `IDENTITY_ATTRIBUTES`。
  */
 function scrub(root: Element): void {
-  const all = [root, ...root.querySelectorAll('*')]
-  for (const element of all) {
-    for (const name of IDENTITY_ATTRIBUTES) element.removeAttribute(name)
-  }
-  for (const layer of root.querySelectorAll('[data-chat-ux-caret-layer]')) layer.remove()
+    const all = [root, ...root.querySelectorAll('*')]
+    for (const element of all) {
+        for (const name of IDENTITY_ATTRIBUTES) element.removeAttribute(name)
+    }
+    for (const layer of root.querySelectorAll('[data-chat-ux-caret-layer]')) layer.remove()
 }
 
 /**
@@ -939,8 +941,8 @@ function scrub(root: Element): void {
  * 值归一，终点严丝合缝、中间也不跳。
  */
 function morphProgress(u: number): number {
-  if (u >= MORPH_END) return 1
-  return springProgress(u / MORPH_END, 1, ACROSS_OMEGA) / springProgress(1, 1, ACROSS_OMEGA)
+    if (u >= MORPH_END) return 1
+    return springProgress(u / MORPH_END, 1, ACROSS_OMEGA) / springProgress(1, 1, ACROSS_OMEGA)
 }
 
 /**
@@ -954,10 +956,10 @@ function morphProgress(u: number): number {
  * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
  */
 function springProgress(u: number, damping: number, omega: number): number {
-  if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
-  const damped = omega * Math.sqrt(1 - damping * damping)
-  return 1 - Math.exp(-damping * omega * u)
-    * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u))
+    if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
+    const damped = omega * Math.sqrt(1 - damping * damping)
+    return 1 - Math.exp(-damping * omega * u)
+        * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u))
 }
 
 /**
@@ -971,7 +973,7 @@ function springProgress(u: number, damping: number, omega: number): number {
  * @returns 给 `borderRadius` 用的值。
  */
 function cornerRadius(radius: number, sx: number, sy: number): string {
-  return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px'
+    return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px'
 }
 
 /**
@@ -982,38 +984,38 @@ function cornerRadius(radius: number, sx: number, sy: number): string {
  * @returns 像素数；读不出来当 0——阴影小一点，总比画到列外强。
  */
 function shadowSpread(shadow: string): number {
-  if (shadow === '' || shadow === 'none') return 0
-  let spread = 0
-  for (const part of shadow.split(/,(?![^()]*\))/)) {
-    const clean = part.replace(/[a-z-]+\([^)]*\)/gi, ' ')
-    const found = clean.match(/-?\d*\.?\d+px/g)
-    if (found === null) continue
-    const values = found.map(Number.parseFloat)
-    spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0))
-  }
-  return spread
+    if (shadow === '' || shadow === 'none') return 0
+    let spread = 0
+    for (const part of shadow.split(/,(?![^()]*\))/)) {
+        const clean = part.replace(/[a-z-]+\([^)]*\)/gi, ' ')
+        const found = clean.match(/-?\d*\.?\d+px/g)
+        if (found === null) continue
+        const values = found.map(Number.parseFloat)
+        spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0))
+    }
+    return spread
 }
 
 /** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
 export function pixel(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
 }
 
 /** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
 export function alphaOf(color: string): number {
-  const parts = colorParts(color)
-  if (parts === null) return 0
-  return parts[3] ?? 1
+    const parts = colorParts(color)
+    if (parts === null) return 0
+    return parts[3] ?? 1
 }
 
 /** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
 function colorParts(color: string): number[] | null {
-  const match = /^rgba?\(([^)]+)\)$/.exec(color.trim())
-  if (match === null) return null
-  const raw = match[1]
-  if (raw === undefined) return null
-  const parts = raw.split(',').map(part => Number.parseFloat(part))
-  if (parts.length < 3 || parts.some(part => !Number.isFinite(part))) return null
-  return parts
+    const match = /^rgba?\(([^)]+)\)$/.exec(color.trim())
+    if (match === null) return null
+    const raw = match[1]
+    if (raw === undefined) return null
+    const parts = raw.split(',').map(part => Number.parseFloat(part))
+    if (parts.length < 3 || parts.some(part => !Number.isFinite(part))) return null
+    return parts
 }

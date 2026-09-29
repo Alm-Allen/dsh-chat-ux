@@ -49,8 +49,8 @@
  * @module dsh-chat-ux/client/token-motion
  */
 
-import { STREAMING_ATTRIBUTE, STREAMING_SELECTOR } from './dom-contract'
-import { isProgrammaticToggle } from './programmatic-toggle'
+import {STREAMING_ATTRIBUTE, STREAMING_SELECTOR} from './dom-contract'
+import {isProgrammaticToggle} from './programmatic-toggle'
 
 /**
  * 一个字符从极淡到停稳之间有多少档。
@@ -102,10 +102,11 @@ export const RUN_COLOR_VAR = '--dsh-chat-ux-run-color'
 
 /** 淡入引擎的把柄：设置一改调 `resync`，插件卸下时调 `dispose`。 */
 export interface TokenMotionHandle {
-  /** 按当前设置重落一次：要淡入就装上，不要就卸掉。 */
-  resync(): void
-  /** 彻底卸掉。 */
-  dispose(): void
+    /** 按当前设置重落一次：要淡入就装上，不要就卸掉。 */
+    resync(): void
+
+    /** 彻底卸掉。 */
+    dispose(): void
 }
 
 /** 同一批字符之间错开多少相位：步长与渐变时长成比例，所以把设置调快调慢都不会让错峰反客为主。 */
@@ -127,26 +128,26 @@ const MAX_STAGGER_MS = 8
  * @returns 一个 `resync` / `dispose` 的把柄。
  */
 export function installTokenMotion(readEnabled: () => boolean): TokenMotionHandle {
-  /** 装出来的那个引擎的 disposer；`null` 表示现在没装。 */
-  let teardown: (() => void) | null = null
-  const resync = (): void => {
-    if (readEnabled()) {
-      if (teardown === null) teardown = runTokenMotion()
-      return
+    /** 装出来的那个引擎的 disposer；`null` 表示现在没装。 */
+    let teardown: (() => void) | null = null
+    const resync = (): void => {
+        if (readEnabled()) {
+            if (teardown === null) teardown = runTokenMotion()
+            return
+        }
+        if (teardown === null) return
+        teardown()
+        teardown = null
     }
-    if (teardown === null) return
-    teardown()
-    teardown = null
-  }
-  resync()
-  return {
-    resync,
-    dispose: (): void => {
-      if (teardown === null) return
-      teardown()
-      teardown = null
-    },
-  }
+    resync()
+    return {
+        resync,
+        dispose: (): void => {
+            if (teardown === null) return
+            teardown()
+            teardown = null
+        },
+    }
 }
 
 /**
@@ -154,541 +155,546 @@ export function installTokenMotion(readEnabled: () => boolean): TokenMotionHandl
  * @returns disposer：断开 observer、清掉全部 highlight、撤掉规则表。
  */
 function runTokenMotion(): () => void {
-  const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
-  if (registry === undefined) return () => {}
-  const HighlightConstructor = (globalThis as unknown as { Highlight?: new () => HighlightLike }).Highlight
-  if (HighlightConstructor === undefined) return () => {}
-  if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return () => {}
-
-  /** 还没有停稳的字符区间。 */
-  const liveRuns: LiveRun[] = []
-  /** 安装那一刻就已经在页面上的流式容器：它们是历史，不重播淡入。 */
-  const historyContainers = new WeakSet<Element>()
-  for (const container of document.querySelectorAll(STREAMING_SELECTOR)) historyContainers.add(container)
-  /** 上一个绘制帧的时间戳；0 表示还没有画过。 */
-  let lastFrameAt = 0
-  /** 每个流式容器当前的文本快照：扫描时写入，绘制帧直接复用。 */
-  const textSnapshots = new WeakMap<Element, TextSnapshot>()
-  /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
-  const foldQuietUntil = new WeakMap<Element, number>()
-  /** 上一次全量扫描时在页面上的流式容器；不在了的那些，区间与快照一起丢掉。 */
-  let liveContainers: Element[] = []
-  /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
-  const writtenColors = new WeakMap<Element, string>()
-  /** 排队中的绘制帧句柄；0 表示没有排队。 */
-  let scheduledFrame = 0
-  /** 每一档一个 highlight：注册一次，之后每帧只换里面的区间。null 表示这一档此刻没有注册。 */
-  const highlights: (HighlightLike | null)[] = new Array<HighlightLike | null>(REVEAL_STEPS).fill(null)
-  /** 绘制帧一连隔得很久的帧数；攒够 `SLOW_FRAME_RUN` 就让路。 */
-  let slowFrames = 0
-  /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
-  let yieldUntil = 0
-
-  // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
-  // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
-  // 一次整页的样式失效（见模块注释）。
-  const revealStyleElement = document.createElement('style')
-  revealStyleElement.id = REVEAL_STYLE_ID
-  revealStyleElement.textContent = revealCss
-  document.head.append(revealStyleElement)
-
-  /** 注销全部档位的 highlight。 */
-  const clearHighlights = (): void => {
-    for (let step = 0; step < REVEAL_STEPS; step += 1) {
-      if (highlights[step] === null) continue
-      registry.delete(HIGHLIGHT_PREFIX + step)
-      highlights[step] = null
+    const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
+    if (registry === undefined) return () => {
     }
-  }
-
-  /**
-   * 把这一档画的区间换成这一批。
-   *
-   * 注册表只在一档第一次用到时写一次，之后只换 highlight 里的区间：每帧对二十四个名字各注销、
-   * 注册一遍，浏览器要为每一次都重排一遍 highlight 的标记。这一档这一帧空着就清掉，但不注销——
-   * 下一帧多半还要用它。
-   * @param step - 档位。
-   * @param ranges - 这一帧落在这一档的区间。
-   */
-  const showStep = (step: number, ranges: readonly StaticRange[]): void => {
-    let highlight = highlights[step] ?? null
-    if (ranges.length === 0) {
-      if (highlight !== null && highlight.size > 0) highlight.clear()
-      return
+    const HighlightConstructor = (globalThis as unknown as { Highlight?: new () => HighlightLike }).Highlight
+    if (HighlightConstructor === undefined) return () => {
     }
-    if (highlight === null) {
-      highlight = new HighlightConstructor()
-      highlights[step] = highlight
-      registry.set(HIGHLIGHT_PREFIX + step, highlight)
-    } else {
-      highlight.clear()
+    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return () => {
     }
-    for (const range of ranges) highlight.add(range)
-  }
 
-  /**
-   * 把一个元素自己的颜色发布到 `RUN_COLOR_VAR` 上。
-   *
-   * 读的是算出来的颜色，而不是记下来的颜色：要紧的是 Markdown 层实际画出来的那个颜色——
-   * 链接的令牌、语法 token、列表标记——而不是本模块上一次写进去的东西。元素上仍然带着记给它的
-   * 那个颜色时跳过这次读取，而这正是第一帧之后每一帧的常见情况。
-   *
-   * 从祖先那里继承下来的值已经就是它的颜色时（段落里的加粗、列表项里的正文），不写：一次内联
-   * 样式就是一次样式失效，还会惊动页面上别人盯着 style 属性的观察者。
-   * @param element - 区间文字渲染所在的元素。
-   */
-  const publishRunColor = (element: Element | null): void => {
-    if (element === null) return
-    const style = window.getComputedStyle(element)
-    const color = style.color
-    if (writtenColors.get(element) === color) return
-    writtenColors.set(element, color)
-    if (style.getPropertyValue(RUN_COLOR_VAR).trim() === color) return
-    const styled = element as HTMLElement
-    styled.style.setProperty(RUN_COLOR_VAR, color)
-  }
+    /** 还没有停稳的字符区间。 */
+    const liveRuns: LiveRun[] = []
+    /** 安装那一刻就已经在页面上的流式容器：它们是历史，不重播淡入。 */
+    const historyContainers = new WeakSet<Element>()
+    for (const container of document.querySelectorAll(STREAMING_SELECTOR)) historyContainers.add(container)
+    /** 上一个绘制帧的时间戳；0 表示还没有画过。 */
+    let lastFrameAt = 0
+    /** 每个流式容器当前的文本快照：扫描时写入，绘制帧直接复用。 */
+    const textSnapshots = new WeakMap<Element, TextSnapshot>()
+    /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
+    const foldQuietUntil = new WeakMap<Element, number>()
+    /** 上一次全量扫描时在页面上的流式容器；不在了的那些，区间与快照一起丢掉。 */
+    let liveContainers: Element[] = []
+    /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
+    const writtenColors = new WeakMap<Element, string>()
+    /** 排队中的绘制帧句柄；0 表示没有排队。 */
+    let scheduledFrame = 0
+    /** 每一档一个 highlight：注册一次，之后每帧只换里面的区间。null 表示这一档此刻没有注册。 */
+    const highlights: (HighlightLike | null)[] = new Array<HighlightLike | null>(REVEAL_STEPS).fill(null)
+    /** 绘制帧一连隔得很久的帧数；攒够 `SLOW_FRAME_RUN` 就让路。 */
+    let slowFrames = 0
+    /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
+    let yieldUntil = 0
 
-  /**
-   * 记下折叠即将重排的那些容器。
-   *
-   * 点一下思考行并不是模型在吐字，但它切换的那一行就住在一个仍然带着 `data-streaming` 的容器里；
-   * 当收起时的摘要恰好是展开后内容的前缀时，它产生的 mutation 看起来和一次追加一模一样。
-   * 点击是区分二者的唯一信号，所以在 React 的处理函数跑之前就捕获它，把它能触达的容器从淡入里
-   * 摘出去。
-   * @param event - 页面上任意一处点击或按键。
-   */
-  const rememberReaderFold = (event: Event): void => {
-    // 本插件自己的自动收起不是读者的意图，它落在思考刚停、正文刚开头的位置上。
-    if (isProgrammaticToggle()) return
-    const target = event.target
-    if (!(target instanceof Element)) return
-    const until = performance.now() + FOLD_QUIET_MS
-    const ownContainer = target.closest(STREAMING_SELECTOR)
-    if (ownContainer !== null) foldQuietUntil.set(ownContainer, until)
-    // 触发折叠的控件可能住在它要重排的那个容器之外，所以这里连子树一起扫，而不是只看目标自己的
-    // 祖先——但只在点击时扫：键盘事件的目标常常是整个 body，那时「子树」就是整篇文档，一次
-    // PageUp 会把页面上每一个流式容器一起静默掉，而按方向键的读者并没有碰过它们。
-    if (event.type !== 'click') return
-    for (const container of target.querySelectorAll(STREAMING_SELECTOR)) foldQuietUntil.set(container, until)
-  }
+    // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
+    // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
+    // 一次整页的样式失效（见模块注释）。
+    const revealStyleElement = document.createElement('style')
+    revealStyleElement.id = REVEAL_STYLE_ID
+    revealStyleElement.textContent = revealCss
+    document.head.append(revealStyleElement)
 
-  /**
-   * 主线程已经被占满：手上的区间直接落定，接下来一段时间里新字符以本色出现。
-   *
-   * 这时候淡入本来也画不顺——每一档都要在帧里停好几十毫秒——而它每帧的那份活又叠在别人的卡顿
-   * 上。让出来比硬撑强：文字照常到达，只是少了那一下渐变。
-   */
-  const yieldToBusyThread = (): void => {
-    yieldUntil = performance.now() + YIELD_MS
-    slowFrames = 0
-    lastFrameAt = 0
-    liveRuns.length = 0
-    clearHighlights()
-  }
-
-  /** 排下一个绘制帧。 */
-  const scheduleFrame = (): void => {
-    scheduledFrame = requestAnimationFrame((now) => { paint(now, true) })
-  }
-
-  /**
-   * 按当前年龄重画每一个还活着的区间，然后排下一帧。
-   * @param now - 这一帧的时间戳。
-   * @param fromFrame - 由绘制帧调起，而不是扫描时同步补画的那一次：只有这种帧间隔才说明主线程忙不忙。
-   */
-  const paint = (now: number, fromFrame: boolean): void => {
-    scheduledFrame = 0
-    if (liveRuns.length === 0) {
-      clearHighlights()
-      return
-    }
-    // 上一帧到现在隔得太久，说明这段空白里根本没有绘制帧：页面被藏起来时 rAF 不跑，主线程
-    // 被占住时也会跳帧，而 `performance.now()` 一直在走。把没绘制的时长从每个区间的年龄里
-    // 扣掉，它们才能在切回来（或卡顿结束）之后接着自己的淡入往下走，而不是一帧之内全部过期。
-    const previousFrameAt = lastFrameAt
-    lastFrameAt = now
-    const gap = previousFrameAt === 0 ? 0 : now - previousFrameAt
-    // 一连好几帧都这么慢，那不是一次偶发的卡顿，是主线程被占满了：让路。页面藏起来那种长达
-    // 好几秒的空白不算——那是没人在看，不是忙。
-    if (fromFrame && gap > SLOW_FRAME_MS && gap < HIDDEN_GAP_MS) slowFrames += 1
-    else if (fromFrame && gap > 0) slowFrames = 0
-    if (slowFrames >= SLOW_FRAME_RUN) {
-      yieldToBusyThread()
-      return
-    }
-    if (gap > FRAME_GAP_LIMIT_MS) {
-      const unspent = gap - NOMINAL_FRAME_MS
-      for (const run of liveRuns) {
-        // 空白期里出生的区间按「此刻出生」算，否则它还要再等这段空白过去才开始淡入。
-        run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now
-      }
-    }
-    /** 每一档本帧已经画出来的那一段；后一个区间与它接得上就并进去，不再单独建一个。 */
-    const drawn: (RevealSegment | null)[] = new Array(REVEAL_STEPS).fill(null)
-    const buckets: RevealSegment[][] = []
-    for (let step = 0; step < REVEAL_STEPS; step += 1) buckets.push([])
-    /** 活下来的区间就地往前压：splice 每去掉一个都要搬动后面的元素，一批上千个就是平方级。 */
-    let kept = 0
-    for (let index = 0; index < liveRuns.length; index += 1) {
-      const run = liveRuns[index]
-      if (run === undefined) continue
-      const age = now - run.bornAt - run.delay
-      // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
-      if (age >= REVEAL_MS) continue
-      liveRuns[kept] = run
-      kept += 1
-      // 排队这些区间的扫描顺手建好了快照，而之后的每一次 mutation 都会先经过一次新的扫描才轮到
-      // 这一帧绘制，所以缓存里就是屏幕上那份文本。在这里重新走一遍容器，等于给每一帧都塞进一个
-      // O(整条消息) 的 TreeWalker。
-      const snapshot = textSnapshots.get(run.container)
-      if (snapshot === undefined) continue
-
-      // 按快照里的偏移二分找出第一个能装下这段区间的文本节点：逐字符区间意味着每帧很多次查找，
-      // 从消息开头逐个扫太慢。
-      const end = run.start + run.length
-      let low = 0
-      let high = snapshot.entries.length - 1
-      let firstIndex = -1
-      while (low <= high) {
-        const middle = (low + high) >> 1
-        const entry = snapshot.entries[middle]
-        if (entry === undefined) break
-        if (entry.start + entry.node.data.length <= run.start) {
-          low = middle + 1
-          continue
+    /** 注销全部档位的 highlight。 */
+    const clearHighlights = (): void => {
+        for (let step = 0; step < REVEAL_STEPS; step += 1) {
+            if (highlights[step] === null) continue
+            registry.delete(HIGHLIGHT_PREFIX + step)
+            highlights[step] = null
         }
-        firstIndex = middle
-        high = middle - 1
-      }
-      // 这段区间已经不在 DOM 里了。
-      const firstEntry = snapshot.entries[firstIndex]
-      if (firstEntry === undefined) continue
-      if (firstEntry.start >= end) continue
-      const start = Math.max(0, run.start - firstEntry.start)
-      let lastNode = firstEntry.node
-      let lastEnd = Math.min(firstEntry.node.data.length, end - firstEntry.start)
-      for (let next = firstIndex + 1; next < snapshot.entries.length; next += 1) {
-        const entry = snapshot.entries[next]
-        if (entry === undefined) break
-        if (entry.start >= end) break
-        lastNode = entry.node
-        lastEnd = Math.min(entry.node.data.length, end - entry.start)
-      }
-      // 元素是从区间所在的文本节点反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
-      // （重新解析 `**bold`、折叠某一行），区间所在的元素被换掉之后，旧元素上的颜色再也没人渲染，
-      // 真正在渲染的新元素会回退到页面默认色——于是闪一下正文色，而不是淡入。
-      //
-      // 但只在**元素真的换了**才去读它的颜色。`publishRunColor` 的第一步是 `getComputedStyle`，
-      // 而它是一次强制样式结算——一帧里几百个区间各读一次，等于把整页的样式重算拖进 rAF 里。元素
-      // 没换的那些帧（绝大多数）只需要一次比较。
-      const element = firstEntry.node.parentElement
-      if (element !== run.colorElement) {
-        publishRunColor(element)
-        run.colorElement = element
-      }
-
-      // 档位：0 是最淡，最后一档就是本色；按时间线性映射，所以颜色以恒定速率变实。
-      // 上面的卫语句已经排除了 age >= REVEAL_MS，比值必然小于 1，档位必然落在范围内。
-      const step = age <= 0 ? 0 : Math.floor((age / REVEAL_MS) * REVEAL_STEPS)
-      const bucket = buckets[step]
-      if (bucket === undefined) continue
-      // 同一个文本节点里、偏移接得上的相邻字符，这一帧本来就落在同一档——画出来是同一段文字，
-      // 合成一个区间就够：区间数于是从「字符数」降到「段数」。
-      const previous = drawn[step] ?? null
-      if (previous !== null && lastNode === firstEntry.node && previous.node === firstEntry.node && previous.end === start) {
-        previous.end = lastEnd
-        continue
-      }
-      const segment: RevealSegment = { node: firstEntry.node, start, end: lastEnd }
-      drawn[step] = segment
-      bucket.push(segment)
     }
-    liveRuns.length = kept
-    for (let step = 0; step < REVEAL_STEPS; step += 1) {
-      const list = buckets[step] ?? []
-      // StaticRange 不跟踪 DOM 变动：每帧都从新快照现建，用不着它跟踪；活的 Range 在被回收之前
-      // 会让页面上每一次 DOM 变动都替它修正边界（见模块注释）。
-      const ranges = list.map(segment => new StaticRange({
-        startContainer: segment.node,
-        startOffset: segment.start,
-        endContainer: segment.node,
-        endOffset: segment.end,
-      }))
-      showStep(step, ranges)
+
+    /**
+     * 把这一档画的区间换成这一批。
+     *
+     * 注册表只在一档第一次用到时写一次，之后只换 highlight 里的区间：每帧对二十四个名字各注销、
+     * 注册一遍，浏览器要为每一次都重排一遍 highlight 的标记。这一档这一帧空着就清掉，但不注销——
+     * 下一帧多半还要用它。
+     * @param step - 档位。
+     * @param ranges - 这一帧落在这一档的区间。
+     */
+    const showStep = (step: number, ranges: readonly StaticRange[]): void => {
+        let highlight = highlights[step] ?? null
+        if (ranges.length === 0) {
+            if (highlight !== null && highlight.size > 0) highlight.clear()
+            return
+        }
+        if (highlight === null) {
+            highlight = new HighlightConstructor()
+            highlights[step] = highlight
+            registry.set(HIGHLIGHT_PREFIX + step, highlight)
+        } else {
+            highlight.clear()
+        }
+        for (const range of ranges) highlight.add(range)
     }
-    if (liveRuns.length > 0) scheduleFrame()
-    else clearHighlights()
-  }
 
-  /**
-   * 把流式容器与上一次的快照对比，然后把新出现的那一段排成区间。
-   * @param only - 只看这几个容器（这一批变动碰到的）；null 表示把页面上的流式容器全看一遍，
-   *   并清掉已经不在的那些。
-   */
-  const scan = (only: ReadonlySet<Element> | null): void => {
-    const now = performance.now()
-    let containers: Element[]
-    if (only === null) {
-      containers = [...document.querySelectorAll(STREAMING_SELECTOR)]
-      // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
-      // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
-      for (const gone of liveContainers) {
-        if (containers.includes(gone)) continue
-        textSnapshots.delete(gone)
-        for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-          if (liveRuns[index]?.container === gone) liveRuns.splice(index, 1)
-        }
-      }
-      liveContainers = containers
-    } else {
-      containers = [...only].filter(container => container.isConnected && container.matches(STREAMING_SELECTOR))
-      for (const container of containers) if (!liveContainers.includes(container)) liveContainers.push(container)
+    /**
+     * 把一个元素自己的颜色发布到 `RUN_COLOR_VAR` 上。
+     *
+     * 读的是算出来的颜色，而不是记下来的颜色：要紧的是 Markdown 层实际画出来的那个颜色——
+     * 链接的令牌、语法 token、列表标记——而不是本模块上一次写进去的东西。元素上仍然带着记给它的
+     * 那个颜色时跳过这次读取，而这正是第一帧之后每一帧的常见情况。
+     *
+     * 从祖先那里继承下来的值已经就是它的颜色时（段落里的加粗、列表项里的正文），不写：一次内联
+     * 样式就是一次样式失效，还会惊动页面上别人盯着 style 属性的观察者。
+     * @param element - 区间文字渲染所在的元素。
+     */
+    const publishRunColor = (element: Element | null): void => {
+        if (element === null) return
+        const style = window.getComputedStyle(element)
+        const color = style.color
+        if (writtenColors.get(element) === color) return
+        writtenColors.set(element, color)
+        if (style.getPropertyValue(RUN_COLOR_VAR).trim() === color) return
+        const styled = element as HTMLElement
+        styled.style.setProperty(RUN_COLOR_VAR, color)
     }
-    if (containers.length === 0) return
-    /** 主线程正忙、正在让路：快照照常更新，只是这一段新字符不排淡入。 */
-    const yielding = now < yieldUntil
-    /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
-    const createdRuns: LiveRun[] = []
-    for (const container of containers) {
-      const batchStart = createdRuns.length
-      // 先把容器下每一个文本节点拼起来，同时记住每个节点在拼接串里的偏移。
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
-      const entries: TextNodeEntry[] = []
-      let text = ''
-      let node = walker.nextNode()
-      while (node !== null) {
-        const textNode = node as Text
-        entries.push({ node: textNode, start: text.length })
-        text += textNode.data
-        node = walker.nextNode()
-      }
 
-      const previous = textSnapshots.get(container)?.text
-      textSnapshots.set(container, { text, entries })
+    /**
+     * 记下折叠即将重排的那些容器。
+     *
+     * 点一下思考行并不是模型在吐字，但它切换的那一行就住在一个仍然带着 `data-streaming` 的容器里；
+     * 当收起时的摘要恰好是展开后内容的前缀时，它产生的 mutation 看起来和一次追加一模一样。
+     * 点击是区分二者的唯一信号，所以在 React 的处理函数跑之前就捕获它，把它能触达的容器从淡入里
+     * 摘出去。
+     * @param event - 页面上任意一处点击或按键。
+     */
+    const rememberReaderFold = (event: Event): void => {
+        // 本插件自己的自动收起不是读者的意图，它落在思考刚停、正文刚开头的位置上。
+        if (isProgrammaticToggle()) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const until = performance.now() + FOLD_QUIET_MS
+        const ownContainer = target.closest(STREAMING_SELECTOR)
+        if (ownContainer !== null) foldQuietUntil.set(ownContainer, until)
+        // 触发折叠的控件可能住在它要重排的那个容器之外，所以这里连子树一起扫，而不是只看目标自己的
+        // 祖先——但只在点击时扫：键盘事件的目标常常是整个 body，那时「子树」就是整篇文档，一次
+        // PageUp 会把页面上每一个流式容器一起静默掉，而按方向键的读者并没有碰过它们。
+        if (event.type !== 'click') return
+        for (const container of target.querySelectorAll(STREAMING_SELECTOR)) foldQuietUntil.set(container, until)
+    }
 
-      // 第一次见到这个容器。安装那一刻就在页面上的，是历史；一出现就已经很长（切会话、翻历史
-      // 时整段挂载）的，也当历史。只有安装之后才冒出来、还没长出几个字的那种——新的一轮回答——
-      // 才把它开头这几个字符也算成新出现的。
-      if (previous === undefined && (historyContainers.has(container) || text.length > FIRST_SIGHT_LIMIT)) continue
-      const before = previous ?? ''
+    /**
+     * 主线程已经被占满：手上的区间直接落定，接下来一段时间里新字符以本色出现。
+     *
+     * 这时候淡入本来也画不顺——每一档都要在帧里停好几十毫秒——而它每帧的那份活又叠在别人的卡顿
+     * 上。让出来比硬撑强：文字照常到达，只是少了那一下渐变。
+     */
+    const yieldToBusyThread = (): void => {
+        yieldUntil = performance.now() + YIELD_MS
+        slowFrames = 0
+        lastFrameAt = 0
+        liveRuns.length = 0
+        clearHighlights()
+    }
 
-      // 这一趟变化里的两段稳定区：公共前缀里的区间位置不变，公共后缀里的区间整体平移，中间那段
-      // 才是真被改写的地方。展开或收起一行思考正是这个形状——容器前面的文本被摘要和正文互相
-      // 替换，后面正在流的正文一个字都没动，那些字不该因为读者碰了一下折叠控件就整片定格；而
-      // 重排一次就把整个容器里的区间杀光，会让正淡到一半的文字直接跳成实色。
-      const overlapLimit = Math.min(before.length, text.length)
-      let prefix = 0
-      while (prefix < overlapLimit && before.charCodeAt(prefix) === text.charCodeAt(prefix)) prefix += 1
-      // 后缀不与前缀重叠，所以中间那段改写区不会被两边同时认领。
-      let suffix = 0
-      while (
-        suffix < overlapLimit - prefix
-        && before.charCodeAt(before.length - 1 - suffix) === text.charCodeAt(text.length - 1 - suffix)
-      ) suffix += 1
-      const stableFrom = before.length - suffix
-      const shift = text.length - before.length
-      for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-        const run = liveRuns[index]
-        if (run === undefined) continue
-        if (run.container !== container) continue
-        if (run.start + run.length <= prefix) continue
-        if (run.start >= stableFrom) {
-          // 同一段字符，只是整体挪了位：跟着挪，它的年龄和相位都不动。
-          liveRuns[index] = { ...run, start: run.start + shift }
-          continue
+    /** 排下一个绘制帧。 */
+    const scheduleFrame = (): void => {
+        scheduledFrame = requestAnimationFrame((now) => {
+            paint(now, true)
+        })
+    }
+
+    /**
+     * 按当前年龄重画每一个还活着的区间，然后排下一帧。
+     * @param now - 这一帧的时间戳。
+     * @param fromFrame - 由绘制帧调起，而不是扫描时同步补画的那一次：只有这种帧间隔才说明主线程忙不忙。
+     */
+    const paint = (now: number, fromFrame: boolean): void => {
+        scheduledFrame = 0
+        if (liveRuns.length === 0) {
+            clearHighlights()
+            return
         }
-        liveRuns.splice(index, 1)
-      }
-
-      if (yielding) continue
-
-      // 读者刚折叠或展开过：这一次变化是那一下重排引起的，不是模型在吐字。
-      const quietUntil = foldQuietUntil.get(container)
-      if (quietUntil !== undefined && now <= quietUntil) continue
-
-      // 新出现的字符。纯粹在尾部追加时，它就是最后那一段；Markdown 闭合一个标记（`**`、反引号、
-      // 链接）时，新字符夹在旧文字中间，那种改写里对不上旧文本的那几个字同样该淡入。
-      //
-      // 改写要看中间那段：把旧文本与新文本各自的前后缀剥掉之后，两边剩下的部分用一次字符级公共子
-      // 序列对齐，对不上的新字符就是新出现的。中间那段一旦大起来就放弃——整块重写（流式结束时整体
-      // 重排、切换渲染分支）不该让读者重看一遍淡入，只有小范围闭合才值得给那几个字动画。
-      const oldMiddle = before.slice(prefix, before.length - suffix)
-      const newMiddle = text.slice(prefix, text.length - suffix)
-      if (newMiddle.length === 0) continue
-      if (oldMiddle.length > 0 && oldMiddle.length * newMiddle.length > REWRITE_DIFF_BUDGET) continue
-
-      // 每个新字符在旧文本里对不对得上。旧文本的中间段是空的，就是整段都没对上——这一次变化全是
-      // 新增，不必走一次对齐。
-      const matched = new Uint8Array(newMiddle.length)
-      if (oldMiddle.length > 0) {
-        // 自底向上的公共子序列长度表，回溯时用它判断哪个新字符对得上旧文本。
-        const columns = newMiddle.length + 1
-        const lengths = new Uint16Array((oldMiddle.length + 1) * columns)
-        for (let row = oldMiddle.length - 1; row >= 0; row -= 1) {
-          for (let column = newMiddle.length - 1; column >= 0; column -= 1) {
-            const sameCharacter = oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)
-            lengths[row * columns + column] = sameCharacter
-              ? (lengths[(row + 1) * columns + column + 1] ?? 0) + 1
-              : Math.max(lengths[(row + 1) * columns + column] ?? 0, lengths[row * columns + column + 1] ?? 0)
-          }
+        // 上一帧到现在隔得太久，说明这段空白里根本没有绘制帧：页面被藏起来时 rAF 不跑，主线程
+        // 被占住时也会跳帧，而 `performance.now()` 一直在走。把没绘制的时长从每个区间的年龄里
+        // 扣掉，它们才能在切回来（或卡顿结束）之后接着自己的淡入往下走，而不是一帧之内全部过期。
+        const previousFrameAt = lastFrameAt
+        lastFrameAt = now
+        const gap = previousFrameAt === 0 ? 0 : now - previousFrameAt
+        // 一连好几帧都这么慢，那不是一次偶发的卡顿，是主线程被占满了：让路。页面藏起来那种长达
+        // 好几秒的空白不算——那是没人在看，不是忙。
+        if (fromFrame && gap > SLOW_FRAME_MS && gap < HIDDEN_GAP_MS) slowFrames += 1
+        else if (fromFrame && gap > 0) slowFrames = 0
+        if (slowFrames >= SLOW_FRAME_RUN) {
+            yieldToBusyThread()
+            return
         }
-        let matchedCount = 0
-        let row = 0
-        let column = 0
-        while (row < oldMiddle.length && column < newMiddle.length) {
-          if (oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)) {
-            matched[column] = 1
-            matchedCount += 1
-            row += 1
-            column += 1
-            continue
-          }
-          // 哪边的表值大就往哪边走。
-          const skipOldRow = lengths[(row + 1) * columns + column] ?? 0
-          const skipNewColumn = lengths[row * columns + column + 1] ?? 0
-          const advanceOldRow = skipOldRow >= skipNewColumn
-          if (advanceOldRow) row += 1
-          if (!advanceOldRow) column += 1
-        }
-        if (matchedCount === 0 || newMiddle.length - matchedCount > LOCAL_REWRITE_LIMIT) continue
-      }
-
-      // 对不上的新字符就是要淡入的那批，连续的合并成一段。
-      const addedRanges: OffsetRange[] = []
-      let rangeStart = -1
-      for (let index = 0; index < newMiddle.length; index += 1) {
-        if (matched[index] === 1) {
-          if (rangeStart >= 0) addedRanges.push({ start: rangeStart + prefix, end: index + prefix })
-          rangeStart = -1
-          continue
-        }
-        if (rangeStart < 0) rangeStart = index
-      }
-      if (rangeStart >= 0) addedRanges.push({ start: rangeStart + prefix, end: newMiddle.length + prefix })
-      if (addedRanges.length === 0) continue
-      // 一批到的字太多就不淡入：几千个字一起淡，读者看到的是一片糊，而区间数就是字符数、直接乘在
-      // 每一帧上（每帧每个区间一个 Range）。实测一万五千字符一块到达就能把单帧推到七百毫秒，而且
-      // 帧间隔补偿会不断给这些区间续命、自己缓不过来。真实流式的单批增量中位十几个字符。
-      let addedLength = 0
-      for (const range of addedRanges) addedLength += range.end - range.start
-      if (addedLength > BURST_LIMIT) continue
-
-      // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
-      // `styles.ts` 正是从这个元素读淡入用的颜色，一个节点的文本总是渲染在一个元素里。
-      // 同一个节点里的字符出生时间相同，相位在遍历完之后按位次统一分配——一到屏幕就整块变亮的
-      // 台阶感，正是错峰要摊掉的东西。
-      // 按码点迭代，所以代理对算作一个区间；空白不单独成区间，但仍然推进偏移。
-      const touchedElements = new Set<Element>()
-      for (const range of addedRanges) {
-        for (const entry of entries) {
-          if (entry.start + entry.node.data.length <= range.start) continue
-          if (entry.start >= range.end) break
-          const begin = Math.max(range.start, entry.start)
-          const end = Math.min(range.end, entry.start + entry.node.data.length)
-          const element = entry.node.parentElement
-          let offset = begin
-          for (const character of entry.node.data.slice(begin - entry.start, end - entry.start)) {
-            if (character.trim().length === 0) {
-              offset += character.length
-              continue
+        if (gap > FRAME_GAP_LIMIT_MS) {
+            const unspent = gap - NOMINAL_FRAME_MS
+            for (const run of liveRuns) {
+                // 空白期里出生的区间按「此刻出生」算，否则它还要再等这段空白过去才开始淡入。
+                run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now
             }
-            // 每个元素每次扫描只读一次样式：一批文本通常落在一两个节点里，
-            // 所以哪怕整段一次到达也只有几次读取。
-            if (element !== null && !touchedElements.has(element)) {
-              touchedElements.add(element)
-              publishRunColor(element)
-            }
-            const run: LiveRun = {
-              container,
-              start: offset,
-              length: character.length,
-              bornAt: now,
-              delay: 0,
-              // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
-              // 就是一次强制样式结算，而这一次读取恰好落在新字符刚插进来、样式刚失效的那一帧——
-              // 实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）绘制帧的
-              // 那次比较仍然会发现，颜色照旧补上。
-              colorElement: element,
-            }
-            liveRuns.push(run)
-            createdRuns.push(run)
-            offset += character.length
-          }
         }
-      }
-      // 按这批字符在流里的位次错开：整批摊开的总相位不超过一次渐变，所以一次插入几百个字符也不会
-      // 让尾巴等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片；再小看不出扫动，
-      // 再大就让最后到的字符显得迟滞。
-      const batchCount = createdRuns.length - batchStart
-      const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, REVEAL_MS / STAGGER_DIVISOR))
-      const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, REVEAL_MS / (batchCount - 1))
-      for (let slot = batchStart; slot < createdRuns.length; slot += 1) {
-        const run = createdRuns[slot]
-        if (run === undefined || step === 0) continue
-        run.delay = (slot - batchStart) * step
-      }
-    }
-    if (createdRuns.length === 0) return
-    // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
-    // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
-    // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
-    if (scheduledFrame !== 0) {
-      cancelAnimationFrame(scheduledFrame)
-      scheduledFrame = 0
-    }
-    paint(performance.now(), false)
-  }
+        /** 每一档本帧已经画出来的那一段；后一个区间与它接得上就并进去，不再单独建一个。 */
+        const drawn: (RevealSegment | null)[] = new Array(REVEAL_STEPS).fill(null)
+        const buckets: RevealSegment[][] = []
+        for (let step = 0; step < REVEAL_STEPS; step += 1) buckets.push([])
+        /** 活下来的区间就地往前压：splice 每去掉一个都要搬动后面的元素，一批上千个就是平方级。 */
+        let kept = 0
+        for (let index = 0; index < liveRuns.length; index += 1) {
+            const run = liveRuns[index]
+            if (run === undefined) continue
+            const age = now - run.bornAt - run.delay
+            // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
+            if (age >= REVEAL_MS) continue
+            liveRuns[kept] = run
+            kept += 1
+            // 排队这些区间的扫描顺手建好了快照，而之后的每一次 mutation 都会先经过一次新的扫描才轮到
+            // 这一帧绘制，所以缓存里就是屏幕上那份文本。在这里重新走一遍容器，等于给每一帧都塞进一个
+            // O(整条消息) 的 TreeWalker。
+            const snapshot = textSnapshots.get(run.container)
+            if (snapshot === undefined) continue
 
-  // 只看流式容器里的变动：页面上别处的 DOM 变动（别的插件、侧栏、计时器、输入框）一次扫描都不
-  // 触发，流式容器里的变动也只重扫被碰到的那一个。整页重看只留给容器本身出现、消失或者换了
-  // `data-streaming` 的那几种变动。
-  const observer = new MutationObserver((records) => {
-    let everything = false
-    const touched = new Set<Element>()
-    for (const record of records) {
-      // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div
-      // 补上这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
-      if (record.type === 'attributes') {
-        everything = true
-        continue
-      }
-      const target = record.target
-      const element = target instanceof Element ? target : target.parentElement
-      const container = element?.closest(STREAMING_SELECTOR) ?? null
-      if (container !== null) touched.add(container)
-      if (record.type !== 'childList' || everything) continue
-      for (const added of record.addedNodes) {
-        if (!(added instanceof Element)) continue
-        if (added.matches(STREAMING_SELECTOR) || added.querySelector(STREAMING_SELECTOR) !== null) everything = true
-      }
-      for (const removed of record.removedNodes) {
-        if (liveContainers.some(live => live === removed || removed.contains(live))) everything = true
-      }
-    }
-    if (everything) scan(null)
-    else if (touched.size > 0) scan(touched)
-  })
-  observer.observe(document.body, {
-    subtree: true,
-    childList: true,
-    characterData: true,
-    attributes: true,
-    attributeFilter: [STREAMING_ATTRIBUTE],
-  })
-  document.addEventListener('click', rememberReaderFold, true)
-  document.addEventListener('keydown', rememberReaderFold, true)
-  scan(null)
+            // 按快照里的偏移二分找出第一个能装下这段区间的文本节点：逐字符区间意味着每帧很多次查找，
+            // 从消息开头逐个扫太慢。
+            const end = run.start + run.length
+            let low = 0
+            let high = snapshot.entries.length - 1
+            let firstIndex = -1
+            while (low <= high) {
+                const middle = (low + high) >> 1
+                const entry = snapshot.entries[middle]
+                if (entry === undefined) break
+                if (entry.start + entry.node.data.length <= run.start) {
+                    low = middle + 1
+                    continue
+                }
+                firstIndex = middle
+                high = middle - 1
+            }
+            // 这段区间已经不在 DOM 里了。
+            const firstEntry = snapshot.entries[firstIndex]
+            if (firstEntry === undefined) continue
+            if (firstEntry.start >= end) continue
+            const start = Math.max(0, run.start - firstEntry.start)
+            let lastNode = firstEntry.node
+            let lastEnd = Math.min(firstEntry.node.data.length, end - firstEntry.start)
+            for (let next = firstIndex + 1; next < snapshot.entries.length; next += 1) {
+                const entry = snapshot.entries[next]
+                if (entry === undefined) break
+                if (entry.start >= end) break
+                lastNode = entry.node
+                lastEnd = Math.min(entry.node.data.length, end - entry.start)
+            }
+            // 元素是从区间所在的文本节点反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
+            // （重新解析 `**bold`、折叠某一行），区间所在的元素被换掉之后，旧元素上的颜色再也没人渲染，
+            // 真正在渲染的新元素会回退到页面默认色——于是闪一下正文色，而不是淡入。
+            //
+            // 但只在**元素真的换了**才去读它的颜色。`publishRunColor` 的第一步是 `getComputedStyle`，
+            // 而它是一次强制样式结算——一帧里几百个区间各读一次，等于把整页的样式重算拖进 rAF 里。元素
+            // 没换的那些帧（绝大多数）只需要一次比较。
+            const element = firstEntry.node.parentElement
+            if (element !== run.colorElement) {
+                publishRunColor(element)
+                run.colorElement = element
+            }
 
-  return () => {
-    observer.disconnect()
-    document.removeEventListener('click', rememberReaderFold, true)
-    document.removeEventListener('keydown', rememberReaderFold, true)
-    if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame)
-    scheduledFrame = 0
-    liveRuns.length = 0
-    clearHighlights()
-    revealStyleElement.remove()
-  }
+            // 档位：0 是最淡，最后一档就是本色；按时间线性映射，所以颜色以恒定速率变实。
+            // 上面的卫语句已经排除了 age >= REVEAL_MS，比值必然小于 1，档位必然落在范围内。
+            const step = age <= 0 ? 0 : Math.floor((age / REVEAL_MS) * REVEAL_STEPS)
+            const bucket = buckets[step]
+            if (bucket === undefined) continue
+            // 同一个文本节点里、偏移接得上的相邻字符，这一帧本来就落在同一档——画出来是同一段文字，
+            // 合成一个区间就够：区间数于是从「字符数」降到「段数」。
+            const previous = drawn[step] ?? null
+            if (previous !== null && lastNode === firstEntry.node && previous.node === firstEntry.node && previous.end === start) {
+                previous.end = lastEnd
+                continue
+            }
+            const segment: RevealSegment = {node: firstEntry.node, start, end: lastEnd}
+            drawn[step] = segment
+            bucket.push(segment)
+        }
+        liveRuns.length = kept
+        for (let step = 0; step < REVEAL_STEPS; step += 1) {
+            const list = buckets[step] ?? []
+            // StaticRange 不跟踪 DOM 变动：每帧都从新快照现建，用不着它跟踪；活的 Range 在被回收之前
+            // 会让页面上每一次 DOM 变动都替它修正边界（见模块注释）。
+            const ranges = list.map(segment => new StaticRange({
+                startContainer: segment.node,
+                startOffset: segment.start,
+                endContainer: segment.node,
+                endOffset: segment.end,
+            }))
+            showStep(step, ranges)
+        }
+        if (liveRuns.length > 0) scheduleFrame()
+        else clearHighlights()
+    }
+
+    /**
+     * 把流式容器与上一次的快照对比，然后把新出现的那一段排成区间。
+     * @param only - 只看这几个容器（这一批变动碰到的）；null 表示把页面上的流式容器全看一遍，
+     *   并清掉已经不在的那些。
+     */
+    const scan = (only: ReadonlySet<Element> | null): void => {
+        const now = performance.now()
+        let containers: Element[]
+        if (only === null) {
+            containers = [...document.querySelectorAll(STREAMING_SELECTOR)]
+            // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
+            // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
+            for (const gone of liveContainers) {
+                if (containers.includes(gone)) continue
+                textSnapshots.delete(gone)
+                for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+                    if (liveRuns[index]?.container === gone) liveRuns.splice(index, 1)
+                }
+            }
+            liveContainers = containers
+        } else {
+            containers = [...only].filter(container => container.isConnected && container.matches(STREAMING_SELECTOR))
+            for (const container of containers) if (!liveContainers.includes(container)) liveContainers.push(container)
+        }
+        if (containers.length === 0) return
+        /** 主线程正忙、正在让路：快照照常更新，只是这一段新字符不排淡入。 */
+        const yielding = now < yieldUntil
+        /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
+        const createdRuns: LiveRun[] = []
+        for (const container of containers) {
+            const batchStart = createdRuns.length
+            // 先把容器下每一个文本节点拼起来，同时记住每个节点在拼接串里的偏移。
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+            const entries: TextNodeEntry[] = []
+            let text = ''
+            let node = walker.nextNode()
+            while (node !== null) {
+                const textNode = node as Text
+                entries.push({node: textNode, start: text.length})
+                text += textNode.data
+                node = walker.nextNode()
+            }
+
+            const previous = textSnapshots.get(container)?.text
+            textSnapshots.set(container, {text, entries})
+
+            // 第一次见到这个容器。安装那一刻就在页面上的，是历史；一出现就已经很长（切会话、翻历史
+            // 时整段挂载）的，也当历史。只有安装之后才冒出来、还没长出几个字的那种——新的一轮回答——
+            // 才把它开头这几个字符也算成新出现的。
+            if (previous === undefined && (historyContainers.has(container) || text.length > FIRST_SIGHT_LIMIT)) continue
+            const before = previous ?? ''
+
+            // 这一趟变化里的两段稳定区：公共前缀里的区间位置不变，公共后缀里的区间整体平移，中间那段
+            // 才是真被改写的地方。展开或收起一行思考正是这个形状——容器前面的文本被摘要和正文互相
+            // 替换，后面正在流的正文一个字都没动，那些字不该因为读者碰了一下折叠控件就整片定格；而
+            // 重排一次就把整个容器里的区间杀光，会让正淡到一半的文字直接跳成实色。
+            const overlapLimit = Math.min(before.length, text.length)
+            let prefix = 0
+            while (prefix < overlapLimit && before.charCodeAt(prefix) === text.charCodeAt(prefix)) prefix += 1
+            // 后缀不与前缀重叠，所以中间那段改写区不会被两边同时认领。
+            let suffix = 0
+            while (
+                suffix < overlapLimit - prefix
+                && before.charCodeAt(before.length - 1 - suffix) === text.charCodeAt(text.length - 1 - suffix)
+                ) suffix += 1
+            const stableFrom = before.length - suffix
+            const shift = text.length - before.length
+            for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
+                const run = liveRuns[index]
+                if (run === undefined) continue
+                if (run.container !== container) continue
+                if (run.start + run.length <= prefix) continue
+                if (run.start >= stableFrom) {
+                    // 同一段字符，只是整体挪了位：跟着挪，它的年龄和相位都不动。
+                    liveRuns[index] = {...run, start: run.start + shift}
+                    continue
+                }
+                liveRuns.splice(index, 1)
+            }
+
+            if (yielding) continue
+
+            // 读者刚折叠或展开过：这一次变化是那一下重排引起的，不是模型在吐字。
+            const quietUntil = foldQuietUntil.get(container)
+            if (quietUntil !== undefined && now <= quietUntil) continue
+
+            // 新出现的字符。纯粹在尾部追加时，它就是最后那一段；Markdown 闭合一个标记（`**`、反引号、
+            // 链接）时，新字符夹在旧文字中间，那种改写里对不上旧文本的那几个字同样该淡入。
+            //
+            // 改写要看中间那段：把旧文本与新文本各自的前后缀剥掉之后，两边剩下的部分用一次字符级公共子
+            // 序列对齐，对不上的新字符就是新出现的。中间那段一旦大起来就放弃——整块重写（流式结束时整体
+            // 重排、切换渲染分支）不该让读者重看一遍淡入，只有小范围闭合才值得给那几个字动画。
+            const oldMiddle = before.slice(prefix, before.length - suffix)
+            const newMiddle = text.slice(prefix, text.length - suffix)
+            if (newMiddle.length === 0) continue
+            if (oldMiddle.length > 0 && oldMiddle.length * newMiddle.length > REWRITE_DIFF_BUDGET) continue
+
+            // 每个新字符在旧文本里对不对得上。旧文本的中间段是空的，就是整段都没对上——这一次变化全是
+            // 新增，不必走一次对齐。
+            const matched = new Uint8Array(newMiddle.length)
+            if (oldMiddle.length > 0) {
+                // 自底向上的公共子序列长度表，回溯时用它判断哪个新字符对得上旧文本。
+                const columns = newMiddle.length + 1
+                const lengths = new Uint16Array((oldMiddle.length + 1) * columns)
+                for (let row = oldMiddle.length - 1; row >= 0; row -= 1) {
+                    for (let column = newMiddle.length - 1; column >= 0; column -= 1) {
+                        const sameCharacter = oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)
+                        lengths[row * columns + column] = sameCharacter
+                            ? (lengths[(row + 1) * columns + column + 1] ?? 0) + 1
+                            : Math.max(lengths[(row + 1) * columns + column] ?? 0, lengths[row * columns + column + 1] ?? 0)
+                    }
+                }
+                let matchedCount = 0
+                let row = 0
+                let column = 0
+                while (row < oldMiddle.length && column < newMiddle.length) {
+                    if (oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)) {
+                        matched[column] = 1
+                        matchedCount += 1
+                        row += 1
+                        column += 1
+                        continue
+                    }
+                    // 哪边的表值大就往哪边走。
+                    const skipOldRow = lengths[(row + 1) * columns + column] ?? 0
+                    const skipNewColumn = lengths[row * columns + column + 1] ?? 0
+                    const advanceOldRow = skipOldRow >= skipNewColumn
+                    if (advanceOldRow) row += 1
+                    if (!advanceOldRow) column += 1
+                }
+                if (matchedCount === 0 || newMiddle.length - matchedCount > LOCAL_REWRITE_LIMIT) continue
+            }
+
+            // 对不上的新字符就是要淡入的那批，连续的合并成一段。
+            const addedRanges: OffsetRange[] = []
+            let rangeStart = -1
+            for (let index = 0; index < newMiddle.length; index += 1) {
+                if (matched[index] === 1) {
+                    if (rangeStart >= 0) addedRanges.push({start: rangeStart + prefix, end: index + prefix})
+                    rangeStart = -1
+                    continue
+                }
+                if (rangeStart < 0) rangeStart = index
+            }
+            if (rangeStart >= 0) addedRanges.push({start: rangeStart + prefix, end: newMiddle.length + prefix})
+            if (addedRanges.length === 0) continue
+            // 一批到的字太多就不淡入：几千个字一起淡，读者看到的是一片糊，而区间数就是字符数、直接乘在
+            // 每一帧上（每帧每个区间一个 Range）。实测一万五千字符一块到达就能把单帧推到七百毫秒，而且
+            // 帧间隔补偿会不断给这些区间续命、自己缓不过来。真实流式的单批增量中位十几个字符。
+            let addedLength = 0
+            for (const range of addedRanges) addedLength += range.end - range.start
+            if (addedLength > BURST_LIMIT) continue
+
+            // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
+            // `styles.ts` 正是从这个元素读淡入用的颜色，一个节点的文本总是渲染在一个元素里。
+            // 同一个节点里的字符出生时间相同，相位在遍历完之后按位次统一分配——一到屏幕就整块变亮的
+            // 台阶感，正是错峰要摊掉的东西。
+            // 按码点迭代，所以代理对算作一个区间；空白不单独成区间，但仍然推进偏移。
+            const touchedElements = new Set<Element>()
+            for (const range of addedRanges) {
+                for (const entry of entries) {
+                    if (entry.start + entry.node.data.length <= range.start) continue
+                    if (entry.start >= range.end) break
+                    const begin = Math.max(range.start, entry.start)
+                    const end = Math.min(range.end, entry.start + entry.node.data.length)
+                    const element = entry.node.parentElement
+                    let offset = begin
+                    for (const character of entry.node.data.slice(begin - entry.start, end - entry.start)) {
+                        if (character.trim().length === 0) {
+                            offset += character.length
+                            continue
+                        }
+                        // 每个元素每次扫描只读一次样式：一批文本通常落在一两个节点里，
+                        // 所以哪怕整段一次到达也只有几次读取。
+                        if (element !== null && !touchedElements.has(element)) {
+                            touchedElements.add(element)
+                            publishRunColor(element)
+                        }
+                        const run: LiveRun = {
+                            container,
+                            start: offset,
+                            length: character.length,
+                            bornAt: now,
+                            delay: 0,
+                            // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
+                            // 就是一次强制样式结算，而这一次读取恰好落在新字符刚插进来、样式刚失效的那一帧——
+                            // 实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）绘制帧的
+                            // 那次比较仍然会发现，颜色照旧补上。
+                            colorElement: element,
+                        }
+                        liveRuns.push(run)
+                        createdRuns.push(run)
+                        offset += character.length
+                    }
+                }
+            }
+            // 按这批字符在流里的位次错开：整批摊开的总相位不超过一次渐变，所以一次插入几百个字符也不会
+            // 让尾巴等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片；再小看不出扫动，
+            // 再大就让最后到的字符显得迟滞。
+            const batchCount = createdRuns.length - batchStart
+            const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, REVEAL_MS / STAGGER_DIVISOR))
+            const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, REVEAL_MS / (batchCount - 1))
+            for (let slot = batchStart; slot < createdRuns.length; slot += 1) {
+                const run = createdRuns[slot]
+                if (run === undefined || step === 0) continue
+                run.delay = (slot - batchStart) * step
+            }
+        }
+        if (createdRuns.length === 0) return
+        // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
+        // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
+        // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
+        if (scheduledFrame !== 0) {
+            cancelAnimationFrame(scheduledFrame)
+            scheduledFrame = 0
+        }
+        paint(performance.now(), false)
+    }
+
+    // 只看流式容器里的变动：页面上别处的 DOM 变动（别的插件、侧栏、计时器、输入框）一次扫描都不
+    // 触发，流式容器里的变动也只重扫被碰到的那一个。整页重看只留给容器本身出现、消失或者换了
+    // `data-streaming` 的那几种变动。
+    const observer = new MutationObserver((records) => {
+        let everything = false
+        const touched = new Set<Element>()
+        for (const record of records) {
+            // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div
+            // 补上这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
+            if (record.type === 'attributes') {
+                everything = true
+                continue
+            }
+            const target = record.target
+            const element = target instanceof Element ? target : target.parentElement
+            const container = element?.closest(STREAMING_SELECTOR) ?? null
+            if (container !== null) touched.add(container)
+            if (record.type !== 'childList' || everything) continue
+            for (const added of record.addedNodes) {
+                if (!(added instanceof Element)) continue
+                if (added.matches(STREAMING_SELECTOR) || added.querySelector(STREAMING_SELECTOR) !== null) everything = true
+            }
+            for (const removed of record.removedNodes) {
+                if (liveContainers.some(live => live === removed || removed.contains(live))) everything = true
+            }
+        }
+        if (everything) scan(null)
+        else if (touched.size > 0) scan(touched)
+    })
+    observer.observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: [STREAMING_ATTRIBUTE],
+    })
+    document.addEventListener('click', rememberReaderFold, true)
+    document.addEventListener('keydown', rememberReaderFold, true)
+    scan(null)
+
+    return () => {
+        observer.disconnect()
+        document.removeEventListener('click', rememberReaderFold, true)
+        document.removeEventListener('keydown', rememberReaderFold, true)
+        if (scheduledFrame !== 0) cancelAnimationFrame(scheduledFrame)
+        scheduledFrame = 0
+        liveRuns.length = 0
+        clearHighlights()
+        revealStyleElement.remove()
+    }
 }
 
 /**
@@ -717,15 +723,15 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal'
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
  */
-const revealCss = Array.from({ length: REVEAL_STEPS }, (_, step) => {
-  const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
-  const alpha = Number((ratio * 100).toFixed(2))
-  const name = HIGHLIGHT_PREFIX + step
-  return [
-    STREAMING_SELECTOR + '::highlight(' + name + '), ' + STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
-    '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
-    '}',
-  ].join('\n')
+const revealCss = Array.from({length: REVEAL_STEPS}, (_, step) => {
+    const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
+    const alpha = Number((ratio * 100).toFixed(2))
+    const name = HIGHLIGHT_PREFIX + step
+    return [
+        STREAMING_SELECTOR + '::highlight(' + name + '), ' + STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
+        '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+        '}',
+    ].join('\n')
 }).join('\n\n')
 
 /**
@@ -777,28 +783,28 @@ const YIELD_MS = 3000
 
 /** 一个正在淡入的字符区间。 */
 interface LiveRun {
-  readonly container: Element
-  /** 在容器拼接文本里的字符偏移。 */
-  readonly start: number
-  /** 区间长度，单位是 UTF-16 码元。 */
-  readonly length: number
-  /**
-   * 这段区间开始淡入时的 `performance.now()` 时间戳。它会被帧间隔补偿整体推后（见 `paint`），
-   * 所以不是只读的。
-   */
-  bornAt: number
-  /**
-   * 相对同批第一个字符的相位偏移，单位毫秒。出生时间不动，淡入整体后移，所以一批字符不会挤在
-   * 同一毫秒里一起变亮。
-   */
-  delay: number
-  /**
-   * 上一次为这个区间读过颜色的那个承载元素。
-   *
-   * 颜色只在它换掉时才重量：读一次颜色就是一次强制样式结算，而一帧里可能有几百个区间——每个区间
-   * 每帧读一次，等于把整页的样式重算拖进 rAF 里。元素没换的帧只需要一次比较。
-   */
-  colorElement: Element | null
+    readonly container: Element
+    /** 在容器拼接文本里的字符偏移。 */
+    readonly start: number
+    /** 区间长度，单位是 UTF-16 码元。 */
+    readonly length: number
+    /**
+     * 这段区间开始淡入时的 `performance.now()` 时间戳。它会被帧间隔补偿整体推后（见 `paint`），
+     * 所以不是只读的。
+     */
+    bornAt: number
+    /**
+     * 相对同批第一个字符的相位偏移，单位毫秒。出生时间不动，淡入整体后移，所以一批字符不会挤在
+     * 同一毫秒里一起变亮。
+     */
+    delay: number
+    /**
+     * 上一次为这个区间读过颜色的那个承载元素。
+     *
+     * 颜色只在它换掉时才重量：读一次颜色就是一次强制样式结算，而一帧里可能有几百个区间——每个区间
+     * 每帧读一次，等于把整页的样式重算拖进 rAF 里。元素没换的帧只需要一次比较。
+     */
+    colorElement: Element | null
 }
 
 /**
@@ -808,42 +814,45 @@ interface LiveRun {
  * 它们画出来本来就是同一段文字，所以合成一个 Range 就够。
  */
 interface RevealSegment {
-  readonly node: Text
-  /** 节点内起始偏移。 */
-  readonly start: number
-  /** 节点内结束偏移（不含）；后来的区间接得上时它往后延。 */
-  end: number
+    readonly node: Text
+    /** 节点内起始偏移。 */
+    readonly start: number
+    /** 节点内结束偏移（不含）；后来的区间接得上时它往后延。 */
+    end: number
 }
 
 /** 一个文本节点，以及它在容器拼接文本里的起始偏移。 */
 interface TextNodeEntry {
-  readonly node: Text
-  readonly start: number
+    readonly node: Text
+    readonly start: number
 }
 
 /** 一个容器的文本，以及里面每个文本节点的位置。 */
 interface TextSnapshot {
-  readonly text: string
-  readonly entries: readonly TextNodeEntry[]
+    readonly text: string
+    readonly entries: readonly TextNodeEntry[]
 }
 
 /** 浏览器的 highlight 注册表，放宽类型以免跟着 lib.dom 的版本漂移。 */
 interface HighlightRegistryLike {
-  set(name: string, highlight: HighlightLike): void
-  delete(name: string): void
+    set(name: string, highlight: HighlightLike): void
+
+    delete(name: string): void
 }
 
 /** 一个 highlight：一组区间。放宽类型的理由同上。 */
 interface HighlightLike {
-  add(range: AbstractRange): unknown
-  clear(): void
-  readonly size: number
+    add(range: AbstractRange): unknown
+
+    clear(): void
+
+    readonly size: number
 }
 
 /** 新文本里的一段字符偏移，左闭右开。 */
 interface OffsetRange {
-  readonly start: number
-  readonly end: number
+    readonly start: number
+    readonly end: number
 }
 
 /**

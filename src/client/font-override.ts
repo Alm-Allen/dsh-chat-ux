@@ -12,17 +12,17 @@
  * @module dsh-chat-ux/client/font-override
  */
 import {
-  CODE_VARIABLE, EMBEDDED_MONO, EMBEDDED_SANS, FONT_ATTRIBUTE, MONO_VARIABLE, SANS_VARIABLE,
+    CODE_VARIABLE, EMBEDDED_MONO, EMBEDDED_SANS, FONT_ATTRIBUTE, MONO_VARIABLE, SANS_VARIABLE,
 } from './font-styles'
 
 /** 这一处要落到 body 上的三项选择。 */
 export interface FontChoice {
-  /** 是否用自带字体接管界面。关掉时这一处什么都不写，dsh 自己的字体栈原样生效。 */
-  embedded: boolean
-  /** 自定义的正文字体栈；空串用自带的。 */
-  sans: string
-  /** 自定义的等宽字体栈；空串用自带的。 */
-  code: string
+    /** 是否用自带字体接管界面。关掉时这一处什么都不写，dsh 自己的字体栈原样生效。 */
+    embedded: boolean
+    /** 自定义的正文字体栈；空串用自带的。 */
+    sans: string
+    /** 自定义的等宽字体栈；空串用自带的。 */
+    code: string
 }
 
 /**
@@ -34,8 +34,8 @@ export interface FontChoice {
  * @returns 浏览器认它为一个字体栈时为真。
  */
 export function isFontFamilyValue(value: string): boolean {
-  const text = value.trim()
-  return text !== '' && hasPairedQuotes(text) && CSS.supports('font-family', text)
+    const text = value.trim()
+    return text !== '' && hasPairedQuotes(text) && CSS.supports('font-family', text)
 }
 
 /**
@@ -43,14 +43,14 @@ export function isFontFamilyValue(value: string): boolean {
  * @param choice - 开关与两条自定义栈。
  */
 export function applyFontChoice(choice: FontChoice): void {
-  if (!choice.embedded) {
-    clearFontChoice()
-    return
-  }
-  document.body.setAttribute(FONT_ATTRIBUTE, '')
-  applyFamily(SANS_VARIABLE, choice.sans, EMBEDDED_SANS)
-  applyFamily(CODE_VARIABLE, choice.code, EMBEDDED_MONO)
-  applyFamily(MONO_VARIABLE, choice.code, EMBEDDED_MONO)
+    if (!choice.embedded) {
+        clearFontChoice()
+        return
+    }
+    document.body.setAttribute(FONT_ATTRIBUTE, '')
+    applyFamily(SANS_VARIABLE, choice.sans, EMBEDDED_SANS)
+    applyFamily(CODE_VARIABLE, choice.code, EMBEDDED_MONO)
+    applyFamily(MONO_VARIABLE, choice.code, EMBEDDED_MONO)
 }
 
 /**
@@ -58,11 +58,11 @@ export function applyFontChoice(choice: FontChoice): void {
  * 谁都不引用它们的状态（浏览器就不会去取）。
  */
 export function clearFontChoice(): void {
-  const { body } = document
-  body.removeAttribute(FONT_ATTRIBUTE)
-  body.style.removeProperty(SANS_VARIABLE)
-  body.style.removeProperty(CODE_VARIABLE)
-  body.style.removeProperty(MONO_VARIABLE)
+    const {body} = document
+    body.removeAttribute(FONT_ATTRIBUTE)
+    body.style.removeProperty(SANS_VARIABLE)
+    body.style.removeProperty(CODE_VARIABLE)
+    body.style.removeProperty(MONO_VARIABLE)
 }
 
 /**
@@ -77,13 +77,13 @@ export function clearFontChoice(): void {
  * @returns 单双引号各自成对时为真。
  */
 function hasPairedQuotes(value: string): boolean {
-  let singles = 0
-  let doubles = 0
-  for (const character of value) {
-    if (character === "'") singles += 1
-    else if (character === '"') doubles += 1
-  }
-  return singles % 2 === 0 && doubles % 2 === 0
+    let singles = 0
+    let doubles = 0
+    for (const character of value) {
+        if (character === "'") singles += 1
+        else if (character === '"') doubles += 1
+    }
+    return singles % 2 === 0 && doubles % 2 === 0
 }
 
 /**
@@ -93,9 +93,9 @@ function hasPairedQuotes(value: string): boolean {
  * @param embedded - 自带的那条栈。
  */
 function applyFamily(variable: string, custom: string, embedded: string): void {
-  if (!isFontFamilyValue(custom)) {
-    document.body.style.removeProperty(variable)
-    return
-  }
-  document.body.style.setProperty(variable, custom.trim() + ', ' + embedded)
+    if (!isFontFamilyValue(custom)) {
+        document.body.style.removeProperty(variable)
+        return
+    }
+    document.body.style.setProperty(variable, custom.trim() + ', ' + embedded)
 }

@@ -50,10 +50,17 @@
  * @module dsh-chat-ux/client/fold-glide
  */
 
-import { CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, THINK_ROW_SELECTOR } from './dom-contract'
-import { ensureFollowTail, FOLLOW_LOOK_TOTAL_MS } from './follow-tail'
-import { isProgrammaticToggle } from './programmatic-toggle'
-import { isReaderScrollIntent } from './reader-intent'
+import {
+    CHAT_FLOW_SELECTOR,
+    CONVERSATION_SCROLL_SELECTOR,
+    FOLLOW_THRESHOLD_PX,
+    PROCESS_BODY_SELECTOR,
+    PROCESS_GROUP_SELECTOR,
+    THINK_ROW_SELECTOR
+} from './dom-contract'
+import {ensureFollowTail, FOLLOW_LOOK_TOTAL_MS} from './follow-tail'
+import {isProgrammaticToggle} from './programmatic-toggle'
+import {isReaderScrollIntent} from './reader-intent'
 
 /** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200
@@ -113,14 +120,14 @@ const NOMINAL_FRAME_MS = 16.7
  * 一次「压高度」式收起要的五样东西。
  */
 interface HeightShut {
-  /** 要压的真身：展开体自己，或过程组的组根。 */
-  readonly target: HTMLElement
-  /** 收起的终点高度。展开体归 0；组根停在组头那一段，组体就藏在它下面。 */
-  readonly floor: number
-  /** React 把这次折叠落到 DOM 上了：展开体被卸掉，或组体带上 hidden。 */
-  readonly collapsed: () => boolean
-  readonly control: HTMLElement
-  readonly watch: FoldWatch
+    /** 要压的真身：展开体自己，或过程组的组根。 */
+    readonly target: HTMLElement
+    /** 收起的终点高度。展开体归 0；组根停在组头那一段，组体就藏在它下面。 */
+    readonly floor: number
+    /** React 把这次折叠落到 DOM 上了：展开体被卸掉，或组体带上 hidden。 */
+    readonly collapsed: () => boolean
+    readonly control: HTMLElement
+    readonly watch: FoldWatch
 }
 
 /**
@@ -131,25 +138,25 @@ interface HeightShut {
  * 出来——什么算读者的意图由 `isReaderScrollIntent` 判。
  */
 interface FoldWatch {
-  /** 折叠开始那一刻读者是不是贴着底部。 */
-  readonly atBottom: boolean
-  /** 这中间读者有没有为滚动出过手。 */
-  readonly moved: () => boolean
-  /** 撤掉意图监听。 */
-  readonly stop: () => void
+    /** 折叠开始那一刻读者是不是贴着底部。 */
+    readonly atBottom: boolean
+    /** 这中间读者有没有为滚动出过手。 */
+    readonly moved: () => boolean
+    /** 撤掉意图监听。 */
+    readonly stop: () => void
 }
 
 interface FoldIntent {
-  /** 展开方向被点的开合控件：DisclosureRow 的行，或过程组头的按钮。 */
-  readonly control: HTMLElement
-  /** 展开方向的过程组体；不是过程组时为 null。 */
-  readonly groupBody: HTMLElement | null
-  /** 展开方向的过程组根；高度压在它身上。不是过程组时为 null。 */
-  readonly groupRoot: HTMLElement | null
-  /** 点击那一刻组根的高度——收起态的它正是展开动画的起点。 */
-  readonly collapsedHeight: number
-  readonly watch: FoldWatch
-  readonly takenAt: number
+    /** 展开方向被点的开合控件：DisclosureRow 的行，或过程组头的按钮。 */
+    readonly control: HTMLElement
+    /** 展开方向的过程组体；不是过程组时为 null。 */
+    readonly groupBody: HTMLElement | null
+    /** 展开方向的过程组根；高度压在它身上。不是过程组时为 null。 */
+    readonly groupRoot: HTMLElement | null
+    /** 点击那一刻组根的高度——收起态的它正是展开动画的起点。 */
+    readonly collapsedHeight: number
+    readonly watch: FoldWatch
+    readonly takenAt: number
 }
 
 /** 卷帘门排到哪一刻为止；这一段时间里位置归动画管。 */
@@ -163,12 +170,12 @@ let foldBusyUntil = 0
  * @returns 上一次动画排到的时刻还没过时为真。
  */
 export function isFoldGlideBusy(): boolean {
-  return performance.now() < foldBusyUntil
+    return performance.now() < foldBusyUntil
 }
 
 /** 排一段「位置归动画管」的时间。 */
 const markFoldBusy = (): void => {
-  foldBusyUntil = performance.now() + ROLL_MS + FOLD_BUSY_GRACE_MS
+    foldBusyUntil = performance.now() + ROLL_MS + FOLD_BUSY_GRACE_MS
 }
 
 /**
@@ -176,433 +183,444 @@ const markFoldBusy = (): void => {
  * @returns 卸载函数。
  */
 export function installFoldGlide(): () => void {
-  if (typeof document === 'undefined' || document.body === null) return () => {}
-
-  let intent: FoldIntent | null = null
-  /** 收起动画正在跑：这 200ms 不接受新的点击，免得两次折叠叠在一起。 */
-  let shutting = false
-  /** 正在把拦下来的那次点击原样交还给 React——那一次不该再被拦。 */
-  let replaying = false
-
-  const reduceMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-  /**
-   * 元素此刻露在读者眼里的那一段，它的终点距元素顶边有多远。
-   *
-   * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（max-height:
-   * min(400px, 50vh)）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者看得见的
-   * 地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
-   * @param element - 要量的真身。
-   * @returns 终点偏移，单位像素；为 0 时说明它整个在视口外。
-   */
-  const visibleReachOf = (element: HTMLElement): number => {
-    const rect = element.getBoundingClientRect()
-    let bottom = Math.min(rect.bottom, window.innerHeight)
-    // 每一层裁剪祖先都可能把可见范围收得更窄，所以整条链都要过一遍；overflow 是 visible 的
-    // 祖先不裁东西，跳过。getComputedStyle 在这里不算浪费——元素刚插进来，样式本来就要算。
-    for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
-      const style = window.getComputedStyle(ancestor)
-      if (style.overflowX === 'visible' && style.overflowY === 'visible') continue
-      bottom = Math.min(bottom, ancestor.getBoundingClientRect().bottom)
+    if (typeof document === 'undefined' || document.body === null) return () => {
     }
-    return Math.max(0, Math.min(rect.height, bottom - rect.top))
-  }
 
-  /**
-   * 控件的展开体。控件自己发 aria-controls 时以它为准（那个 id 由 useId 生成、带冒号，只能走
-   * getElementById）；否则按卸载式那一族的形状取「控件之后那一个兄弟」。返回 null 就说明这个控件
-   * 当前是收起的。
-   *
-   * 过程组头到不了这里——它先被 processBodyOf 认走，那条路动的是组根，不是展开体自己的高度。
-   */
-  const expandedBodyOf = (control: HTMLElement): HTMLElement | null => {
-    const controls = control.getAttribute('aria-controls')
-    if (controls !== null) {
-      const target = document.getElementById(controls)
-      return target instanceof HTMLElement ? target : null
-    }
-    const last = control.parentElement?.lastElementChild
-    return last instanceof HTMLElement && last !== control ? last : null
-  }
+    let intent: FoldIntent | null = null
+    /** 收起动画正在跑：这 200ms 不接受新的点击，免得两次折叠叠在一起。 */
+    let shutting = false
+    /** 正在把拦下来的那次点击原样交还给 React——那一次不该再被拦。 */
+    let replaying = false
 
-  /**
-   * 控件控制的过程组体。
-   *
-   * 只有组头拿 aria-controls 指着组体（ChatGroupSeat 里的 ProcessGroupHeader），组里的成员行不发
-   * 这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组头」**：
-   * 组体里的每一个工具行、思考行都住在 [data-step-process] 里。只看 closest 的话，点一行工具调用
-   * 会被当成展开整个过程组，那个组的组根就会代替那一行被压扁。
-   * @param control - 被点的开合控件。
-   * @returns 它控制的过程组体；不是组头时为 null。
-   */
-  const processBodyOf = (control: HTMLElement): HTMLElement | null => {
-    const controls = control.getAttribute('aria-controls')
-    if (controls === null) return null
-    const target = document.getElementById(controls)
-    return target instanceof HTMLElement && target.matches(PROCESS_BODY_SELECTOR) ? target : null
-  }
+    const reduceMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-  /**
-   * 读者此刻是不是贴着会话底部。
-   *
-   * 这一份从被点的控件往上找滚动容器——与 follow-tail.ts 那份同名判据的入口不同，判据相同。
-   * @param control - 被点的开合控件。
-   * @returns 滚动位置落在底部阈值之内时为真。
-   */
-  const controlAtBottom = (control: HTMLElement): boolean => {
-    const scroller = control.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
-    // 找不到滚动容器时按「不在底部」处理。
-    if (scroller === null) return false
-    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
-  }
-
-  /**
-   * 挂上一份「读者有没有自己接管滚动」的监听，只活到这一轮折叠收尾为止。
-   *
-   * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
-   * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
-   * 读者在打字，不是在滚动。
-   * @param atBottom - 折叠开始那一刻读者是不是贴着底部。
-   * @returns 这一轮折叠的收尾凭证。
-   */
-  const watchFold = (atBottom: boolean): FoldWatch => {
-    let moved = false
-    const note = (event: Event): void => {
-      if (isReaderScrollIntent(event)) moved = true
-    }
-    // 认这四种：它们都会真的挪动位置。dsh 的 `READING_INTENTS` 里另有 beforematch，本处不认。
-    const types = ['wheel', 'touchstart', 'pointerdown', 'keydown']
-    for (const type of types) document.addEventListener(type, note, true)
-    const stop = (): void => {
-      for (const type of types) document.removeEventListener(type, note, true)
-    }
-    window.setTimeout(stop, FOLD_WATCH_TTL_MS)
-    return { atBottom, moved: () => moved, stop }
-  }
-
-  /** 把拦下来的那次点击原样交给 React。重放期间不再拦，也不再起收起动画。 */
-  const replay = (control: HTMLElement): void => {
-    shutting = false
-    replaying = true
-    try {
-      control.click()
-    } finally {
-      replaying = false
-    }
-  }
-
-  /**
-   * 折叠收尾：折叠开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随。
-   *
-   * 折叠是一次量级很大的高度变化，而 dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉——
-   * 它自己那个「回到底部」按钮是唯一的重开入口。这一处只判断这一次交还算不算数；怎么交还
-   * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里，跟随守护走的是同一条路。
-   *
-   * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
-   * @param watch - 这一轮折叠的收尾凭证。
-   */
-  const handBackFollow = (watch: FoldWatch): void => {
-    if (!watch.atBottom) {
-      watch.stop()
-      return
-    }
-    ensureFollowTail({
-      // 读者中途自己动了手，这一次交还就作废。
-      stillWanted: () => !watch.moved(),
-      onSettled: () => { watch.stop() },
-    })
-  }
-
-  /**
-   * 折叠收尾的入口：动画走完再看一眼跟随。
-   *
-   * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画
-   * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
-   * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
-   * ROLL_MS。
-   * @param watch - 这一轮折叠的收尾凭证。
-   * @param roll - 展开方向正在走的那条动画；没有时为 null。
-   */
-  const settleAfterFold = (watch: FoldWatch, roll: Animation | null = null): void => {
-    if (roll === null) {
-      window.setTimeout(() => { handBackFollow(watch) }, ROLL_MS)
-      return
-    }
-    const settle = (): void => { handBackFollow(watch) }
-    roll.finished.then(settle, settle)
-  }
-
-  /**
-   * 主线程被占住的那几帧不算进卷帘门的时间。
-   *
-   * 高度动画在主线程上走，卡住的那一段它一帧都画不出来，而 WAAPI 按墙上时间算进度：卡完之后的第一帧
-   * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
-   * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
-   * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
-   * 动画管」的时间，跟随守护会多等这么久。
-   *
-   * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
-   * @param roll - 正在走的那条卷帘门动画。
-   */
-  const holdThroughStalls = (roll: Animation): void => {
-    let lastFrameAt = 0
-    let lastTime = 0
-    let frameInterval = NOMINAL_FRAME_MS
-    const timeOf = (): number => {
-      const time = roll.currentTime
-      return typeof time === 'number' ? time : 0
-    }
-    const look = (now: number): void => {
-      if (roll.playState !== 'running') return
-      const gap = lastFrameAt === 0 ? 0 : now - lastFrameAt
-      if (gap > FRAME_GAP_LIMIT_MS) {
-        const resumeAt = lastTime + frameInterval
-        const skipped = timeOf() - resumeAt
-        if (skipped > 0) {
-          roll.currentTime = resumeAt
-          foldBusyUntil += skipped
+    /**
+     * 元素此刻露在读者眼里的那一段，它的终点距元素顶边有多远。
+     *
+     * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（max-height:
+     * min(400px, 50vh)）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者看得见的
+     * 地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
+     * @param element - 要量的真身。
+     * @returns 终点偏移，单位像素；为 0 时说明它整个在视口外。
+     */
+    const visibleReachOf = (element: HTMLElement): number => {
+        const rect = element.getBoundingClientRect()
+        let bottom = Math.min(rect.bottom, window.innerHeight)
+        // 每一层裁剪祖先都可能把可见范围收得更窄，所以整条链都要过一遍；overflow 是 visible 的
+        // 祖先不裁东西，跳过。getComputedStyle 在这里不算浪费——元素刚插进来，样式本来就要算。
+        for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
+            const style = window.getComputedStyle(ancestor)
+            if (style.overflowX === 'visible' && style.overflowY === 'visible') continue
+            bottom = Math.min(bottom, ancestor.getBoundingClientRect().bottom)
         }
-      } else if (gap > 0) {
-        frameInterval = gap
-      }
-      lastFrameAt = now
-      lastTime = timeOf()
-      requestAnimationFrame(look)
+        return Math.max(0, Math.min(rect.height, bottom - rect.top))
     }
-    requestAnimationFrame(look)
-  }
 
-  /**
-   * 等 React 把这次折叠落到 DOM 上，再撤掉动画与内联样式。
-   *
-   * 收起方向的高度动画带着 fill: 'forwards'，把真身锁在终点高度上。React 若还没收下这次点击，
-   * cancel() 就会把高度整块还给 CSS——一次从终点弹回全高的跳变，足够把 dsh 的跟随甩出去。所以
-   * 等到 DOM 那边真的收拢了才撤；等够几帧仍然没收拢，那说明这次点击确实没有折叠，只好撤回原样。
-   * @param settled - DOM 那边已经收拢了。
-   * @param done - 可以撤掉动画与内联样式了。
-   * @param attempt - 已经等了几帧。
-   */
-  const confirmCollapsed = (settled: () => boolean, done: () => void, attempt = 0): void => {
-    if (settled() || attempt >= SHUT_CONFIRM_FRAMES) {
-      done()
-      return
+    /**
+     * 控件的展开体。控件自己发 aria-controls 时以它为准（那个 id 由 useId 生成、带冒号，只能走
+     * getElementById）；否则按卸载式那一族的形状取「控件之后那一个兄弟」。返回 null 就说明这个控件
+     * 当前是收起的。
+     *
+     * 过程组头到不了这里——它先被 processBodyOf 认走，那条路动的是组根，不是展开体自己的高度。
+     */
+    const expandedBodyOf = (control: HTMLElement): HTMLElement | null => {
+        const controls = control.getAttribute('aria-controls')
+        if (controls !== null) {
+            const target = document.getElementById(controls)
+            return target instanceof HTMLElement ? target : null
+        }
+        const last = control.parentElement?.lastElementChild
+        return last instanceof HTMLElement && last !== control ? last : null
     }
-    requestAnimationFrame(() => { confirmCollapsed(settled, done, attempt + 1) })
-  }
 
-  /**
-   * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
-   * 标记，让子元素按自然高度排好、不被 flex 挤扁（见模块注释）。
-   *
-   * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
-   * 一起交回来。
-   * @param target - 要压的真身。
-   * @returns 把内联样式与标记还原到开工之前。
-   */
-  const beginHeightClip = (target: HTMLElement): (() => void) => {
-    const previousOverflow = target.style.overflow
-    const previousBoxSizing = target.style.boxSizing
-    target.style.overflow = 'hidden'
-    target.style.boxSizing = 'border-box'
-    target.setAttribute(ROLLING_ATTRIBUTE, '')
+    /**
+     * 控件控制的过程组体。
+     *
+     * 只有组头拿 aria-controls 指着组体（ChatGroupSeat 里的 ProcessGroupHeader），组里的成员行不发
+     * 这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组头」**：
+     * 组体里的每一个工具行、思考行都住在 [data-step-process] 里。只看 closest 的话，点一行工具调用
+     * 会被当成展开整个过程组，那个组的组根就会代替那一行被压扁。
+     * @param control - 被点的开合控件。
+     * @returns 它控制的过程组体；不是组头时为 null。
+     */
+    const processBodyOf = (control: HTMLElement): HTMLElement | null => {
+        const controls = control.getAttribute('aria-controls')
+        if (controls === null) return null
+        const target = document.getElementById(controls)
+        return target instanceof HTMLElement && target.matches(PROCESS_BODY_SELECTOR) ? target : null
+    }
+
+    /**
+     * 读者此刻是不是贴着会话底部。
+     *
+     * 这一份从被点的控件往上找滚动容器——与 follow-tail.ts 那份同名判据的入口不同，判据相同。
+     * @param control - 被点的开合控件。
+     * @returns 滚动位置落在底部阈值之内时为真。
+     */
+    const controlAtBottom = (control: HTMLElement): boolean => {
+        const scroller = control.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+        // 找不到滚动容器时按「不在底部」处理。
+        if (scroller === null) return false
+        return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
+    }
+
+    /**
+     * 挂上一份「读者有没有自己接管滚动」的监听，只活到这一轮折叠收尾为止。
+     *
+     * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
+     * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
+     * 读者在打字，不是在滚动。
+     * @param atBottom - 折叠开始那一刻读者是不是贴着底部。
+     * @returns 这一轮折叠的收尾凭证。
+     */
+    const watchFold = (atBottom: boolean): FoldWatch => {
+        let moved = false
+        const note = (event: Event): void => {
+            if (isReaderScrollIntent(event)) moved = true
+        }
+        // 认这四种：它们都会真的挪动位置。dsh 的 `READING_INTENTS` 里另有 beforematch，本处不认。
+        const types = ['wheel', 'touchstart', 'pointerdown', 'keydown']
+        for (const type of types) document.addEventListener(type, note, true)
+        const stop = (): void => {
+            for (const type of types) document.removeEventListener(type, note, true)
+        }
+        window.setTimeout(stop, FOLD_WATCH_TTL_MS)
+        return {atBottom, moved: () => moved, stop}
+    }
+
+    /** 把拦下来的那次点击原样交给 React。重放期间不再拦，也不再起收起动画。 */
+    const replay = (control: HTMLElement): void => {
+        shutting = false
+        replaying = true
+        try {
+            control.click()
+        } finally {
+            replaying = false
+        }
+    }
+
+    /**
+     * 折叠收尾：折叠开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随。
+     *
+     * 折叠是一次量级很大的高度变化，而 dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉——
+     * 它自己那个「回到底部」按钮是唯一的重开入口。这一处只判断这一次交还算不算数；怎么交还
+     * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里，跟随守护走的是同一条路。
+     *
+     * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
+     * @param watch - 这一轮折叠的收尾凭证。
+     */
+    const handBackFollow = (watch: FoldWatch): void => {
+        if (!watch.atBottom) {
+            watch.stop()
+            return
+        }
+        ensureFollowTail({
+            // 读者中途自己动了手，这一次交还就作废。
+            stillWanted: () => !watch.moved(),
+            onSettled: () => {
+                watch.stop()
+            },
+        })
+    }
+
+    /**
+     * 折叠收尾的入口：动画走完再看一眼跟随。
+     *
+     * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画
+     * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
+     * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
+     * ROLL_MS。
+     * @param watch - 这一轮折叠的收尾凭证。
+     * @param roll - 展开方向正在走的那条动画；没有时为 null。
+     */
+    const settleAfterFold = (watch: FoldWatch, roll: Animation | null = null): void => {
+        if (roll === null) {
+            window.setTimeout(() => {
+                handBackFollow(watch)
+            }, ROLL_MS)
+            return
+        }
+        const settle = (): void => {
+            handBackFollow(watch)
+        }
+        roll.finished.then(settle, settle)
+    }
+
+    /**
+     * 主线程被占住的那几帧不算进卷帘门的时间。
+     *
+     * 高度动画在主线程上走，卡住的那一段它一帧都画不出来，而 WAAPI 按墙上时间算进度：卡完之后的第一帧
+     * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
+     * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
+     * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
+     * 动画管」的时间，跟随守护会多等这么久。
+     *
+     * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
+     * @param roll - 正在走的那条卷帘门动画。
+     */
+    const holdThroughStalls = (roll: Animation): void => {
+        let lastFrameAt = 0
+        let lastTime = 0
+        let frameInterval = NOMINAL_FRAME_MS
+        const timeOf = (): number => {
+            const time = roll.currentTime
+            return typeof time === 'number' ? time : 0
+        }
+        const look = (now: number): void => {
+            if (roll.playState !== 'running') return
+            const gap = lastFrameAt === 0 ? 0 : now - lastFrameAt
+            if (gap > FRAME_GAP_LIMIT_MS) {
+                const resumeAt = lastTime + frameInterval
+                const skipped = timeOf() - resumeAt
+                if (skipped > 0) {
+                    roll.currentTime = resumeAt
+                    foldBusyUntil += skipped
+                }
+            } else if (gap > 0) {
+                frameInterval = gap
+            }
+            lastFrameAt = now
+            lastTime = timeOf()
+            requestAnimationFrame(look)
+        }
+        requestAnimationFrame(look)
+    }
+
+    /**
+     * 等 React 把这次折叠落到 DOM 上，再撤掉动画与内联样式。
+     *
+     * 收起方向的高度动画带着 fill: 'forwards'，把真身锁在终点高度上。React 若还没收下这次点击，
+     * cancel() 就会把高度整块还给 CSS——一次从终点弹回全高的跳变，足够把 dsh 的跟随甩出去。所以
+     * 等到 DOM 那边真的收拢了才撤；等够几帧仍然没收拢，那说明这次点击确实没有折叠，只好撤回原样。
+     * @param settled - DOM 那边已经收拢了。
+     * @param done - 可以撤掉动画与内联样式了。
+     * @param attempt - 已经等了几帧。
+     */
+    const confirmCollapsed = (settled: () => boolean, done: () => void, attempt = 0): void => {
+        if (settled() || attempt >= SHUT_CONFIRM_FRAMES) {
+            done()
+            return
+        }
+        requestAnimationFrame(() => {
+            confirmCollapsed(settled, done, attempt + 1)
+        })
+    }
+
+    /**
+     * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
+     * 标记，让子元素按自然高度排好、不被 flex 挤扁（见模块注释）。
+     *
+     * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
+     * 一起交回来。
+     * @param target - 要压的真身。
+     * @returns 把内联样式与标记还原到开工之前。
+     */
+    const beginHeightClip = (target: HTMLElement): (() => void) => {
+        const previousOverflow = target.style.overflow
+        const previousBoxSizing = target.style.boxSizing
+        target.style.overflow = 'hidden'
+        target.style.boxSizing = 'border-box'
+        target.setAttribute(ROLLING_ATTRIBUTE, '')
+        return () => {
+            target.style.overflow = previousOverflow
+            target.style.boxSizing = previousBoxSizing
+            target.removeAttribute(ROLLING_ATTRIBUTE)
+        }
+    }
+
+    /**
+     * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
+     *
+     * 只有高度这一道，但它分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
+     * 曾经在这里叠过一层按可见段走的裁剪，那是错的——裁剪只影响绘制，而高度已经先长出来了，两道进度
+     * 相同、行程不同，差值就是一片空白。
+     *
+     * rect 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成 border-box，
+     * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
+     * @param target - 要拉开的真身：展开体自己，或过程组的组根。
+     * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
+     * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
+     */
+    const rollOpen = (target: HTMLElement, from: number): Animation | null => {
+        markFoldBusy()
+        const height = target.getBoundingClientRect().height
+        if (height <= from) return null
+        const travel = Math.max(from, visibleReachOf(target))
+        const restore = beginHeightClip(target)
+        const growing = target.animate(
+            travel >= height
+                ? [{height: String(from) + 'px'}, {height: String(height) + 'px'}]
+                : [
+                    {height: String(from) + 'px', offset: 0, easing: 'ease-out'},
+                    {height: String(travel) + 'px', offset: VISIBLE_SHARE, easing: 'linear'},
+                    {height: String(height) + 'px', offset: 1},
+                ],
+            {duration: ROLL_MS, easing: 'ease-out'},
+        )
+        holdThroughStalls(growing)
+        growing.onfinish = () => {
+            growing.cancel()
+            restore()
+        }
+        return growing
+    }
+
+    /**
+     * 卷帘门收回：**动真身，不克隆**。
+     *
+     * 这次点击已经在捕获阶段被拦下，React 还没折叠——真身留在原位、还是展开态，于是可以像展开方向
+     * 那样压它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到终点的那
+     * 一刻再放行点击，React 这才收拢，而真身此时已经不占多余空间，接上来的时候不会跳。
+     *
+     * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
+     * VISIBLE_SHARE 的时长卷上去。
+     * @param fold - 要压的真身、终点高度、以及「React 收拢了」的判据。
+     */
+    const rollShut = (fold: HeightShut): void => {
+        markFoldBusy()
+        const height = fold.target.getBoundingClientRect().height
+        // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
+        const release = window.setTimeout(() => {
+            shutting = false
+        }, ROLL_MS + 200)
+        if (height <= fold.floor) {
+            window.clearTimeout(release)
+            replay(fold.control)
+            settleAfterFold(fold.watch)
+            return
+        }
+        const travel = Math.max(fold.floor, visibleReachOf(fold.target))
+        const restore = beginHeightClip(fold.target)
+        const shrinking = fold.target.animate(
+            travel >= height
+                ? [{height: String(height) + 'px'}, {height: String(fold.floor) + 'px'}]
+                : [
+                    {height: String(height) + 'px', offset: 0, easing: 'linear'},
+                    {height: String(travel) + 'px', offset: 1 - VISIBLE_SHARE, easing: 'ease-out'},
+                    {height: String(fold.floor) + 'px', offset: 1},
+                ],
+            {duration: ROLL_MS, easing: 'ease-out', fill: 'forwards'},
+        )
+        holdThroughStalls(shrinking)
+        shrinking.onfinish = () => {
+            window.clearTimeout(release)
+            replay(fold.control)
+            // DOM 那边该已经收拢了；没收拢就不能撤动画，见 confirmCollapsed。
+            confirmCollapsed(fold.collapsed, () => {
+                shrinking.cancel()
+                restore()
+            })
+            settleAfterFold(fold.watch)
+        }
+    }
+
+    const flush = (): void => {
+        const current = intent
+        intent = null
+        if (current === null) return
+        const watch = current.watch
+        // 这一条路上没有动画，收尾就是把监听撤掉。
+        if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) {
+            watch.stop()
+            return
+        }
+        // 过程组：压组根，不压组体——组体自己带滚动条，dsh 的跟随正盯着它。
+        if (current.groupRoot !== null && current.groupBody !== null) {
+            if (current.groupBody.hasAttribute('hidden')) {
+                watch.stop()
+                return
+            }
+            settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight))
+            return
+        }
+        const body = expandedBodyOf(current.control)
+        if (body === null) {
+            watch.stop()
+            return
+        }
+        // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
+        settleAfterFold(watch, rollOpen(body, 0))
+    }
+
+    const onClick = (event: Event): void => {
+        // 自己重放的那一次直接放行，交给 React。
+        if (replaying) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        // 本插件自己的自动开合派发的也是真正的 click，走的正是这条捕获路径。思考行要和读者的点击一样
+        // 起动画：它自己展开、自己收起时若走瞬时切换，读者看到的是内容「啪」地出现和消失，而工具行
+        // 那种只由读者点击的行一直是有卷帘门的。
+        // 过程组不在此列：它一次扫描可能切换好几个组，而收起动画是全局互斥的（shutting），同时来的
+        // 第二次点击会被吞掉，那一组就再也轮不到切换了。
+        if (isProgrammaticToggle() && target.closest(THINK_ROW_SELECTOR) === null) return
+        // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行、任务面板——
+        // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
+        if (target.closest<HTMLElement>(CHAT_FLOW_SELECTOR) === null) return
+        // 弹出层开的不是折叠体：菜单与对话框不该带动聊天流。
+        if (target.closest<HTMLElement>(POPUP_SELECTOR) !== null) return
+        // 收起动画正在跑：这 200ms 里不接受新的点击，免得两次折叠叠在一起。
+        if (shutting) {
+            event.stopPropagation()
+            event.preventDefault()
+            return
+        }
+        // 上一轮展开方向的等待作废，它挂着的意图监听要跟着撤掉。
+        intent?.watch.stop()
+        intent = null
+        // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
+        const control = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
+            ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
+        if (control === null) return
+        // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
+        if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
+        // 组头控制组体，成员行不控制——见 processBodyOf。
+        const groupBody = processBodyOf(control)
+        const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+        const body = groupBody ?? expandedBodyOf(control)
+        // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。起点高度要在这一边量——此刻组根
+        // 正是收起态，那就是门要拉出来的那一段。
+        if (body === null || body.hasAttribute('hidden')) {
+            intent = {
+                control,
+                groupBody,
+                groupRoot,
+                collapsedHeight: groupRoot?.getBoundingClientRect().height ?? 0,
+                watch: watchFold(controlAtBottom(control)),
+                takenAt: Date.now(),
+            }
+            return
+        }
+        if (reduceMotion()) return
+        // 收起方向：把这次点击拦下来，让真身自己卷上去，卷完再放行。
+        event.stopPropagation()
+        event.preventDefault()
+        shutting = true
+        const watch = watchFold(controlAtBottom(control))
+        const collapsed = groupBody !== null
+            ? (): boolean => groupBody.hasAttribute('hidden')
+            : (): boolean => !body.isConnected
+        rollShut({
+            target: groupRoot ?? body,
+            // 组根停在组头那一段：组体收起来之后，组根本来的高度就是这么多。
+            floor: groupRoot === null
+                ? 0
+                : Math.max(0, groupRoot.getBoundingClientRect().height - body.getBoundingClientRect().height),
+            collapsed,
+            control,
+            watch,
+        })
+    }
+
+    const observer = new MutationObserver(flush)
+    document.addEventListener('click', onClick, true)
+    // hidden 也要观察：过程组的开合是 setAttribute('hidden', 'until-found')，只有属性变化，
+    // 不带 attributeFilter 就收不到。别处的 hidden 切换多在 intent 为 null 时到达，直接返回，
+    // 成本可以忽略。
+    observer.observe(document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['hidden']})
+
     return () => {
-      target.style.overflow = previousOverflow
-      target.style.boxSizing = previousBoxSizing
-      target.removeAttribute(ROLLING_ATTRIBUTE)
+        document.removeEventListener('click', onClick, true)
+        observer.disconnect()
+        intent?.watch.stop()
     }
-  }
-
-  /**
-   * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
-   *
-   * 只有高度这一道，但它分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
-   * 曾经在这里叠过一层按可见段走的裁剪，那是错的——裁剪只影响绘制，而高度已经先长出来了，两道进度
-   * 相同、行程不同，差值就是一片空白。
-   *
-   * rect 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成 border-box，
-   * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
-   * @param target - 要拉开的真身：展开体自己，或过程组的组根。
-   * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
-   * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
-   */
-  const rollOpen = (target: HTMLElement, from: number): Animation | null => {
-    markFoldBusy()
-    const height = target.getBoundingClientRect().height
-    if (height <= from) return null
-    const travel = Math.max(from, visibleReachOf(target))
-    const restore = beginHeightClip(target)
-    const growing = target.animate(
-      travel >= height
-        ? [{ height: String(from) + 'px' }, { height: String(height) + 'px' }]
-        : [
-          { height: String(from) + 'px', offset: 0, easing: 'ease-out' },
-          { height: String(travel) + 'px', offset: VISIBLE_SHARE, easing: 'linear' },
-          { height: String(height) + 'px', offset: 1 },
-        ],
-      { duration: ROLL_MS, easing: 'ease-out' },
-    )
-    holdThroughStalls(growing)
-    growing.onfinish = () => {
-      growing.cancel()
-      restore()
-    }
-    return growing
-  }
-
-  /**
-   * 卷帘门收回：**动真身，不克隆**。
-   *
-   * 这次点击已经在捕获阶段被拦下，React 还没折叠——真身留在原位、还是展开态，于是可以像展开方向
-   * 那样压它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到终点的那
-   * 一刻再放行点击，React 这才收拢，而真身此时已经不占多余空间，接上来的时候不会跳。
-   *
-   * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
-   * VISIBLE_SHARE 的时长卷上去。
-   * @param fold - 要压的真身、终点高度、以及「React 收拢了」的判据。
-   */
-  const rollShut = (fold: HeightShut): void => {
-    markFoldBusy()
-    const height = fold.target.getBoundingClientRect().height
-    // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
-    const release = window.setTimeout(() => { shutting = false }, ROLL_MS + 200)
-    if (height <= fold.floor) {
-      window.clearTimeout(release)
-      replay(fold.control)
-      settleAfterFold(fold.watch)
-      return
-    }
-    const travel = Math.max(fold.floor, visibleReachOf(fold.target))
-    const restore = beginHeightClip(fold.target)
-    const shrinking = fold.target.animate(
-      travel >= height
-        ? [{ height: String(height) + 'px' }, { height: String(fold.floor) + 'px' }]
-        : [
-          { height: String(height) + 'px', offset: 0, easing: 'linear' },
-          { height: String(travel) + 'px', offset: 1 - VISIBLE_SHARE, easing: 'ease-out' },
-          { height: String(fold.floor) + 'px', offset: 1 },
-        ],
-      { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' },
-    )
-    holdThroughStalls(shrinking)
-    shrinking.onfinish = () => {
-      window.clearTimeout(release)
-      replay(fold.control)
-      // DOM 那边该已经收拢了；没收拢就不能撤动画，见 confirmCollapsed。
-      confirmCollapsed(fold.collapsed, () => {
-        shrinking.cancel()
-        restore()
-      })
-      settleAfterFold(fold.watch)
-    }
-  }
-
-  const flush = (): void => {
-    const current = intent
-    intent = null
-    if (current === null) return
-    const watch = current.watch
-    // 这一条路上没有动画，收尾就是把监听撤掉。
-    if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) {
-      watch.stop()
-      return
-    }
-    // 过程组：压组根，不压组体——组体自己带滚动条，dsh 的跟随正盯着它。
-    if (current.groupRoot !== null && current.groupBody !== null) {
-      if (current.groupBody.hasAttribute('hidden')) {
-        watch.stop()
-        return
-      }
-      settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight))
-      return
-    }
-    const body = expandedBodyOf(current.control)
-    if (body === null) {
-      watch.stop()
-      return
-    }
-    // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
-    settleAfterFold(watch, rollOpen(body, 0))
-  }
-
-  const onClick = (event: Event): void => {
-    // 自己重放的那一次直接放行，交给 React。
-    if (replaying) return
-    const target = event.target
-    if (!(target instanceof Element)) return
-    // 本插件自己的自动开合派发的也是真正的 click，走的正是这条捕获路径。思考行要和读者的点击一样
-    // 起动画：它自己展开、自己收起时若走瞬时切换，读者看到的是内容「啪」地出现和消失，而工具行
-    // 那种只由读者点击的行一直是有卷帘门的。
-    // 过程组不在此列：它一次扫描可能切换好几个组，而收起动画是全局互斥的（shutting），同时来的
-    // 第二次点击会被吞掉，那一组就再也轮不到切换了。
-    if (isProgrammaticToggle() && target.closest(THINK_ROW_SELECTOR) === null) return
-    // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行、任务面板——
-    // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
-    if (target.closest<HTMLElement>(CHAT_FLOW_SELECTOR) === null) return
-    // 弹出层开的不是折叠体：菜单与对话框不该带动聊天流。
-    if (target.closest<HTMLElement>(POPUP_SELECTOR) !== null) return
-    // 收起动画正在跑：这 200ms 里不接受新的点击，免得两次折叠叠在一起。
-    if (shutting) {
-      event.stopPropagation()
-      event.preventDefault()
-      return
-    }
-    // 上一轮展开方向的等待作废，它挂着的意图监听要跟着撤掉。
-    intent?.watch.stop()
-    intent = null
-    // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
-    const control = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
-      ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
-    if (control === null) return
-    // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
-    if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
-    // 组头控制组体，成员行不控制——见 processBodyOf。
-    const groupBody = processBodyOf(control)
-    const groupRoot = groupBody?.parentElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
-    const body = groupBody ?? expandedBodyOf(control)
-    // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。起点高度要在这一边量——此刻组根
-    // 正是收起态，那就是门要拉出来的那一段。
-    if (body === null || body.hasAttribute('hidden')) {
-      intent = {
-        control,
-        groupBody,
-        groupRoot,
-        collapsedHeight: groupRoot?.getBoundingClientRect().height ?? 0,
-        watch: watchFold(controlAtBottom(control)),
-        takenAt: Date.now(),
-      }
-      return
-    }
-    if (reduceMotion()) return
-    // 收起方向：把这次点击拦下来，让真身自己卷上去，卷完再放行。
-    event.stopPropagation()
-    event.preventDefault()
-    shutting = true
-    const watch = watchFold(controlAtBottom(control))
-    const collapsed = groupBody !== null
-      ? (): boolean => groupBody.hasAttribute('hidden')
-      : (): boolean => !body.isConnected
-    rollShut({
-      target: groupRoot ?? body,
-      // 组根停在组头那一段：组体收起来之后，组根本来的高度就是这么多。
-      floor: groupRoot === null
-        ? 0
-        : Math.max(0, groupRoot.getBoundingClientRect().height - body.getBoundingClientRect().height),
-      collapsed,
-      control,
-      watch,
-    })
-  }
-
-  const observer = new MutationObserver(flush)
-  document.addEventListener('click', onClick, true)
-  // hidden 也要观察：过程组的开合是 setAttribute('hidden', 'until-found')，只有属性变化，
-  // 不带 attributeFilter 就收不到。别处的 hidden 切换多在 intent 为 null 时到达，直接返回，
-  // 成本可以忽略。
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] })
-
-  return () => {
-    document.removeEventListener('click', onClick, true)
-    observer.disconnect()
-    intent?.watch.stop()
-  }
 }

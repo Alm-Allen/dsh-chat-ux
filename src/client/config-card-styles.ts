@@ -16,22 +16,22 @@
  * （那一页用的是带 hash 的 CSS Module 名，而插件的样式表是普通的全局 CSS）。
  */
 export const CARD_CLASS = {
-  form: 'dsh-chat-ux-card-form',
-  notice: 'dsh-chat-ux-card-notice',
-  row: 'dsh-chat-ux-card-row',
-  rowText: 'dsh-chat-ux-card-row-text',
-  label: 'dsh-chat-ux-card-label',
-  labelLine: 'dsh-chat-ux-card-label-line',
-  badges: 'dsh-chat-ux-card-badges',
-  reset: 'dsh-chat-ux-card-reset',
-  hint: 'dsh-chat-ux-card-hint',
-  failed: 'dsh-chat-ux-card-failed',
-  field: 'dsh-chat-ux-card-field',
-  fieldHead: 'dsh-chat-ux-card-field-head',
-  input: 'dsh-chat-ux-card-input',
-  invalid: 'dsh-chat-ux-card-invalid',
-  segment: 'dsh-chat-ux-card-segment',
-  subfields: 'dsh-chat-ux-card-subfields',
+    form: 'dsh-chat-ux-card-form',
+    notice: 'dsh-chat-ux-card-notice',
+    row: 'dsh-chat-ux-card-row',
+    rowText: 'dsh-chat-ux-card-row-text',
+    label: 'dsh-chat-ux-card-label',
+    labelLine: 'dsh-chat-ux-card-label-line',
+    badges: 'dsh-chat-ux-card-badges',
+    reset: 'dsh-chat-ux-card-reset',
+    hint: 'dsh-chat-ux-card-hint',
+    failed: 'dsh-chat-ux-card-failed',
+    field: 'dsh-chat-ux-card-field',
+    fieldHead: 'dsh-chat-ux-card-field-head',
+    input: 'dsh-chat-ux-card-input',
+    invalid: 'dsh-chat-ux-card-invalid',
+    segment: 'dsh-chat-ux-card-segment',
+    subfields: 'dsh-chat-ux-card-subfields',
 } as const
 
 /**

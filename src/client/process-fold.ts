@@ -17,8 +17,8 @@
  * @module dsh-chat-ux/client/process-fold
  */
 
-import { CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, RUNNING_STATE } from './dom-contract'
-import { beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle } from './programmatic-toggle'
+import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_GROUP_SELECTOR, RUNNING_STATE} from './dom-contract'
+import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from './programmatic-toggle'
 
 /** 组头那个开合控件。 */
 const HEADER_SELECTOR = 'button[data-process-activity]'
@@ -61,136 +61,136 @@ const CLOSED = 'closed'
  * @returns disposer：断开 observer 并摘掉两个监听。
  */
 export function installProcessFold(): () => void {
-  /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
-  const touchedIn = new WeakMap<Element, string>()
-  /** 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
-  const attemptedIn = new WeakMap<Element, string>()
-  /** 是否已经排了一次扫描。 */
-  let scanQueued = false
+    /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
+    const touchedIn = new WeakMap<Element, string>()
+    /** 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
+    const attemptedIn = new WeakMap<Element, string>()
+    /** 是否已经排了一次扫描。 */
+    let scanQueued = false
 
-  /**
-   * 把给到的这些组拉到它们当前阶段该有的样子。
-   * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
-   */
-  const syncGroups = (groups: Iterable<HTMLElement>): void => {
-    for (const group of groups) {
-      // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
-      if (!group.isConnected) continue
-      const header = group.querySelector(HEADER_SELECTOR)
-      const body = group.querySelector(PROCESS_BODY_SELECTOR)
-      if (!(header instanceof HTMLElement) || body === null) continue
-      const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING_STATE
-      // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
-      // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
-      // 写到属性上，样式表在组体展开时用它替掉整段文本。
-      const headerText = header.textContent ?? ''
-      const separatorAt = headerText.indexOf(DETAIL_SEPARATOR)
-      const detailed = separatorAt >= 0
-      group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed)
-      group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'))
-      if (detailed) {
-        const label = headerText.slice(0, separatorAt)
-        // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
-        // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
-        // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
-        if (header.getAttribute(LABEL_ATTRIBUTE) !== label) header.setAttribute(LABEL_ATTRIBUTE, label)
-        if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label) header.setAttribute(LABEL_NAME_ATTRIBUTE, label)
-        const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`
-        // 这条路径每个扫描帧都会走到，值没变就别再写一次。
-        if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {
-          header.style.setProperty(LABEL_SPREAD_PROPERTY, spread)
+    /**
+     * 把给到的这些组拉到它们当前阶段该有的样子。
+     * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
+     */
+    const syncGroups = (groups: Iterable<HTMLElement>): void => {
+        for (const group of groups) {
+            // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
+            if (!group.isConnected) continue
+            const header = group.querySelector(HEADER_SELECTOR)
+            const body = group.querySelector(PROCESS_BODY_SELECTOR)
+            if (!(header instanceof HTMLElement) || body === null) continue
+            const phase = header.querySelector(RUNNING_SELECTOR) === null ? CLOSED : RUNNING_STATE
+            // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
+            // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
+            // 写到属性上，样式表在组体展开时用它替掉整段文本。
+            const headerText = header.textContent ?? ''
+            const separatorAt = headerText.indexOf(DETAIL_SEPARATOR)
+            const detailed = separatorAt >= 0
+            group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed)
+            group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'))
+            if (detailed) {
+                const label = headerText.slice(0, separatorAt)
+                // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
+                // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
+                // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
+                if (header.getAttribute(LABEL_ATTRIBUTE) !== label) header.setAttribute(LABEL_ATTRIBUTE, label)
+                if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label) header.setAttribute(LABEL_NAME_ATTRIBUTE, label)
+                const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`
+                // 这条路径每个扫描帧都会走到，值没变就别再写一次。
+                if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {
+                    header.style.setProperty(LABEL_SPREAD_PROPERTY, spread)
+                }
+            } else header.removeAttribute(LABEL_NAME_ATTRIBUTE)
+            // 这个阶段里读者已经决定过这个组的开合，别碰它。
+            if (touchedIn.get(group) === phase) continue
+            if (body.hasAttribute('hidden') === (phase === CLOSED)) continue
+            // 一次没引起变化的点击，下一次也不会引起变化。
+            if (attemptedIn.get(group) === phase) continue
+            attemptedIn.set(group, phase)
+            // dsh 的组头 onClick 里有 focus()，那是给真实点击准备的。程序化点击不该把焦点从读者手里拿走，
+            // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab。
+            const previousFocus = document.activeElement
+            // 同一个 focus() 还会把组头滚进视口，而那次 scroll 在 dsh 眼里和读者自己滚一下没有区别：跟随
+            // 被挂起 500ms 采样（pending），这期间 onResize 直接返回不跟随，等它终于跑时内容已经长出去一截，
+            // nearBottom 判否，跟随就此关掉——而读者一下都没碰过键鼠。所以这一段结束后把滚动位置放回去。
+            const scroller = header.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+            const scrollTop = scroller === null ? null : scroller.scrollTop
+            // 贴底与否要在点击之前量：这一下点击自己就会改布局。
+            const wasAtBottom = scroller !== null
+                && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
+            // 这一次点击是本模块派的：折叠守卫与思考行那一侧都不该把它当成读者的意图。
+            beginProgrammaticToggle()
+            try {
+                header.click()
+            } finally {
+                endProgrammaticToggle()
+            }
+            // 位置要放回去，但不能把贴底的读者放到离底一截的地方：这一次写同样是一次滚动，会被 dsh
+            // 认成读者移动，跟随就此关掉。贴底时直接钉到底。
+            if (scroller !== null && scrollTop !== null && scroller.scrollTop !== scrollTop) {
+                scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : scrollTop
+            }
+            // 读者本来就停在组头上时，这一句会把焦点放回原处，等于什么都没发生。
+            if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({preventScroll: true})
+            if (document.activeElement === header) header.blur()
         }
-      } else header.removeAttribute(LABEL_NAME_ATTRIBUTE)
-      // 这个阶段里读者已经决定过这个组的开合，别碰它。
-      if (touchedIn.get(group) === phase) continue
-      if (body.hasAttribute('hidden') === (phase === CLOSED)) continue
-      // 一次没引起变化的点击，下一次也不会引起变化。
-      if (attemptedIn.get(group) === phase) continue
-      attemptedIn.set(group, phase)
-      // dsh 的组头 onClick 里有 focus()，那是给真实点击准备的。程序化点击不该把焦点从读者手里拿走，
-      // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab。
-      const previousFocus = document.activeElement
-      // 同一个 focus() 还会把组头滚进视口，而那次 scroll 在 dsh 眼里和读者自己滚一下没有区别：跟随
-      // 被挂起 500ms 采样（pending），这期间 onResize 直接返回不跟随，等它终于跑时内容已经长出去一截，
-      // nearBottom 判否，跟随就此关掉——而读者一下都没碰过键鼠。所以这一段结束后把滚动位置放回去。
-      const scroller = header.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
-      const scrollTop = scroller === null ? null : scroller.scrollTop
-      // 贴底与否要在点击之前量：这一下点击自己就会改布局。
-      const wasAtBottom = scroller !== null
-        && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= FOLLOW_THRESHOLD_PX
-      // 这一次点击是本模块派的：折叠守卫与思考行那一侧都不该把它当成读者的意图。
-      beginProgrammaticToggle()
-      try {
-        header.click()
-      } finally {
-        endProgrammaticToggle()
-      }
-      // 位置要放回去，但不能把贴底的读者放到离底一截的地方：这一次写同样是一次滚动，会被 dsh
-      // 认成读者移动，跟随就此关掉。贴底时直接钉到底。
-      if (scroller !== null && scrollTop !== null && scroller.scrollTop !== scrollTop) {
-        scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : scrollTop
-      }
-      // 读者本来就停在组头上时，这一句会把焦点放回原处，等于什么都没发生。
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true })
-      if (document.activeElement === header) header.blur()
     }
-  }
 
-  /** 装好之后先全量收敛一遍：页面里躺着的那些组也要归位。 */
-  const syncEveryGroup = (): void => {
-    syncGroups(document.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR))
-  }
+    /** 装好之后先全量收敛一遍：页面里躺着的那些组也要归位。 */
+    const syncEveryGroup = (): void => {
+        syncGroups(document.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR))
+    }
 
-  /** 记住是读者、而不是本模块刚刚决定了一个组的开合。 */
-  const rememberReaderTouched = (event: Event): void => {
-    if (isProgrammaticToggle()) return
-    const target = event.target
-    if (!(target instanceof Element)) return
-    const group = target.closest(PROCESS_GROUP_SELECTOR)
-    if (group === null) return
-    const header = group.querySelector(HEADER_SELECTOR)
-    touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
-  }
+    /** 记住是读者、而不是本模块刚刚决定了一个组的开合。 */
+    const rememberReaderTouched = (event: Event): void => {
+        if (isProgrammaticToggle()) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const group = target.closest(PROCESS_GROUP_SELECTOR)
+        if (group === null) return
+        const header = group.querySelector(HEADER_SELECTOR)
+        touchedIn.set(group, header !== null && header.querySelector(RUNNING_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
+    }
 
-  /**
-   * 这一批变化涉及哪些组。
-   *
-   * 从 records 里拿引用，而不是回头去查文档——理由同 `reasoning-fold`。组头里的实时细节是随流式
-   * 逐字变的，所以 characterData 也在观察范围里：不盯着它，组头那半截标签就会停在旧值上。
-   */
-  const touchedGroups = new Set<HTMLElement>()
+    /**
+     * 这一批变化涉及哪些组。
+     *
+     * 从 records 里拿引用，而不是回头去查文档——理由同 `reasoning-fold`。组头里的实时细节是随流式
+     * 逐字变的，所以 characterData 也在观察范围里：不盯着它，组头那半截标签就会停在旧值上。
+     */
+    const touchedGroups = new Set<HTMLElement>()
 
-  // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
-  const observer = new MutationObserver((records) => {
-    const known = touchedGroups.size
-    for (const record of records) collectGroups(record, touchedGroups)
-    // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
-    if (touchedGroups.size === known) return
-    if (scanQueued) return
-    scanQueued = true
-    requestAnimationFrame(() => {
-      scanQueued = false
-      const groups = [...touchedGroups]
-      touchedGroups.clear()
-      syncGroups(groups)
+    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
+    const observer = new MutationObserver((records) => {
+        const known = touchedGroups.size
+        for (const record of records) collectGroups(record, touchedGroups)
+        // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
+        if (touchedGroups.size === known) return
+        if (scanQueued) return
+        scanQueued = true
+        requestAnimationFrame(() => {
+            scanQueued = false
+            const groups = [...touchedGroups]
+            touchedGroups.clear()
+            syncGroups(groups)
+        })
     })
-  })
-  observer.observe(document.body ?? document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ['data-text-shimmer', 'hidden'],
-    characterData: true,
-  })
-  document.addEventListener('click', rememberReaderTouched, true)
-  document.addEventListener('keydown', rememberReaderTouched, true)
-  syncEveryGroup()
+    observer.observe(document.body ?? document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-text-shimmer', 'hidden'],
+        characterData: true,
+    })
+    document.addEventListener('click', rememberReaderTouched, true)
+    document.addEventListener('keydown', rememberReaderTouched, true)
+    syncEveryGroup()
 
-  return () => {
-    observer.disconnect()
-    document.removeEventListener('click', rememberReaderTouched, true)
-    document.removeEventListener('keydown', rememberReaderTouched, true)
-  }
+    return () => {
+        observer.disconnect()
+        document.removeEventListener('click', rememberReaderTouched, true)
+        document.removeEventListener('keydown', rememberReaderTouched, true)
+    }
 }
 
 /**
@@ -201,13 +201,13 @@ export function installProcessFold(): () => void {
  * @param into - 收集到的组。
  */
 function collectGroups(record: MutationRecord, into: Set<HTMLElement>): void {
-  const target = record.target
-  const element = target instanceof Element ? target : target.parentElement
-  const group = element?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
-  if (group !== null) into.add(group)
-  for (const node of record.addedNodes) {
-    if (!(node instanceof HTMLElement)) continue
-    if (node.matches(PROCESS_GROUP_SELECTOR)) into.add(node)
-    for (const found of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) into.add(found)
-  }
+    const target = record.target
+    const element = target instanceof Element ? target : target.parentElement
+    const group = element?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
+    if (group !== null) into.add(group)
+    for (const node of record.addedNodes) {
+        if (!(node instanceof HTMLElement)) continue
+        if (node.matches(PROCESS_GROUP_SELECTOR)) into.add(node)
+        for (const found of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) into.add(found)
+    }
 }

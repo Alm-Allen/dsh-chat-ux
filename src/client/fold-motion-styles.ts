@@ -34,7 +34,7 @@
  *
  * @module dsh-chat-ux/client/fold-motion-styles
  */
-import { ROLLING_ATTRIBUTE } from './fold-glide'
+import {ROLLING_ATTRIBUTE} from './fold-glide'
 
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 export const FOLD_MOTION_CSS = `

@@ -30,9 +30,9 @@
  *
  * @module dsh-chat-ux/client/send-flight
  */
-import { CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR } from './dom-contract'
-import { alphaOf, FLIGHT_MS, snapshotComposer, startMorph } from './send-morph'
-import type { ComposerSnapshot, Morph } from './send-morph'
+import {CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR} from './dom-contract'
+import {alphaOf, FLIGHT_MS, snapshotComposer, startMorph} from './send-morph'
+import type {ComposerSnapshot, Morph} from './send-morph'
 
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
@@ -68,194 +68,195 @@ const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR
  * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
 export function installSendFlight(readEnabled: () => boolean): () => void {
-  // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {}
-
-  /** 最近一次抓到的草稿起点。 */
-  let origin: DraftOrigin | null = null
-  /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
-  const handled = new WeakSet<Element>()
-  /** 正在飞的那一段。读者连发时，最后一段说了算。 */
-  let flight: Flight | null = null
-  /** 定时器兜底。 */
-  let rescue = 0
-
-  for (const echo of document.querySelectorAll(ECHO_SELECTOR)) handled.add(echo)
-
-  /**
-   * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
-   *
-   * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
-   * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
-   */
-  const rowWatcher = new MutationObserver((records) => {
-    const current = flight
-    if (current === null || !touchesUserRow(records)) return
-    const row = currentRow(current.previous)
-    if (row === null || row === current.hidden) return
-    current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-    row.setAttribute(FLYING_ATTRIBUTE, '')
-    current.hidden = row
-    current.bubble = findBubble(row)
-    followTarget(current)
-  })
-
-  /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
-  const settle = (): void => {
-    const current = flight
-    if (current === null) return
-    flight = null
-    rowWatcher.disconnect()
-    window.clearTimeout(rescue)
-    rescue = 0
-    current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-    // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
-    // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
-    // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
-    // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
-    current.morph.wrapper.remove()
-    for (const animation of current.morph.animations) animation.cancel()
-  }
-
-  /**
-   * 帧里三件事：认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。认行交给上面那个
-   * observer——它不是每帧都有新答案的事。
-   *
-   * **位移与形状都不在这里写**：两条关键帧同一条时间轴（同一个 `FLIGHT_MS`、同一批 offset），dsh 解析
-   * 响应占住主线程那几十到一百多毫秒里它们照样一起在走，右边缘的等式（见 `ACROSS_OMEGA`）在整段里都
-   * 成立。这条路径上曾经栽过一次：位移在合成器上、形状留在主线程的 `clip-path` 里，主线程一卡，一整张
-   * 还没收窄的卡片就飞到了终点。
-   *
-   * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
-   */
-  const tick = (): void => {
-    const current = flight
-    if (current === null) return
-    const u = current.morph.progress()
-    if (u >= 1) {
-      settle()
-      return
+    // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {
     }
-    current.morph.compact(u)
-    followTarget(current)
-    requestAnimationFrame(tick)
-  }
 
-  /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
-  const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
-    // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
-    // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
-    settle()
-    const bubble = findBubble(echo)
-    if (bubble === null) return
-    const box = bubble.getBoundingClientRect()
-    const card = draft.snapshot.box
-    if (!sameScreen(card.left, box.left, window.innerWidth)) return
-    if (!sameScreen(card.top, box.top, window.innerHeight)) return
-    const morph = startMorph(draft.snapshot, bubble, box)
-    if (morph === null) return
-    echo.setAttribute(FLYING_ATTRIBUTE, '')
-    flight = {
-      morph,
-      targetAt: { left: box.left, top: box.top },
-      shiftedX: 0,
-      shiftedY: 0,
-      previous: lastUserRow(),
-      hidden: echo,
-      bubble,
+    /** 最近一次抓到的草稿起点。 */
+    let origin: DraftOrigin | null = null
+    /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
+    const handled = new WeakSet<Element>()
+    /** 正在飞的那一段。读者连发时，最后一段说了算。 */
+    let flight: Flight | null = null
+    /** 定时器兜底。 */
+    let rescue = 0
+
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR)) handled.add(echo)
+
+    /**
+     * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
+     *
+     * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
+     * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
+     */
+    const rowWatcher = new MutationObserver((records) => {
+        const current = flight
+        if (current === null || !touchesUserRow(records)) return
+        const row = currentRow(current.previous)
+        if (row === null || row === current.hidden) return
+        current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
+        row.setAttribute(FLYING_ATTRIBUTE, '')
+        current.hidden = row
+        current.bubble = findBubble(row)
+        followTarget(current)
+    })
+
+    /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
+    const settle = (): void => {
+        const current = flight
+        if (current === null) return
+        flight = null
+        rowWatcher.disconnect()
+        window.clearTimeout(rescue)
+        rescue = 0
+        current.hidden?.removeAttribute(FLYING_ATTRIBUTE)
+        // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
+        // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
+        // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
+        // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
+        current.morph.wrapper.remove()
+        for (const animation of current.morph.animations) animation.cancel()
     }
-    rowWatcher.observe(document.body, { childList: true, subtree: true })
-    rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
-    requestAnimationFrame(tick)
-  }
 
-  /**
-   * 等这一次提交的回显。
-   *
-   * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
-   */
-  const echoWatcher = new MutationObserver(() => {
-    const draft = origin
-    if (draft === null) {
-      echoWatcher.disconnect()
-      return
+    /**
+     * 帧里三件事：认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。认行交给上面那个
+     * observer——它不是每帧都有新答案的事。
+     *
+     * **位移与形状都不在这里写**：两条关键帧同一条时间轴（同一个 `FLIGHT_MS`、同一批 offset），dsh 解析
+     * 响应占住主线程那几十到一百多毫秒里它们照样一起在走，右边缘的等式（见 `ACROSS_OMEGA`）在整段里都
+     * 成立。这条路径上曾经栽过一次：位移在合成器上、形状留在主线程的 `clip-path` 里，主线程一卡，一整张
+     * 还没收窄的卡片就飞到了终点。
+     *
+     * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
+     */
+    const tick = (): void => {
+        const current = flight
+        if (current === null) return
+        const u = current.morph.progress()
+        if (u >= 1) {
+            settle()
+            return
+        }
+        current.morph.compact(u)
+        followTarget(current)
+        requestAnimationFrame(tick)
     }
-    if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
-      origin = null
-      echoWatcher.disconnect()
-      return
+
+    /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+    const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
+        // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
+        // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
+        settle()
+        const bubble = findBubble(echo)
+        if (bubble === null) return
+        const box = bubble.getBoundingClientRect()
+        const card = draft.snapshot.box
+        if (!sameScreen(card.left, box.left, window.innerWidth)) return
+        if (!sameScreen(card.top, box.top, window.innerHeight)) return
+        const morph = startMorph(draft.snapshot, bubble, box)
+        if (morph === null) return
+        echo.setAttribute(FLYING_ATTRIBUTE, '')
+        flight = {
+            morph,
+            targetAt: {left: box.left, top: box.top},
+            shiftedX: 0,
+            shiftedY: 0,
+            previous: lastUserRow(),
+            hidden: echo,
+            bubble,
+        }
+        rowWatcher.observe(document.body, {childList: true, subtree: true})
+        rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
+        requestAnimationFrame(tick)
     }
-    const echo = takeFreshEcho(handled)
-    if (echo === null) return
-    origin = null
-    echoWatcher.disconnect()
-    startFlight(echo, draft)
-  })
 
-  /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
-  const captureOrigin = (): void => {
-    if (!readEnabled()) return
-    const input = document.querySelector(COMPOSER_INPUT_SELECTOR)
-    if (!(input instanceof HTMLElement)) return
-    const card = input.closest(COMPOSER_CARD_SELECTOR)
-    if (!(card instanceof HTMLElement)) return
-    // 空草稿不会提交出一条消息；量它只是白花一次克隆。
-    if ((input.textContent ?? '').trim() === '') return
-    const snapshot = snapshotComposer(input, card)
-    if (snapshot === null) return
-    origin = { capturedAt: performance.now(), snapshot }
-    echoWatcher.observe(document.body, { childList: true, subtree: true })
-  }
+    /**
+     * 等这一次提交的回显。
+     *
+     * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
+     */
+    const echoWatcher = new MutationObserver(() => {
+        const draft = origin
+        if (draft === null) {
+            echoWatcher.disconnect()
+            return
+        }
+        if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
+            origin = null
+            echoWatcher.disconnect()
+            return
+        }
+        const echo = takeFreshEcho(handled)
+        if (echo === null) return
+        origin = null
+        echoWatcher.disconnect()
+        startFlight(echo, draft)
+    })
 
-  /**
-   * 提交的两条手动路径：回车，和点输入卡片里的按钮。两个都早于 React 清空草稿，所以起点量得到。
-   * 点了没提交也不亏——没有回显就没有动画。
-   */
-  const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
-    if (event.isComposing) return
-    captureOrigin()
-  }
+    /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
+    const captureOrigin = (): void => {
+        if (!readEnabled()) return
+        const input = document.querySelector(COMPOSER_INPUT_SELECTOR)
+        if (!(input instanceof HTMLElement)) return
+        const card = input.closest(COMPOSER_CARD_SELECTOR)
+        if (!(card instanceof HTMLElement)) return
+        // 空草稿不会提交出一条消息；量它只是白花一次克隆。
+        if ((input.textContent ?? '').trim() === '') return
+        const snapshot = snapshotComposer(input, card)
+        if (snapshot === null) return
+        origin = {capturedAt: performance.now(), snapshot}
+        echoWatcher.observe(document.body, {childList: true, subtree: true})
+    }
 
-  const onClick = (event: MouseEvent): void => {
-    if (!(event.target instanceof Element)) return
-    if (event.target.closest(COMPOSER_CARD_SELECTOR) === null) return
-    captureOrigin()
-  }
+    /**
+     * 提交的两条手动路径：回车，和点输入卡片里的按钮。两个都早于 React 清空草稿，所以起点量得到。
+     * 点了没提交也不亏——没有回显就没有动画。
+     */
+    const onKeyDown = (event: KeyboardEvent): void => {
+        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+        if (event.isComposing) return
+        captureOrigin()
+    }
 
-  document.addEventListener('keydown', onKeyDown, true)
-  document.addEventListener('click', onClick, true)
+    const onClick = (event: MouseEvent): void => {
+        if (!(event.target instanceof Element)) return
+        if (event.target.closest(COMPOSER_CARD_SELECTOR) === null) return
+        captureOrigin()
+    }
 
-  return () => {
-    document.removeEventListener('keydown', onKeyDown, true)
-    document.removeEventListener('click', onClick, true)
-    echoWatcher.disconnect()
-    rowWatcher.disconnect()
-    origin = null
-    settle()
-  }
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('click', onClick, true)
+
+    return () => {
+        document.removeEventListener('keydown', onKeyDown, true)
+        document.removeEventListener('click', onClick, true)
+        echoWatcher.disconnect()
+        rowWatcher.disconnect()
+        origin = null
+        settle()
+    }
 }
 
 /** 草稿起飞前的那一刻：整张输入卡片的快照。 */
 interface DraftOrigin {
-  readonly capturedAt: number
-  readonly snapshot: ComposerSnapshot
+    readonly capturedAt: number
+    readonly snapshot: ComposerSnapshot
 }
 
 /** 一段正在飞的动画。`hidden` 会在回显被换掉时改指新来的那一行。 */
 interface Flight {
-  /** 替身与它身上跑着的全部合成动画。 */
-  readonly morph: Morph
-  /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
-  readonly targetAt: { readonly left: number; readonly top: number }
-  /** 已经补到外层上的差值；没变就不写样式。 */
-  shiftedX: number
-  shiftedY: number
-  /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
-  readonly previous: HTMLElement | null
-  hidden: HTMLElement | null
-  /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
-  bubble: HTMLElement | null
+    /** 替身与它身上跑着的全部合成动画。 */
+    readonly morph: Morph
+    /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
+    readonly targetAt: { readonly left: number; readonly top: number }
+    /** 已经补到外层上的差值；没变就不写样式。 */
+    shiftedX: number
+    shiftedY: number
+    /** 起飞之前聊天流里最后一条用户消息。靠它认出新来的那一行。 */
+    readonly previous: HTMLElement | null
+    hidden: HTMLElement | null
+    /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
+    bubble: HTMLElement | null
 }
 
 /**
@@ -265,18 +266,18 @@ interface Flight {
  * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
  */
 function followTarget(value: Flight): void {
-  const bubble = value.bubble
-  if (bubble === null) return
-  const box = bubble.getBoundingClientRect()
-  // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
-  // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
-  if (box.width === 0) return
-  const shiftX = box.left - value.targetAt.left
-  const shiftY = box.top - value.targetAt.top
-  if (shiftX === value.shiftedX && shiftY === value.shiftedY) return
-  value.shiftedX = shiftX
-  value.shiftedY = shiftY
-  value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)'
+    const bubble = value.bubble
+    if (bubble === null) return
+    const box = bubble.getBoundingClientRect()
+    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
+    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+    if (box.width === 0) return
+    const shiftX = box.left - value.targetAt.left
+    const shiftY = box.top - value.targetAt.top
+    if (shiftX === value.shiftedX && shiftY === value.shiftedY) return
+    value.shiftedX = shiftX
+    value.shiftedY = shiftY
+    value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)'
 }
 
 /**
@@ -286,29 +287,29 @@ function followTarget(value: Flight): void {
  * 里被当成新的，跟着再飞一次。
  */
 function takeFreshEcho(handled: WeakSet<Element>): HTMLElement | null {
-  const fresh: Element[] = []
-  for (const echo of document.querySelectorAll(ECHO_SELECTOR)) {
-    if (!handled.has(echo)) fresh.push(echo)
-  }
-  if (fresh.length === 0) return null
-  for (const echo of fresh) handled.add(echo)
-  const latest = fresh.at(-1)
-  return latest instanceof HTMLElement ? latest : null
+    const fresh: Element[] = []
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR)) {
+        if (!handled.has(echo)) fresh.push(echo)
+    }
+    if (fresh.length === 0) return null
+    for (const echo of fresh) handled.add(echo)
+    const latest = fresh.at(-1)
+    return latest instanceof HTMLElement ? latest : null
 }
 
 /** 此刻该藏的那一条：回显还在就是它，回显被换掉之后就是正式那一行。 */
 function currentRow(previous: HTMLElement | null): HTMLElement | null {
-  const echo = document.querySelector(ECHO_SELECTOR)
-  if (echo instanceof HTMLElement && echo !== previous) return echo
-  const row = lastUserRow()
-  return row === previous ? null : row
+    const echo = document.querySelector(ECHO_SELECTOR)
+    if (echo instanceof HTMLElement && echo !== previous) return echo
+    const row = lastUserRow()
+    return row === previous ? null : row
 }
 
 /** 聊天流里最后一条用户行。 */
 function lastUserRow(): HTMLElement | null {
-  const rows = document.querySelectorAll(USER_ROW_SELECTOR)
-  const last = rows.item(rows.length - 1)
-  return last instanceof HTMLElement ? last : null
+    const rows = document.querySelectorAll(USER_ROW_SELECTOR)
+    const last = rows.item(rows.length - 1)
+    return last instanceof HTMLElement ? last : null
 }
 
 /**
@@ -319,14 +320,14 @@ function lastUserRow(): HTMLElement | null {
  * 与引用摘要都没有底色，会被跳过。
  */
 function findBubble(row: HTMLElement): HTMLElement | null {
-  const queue: Element[] = Array.from(row.children)
-  while (queue.length > 0) {
-    const current = queue.shift()
-    if (current === undefined) break
-    if (current instanceof HTMLElement && alphaOf(getComputedStyle(current).backgroundColor) > 0) return current
-    for (const child of current.children) queue.push(child)
-  }
-  return null
+    const queue: Element[] = Array.from(row.children)
+    while (queue.length > 0) {
+        const current = queue.shift()
+        if (current === undefined) break
+        if (current instanceof HTMLElement && alphaOf(getComputedStyle(current).backgroundColor) > 0) return current
+        for (const child of current.children) queue.push(child)
+    }
+    return null
 }
 
 /**
@@ -338,21 +339,21 @@ function findBubble(row: HTMLElement): HTMLElement | null {
  * @returns 值得认一次行时为真。
  */
 function touchesUserRow(records: MutationRecord[]): boolean {
-  for (const record of records) {
-    for (const node of record.addedNodes) {
-      if (isRowNode(node)) return true
+    for (const record of records) {
+        for (const node of record.addedNodes) {
+            if (isRowNode(node)) return true
+        }
+        for (const node of record.removedNodes) {
+            if (isRowNode(node)) return true
+        }
     }
-    for (const node of record.removedNodes) {
-      if (isRowNode(node)) return true
-    }
-  }
-  return false
+    return false
 }
 
 /** 一个节点自己、或者它带进来的那棵子树里，有没有用户行或回显行。 */
 function isRowNode(node: Node): boolean {
-  return node instanceof HTMLElement
-    && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null)
+    return node instanceof HTMLElement
+        && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null)
 }
 
 /**
@@ -362,5 +363,5 @@ function isRowNode(node: Node): boolean {
  * 就看得见；有一头已经飞出屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
  */
 function sameScreen(start: number, end: number, viewportExtent: number): boolean {
-  return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent)
+    return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent)
 }

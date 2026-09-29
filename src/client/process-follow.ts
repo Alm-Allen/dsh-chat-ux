@@ -23,8 +23,8 @@
  * @module dsh-chat-ux/client/process-follow
  */
 
-import { PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR } from './dom-contract'
-import { isReaderScrollIntent } from './reader-intent'
+import {PROCESS_BODY_SELECTOR, PROCESS_CONTENT_SELECTOR} from './dom-contract'
+import {isReaderScrollIntent} from './reader-intent'
 
 /** 读者滚回组体底部多近算「看完了」。 */
 const RELEASE_THRESHOLD_PX = 4
@@ -53,111 +53,111 @@ const INTENT_TYPES = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydow
  * @returns disposer：断开 observer、摘掉监听与定时器。
  */
 export function installProcessFollow(readEnabled: () => boolean): () => void {
-  /** 读者在这个组体里真的滚过之后，直到他自己回到底为止，这一处不动手。 */
-  const takenOver = new WeakSet<Element>()
-  /** 已经交给 observer 的组体，以及它此刻的内容层。 */
-  const watched = new Map<HTMLElement, Element | null>()
+    /** 读者在这个组体里真的滚过之后，直到他自己回到底为止，这一处不动手。 */
+    const takenOver = new WeakSet<Element>()
+    /** 已经交给 observer 的组体，以及它此刻的内容层。 */
+    const watched = new Map<HTMLElement, Element | null>()
 
-  /** 这个组体现在归不归我们管。 */
-  const followable = (body: HTMLElement): boolean => {
-    // 收起时它整块不可见。
-    if (body.hasAttribute('hidden')) return false
-    // 「详细」与「完全展开」不收纳：组体不封顶、没有内层滚动条，也就没有跟随可言。
-    if (body.closest('[data-group-expanded-mode]') !== null) return false
-    // 没有可滚的余量时什么都做不了。
-    return body.scrollHeight - body.clientHeight > 0
-  }
-
-  /** 离组体自己的底还差多远。 */
-  const gapOf = (body: HTMLElement): number => body.scrollHeight - body.clientHeight - body.scrollTop
-
-  /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
-  const catchUp = (body: HTMLElement): void => {
-    if (!readEnabled()) return
-    if (takenOver.has(body)) return
-    if (!followable(body)) return
-    if (gapOf(body) <= CATCH_UP_GAP_PX) return
-    body.scrollTop = body.scrollHeight
-  }
-
-  /**
-   * 记下读者接管这个组体滚动的意图。
-   *
-   * 落在组体内容上的指针不算：那是点开某一行，不是碰滚动条。滚动条是组体自己那一段，按在它上面
-   * 时事件的目标正是组体。
-   */
-  const noteIntent = (event: Event): void => {
-    const target = event.target
-    if (!(target instanceof Element)) return
-    const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
-    if (body === null) return
-    if (event.type === 'pointerdown' && target !== body) return
-    if (!isReaderScrollIntent(event)) return
-    // 被 dsh 自己处理掉的滚动键不算——它已经知道这一下要滚到哪里了。
-    if (event.type === 'keydown' && event.defaultPrevented) return
-    takenOver.add(body)
-  }
-
-  /** 读者自己滚回组体的底，让位就结束。 */
-  const noteScroll = (event: Event): void => {
-    const target = event.target
-    if (!(target instanceof HTMLElement)) return
-    if (!target.matches(PROCESS_BODY_SELECTOR)) return
-    if (gapOf(target) > RELEASE_THRESHOLD_PX) return
-    takenOver.delete(target)
-  }
-
-  // 内容一变就判一次。观察组体自己也必要：窗口换宽窄会让封顶高度换一档。
-  const observer = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const target = entry.target
-      if (!(target instanceof HTMLElement)) continue
-      const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
-      if (body === null) continue
-      catchUp(body)
+    /** 这个组体现在归不归我们管。 */
+    const followable = (body: HTMLElement): boolean => {
+        // 收起时它整块不可见。
+        if (body.hasAttribute('hidden')) return false
+        // 「详细」与「完全展开」不收纳：组体不封顶、没有内层滚动条，也就没有跟随可言。
+        if (body.closest('[data-group-expanded-mode]') !== null) return false
+        // 没有可滚的余量时什么都做不了。
+        return body.scrollHeight - body.clientHeight > 0
     }
-  })
 
-  /**
-   * 会话切换、过程组增减、以及内容层被重挂，都要跟着走。
-   *
-   * 内容层每一轮都重新对一次，而不是认一次就完：组体自己是封顶的，内容再长它的尺寸也不动，真正会
-   * 变尺寸的是里面那一层；而 React 把那一层重挂之后，旧元素上的观察就再也收不到通知了。
-   */
-  const sync = (): void => {
-    const present = new Set(document.querySelectorAll<HTMLElement>(PROCESS_BODY_SELECTOR))
-    for (const body of present) {
-      const first = !watched.has(body)
-      if (first) observer.observe(body)
-      const content = body.querySelector(PROCESS_CONTENT_SELECTOR)
-      const watchedContent = watched.get(body)
-      if (!first && watchedContent === content) continue
-      if (watchedContent !== undefined && watchedContent !== null) observer.unobserve(watchedContent)
-      watched.set(body, content)
-      if (content !== null) observer.observe(content)
+    /** 离组体自己的底还差多远。 */
+    const gapOf = (body: HTMLElement): number => body.scrollHeight - body.clientHeight - body.scrollTop
+
+    /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
+    const catchUp = (body: HTMLElement): void => {
+        if (!readEnabled()) return
+        if (takenOver.has(body)) return
+        if (!followable(body)) return
+        if (gapOf(body) <= CATCH_UP_GAP_PX) return
+        body.scrollTop = body.scrollHeight
     }
-    for (const [body, content] of [...watched]) {
-      if (present.has(body)) {
-        // 收起过的组体重新展开时，上一次那回让位不该跟过来。
-        if (body.hasAttribute('hidden')) takenOver.delete(body)
-        continue
-      }
-      watched.delete(body)
-      takenOver.delete(body)
-      observer.unobserve(body)
-      if (content !== null) observer.unobserve(content)
+
+    /**
+     * 记下读者接管这个组体滚动的意图。
+     *
+     * 落在组体内容上的指针不算：那是点开某一行，不是碰滚动条。滚动条是组体自己那一段，按在它上面
+     * 时事件的目标正是组体。
+     */
+    const noteIntent = (event: Event): void => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
+        if (body === null) return
+        if (event.type === 'pointerdown' && target !== body) return
+        if (!isReaderScrollIntent(event)) return
+        // 被 dsh 自己处理掉的滚动键不算——它已经知道这一下要滚到哪里了。
+        if (event.type === 'keydown' && event.defaultPrevented) return
+        takenOver.add(body)
     }
-  }
 
-  const timer = window.setInterval(sync, SYNC_INTERVAL_MS)
-  window.addEventListener('scroll', noteScroll, { capture: true, passive: true })
-  for (const type of INTENT_TYPES) window.addEventListener(type, noteIntent, { capture: true, passive: true })
-  sync()
+    /** 读者自己滚回组体的底，让位就结束。 */
+    const noteScroll = (event: Event): void => {
+        const target = event.target
+        if (!(target instanceof HTMLElement)) return
+        if (!target.matches(PROCESS_BODY_SELECTOR)) return
+        if (gapOf(target) > RELEASE_THRESHOLD_PX) return
+        takenOver.delete(target)
+    }
 
-  return () => {
-    window.clearInterval(timer)
-    observer.disconnect()
-    window.removeEventListener('scroll', noteScroll, true)
-    for (const type of INTENT_TYPES) window.removeEventListener(type, noteIntent, true)
-  }
+    // 内容一变就判一次。观察组体自己也必要：窗口换宽窄会让封顶高度换一档。
+    const observer = new ResizeObserver(entries => {
+        for (const entry of entries) {
+            const target = entry.target
+            if (!(target instanceof HTMLElement)) continue
+            const body = target.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
+            if (body === null) continue
+            catchUp(body)
+        }
+    })
+
+    /**
+     * 会话切换、过程组增减、以及内容层被重挂，都要跟着走。
+     *
+     * 内容层每一轮都重新对一次，而不是认一次就完：组体自己是封顶的，内容再长它的尺寸也不动，真正会
+     * 变尺寸的是里面那一层；而 React 把那一层重挂之后，旧元素上的观察就再也收不到通知了。
+     */
+    const sync = (): void => {
+        const present = new Set(document.querySelectorAll<HTMLElement>(PROCESS_BODY_SELECTOR))
+        for (const body of present) {
+            const first = !watched.has(body)
+            if (first) observer.observe(body)
+            const content = body.querySelector(PROCESS_CONTENT_SELECTOR)
+            const watchedContent = watched.get(body)
+            if (!first && watchedContent === content) continue
+            if (watchedContent !== undefined && watchedContent !== null) observer.unobserve(watchedContent)
+            watched.set(body, content)
+            if (content !== null) observer.observe(content)
+        }
+        for (const [body, content] of [...watched]) {
+            if (present.has(body)) {
+                // 收起过的组体重新展开时，上一次那回让位不该跟过来。
+                if (body.hasAttribute('hidden')) takenOver.delete(body)
+                continue
+            }
+            watched.delete(body)
+            takenOver.delete(body)
+            observer.unobserve(body)
+            if (content !== null) observer.unobserve(content)
+        }
+    }
+
+    const timer = window.setInterval(sync, SYNC_INTERVAL_MS)
+    window.addEventListener('scroll', noteScroll, {capture: true, passive: true})
+    for (const type of INTENT_TYPES) window.addEventListener(type, noteIntent, {capture: true, passive: true})
+    sync()
+
+    return () => {
+        window.clearInterval(timer)
+        observer.disconnect()
+        window.removeEventListener('scroll', noteScroll, true)
+        for (const type of INTENT_TYPES) window.removeEventListener(type, noteIntent, true)
+    }
 }

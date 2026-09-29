@@ -14,12 +14,12 @@
  *
  * @module dsh-chat-ux
  */
-import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import type { Context, Volatile } from '@deepseek-ai/cordis'
+import {createReadStream} from 'node:fs'
+import {stat} from 'node:fs/promises'
+import type {IncomingMessage, ServerResponse} from 'node:http'
+import {join} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import type {Context, Volatile} from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 
 // 报给加载器的插件名；同时也是这一行在 profile 里的条目 id。
@@ -86,21 +86,21 @@ export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
 
 // 这个插件拥有的配置字段。
 export interface Config {
-  // 思考结束、出现工具调用这些时刻，是否刻意把聊天区交还给 dsh 的跟随。
-  enhancedFollow: Volatile<boolean>
-  // 插入符动效的档位。
-  caretMotion: Volatile<CaretMotionMode>
-  // 是否用插件自带的两套字体接管界面。关掉时 dsh 自己在 :root 上声明的字体栈原样生效。
-  fonts: Volatile<boolean>
-  // 自定义的正文字体栈；空串表示用自带的那套。
-  fontSans: Volatile<string>
-  // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
-  fontCode: Volatile<string>
-  // 提交之后气泡是否从输入框起飞。标着 beta 的那一项，默认关着。整段时长不是一个设置项，
-  // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
-  sendFlight: Volatile<boolean>
-  // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
-  tokenFade: Volatile<boolean>
+    // 思考结束、出现工具调用这些时刻，是否刻意把聊天区交还给 dsh 的跟随。
+    enhancedFollow: Volatile<boolean>
+    // 插入符动效的档位。
+    caretMotion: Volatile<CaretMotionMode>
+    // 是否用插件自带的两套字体接管界面。关掉时 dsh 自己在 :root 上声明的字体栈原样生效。
+    fonts: Volatile<boolean>
+    // 自定义的正文字体栈；空串表示用自带的那套。
+    fontSans: Volatile<string>
+    // 自定义的等宽字体栈；空串表示用自带的那套。代码块与界面里的等宽文本都跟着它。
+    fontCode: Volatile<string>
+    // 提交之后气泡是否从输入框起飞。标着 beta 的那一项，默认关着。整段时长不是一个设置项，
+    // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
+    sendFlight: Volatile<boolean>
+    // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
+    tokenFade: Volatile<boolean>
 }
 
 /**
@@ -108,13 +108,13 @@ export interface Config {
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
  */
 export const Config = Schema.object({
-  enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
-  caretMotion: Schema.union(['off', 'move', 'typing'] as const).default(DEFAULT_CARET_MOTION).volatile(),
-  fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
-  fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
-  fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
-  sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
-  tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
+    enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
+    caretMotion: Schema.union(['off', 'move', 'typing'] as const).default(DEFAULT_CARET_MOTION).volatile(),
+    fonts: Schema.boolean().default(DEFAULT_EMBEDDED_FONTS).volatile(),
+    fontSans: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+    fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
+    sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
+    tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
 })
 
 /**
@@ -122,14 +122,14 @@ export const Config = Schema.object({
  * @param ctx - host 根 context。
  */
 export function apply(ctx: Context): void {
-  console.log('[dsh-chat-ux] host half loaded')
-  // 等 web 服务器出现再挂字体：它在 profile 里是另一行，不一定比这一行先激活。没有它的组合
-  // （例如 headless）里这段回调不会跑，字体取不到，插件其余部分照常工作。
-  ctx.inject(['webServer'], (scope) => {
-    const webServer = scope.get('webServer') as WebServerLike
-    scope.effect(() => webServer.register({ kind: 'prefix', path: FONT_ROUTE_PATH, handler: serveFont }),
-      'dsh-chat-ux: embedded fonts')
-  })
+    console.log('[dsh-chat-ux] host half loaded')
+    // 等 web 服务器出现再挂字体：它在 profile 里是另一行，不一定比这一行先激活。没有它的组合
+    // （例如 headless）里这段回调不会跑，字体取不到，插件其余部分照常工作。
+    ctx.inject(['webServer'], (scope) => {
+        const webServer = scope.get('webServer') as WebServerLike
+        scope.effect(() => webServer.register({kind: 'prefix', path: FONT_ROUTE_PATH, handler: serveFont}),
+            'dsh-chat-ux: embedded fonts')
+    })
 }
 
 /** 包内字体目录。host 产物在 `dist/`，所以从这里回到包根。 */
@@ -140,11 +140,11 @@ const FONT_DIRECTORY = fileURLToPath(new URL('../assets/fonts/', import.meta.url
  * 文件名与 `scripts/subset-fonts.py` 的产物、前端 `font-styles.ts` 的 URL 三者一致。
  */
 const FONT_FILES = new Set([
-  'harmonyos-sans-sc-regular.woff2',
-  'harmonyos-sans-sc-medium.woff2',
-  'harmonyos-sans-sc-bold.woff2',
-  'maple-mono-nf-cn-regular.woff2',
-  'maple-mono-nf-cn-bold.woff2',
+    'harmonyos-sans-sc-regular.woff2',
+    'harmonyos-sans-sc-medium.woff2',
+    'harmonyos-sans-sc-bold.woff2',
+    'maple-mono-nf-cn-regular.woff2',
+    'maple-mono-nf-cn-bold.woff2',
 ])
 
 /**
@@ -152,39 +152,39 @@ const FONT_FILES = new Set([
  * 这个包不依赖 dsh 的任何包，所以只按形状取它。
  */
 interface WebServerLike {
-  register(route: {
-    kind: 'exact' | 'prefix'
-    path: string
-    handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
-  }): () => void
+    register(route: {
+        kind: 'exact' | 'prefix'
+        path: string
+        handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
+    }): () => void
 }
 
 /** 把一份字体子集写进响应。 */
 const serveFont = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-  const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
-  const fileName = pathname.slice(FONT_ROUTE_PATH.length + 1)
-  if (!FONT_FILES.has(fileName)) {
-    response.writeHead(404).end()
-    return
-  }
-  const file = join(FONT_DIRECTORY, fileName)
-  // 文件读不到就当 404：这条路由只服务包内固定的几份字，缺了就是没生成或没随包发出。
-  const info = await stat(file).catch(() => null)
-  if (info === null) {
-    response.writeHead(404).end()
-    return
-  }
-  const etag = '"' + String(info.size) + '-' + String(Math.round(info.mtimeMs)) + '"'
-  if (request.headers['if-none-match'] === etag) {
-    response.writeHead(304).end()
-    return
-  }
-  response.writeHead(200, {
-    'content-type': 'font/woff2',
-    'content-length': String(info.size),
-    // 重新生成子集时文件名不变，所以留一天而不是 immutable。
-    'cache-control': 'public, max-age=86400',
-    etag,
-  })
-  createReadStream(file).pipe(response)
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+    const fileName = pathname.slice(FONT_ROUTE_PATH.length + 1)
+    if (!FONT_FILES.has(fileName)) {
+        response.writeHead(404).end()
+        return
+    }
+    const file = join(FONT_DIRECTORY, fileName)
+    // 文件读不到就当 404：这条路由只服务包内固定的几份字，缺了就是没生成或没随包发出。
+    const info = await stat(file).catch(() => null)
+    if (info === null) {
+        response.writeHead(404).end()
+        return
+    }
+    const etag = '"' + String(info.size) + '-' + String(Math.round(info.mtimeMs)) + '"'
+    if (request.headers['if-none-match'] === etag) {
+        response.writeHead(304).end()
+        return
+    }
+    response.writeHead(200, {
+        'content-type': 'font/woff2',
+        'content-length': String(info.size),
+        // 重新生成子集时文件名不变，所以留一天而不是 immutable。
+        'cache-control': 'public, max-age=86400',
+        etag,
+    })
+    createReadStream(file).pipe(response)
 }

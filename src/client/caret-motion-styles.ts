@@ -18,8 +18,8 @@
  * @module dsh-chat-ux/client/caret-motion-styles
  */
 import {
-  CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
-  CARET_VISIBLE_ATTRIBUTE,
+    CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
+    CARET_VISIBLE_ATTRIBUTE,
 } from './caret-motion'
 
 /** 自绘插入符的宽度。VS Code 的 `cursorWidth` 默认是 0，渲染时按屏幕缩放落到 2px，同档。 */

@@ -21,10 +21,10 @@
  * @module dsh-chat-ux/client/follow-guard
  */
 
-import { FLOW_BLOCK_SELECTOR, FOLLOWING_TAIL_ATTRIBUTE, RUNNING_STATE, SHIMMER_SELECTOR, STREAMING_SELECTOR, THINK_ROW_SELECTOR } from './dom-contract'
-import { isFoldGlideBusy } from './fold-glide'
-import { conversationScroller, ensureFollowTail, isAtBottom } from './follow-tail'
-import { isReaderScrollIntent } from './reader-intent'
+import {FLOW_BLOCK_SELECTOR, FOLLOWING_TAIL_ATTRIBUTE, RUNNING_STATE, SHIMMER_SELECTOR, STREAMING_SELECTOR, THINK_ROW_SELECTOR} from './dom-contract'
+import {isFoldGlideBusy} from './fold-glide'
+import {conversationScroller, ensureFollowTail, isAtBottom} from './follow-tail'
+import {isReaderScrollIntent} from './reader-intent'
 
 /** 工具调用行自己带一个；它住在 assistant 节点内部，不必是新流块。 */
 const CALL_SELECTOR = '[data-chat-call-id]'
@@ -60,148 +60,150 @@ const FOLD_WAIT_ATTEMPTS = 4
  * @returns disposer：断开 observer 并摘掉意图监听。
  */
 export function installFollowGuard(readEnabled: () => boolean): () => void {
-  /** 读者上一次接管滚动之后，有没有自己回到底部。 */
-  let readerTookOver = false
-  /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
-  let scrollerCache: HTMLElement | null = null
-  /** 上一次真正交还的时刻，用来节流。 */
-  let lastEnsureAt = 0
-  /** 最后一次见到结构变化的时刻。 */
-  let lastActivityAt = 0
-  let scanQueued = false
-  /** 这一批变化里有结构事件 / 跟随被关掉。 */
-  let structureSeen = false
-  let guardSeen = false
+    /** 读者上一次接管滚动之后，有没有自己回到底部。 */
+    let readerTookOver = false
+    /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
+    let scrollerCache: HTMLElement | null = null
+    /** 上一次真正交还的时刻，用来节流。 */
+    let lastEnsureAt = 0
+    /** 最后一次见到结构变化的时刻。 */
+    let lastActivityAt = 0
+    let scanQueued = false
+    /** 这一批变化里有结构事件 / 跟随被关掉。 */
+    let structureSeen = false
+    let guardSeen = false
 
-  /**
-   * 读者是不是正在上面看。
-   *
-   * 他只置位一次，之后靠位置自己解除：回到地线以内，就说明他看完了（或者自己点了按钮）。这样不
-   * 需要一个「多久没动静就算放弃」的定时器——那一种会在读者慢慢读的时候把他拽回去。
-   */
-  const readerAway = (): boolean => {
-    if (!readerTookOver) return false
-    const scroller = conversationScroller()
-    // 拿不到滚动容器时保守处理：当作他还在上面，这一轮不动手。
-    if (scroller === null) return true
-    if (!isAtBottom(scroller)) return true
-    readerTookOver = false
-    return false
-  }
-
-  /** 此刻算不算「正在执行」。 */
-  const running = (): boolean =>
-    document.querySelector(RUNNING_CONTENT_SELECTOR) !== null
-    || performance.now() - lastActivityAt <= ACTIVITY_GRACE_MS
-
-  /**
-   * 把这一轮的跟随交还出去。位置、读者意图、折叠动画三道都放行才算数。
-   * @param attempt - 已经因为折叠动画推迟过几次。
-   */
-  const ensure = (attempt = 0): void => {
-    if (!readEnabled()) return
-    if (readerAway()) return
-    const scroller = conversationScroller()
-    if (scroller === null) return
-    // 离底超过一屏就不动手：那是读者自己在看上面，不是跟随丢了一步。
-    if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > scroller.clientHeight) return
-    // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。
-    if (isFoldGlideBusy()) {
-      if (attempt >= FOLD_WAIT_ATTEMPTS) return
-      window.setTimeout(() => { ensure(attempt + 1) }, FOLD_WAIT_MS)
-      return
+    /**
+     * 读者是不是正在上面看。
+     *
+     * 他只置位一次，之后靠位置自己解除：回到地线以内，就说明他看完了（或者自己点了按钮）。这样不
+     * 需要一个「多久没动静就算放弃」的定时器——那一种会在读者慢慢读的时候把他拽回去。
+     */
+    const readerAway = (): boolean => {
+        if (!readerTookOver) return false
+        const scroller = conversationScroller()
+        // 拿不到滚动容器时保守处理：当作他还在上面，这一轮不动手。
+        if (scroller === null) return true
+        if (!isAtBottom(scroller)) return true
+        readerTookOver = false
+        return false
     }
-    const now = performance.now()
-    if (now - lastEnsureAt < MIN_INTERVAL_MS) return
-    lastEnsureAt = now
-    ensureFollowTail({ stillWanted: () => !readerAway() })
-  }
 
-  /** 一批变化看完了，决定要不要动手。 */
-  const settle = (): void => {
-    const structure = structureSeen
-    const guarded = guardSeen
-    structureSeen = false
-    guardSeen = false
-    // 守护那一侧要多一道「正在执行」：属性消失本身也可能是会话切换或历史恢复。
-    if (!structure && !(guarded && running())) return
-    ensure()
-  }
+    /** 此刻算不算「正在执行」。 */
+    const running = (): boolean =>
+        document.querySelector(RUNNING_CONTENT_SELECTOR) !== null
+        || performance.now() - lastActivityAt <= ACTIVITY_GRACE_MS
 
-  const queue = (): void => {
-    if (scanQueued) return
-    scanQueued = true
-    requestAnimationFrame(() => {
-      scanQueued = false
-      settle()
+    /**
+     * 把这一轮的跟随交还出去。位置、读者意图、折叠动画三道都放行才算数。
+     * @param attempt - 已经因为折叠动画推迟过几次。
+     */
+    const ensure = (attempt = 0): void => {
+        if (!readEnabled()) return
+        if (readerAway()) return
+        const scroller = conversationScroller()
+        if (scroller === null) return
+        // 离底超过一屏就不动手：那是读者自己在看上面，不是跟随丢了一步。
+        if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > scroller.clientHeight) return
+        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。
+        if (isFoldGlideBusy()) {
+            if (attempt >= FOLD_WAIT_ATTEMPTS) return
+            window.setTimeout(() => {
+                ensure(attempt + 1)
+            }, FOLD_WAIT_MS)
+            return
+        }
+        const now = performance.now()
+        if (now - lastEnsureAt < MIN_INTERVAL_MS) return
+        lastEnsureAt = now
+        ensureFollowTail({stillWanted: () => !readerAway()})
+    }
+
+    /** 一批变化看完了，决定要不要动手。 */
+    const settle = (): void => {
+        const structure = structureSeen
+        const guarded = guardSeen
+        structureSeen = false
+        guardSeen = false
+        // 守护那一侧要多一道「正在执行」：属性消失本身也可能是会话切换或历史恢复。
+        if (!structure && !(guarded && running())) return
+        ensure()
+    }
+
+    const queue = (): void => {
+        if (scanQueued) return
+        scanQueued = true
+        requestAnimationFrame(() => {
+            scanQueued = false
+            settle()
+        })
+    }
+
+    /** 这一批新增的节点里有没有流块或工具调用行。 */
+    const marksStructure = (node: Node): boolean => {
+        if (!(node instanceof Element)) return false
+        return node.matches(STRUCTURE_SELECTOR) || node.querySelector(STRUCTURE_SELECTOR) !== null
+    }
+
+    /**
+     * 记下读者接管滚动的意图。
+     *
+     * 只有内容真的长出了滚动条才算：那之前读者怎么滚都滚不动，置位只会让守护白等一轮。什么算读者的
+     * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
+     */
+    const noteReaderIntent = (event: Event): void => {
+        // 接管了就不必再判：这个函数唯一的作用就是置位，而它一旦置位，同一手势里后面那几十个
+        // 事件的结果都改不了它。
+        if (readerTookOver) return
+        if (!isReaderScrollIntent(event)) return
+        // 容器缓存下来：滚轮在触控板上能到每秒上百次，而这几次读（全文档查询 + 两个几何值）本来
+        // 就落在读者正在滚、布局正被新内容写脏的时刻。
+        if (scrollerCache === null || !scrollerCache.isConnected) scrollerCache = conversationScroller()
+        const scroller = scrollerCache
+        if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0) return
+        readerTookOver = true
+    }
+
+    const observer = new MutationObserver((records) => {
+        for (const record of records) {
+            if (record.type === 'attributes') {
+                // 跟随从有到无：dsh 刚刚把它关掉。
+                if (record.attributeName === FOLLOWING_TAIL_ATTRIBUTE) {
+                    if (record.target instanceof Element && !record.target.hasAttribute(FOLLOWING_TAIL_ATTRIBUTE)) guardSeen = true
+                    continue
+                }
+                // 思考行从「正在思考」停下来：这一段过程的分界点。
+                if (record.oldValue === RUNNING_STATE
+                    && record.target instanceof Element
+                    && record.target.matches(THINK_ROW_SELECTOR)
+                    && record.target.getAttribute('data-state') !== RUNNING_STATE) {
+                    lastActivityAt = performance.now()
+                    structureSeen = true
+                }
+                continue
+            }
+            for (const node of record.addedNodes) {
+                if (!marksStructure(node)) continue
+                lastActivityAt = performance.now()
+                structureSeen = true
+            }
+        }
+        if (structureSeen || guardSeen) queue()
     })
-  }
 
-  /** 这一批新增的节点里有没有流块或工具调用行。 */
-  const marksStructure = (node: Node): boolean => {
-    if (!(node instanceof Element)) return false
-    return node.matches(STRUCTURE_SELECTOR) || node.querySelector(STRUCTURE_SELECTOR) !== null
-  }
-
-  /**
-   * 记下读者接管滚动的意图。
-   *
-   * 只有内容真的长出了滚动条才算：那之前读者怎么滚都滚不动，置位只会让守护白等一轮。什么算读者的
-   * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
-   */
-  const noteReaderIntent = (event: Event): void => {
-    // 接管了就不必再判：这个函数唯一的作用就是置位，而它一旦置位，同一手势里后面那几十个
-    // 事件的结果都改不了它。
-    if (readerTookOver) return
-    if (!isReaderScrollIntent(event)) return
-    // 容器缓存下来：滚轮在触控板上能到每秒上百次，而这几次读（全文档查询 + 两个几何值）本来
-    // 就落在读者正在滚、布局正被新内容写脏的时刻。
-    if (scrollerCache === null || !scrollerCache.isConnected) scrollerCache = conversationScroller()
-    const scroller = scrollerCache
-    if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0) return
-    readerTookOver = true
-  }
-
-  const observer = new MutationObserver((records) => {
-    for (const record of records) {
-      if (record.type === 'attributes') {
-        // 跟随从有到无：dsh 刚刚把它关掉。
-        if (record.attributeName === FOLLOWING_TAIL_ATTRIBUTE) {
-          if (record.target instanceof Element && !record.target.hasAttribute(FOLLOWING_TAIL_ATTRIBUTE)) guardSeen = true
-          continue
-        }
-        // 思考行从「正在思考」停下来：这一段过程的分界点。
-        if (record.oldValue === RUNNING_STATE
-          && record.target instanceof Element
-          && record.target.matches(THINK_ROW_SELECTOR)
-          && record.target.getAttribute('data-state') !== RUNNING_STATE) {
-          lastActivityAt = performance.now()
-          structureSeen = true
-        }
-        continue
-      }
-      for (const node of record.addedNodes) {
-        if (!marksStructure(node)) continue
-        lastActivityAt = performance.now()
-        structureSeen = true
-      }
+    for (const type of INTENT_TYPES) {
+        document.addEventListener(type, noteReaderIntent, {capture: true, passive: true})
     }
-    if (structureSeen || guardSeen) queue()
-  })
+    observer.observe(document.body ?? document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-state', FOLLOWING_TAIL_ATTRIBUTE],
+        attributeOldValue: true,
+    })
 
-  for (const type of INTENT_TYPES) {
-    document.addEventListener(type, noteReaderIntent, { capture: true, passive: true })
-  }
-  observer.observe(document.body ?? document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ['data-state', FOLLOWING_TAIL_ATTRIBUTE],
-    attributeOldValue: true,
-  })
-
-  return () => {
-    observer.disconnect()
-    for (const type of INTENT_TYPES) document.removeEventListener(type, noteReaderIntent, true)
-  }
+    return () => {
+        observer.disconnect()
+        for (const type of INTENT_TYPES) document.removeEventListener(type, noteReaderIntent, true)
+    }
 }
