@@ -4052,12 +4052,21 @@ function startMorph(snapshot, bubble, end) {
     };
     // 只在 [from, until] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
     // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-    const between = (from, until, frame) => {
+    const between = (from, until, frame, stride = 1) => {
+        const inside = samples.filter(sample => sample.u >= from && sample.u <= until);
         const frames = [];
-        for (const sample of samples) {
-            if (sample.u < from || sample.u > until)
-                continue;
+        inside.forEach((sample, index) => {
+            // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
+            // 看不出来，省下的关键帧换的是实打实的建动画时间。**形状与内容那两段必须同格**，一错格两层就
+            // 不再互为倒数，中段会看见偏移。
+            if (index % stride !== 0)
+                return;
             frames.push({ ...frame(sample), offset: sample.u });
+        });
+        // 末尾那一格永远补上：它是定形的值，缺了它会停在上一格上。
+        const final = inside.at(-1);
+        if (final !== undefined && (frames.at(-1)?.offset ?? -1) !== final.u) {
+            frames.push({ ...frame(final), offset: final.u });
         }
         const first = frames[0];
         const last = frames.at(-1);
@@ -4093,7 +4102,7 @@ function startMorph(snapshot, bubble, end) {
     // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
     const corners = run(shell, between(0, MORPH_END, sample => ({
         borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
-    })));
+    }), 2));
     /**
      * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
      *
@@ -4145,14 +4154,14 @@ function startMorph(snapshot, bubble, end) {
         shell.style.borderRadius = final.radius + 'px';
         scaler.style.transform = 'none';
     };
-    run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) })));
+    run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) }), 2));
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
     const shadow = shadowSpread(snapshot.shadow);
     run(halo, between(0, MORPH_END, sample => ({
         transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
         opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
-    })));
+    }), 2));
     for (const piece of snapshot.chrome) {
         const [x, y, width, height] = piece.rect;
         // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
@@ -4167,7 +4176,7 @@ function startMorph(snapshot, bubble, end) {
                 transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
                 opacity: String(1 - gone),
             };
-        }));
+        }, 2));
     }
     // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
     const draftUntil = draftWindow === undefined ? 1 : draftWindow.until;
