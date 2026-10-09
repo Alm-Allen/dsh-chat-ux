@@ -1,7 +1,14 @@
 /**
  * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并沿一条**折点在圆心**的
- * 折线切一刀——两段各是一条半径，沿线开出等宽的一道切口，把圆分成两块。两块都留在原位，所以把切口
- * 补上还是一整个圆；已占用的那一块多大随占用长大，变化那一下由这里逐帧推过去。
+ * 折线切一刀——两段各是一条半径，把圆分成两块。切开之后那一块有两种去处：留在原位（沿线开出等宽的
+ * 一道切口，补上切口仍是一整个圆），或者沿角平分线推出去一段（缺口就是它原来的位置）。
+ *
+ * 推出去时**缝宽恒定**，而且不由「推开多远」挣出来：洞口按那一块再向外一圈缝来挖（见 `pushImage`），
+ * 于是缝环绕那一块的整条边界、处处一样宽，推开多远只决定那一块离开原位多少、盘面让出多少直径。
+ *
+ * 为什么不能拿位移去挣那道缝：两块相邻的两条边界互相平行，间距就是位移在边界法向上的投影，而法向与
+ * 角平分线的夹角正是半个扇形角——位移一钉死，缝宽就跟着扇形角走（20px 的饼上能从 0.7px 漂到 2.6px）；
+ * 反过来按 sin 反推位移，缝宽是恒定了，盘面却要跟着涨缩。这两条都试过，痕迹记在 `文档/业务/上下文占用饼.md`。
  *
  * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
  * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
@@ -80,9 +87,18 @@ const CUT_GAP_FULL_AT = 25
 const CUT_GAP_MIN_RATIO = 0.5
 
 /**
- * 推出去那一套沿角平分线推开多远，像素——**只在开关打开时用**。
+ * 推出去那一套的缝宽，像素——**只在开关打开时用**。
  *
- * 1px 出头已经看得出「那一块被端了出去」；再大，扇形顶点离圆心太远，形状就不像同一枚饼了。
+ * 缝由「洞口比那一块大一圈」给出（见 `pushImage` 的那条遮罩），宽恒为这个值，与推开多远无关；与「只切
+ * 一刀」那把刀口同宽。1px 出头已经看得很清楚。
+ */
+const SLICE_GAP = 1.2
+
+/**
+ * 推出去那一套里，那一块沿角平分线推开多远，像素。
+ *
+ * 缝不靠它挣（见上），它只影响两件事：那一块离开原位多远，以及盘面还剩多少直径
+ * （`PIE_SIZE - 位移`，位移越大盘面越小）。2.6px 是权衡后的取值——端出去的观感明显，盘面还剩 17.4px。
  */
 const SLICE_LIFT = 2.6
 
@@ -94,8 +110,11 @@ const SLICE_LIFT = 2.6
  */
 const PIVOT_HOLE = 0.7
 
-/** 遮罩的 id：每次画的都是一份独立的图片文档，同一个 id 不会跟别处撞。 */
+/** 圆心那个小洞的遮罩 id：每次画的都是一份独立的图片文档，同一个 id 不会跟别处撞。 */
 const PIVOT_MASK_ID = 'dsh-chat-ux-pivot'
+
+/** 那一圈缝的遮罩 id：同上，只在「推出去」那一套里用。 */
+const SLICE_MASK_ID = 'dsh-chat-ux-slice'
 
 /** 盘面的半径：占满这一格。切口开在圆里，圆外不必留白。 */
 const RADIUS = PIE_SIZE / 2
@@ -119,9 +138,9 @@ export type PieStyle = 'push' | 'cut'
 export interface PieShape {
     /** 折线切开之后，那一块推不推出去。 */
     style: PieStyle
-    /** 切口宽度（「只切一刀」那一套用），像素。 */
+    /** 缝宽，像素：「只切一刀」那一套是切口宽度，「推出去」那一套是环绕那一块的那道缝。 */
     gap?: number
-    /** 推开多远（「推出去」那一套用），像素。 */
+    /** 那一块沿角平分线推开多远（「推出去」那一套用），像素。 */
     lift?: number
 }
 
@@ -212,7 +231,7 @@ export function installContextMeterPie(shouldPush: () => boolean): ContextMeterP
  *
  * 切开之后那一块有两种去处，由 `style` 决定：`cut` 只切一刀——两块都留在原位，中间一道等宽的切口，
  * 把切口补上还是一整个圆；`push` 是那一块沿角平分线推开一段——缺口就是它原来的位置，盘上因此留下
- * 同形状的一块空位。两套的折线是同一条，差别只在推不推。
+ * 同形状的一块空位，两块的间距（缝宽）恒定。两套的折线是同一条，差别只在推不推。
  *
  * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
  * @param percent - 已占用的百分比。
@@ -229,7 +248,9 @@ export function pieImage(percent: number, tone: string, rest: string, shape?: Pi
     if (percent <= 0) return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + rest + '"/>')
 
     const occupied = percent / 100 * 360
-    if (style === 'push') return pushImage(occupied, tone, rest, shape?.lift ?? SLICE_LIFT)
+    if (style === 'push') {
+        return pushImage(occupied, tone, rest, shape?.gap ?? SLICE_GAP, shape?.lift ?? SLICE_LIFT)
+    }
     return cutImage(occupied, tone, rest, shape?.gap ?? CUT_GAP)
 }
 
@@ -266,28 +287,52 @@ function cutImage(occupied: number, tone: string, rest: string, gap: number): st
 /**
  * 推出去：两块是**全等**的扇形，一块留在原位（那就是盘上的缺口），另一块沿角平分线挪开 lift。
  *
- * 整幅图（盘加上推出去那一块）要落在容器正中，所以圆心先沿角平分线的反面退半个 lift——不退的话，
- * 推开的那一侧会被 20px 的容器裁掉一角。
+ * 缝宽恒定，而且不靠位移挣：盘上挖掉的不是「那一条扇形」，而是**它再向外一圈 `seam`**——所以缝环绕
+ * 那一块的整条边界（两条直边、外缘弧、顶点那一头），处处一样宽，与推开多远无关。那一圈缝由一条遮罩
+ * 画出来：把扇形的 path 描一道 `2 × seam` 宽的粗边，外侧那一半就是缝（内侧那一半落在那一块自己的
+ * 地界里，挖掉也无妨）。
+ *
+ * 盘面的半径由位移定（`(PIE_SIZE - lift) / 2`），整幅图的外接尺寸恒为 `PIE_SIZE`，推开的那一侧不会被
+ * 20px 的容器裁掉；圆心仍沿角平分线的反面退半个 lift，整幅图这才落在容器正中。
  * @param occupied - 已占用的角度，度。
  * @param tone - 已占用那一块的颜色。
  * @param rest - 剩下那一块的颜色。
- * @param lift - 推开多远，像素。
+ * @param seam - 缝宽，像素。
+ * @param lift - 那一块沿角平分线推开多远，像素。
  * @returns url()。
  */
-function pushImage(occupied: number, tone: string, rest: string, lift: number): string {
+function pushImage(occupied: number, tone: string, rest: string, seam: number, lift: number): string {
     const direction = occupied / 2
+    const halfAngleSin = Math.sin(rad(direction))
+    const halfAngleCos = Math.cos(rad(direction))
     const half = lift / 2
-    const centerX = round2(CENTER - half * Math.sin(rad(direction)))
-    const centerY = round2(CENTER + half * Math.cos(rad(direction)))
-    // 这一套**不套遮罩**：圆心本来就在缺口里（缺口的顶点就是圆心），那一圈不必再挖；挖了反倒会在盘上
-    // 多出一个小豁口，看着像圆缺了一块。
-    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS)
-        + ' ' + sectorPath(centerX, centerY, PUSH_RADIUS, 0, occupied)
-        + '" fill="' + rest + '" fill-rule="evenodd"/>'
-    const apexX = round2(centerX + lift * Math.sin(rad(direction)))
-    const apexY = round2(centerY - lift * Math.cos(rad(direction)))
-    const slice = '<path d="' + sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied) + '" fill="' + tone + '"/>'
-    return inlineSvg(plate + slice)
+    const centerX = round2(CENTER - half * halfAngleSin)
+    const centerY = round2(CENTER + half * halfAngleCos)
+    const apexX = round2(centerX + lift * halfAngleSin)
+    const apexY = round2(centerY - lift * halfAngleCos)
+    const slice = sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied)
+    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS) + ' ' + slice
+        + '" fill="' + rest + '" fill-rule="evenodd" mask="url(#' + SLICE_MASK_ID + ')"/>'
+    return inlineSvg(sliceGapMask(slice, seam) + plate
+        + '<path d="' + slice + '" fill="' + tone + '"/>')
+}
+
+/**
+ * 那一圈缝的遮罩：整幅图铺白，再把那一条扇形的 path 描一道宽边涂黑——涂黑处透明。
+ *
+ * 描边以 path 为中心向两侧各扩半个缝宽（`stroke-width` 是 `2 × seam`）：外侧那一半是缝，内侧那一半
+ * 落在那一块自己的地界里，挖掉也不影响。拐角用 round，顶点那一头因此是一段圆角的缝，与两条直边同宽。
+ * @param slice - 那一条扇形的 path。
+ * @param seam - 缝宽，像素。
+ * @returns mask 元素的文本。
+ */
+function sliceGapMask(slice: string, seam: number): string {
+    return '<mask id="' + SLICE_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
+        + ' width="' + PIE_SIZE + '" height="' + PIE_SIZE + '">'
+        + '<rect x="0" y="0" width="' + PIE_SIZE + '" height="' + PIE_SIZE + '" fill="#ffffff"/>'
+        + '<path d="' + slice + '" fill="none" stroke="#000000" stroke-width="' + seam * 2
+        + '" stroke-linejoin="round"/>'
+        + '</mask>'
 }
 
 
