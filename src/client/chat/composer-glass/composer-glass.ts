@@ -1,0 +1,114 @@
+/**
+ * 输入框那块玻璃的几何。
+ *
+ * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
+ * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
+ * 样式表里的 `clip-path` 拿它们切开那块底。
+ *
+ * 只在读者打开这个开关时安装（见 `index.tsx` 的 `syncGlass`）。要量的只有两个盒子，观察者也
+ * 只有两个来源：座位与卡片各挂一个 `ResizeObserver`（卡片换行、加附件、上方卡片出现或消失，都会让
+ * 这两个盒子的尺寸变），再加一个 `MutationObserver` 认座位出现与消失（切会话、进新会话页时整棵
+ * 子树会重建）。
+ *
+ * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
+ */
+import {GLASS_BOTTOM_VARIABLE, GLASS_TOP_VARIABLE} from './composer-glass-styles'
+
+/** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
+const SEAT_SELECTOR = '[data-composer-seat]'
+const CARD_SELECTOR = '[data-composer-card]'
+
+/**
+ * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
+ *
+ * @returns 卸下观察者、并把写过的两个属性清干净的函数。
+ */
+export function installComposerGlass(): () => void {
+    const bound = new Set<HTMLElement>()
+    let scheduled = false
+    let stopped = false
+
+    /** 量一次座位：卡片在就写两条边，不在就清掉（缺口回退成零高，也就是整块底）。 */
+    const measure = (seat: HTMLElement): void => {
+        const card = seat.querySelector<HTMLElement>(CARD_SELECTOR)
+        if (card === null) {
+            seat.style.removeProperty(GLASS_TOP_VARIABLE)
+            seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
+            return
+        }
+        const seatBox = seat.getBoundingClientRect()
+        const cardBox = card.getBoundingClientRect()
+        // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
+        const top = `${Math.round(cardBox.top - seatBox.top)}px`
+        const bottom = `${Math.round(cardBox.bottom - seatBox.top)}px`
+        if (seat.style.getPropertyValue(GLASS_TOP_VARIABLE) !== top) seat.style.setProperty(GLASS_TOP_VARIABLE, top)
+        if (seat.style.getPropertyValue(GLASS_BOTTOM_VARIABLE) !== bottom) seat.style.setProperty(GLASS_BOTTOM_VARIABLE, bottom)
+    }
+
+    const resize = new ResizeObserver((entries) => {
+        for (const entry of entries) measure(entry.target as HTMLElement)
+    })
+
+    /** 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次。 */
+    const sync = (): void => {
+        if (stopped) return
+        for (const seat of document.querySelectorAll<HTMLElement>(SEAT_SELECTOR)) {
+            if (!bound.has(seat)) {
+                bound.add(seat)
+                resize.observe(seat)
+            }
+            // 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的。
+            const card = seat.querySelector<HTMLElement>(CARD_SELECTOR)
+            if (card !== null) resize.observe(card)
+            measure(seat)
+        }
+        for (const seat of bound) {
+            if (seat.isConnected) continue
+            resize.unobserve(seat)
+            bound.delete(seat)
+        }
+    }
+
+    /** 对账排到下一帧、一帧最多一次：这一处会在折叠与流式这些 DOM 高频变动的时刻被叫醒，别让它在一帧里
+     查好几遍文档、量好几遍布局。 */
+    const scheduleSync = (): void => {
+        if (scheduled || stopped) return
+        scheduled = true
+        requestAnimationFrame(() => {
+            scheduled = false
+            sync()
+        })
+    }
+
+    const mutations = new MutationObserver((records) => {
+        for (const record of records) {
+            if (![...record.addedNodes, ...record.removedNodes].some(touchesGlass)) continue
+            scheduleSync()
+            return
+        }
+    })
+
+    sync()
+    mutations.observe(document.body, {childList: true, subtree: true})
+    return () => {
+        stopped = true
+        mutations.disconnect()
+        resize.disconnect()
+        for (const seat of bound) {
+            seat.style.removeProperty(GLASS_TOP_VARIABLE)
+            seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
+        }
+        bound.clear()
+    }
+}
+
+/**
+ * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
+ * @param node - 这次加上或去掉的节点。
+ * @returns 它本身、或它的子树里有座位或卡片时为真。
+ */
+function touchesGlass(node: Node): boolean {
+    if (!(node instanceof Element)) return false
+    if (node.matches(SEAT_SELECTOR) || node.matches(CARD_SELECTOR)) return true
+    return node.querySelector(`:is(${SEAT_SELECTOR}, ${CARD_SELECTOR})`) !== null
+}

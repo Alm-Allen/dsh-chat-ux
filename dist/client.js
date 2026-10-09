@@ -47,6 +47,8 @@ exports.inject = void 0;
 exports.apply = apply;
 const caret_motion_1 = require("./chat/caret/caret-motion");
 const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
+const composer_glass_1 = require("./chat/composer-glass/composer-glass");
+const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
 const fold_glide_1 = require("./chat/fold/fold-glide");
@@ -98,6 +100,7 @@ function apply(ctx) {
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
         tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
         piePush: settings_scope_1.DEFAULT_PIE_PUSH,
+        glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
@@ -125,6 +128,21 @@ function apply(ctx) {
             disposeProcess();
         };
     };
+    // 输入框那块玻璃：属性在，样式表里那一整块才命中；量卡片位置的那个观察者也只有这时候才装。
+    // 关掉时两样一起撤——观察者不跑，属性也摘掉，页面上一次都不动手。
+    let glassDispose = null;
+    const syncGlass = () => {
+        if (!settings.glass) {
+            glassDispose?.();
+            glassDispose = null;
+            document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
+            return;
+        }
+        document.body.setAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE, '');
+        if (glassDispose !== null)
+            return;
+        glassDispose = (0, composer_glass_1.installComposerGlass)();
+    };
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.follow = value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
@@ -136,6 +154,8 @@ function apply(ctx) {
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         settings.piePush = value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
+        settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+        syncGlass();
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
         tokenMotion.resync();
@@ -146,6 +166,14 @@ function apply(ctx) {
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
     ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
+    ctx.effect(() => {
+        syncGlass();
+        return () => {
+            glassDispose?.();
+            glassDispose = null;
+            document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
+        };
+    }, 'dsh-chat-ux: composer glass');
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组
     // 行为是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」——读者选过
     // 之后一次都不再动手。
@@ -1182,7 +1210,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1236,6 +1264,12 @@ exports.DEFAULT_HIT_REEL = true;
  * 默认推出去：「从盘子里切下来一块」比一道切口更能说明已占用多少。
  */
 exports.DEFAULT_PIE_PUSH = true;
+/**
+ * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着：它就是读者要的那一层磨砂。关掉后 body 上不挂属性，那一整张规则表一条都不命中。
+ */
+exports.DEFAULT_COMPOSER_GLASS = true;
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -1774,6 +1808,291 @@ function splitReading(text) {
         return null;
     return { integer, decimal: matched[2] ?? null };
 }
+    };
+
+    __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installComposerGlass = installComposerGlass;
+/**
+ * 输入框那块玻璃的几何。
+ *
+ * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
+ * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
+ * 样式表里的 `clip-path` 拿它们切开那块底。
+ *
+ * 只在读者打开这个开关时安装（见 `index.tsx` 的 `syncGlass`）。要量的只有两个盒子，观察者也
+ * 只有两个来源：座位与卡片各挂一个 `ResizeObserver`（卡片换行、加附件、上方卡片出现或消失，都会让
+ * 这两个盒子的尺寸变），再加一个 `MutationObserver` 认座位出现与消失（切会话、进新会话页时整棵
+ * 子树会重建）。
+ *
+ * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
+ */
+const composer_glass_styles_1 = require("./composer-glass-styles");
+/** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
+const SEAT_SELECTOR = '[data-composer-seat]';
+const CARD_SELECTOR = '[data-composer-card]';
+/**
+ * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
+ *
+ * @returns 卸下观察者、并把写过的两个属性清干净的函数。
+ */
+function installComposerGlass() {
+    const bound = new Set();
+    let scheduled = false;
+    let stopped = false;
+    /** 量一次座位：卡片在就写两条边，不在就清掉（缺口回退成零高，也就是整块底）。 */
+    const measure = (seat) => {
+        const card = seat.querySelector(CARD_SELECTOR);
+        if (card === null) {
+            seat.style.removeProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE);
+            seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
+            return;
+        }
+        const seatBox = seat.getBoundingClientRect();
+        const cardBox = card.getBoundingClientRect();
+        // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
+        const top = `${Math.round(cardBox.top - seatBox.top)}px`;
+        const bottom = `${Math.round(cardBox.bottom - seatBox.top)}px`;
+        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_TOP_VARIABLE) !== top)
+            seat.style.setProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE, top);
+        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE) !== bottom)
+            seat.style.setProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE, bottom);
+    };
+    const resize = new ResizeObserver((entries) => {
+        for (const entry of entries)
+            measure(entry.target);
+    });
+    /** 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次。 */
+    const sync = () => {
+        if (stopped)
+            return;
+        for (const seat of document.querySelectorAll(SEAT_SELECTOR)) {
+            if (!bound.has(seat)) {
+                bound.add(seat);
+                resize.observe(seat);
+            }
+            // 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的。
+            const card = seat.querySelector(CARD_SELECTOR);
+            if (card !== null)
+                resize.observe(card);
+            measure(seat);
+        }
+        for (const seat of bound) {
+            if (seat.isConnected)
+                continue;
+            resize.unobserve(seat);
+            bound.delete(seat);
+        }
+    };
+    /** 对账排到下一帧、一帧最多一次：这一处会在折叠与流式这些 DOM 高频变动的时刻被叫醒，别让它在一帧里
+     查好几遍文档、量好几遍布局。 */
+    const scheduleSync = () => {
+        if (scheduled || stopped)
+            return;
+        scheduled = true;
+        requestAnimationFrame(() => {
+            scheduled = false;
+            sync();
+        });
+    };
+    const mutations = new MutationObserver((records) => {
+        for (const record of records) {
+            if (![...record.addedNodes, ...record.removedNodes].some(touchesGlass))
+                continue;
+            scheduleSync();
+            return;
+        }
+    });
+    sync();
+    mutations.observe(document.body, { childList: true, subtree: true });
+    return () => {
+        stopped = true;
+        mutations.disconnect();
+        resize.disconnect();
+        for (const seat of bound) {
+            seat.style.removeProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE);
+            seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
+        }
+        bound.clear();
+    };
+}
+/**
+ * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
+ * @param node - 这次加上或去掉的节点。
+ * @returns 它本身、或它的子树里有座位或卡片时为真。
+ */
+function touchesGlass(node) {
+    if (!(node instanceof Element))
+        return false;
+    if (node.matches(SEAT_SELECTOR) || node.matches(CARD_SELECTOR))
+        return true;
+    return node.querySelector(`:is(${SEAT_SELECTOR}, ${CARD_SELECTOR})`) !== null;
+}
+    };
+
+    __registry["chat/composer-glass/composer-glass-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 输入框毛玻璃：只把**输入卡片那个矩形**变成一块半透明、背后模糊的玻璃。
+ *
+ * 范围就是卡片自己的边框盒——卡片下面那排统计与工具、上面那几张卡（待办、队列坞、目标条）都不在范围
+ * 里，各自保持原样。这是读者看过第一版（整块座位磨砂）之后的要求。
+ *
+ * 麻烦在于铺底的那一层不是卡片自己。有会话内容时（active 相位）铺底的是**座位**
+ * (`[data-composer-seat]`)——dsh 给它 `sticky; bottom: 0; z-index: 7` 与一块画布色实底
+ * （`ConversationRoot.module.css`），dsh-claude-style 那类皮肤只是换了个画法。卡片的
+ * `backdrop-filter` 采样的是它**背后**已经绘制的东西，座位那块不透明的底正好挡在中间，玻璃就什么
+ * 也糊不到。所以座位必须在卡片这个矩形处**让出一块洞**。
+ *
+ * CSS 挖不出「位置由某个子元素决定」的洞，所以那两条边由 JS 量出来：`composer-glass.ts` 把卡片
+ * 相对座位的上下边写进座位上的两个自定义属性，这里只负责画。
+ *
+ *   - 座位的底整块交给它的 `::after`，用 `clip-path` 沿那两个值挖开一条横贯的缺口；两个变量
+ *     缺席时缺口是零高，也就是「整块都有底」——dsh 原来的样子，这是安全的一侧。
+ *   - 卡片自己画底：一条**自带的蓝调渐变**（上亮下深：深色下从一档蓝灰到深蓝黑，浅色下从浅蓝白到浅蓝）
+ *     再加一层轻模糊。读者的口径是「这个输入框应该有它自己的渐变色，其次才是毛玻璃，玻璃稍微透点色
+ *     就行」——所以底为主、通透为辅，渐变的两端只让出一成不到。色值全部从主题令牌派生（带字面兜底），
+ *     深浅色与第三方配色都自动跟随。圆角、发丝描边与阴影一律留着，那是「输入框」这几条边看得见的原因。
+ *   第一次做的时候底是从画布色派生的，当场翻了车：画布色的 92% 叠在画布上就是画布本身，输入区整块
+ *   融进背景，只剩一圈描边。底必须来自输入框自己那几档色，才与画布分得开。
+ *   - 座位上方那条从画布淡出的带子照旧（座位的 `::before`），颜色跟着玻璃的底走。
+ *
+ * 新会话（hero）时铺底的是卡片自己、座位不画底，所以那一档不需要挖洞，卡片那几条规则一并管两档。
+ *
+ * **为什么要 `!important`。** 同页的 dsh-claude-style 也管输入区外观（它把卡片改成透明、改由座位
+ * 铺 `bg-base` 实底），而且它那几条选择器的特异度高得多。本插件只认语义属性、不去认别的插件挂在
+ * body 上的属性，所以压过它的手段只剩 `!important`：那几条声明都没有 `!important`，
+ * `!important` 对非 `!important` 是绝对优先。它那条 `border: none !important` 不在这
+ * 份表的目标里（卡片边框按原样）。
+ *
+ * **不支持就整块不生效。** 没有 `backdrop-filter`（或 `color-mix`）的浏览器上，只做半透明会
+ * 变成「文字叠文字」——比不做更糟，所以整套规则收在 `@supports` 里，条件不成立时一条都不命中。
+ *
+ * @module dsh-chat-ux/client/chat/composer-glass/composer-glass-styles
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.COMPOSER_GLASS_CSS = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
+/**
+ * 玻璃生效的属性。它由 `index.tsx` 按开关写上或摘掉，所以「用不用这块玻璃」不必重新生成样式表。
+ */
+exports.GLASS_ATTRIBUTE = 'data-chat-ux-composer-glass';
+/**
+ * 缺口的上边（卡片顶相对座位顶），单位 px，由 `composer-glass.ts` 写在座位上。
+ * 缺席时 `clip-path` 回退到零高的缺口，也就是整块底——回到 dsh 原来的样子。
+ */
+exports.GLASS_TOP_VARIABLE = '--dsh-chat-ux-glass-top';
+/** 缺口的下边（卡片底相对座位顶），单位 px，同样由 `composer-glass.ts` 写。 */
+exports.GLASS_BOTTOM_VARIABLE = '--dsh-chat-ux-glass-bottom';
+/** 输入框毛玻璃的全部 CSS。 */
+exports.COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
+body[${exports.GLASS_ATTRIBUTE}] {
+  /* 底让出多少。注意这是**叠在几层之上的那一层的**不透明度：卡片面上还有两片角光，合成之后的不透明度
+     会更高（0.92 的底加一片 26% 的角光 ≈ 0.94，背后只剩 6%——读者当场报「好像是直接没有毛玻璃效果
+     了」）。76% 配 blur(22px) 才是他说的「稍微再透一点」：看得到背后那片模糊，读不到内容。 */
+  --dsh-chat-ux-glass-alpha: 70%;
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) and (color: color-mix(in srgb, white 50%, transparent)) {
+  /* ── 一、有会话内容时：座位照旧画底，但在卡片那一段让开 ── */
+  /* 两层背景各铺一段：上段从座位顶到卡片顶，下段从卡片底到座位底，中间那段留白就是让给玻璃的缺口。
+     两个变量缺席时上段铺满整块——也就是 dsh 原来的样子，这是安全的一侧。两条边由
+     composer-glass.ts 量（见那个模块），这里只负责画。 */
+  [data-phase='active'] [data-composer-seat],
+  [data-content-phase='active'] [data-composer-seat] {
+    background:
+      linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 0 / 100% var(--dsh-chat-ux-glass-top, 100%) no-repeat,
+      linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 var(--dsh-chat-ux-glass-bottom, 100%) / 100% calc(100% - var(--dsh-chat-ux-glass-bottom, 100%)) no-repeat !important;
+  }
+
+  /* 上方那条淡出带：座位之外，因此不被模糊。颜色刻意跟着**画布**走、不跟玻璃——它的本分是让内容淡出
+     到画布，跟着玻璃的深蓝走会在消息区底边压出一条看得见的横带（读者报过一次「一层光晕」）。 */
+  [data-phase='active'] [data-composer-seat]::before,
+  [data-content-phase='active'] [data-composer-seat]::before {
+    content: '' !important;
+    position: absolute !important;
+    top: auto !important;
+    bottom: 100% !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: var(--dsh-composer-fade-h, 36px) !important;
+    background: linear-gradient(
+      to top,
+      var(--dsw-alias-bg-base) 0%,
+      color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent) 32%,
+      color-mix(in srgb, var(--dsw-alias-bg-base) 35%, transparent) 68%,
+      transparent 100%
+    ) !important;
+    pointer-events: none !important;
+  }
+
+  /* ── 二、卡片自己画底：一条自带的蓝调渐变（上亮下深）加一层轻模糊，两档相位都这么办 ── */
+  [data-phase='active'] [data-composer-card],
+  [data-content-phase='active'] [data-composer-card],
+  [data-phase='hero'] [data-composer-card],
+  [data-content-phase='hero'] [data-composer-card] {
+    /* 照 dsh 自己的做法（AppFrame.module.css 的 .sidebarCol）：一条两端带着淡淡颜色、中间**完全透明**的
+       四停渐变，底下垫一层掺了一点蓝的底色。这里只把方向转成横向——卡片又宽又扁，左端就是「左上角」、
+       右端就是「右下角」，横向的两端色读起来正是读者要的那对角。
+       颜色与浓淡都用 dsh 自己那两个档：浅色 0.1 / 0.09（AppFrame 第 62-65 行），深色 0.08 / 0.07
+       （第 164-167 行）。第一遍我按 0.14 / 0.12 写，比 dsh 浓了一倍——那也是「看着有点脏脏的」的一半。 */
+    background-image:
+      linear-gradient(
+        to right,
+        rgb(122 155 240 / 0.1) 0%,
+        rgb(122 155 240 / 0) 38%,
+        rgb(143 137 184 / 0) 64%,
+        rgb(143 137 184 / 0.09) 100%
+      ),
+      linear-gradient(
+        color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) var(--dsh-chat-ux-glass-alpha), transparent),
+        color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) var(--dsh-chat-ux-glass-alpha), transparent)
+      ) !important;
+    /* 半径要跟底一起调：底一实，模糊再有也不会被看见。 */
+    -webkit-backdrop-filter: blur(22px) saturate(130%);
+    backdrop-filter: blur(22px) saturate(130%);
+    /* 玻璃那三笔质感：顶边一道亮边、内侧一圈微光、底部一道内阴影。贴底时输入框背后本来就是空白
+       （聊天内容的末尾停在输入框顶边，不会停在它后面），所以「背后透出来的模糊」这件事日常看不到；
+       玻璃感就得由卡片自己交代。dsh 原来那层 --dsw-elevation-soft（发丝描边加两片柔光）接在后面
+       留着，不能丢——那是「一个框」的边。 */
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.9),
+      inset 0 0 0 1px rgb(255 255 255 / 0.5),
+      inset 0 -16px 20px -18px rgb(15 17 21 / 0.07),
+      var(--dsw-elevation-soft, none) !important;
+  }
+
+  /* 深色那一档：照 dsh 自己的做法（AppFrame.module.css 的 .sidebarCol），只是方向转成横向——
+     那条配色 dsh 是用在侧栏上的（竖着：顶上一片蓝、底下一点紫），而卡片又宽又扁，横向的两端色读起来
+     正是读者要的「左上角蓝、中间深、右下角又蓝」。
+     这一版是第三稿：先试过 135deg 的斜线性渐变（扁卡片上投影几乎水平，读者一眼看出「像是从左边渐变
+     到右边」），又试过两片聚在角上的径向光（他说「有点集中，看着有点脏脏的」）。dsh 这一条的好处正在
+     于中间**完全透明**——两端各自一片极淡的色，中间交给底色，所以既不脏也不集中。 */
+  body[data-ds-dark-theme] [data-phase='active'] [data-composer-card],
+  body[data-ds-dark-theme] [data-content-phase='active'] [data-composer-card],
+  body[data-ds-dark-theme] [data-phase='hero'] [data-composer-card],
+  body[data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] {
+    background-image:
+      linear-gradient(
+        to right,
+        rgb(122 155 240 / 0.08) 0%,
+        rgb(122 155 240 / 0) 38%,
+        rgb(143 137 184 / 0) 64%,
+        rgb(143 137 184 / 0.07) 100%
+      ),
+      linear-gradient(
+        color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-input-major, #0e1117) 97%, rgb(122 155 240)) var(--dsh-chat-ux-glass-alpha), transparent),
+        color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-input-major, #0e1117) 97%, rgb(122 155 240)) var(--dsh-chat-ux-glass-alpha), transparent)
+      ) !important;
+    /* 深色下的三笔：亮边与微光更弱、内阴影更重。 */
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.07),
+      inset 0 0 0 1px rgb(255 255 255 / 0.04),
+      inset 0 -16px 20px -18px rgb(0 0 0 / 0.55),
+      var(--dsw-elevation-soft, none) !important;
+  }
+}
+`;
     };
 
     __registry["chat/context-meter/context-meter-pie.js"] = function (module, exports, require) {
@@ -6263,6 +6582,7 @@ const FONT_CODE_FIELD = 'fontCode';
 const SEND_FLIGHT_FIELD = 'sendFlight';
 const HIT_REEL_FIELD = 'hitReel';
 const PIE_PUSH_FIELD = 'piePush';
+const COMPOSER_GLASS_FIELD = 'composerGlass';
 const ZH_COPY = {
     summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标、气泡动效与字体也在这里调。',
     followLabel: '增强跟随',
@@ -6288,6 +6608,9 @@ const ZH_COPY = {
     piePushLabel: '切块推开',
     piePushHint: '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
         + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
+    glassLabel: '输入框毛玻璃',
+    glassHint: '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里。'
+        + '关掉就回到 dsh 原来的输入框。',
     fontsLabel: '自带字体',
     fontsHint: '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
         + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
@@ -6333,6 +6656,9 @@ const EN_COPY = {
     piePushHint: 'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
         + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '
         + 'closing the cut gives you the whole circle back.',
+    glassLabel: 'Composer glass',
+    glassHint: 'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
+        + 'highlight and inner shadow belong to this too. Turning it off restores dsh\'s original composer.',
     fontsLabel: 'Bundled fonts',
     fontsHint: 'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
         + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
@@ -6382,6 +6708,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const sendOn = storedSendOn(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
     const piePushOn = storedPiePush(snapshot.value);
+    const glassOn = storedGlass(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const fontsOn = storedFonts(snapshot.value);
     const sans = sansDraft ?? storedSans(snapshot.value);
@@ -6434,7 +6761,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
      */
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
                             setSansDraft(null);
                             void reset(FONT_SANS_FIELD);
                         } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
@@ -6493,6 +6820,10 @@ function storedHitReel(value) {
 /** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
 function storedPiePush(value) {
     return value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
+}
+/** 从 host 的值里读输入框那块玻璃的开关。 */
+function storedGlass(value) {
+    return value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
 }
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value) {
@@ -6800,7 +7131,7 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
- * 卡片、插入符、文件变更行、折叠体入场与字体那几份各自的 `*-styles.ts`。
+ * 卡片、插入符、文件变更行、折叠体入场、字体与输入框那块玻璃那几份各自的 `*-styles.ts`。
  *
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
@@ -6810,6 +7141,7 @@ const ramp_1 = require("./chat/ramp");
 const reel_styles_1 = require("./chat/reel/reel-styles");
 const config_card_styles_1 = require("./settings/config-card-styles");
 const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
+const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
@@ -6911,7 +7243,7 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {

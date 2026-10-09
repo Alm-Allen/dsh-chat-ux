@@ -71,6 +71,13 @@ export const DEFAULT_HIT_REEL = true
  */
 export const DEFAULT_PIE_PUSH = true
 
+/**
+ * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着：它就是读者要的那一层磨砂。关掉后 body 上不挂属性，那一整张规则表一条都不命中。
+ */
+export const DEFAULT_COMPOSER_GLASS = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
     /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
@@ -93,6 +100,8 @@ export interface ChatUxSection {
     hitReel?: boolean
     /** 上下文占用那枚饼是否把切开的那一块推出去；默认开着。关掉就只留一道切口。 */
     piePush?: boolean
+    /** 输入框那块玻璃是否生效；默认开着。关掉时那整张规则表一条都不命中。 */
+    composerGlass?: boolean
 }
 
 /**

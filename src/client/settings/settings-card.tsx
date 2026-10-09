@@ -27,8 +27,8 @@ import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
 import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-    DEFAULT_HIT_REEL, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
+    DEFAULT_FONT_FAMILY, DEFAULT_HIT_REEL, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -43,6 +43,7 @@ const FONT_CODE_FIELD = 'fontCode'
 const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
 const PIE_PUSH_FIELD = 'piePush'
+const COMPOSER_GLASS_FIELD = 'composerGlass'
 
 /** 一种语言的文案。 */
 interface Copy {
@@ -64,6 +65,8 @@ interface Copy {
     reelHint: string
     piePushLabel: string
     piePushHint: string
+    glassLabel: string
+    glassHint: string
     fontsLabel: string
     fontsHint: string
     fontsOffHint: string
@@ -113,6 +116,10 @@ const ZH_COPY: Copy = {
     piePushHint:
         '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
         + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
+    glassLabel: '输入框毛玻璃',
+    glassHint:
+        '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里。'
+        + '关掉就回到 dsh 原来的输入框。',
     fontsLabel: '自带字体',
     fontsHint:
         '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
@@ -169,6 +176,10 @@ const EN_COPY: Copy = {
         'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
         + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '
         + 'closing the cut gives you the whole circle back.',
+    glassLabel: 'Composer glass',
+    glassHint:
+        'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
+        + 'highlight and inner shadow belong to this too. Turning it off restores dsh\'s original composer.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
         'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
@@ -239,6 +250,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const sendOn = storedSendOn(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
     const piePushOn = storedPiePush(snapshot.value)
+    const glassOn = storedGlass(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
     const fontsOn = storedFonts(snapshot.value)
     const sans = sansDraft ?? storedSans(snapshot.value)
@@ -378,6 +390,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.piePushLabel}
                     onChange={(next: boolean) => void writeField(PIE_PUSH_FIELD, next, storedPiePush)}
+                />
+            ))}
+            {rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, (
+                <Switch
+                    checked={glassOn}
+                    disabled={controlsDisabled}
+                    label={copy.glassLabel}
+                    onChange={(next: boolean) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass)}
                 />
             ))}
             {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
@@ -536,6 +556,11 @@ function storedHitReel(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
 function storedPiePush(value: ChatUxSection | undefined): boolean {
     return value?.piePush ?? DEFAULT_PIE_PUSH
+}
+
+/** 从 host 的值里读输入框那块玻璃的开关。 */
+function storedGlass(value: ChatUxSection | undefined): boolean {
+    return value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
 }
 
 /** 从 host 的值里读光标动效档位。 */

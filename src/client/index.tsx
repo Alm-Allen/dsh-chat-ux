@@ -6,8 +6,8 @@
  * `window.__ModuleLoader__.load({...})` bundle。
  *
  * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞、网页端「工作步骤展示」的
- * 默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
+ * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞、输入框那块玻璃、网页端
+ * 「工作步骤展示」的默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
  * 上改的值就是这样到达效果里的，不用刷新。
  *
  * @module dsh-chat-ux/client
@@ -16,6 +16,8 @@ import type {Context as ClientContext} from '@deepseek-ai/cordis'
 import {installCaretMotion} from './chat/caret/caret-motion'
 import type {CaretMotionMode} from './chat/caret/caret-motion'
 import {installCacheHitPill} from './chat/cache-hit/cache-hit-pill'
+import {installComposerGlass} from './chat/composer-glass/composer-glass'
+import {GLASS_ATTRIBUTE} from './chat/composer-glass/composer-glass-styles'
 import {installContextMeterPie} from './chat/context-meter/context-meter-pie'
 import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
 import type {SlotsService} from './chat/file-mutation/file-mutation-row'
@@ -29,8 +31,8 @@ import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-    DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
+    DEFAULT_FONT_FAMILY, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -77,6 +79,7 @@ export function apply(ctx: ClientContext): void {
         sendOn: DEFAULT_SEND_FLIGHT,
         tokenFade: DEFAULT_TOKEN_FADE,
         piePush: DEFAULT_PIE_PUSH,
+        glass: DEFAULT_COMPOSER_GLASS,
     }
 
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -104,6 +107,20 @@ export function apply(ctx: ClientContext): void {
             disposeProcess()
         }
     }
+    // 输入框那块玻璃：属性在，样式表里那一整块才命中；量卡片位置的那个观察者也只有这时候才装。
+    // 关掉时两样一起撤——观察者不跑，属性也摘掉，页面上一次都不动手。
+    let glassDispose: (() => void) | null = null
+    const syncGlass = (): void => {
+        if (!settings.glass) {
+            glassDispose?.()
+            glassDispose = null
+            document.body.removeAttribute(GLASS_ATTRIBUTE)
+            return
+        }
+        document.body.setAttribute(GLASS_ATTRIBUTE, '')
+        if (glassDispose !== null) return
+        glassDispose = installComposerGlass()
+    }
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
         settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
@@ -115,6 +132,8 @@ export function apply(ctx: ClientContext): void {
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
         settings.piePush = value?.piePush ?? DEFAULT_PIE_PUSH
+        settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
+        syncGlass()
         applyFontChoice(settings.font)
         caret.resync()
         tokenMotion.resync()
@@ -125,6 +144,17 @@ export function apply(ctx: ClientContext): void {
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion')
     ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
+    ctx.effect(
+        () => {
+            syncGlass()
+            return () => {
+                glassDispose?.()
+                glassDispose = null
+                document.body.removeAttribute(GLASS_ATTRIBUTE)
+            }
+        },
+        'dsh-chat-ux: composer glass',
+    )
 
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组
     // 行为是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」——读者选过
@@ -227,6 +257,8 @@ interface ChatUxSettings {
     tokenFade: boolean
     /** 上下文占用那枚饼：折线切开之后那一块推不推出去；改一次就得重画一次。 */
     piePush: boolean
+    /** 输入框那块玻璃开着没有；它是 body 上的一层常驻状态，改一次就得重落一次。 */
+    glass: boolean
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

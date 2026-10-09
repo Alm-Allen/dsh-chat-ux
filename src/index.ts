@@ -102,6 +102,15 @@ export const DEFAULT_HIT_REEL = true
 export const DEFAULT_PIE_PUSH = true
 
 /**
+ * 输入框那块玻璃默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
+ * 改一处就要改另一处。
+ *
+ * 默认开着：它就是读者要的那一层磨砂——整块输入座位半透明、背后模糊。关掉后前端不往 body 上挂
+ * 属性，那一整张规则表一条都不命中，看到的就是 dsh 原来的样子。
+ */
+export const DEFAULT_COMPOSER_GLASS = true
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -129,6 +138,8 @@ export interface Config {
     hitReel: Volatile<boolean>
     // 上下文占用那枚饼：折线切开之后，那一块是否沿角平分线推开一段。关掉就只留一道切口，两块都留在原位。
     piePush: Volatile<boolean>
+    // 输入框那块玻璃是否生效。它在前端只是一层 DOM 状态（body 上的属性），关掉时整张规则表不命中。
+    composerGlass: Volatile<boolean>
 }
 
 /**
@@ -146,6 +157,7 @@ export const Config = Schema.object({
     tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
     piePush: Schema.boolean().default(DEFAULT_PIE_PUSH).volatile(),
+    composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
 })
 
 /**

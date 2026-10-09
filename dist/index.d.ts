@@ -67,6 +67,14 @@ export declare const DEFAULT_HIT_REEL = true;
  */
 export declare const DEFAULT_PIE_PUSH = true;
 /**
+ * 输入框那块玻璃默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
+ * 改一处就要改另一处。
+ *
+ * 默认开着：它就是读者要的那一层磨砂——整块输入座位半透明、背后模糊。关掉后前端不往 body 上挂
+ * 属性，那一整张规则表一条都不命中，看到的就是 dsh 原来的样子。
+ */
+export declare const DEFAULT_COMPOSER_GLASS = true;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
@@ -81,6 +89,7 @@ export interface Config {
     tokenFade: Volatile<boolean>;
     hitReel: Volatile<boolean>;
     piePush: Volatile<boolean>;
+    composerGlass: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -97,6 +106,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
     piePush: Schema<boolean, boolean, "volatile-defined">;
+    composerGlass: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
@@ -108,6 +118,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
     piePush: Schema<boolean, boolean, "volatile-defined">;
+    composerGlass: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。
