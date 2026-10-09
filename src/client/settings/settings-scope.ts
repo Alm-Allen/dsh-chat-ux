@@ -63,6 +63,14 @@ export const DEFAULT_TOKEN_FADE = true
  */
 export const DEFAULT_HIT_REEL = true
 
+/**
+ * 上下文占用那枚饼默认是否把切开的那一块推出去。host 侧 `src/index.ts` 里有一份同样的常量，改一处
+ * 就要改另一处。
+ *
+ * 默认推出去：「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ */
+export const DEFAULT_PIE_PUSH = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
     /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
@@ -83,6 +91,8 @@ export interface ChatUxSection {
     tokenFade?: boolean
     /** 命中率读数变化时，每一位数字是否滚到新值；默认开着。 */
     hitReel?: boolean
+    /** 上下文占用那枚饼是否把切开的那一块推出去；默认开着。关掉就只留一道切口。 */
+    piePush?: boolean
 }
 
 /**

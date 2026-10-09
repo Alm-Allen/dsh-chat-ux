@@ -28,7 +28,7 @@ import {CARD_CLASS} from './config-card-styles'
 import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-    DEFAULT_HIT_REEL, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_HIT_REEL, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -42,6 +42,7 @@ const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
 const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
+const PIE_PUSH_FIELD = 'piePush'
 
 /** 一种语言的文案。 */
 interface Copy {
@@ -61,6 +62,8 @@ interface Copy {
     sendHint: string
     reelLabel: string
     reelHint: string
+    piePushLabel: string
+    piePushHint: string
     fontsLabel: string
     fontsHint: string
     fontsOffHint: string
@@ -106,6 +109,10 @@ const ZH_COPY: Copy = {
     reelHint:
         '输入框下方那枚胶囊里的命中率变化时，变了的那些数字滚到新读数，像老虎机那样翻过去。'
         + '关掉就直接换成新数字。',
+    piePushLabel: '切块推开',
+    piePushHint:
+        '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
+        + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
     fontsLabel: '自带字体',
     fontsHint:
         '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
@@ -157,6 +164,11 @@ const EN_COPY: Copy = {
     reelHint:
         'When the cache-hit rate in the pill below the composer changes, the digits that changed roll to their new '
         + 'values like a slot reel. Off swaps the number instantly.',
+    piePushLabel: 'Slice pulled out',
+    piePushHint:
+        'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
+        + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '
+        + 'closing the cut gives you the whole circle back.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
         'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
@@ -191,7 +203,7 @@ export interface ChatUxConfigCardProps {
 }
 
 /**
- * 渲染这个插件的配置：三个开关、光标动效的三档，以及两条自定义字体栈。
+ * 渲染这个插件的配置：几个开关、光标动效的三档，以及两条自定义字体栈。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -226,6 +238,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const tokenFadeOn = storedTokenFade(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
+    const piePushOn = storedPiePush(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
     const fontsOn = storedFonts(snapshot.value)
     const sans = sansDraft ?? storedSans(snapshot.value)
@@ -357,6 +370,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.reelLabel}
                     onChange={(next: boolean) => void writeField(HIT_REEL_FIELD, next, storedHitReel)}
+                />
+            ))}
+            {rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, (
+                <Switch
+                    checked={piePushOn}
+                    disabled={controlsDisabled}
+                    label={copy.piePushLabel}
+                    onChange={(next: boolean) => void writeField(PIE_PUSH_FIELD, next, storedPiePush)}
                 />
             ))}
             {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
@@ -510,6 +531,11 @@ function storedSendOn(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读命中率转轮的开关。 */
 function storedHitReel(value: ChatUxSection | undefined): boolean {
     return value?.hitReel ?? DEFAULT_HIT_REEL
+}
+
+/** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
+function storedPiePush(value: ChatUxSection | undefined): boolean {
+    return value?.piePush ?? DEFAULT_PIE_PUSH
 }
 
 /** 从 host 的值里读光标动效档位。 */

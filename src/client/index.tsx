@@ -30,7 +30,7 @@ import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-    DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -76,12 +76,17 @@ export function apply(ctx: ClientContext): void {
         font: {embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY},
         sendOn: DEFAULT_SEND_FLIGHT,
         tokenFade: DEFAULT_TOKEN_FADE,
+        piePush: DEFAULT_PIE_PUSH,
     }
 
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = installCaretMotion(() => settings.caret)
     const tokenMotion = installTokenMotion(() => settings.tokenFade)
+    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
+    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关决定折线切开
+    // 之后那一块推不推出去，所以它也由 syncSettings 重落一次。
+    const pie = installContextMeterPie(() => settings.piePush)
     // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
     // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
     let autoFoldDispose: (() => void) | null = null
@@ -109,9 +114,11 @@ export function apply(ctx: ClientContext): void {
         settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
+        settings.piePush = value?.piePush ?? DEFAULT_PIE_PUSH
         applyFontChoice(settings.font)
         caret.resync()
         tokenMotion.resync()
+        pie.resync()
         syncAutoFold()
     }
     syncSettings()
@@ -173,9 +180,7 @@ export function apply(ctx: ClientContext): void {
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
     installCacheHitPill(services.slots, services.configForms)
 
-    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染
-    // 的那一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。
-    ctx.effect(() => installContextMeterPie(), 'dsh-chat-ux: context meter pie')
+    ctx.effect(() => pie.dispose, 'dsh-chat-ux: context meter pie')
 
     // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
     // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
@@ -220,6 +225,8 @@ interface ChatUxSettings {
     sendOn: boolean
     /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
     tokenFade: boolean
+    /** 上下文占用那枚饼：折线切开之后那一块推不推出去；改一次就得重画一次。 */
+    piePush: boolean
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */

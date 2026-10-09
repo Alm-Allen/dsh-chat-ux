@@ -1,8 +1,7 @@
 /**
- * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并把已占用的一角切成
- * 「从盘子上切下来的一块」——分界是一条**折点在圆心**的折线（两段都是从圆心到圆上的直线，也就是
- * 两条半径），切开后那一块沿角平分线推开，灰盘上因此留下同形状的缺口；那一块多大、推得多远都随
- * 占用长大，变化那一下由这里逐帧推过去。
+ * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并沿一条**折点在圆心**的
+ * 折线切一刀——两段各是一条半径，沿线开出等宽的一道切口，把圆分成两块。两块都留在原位，所以把切口
+ * 补上还是一整个圆；已占用的那一块多大随占用长大，变化那一下由这里逐帧推过去。
  *
  * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
  * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
@@ -12,7 +11,7 @@
  * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
  * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
  * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
- * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度与推开距离都由这里算。
+ * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度与切口都由这里算。
  *
  * 扩张那一下为什么是逐帧重画、不是 CSS 过渡：背景图是一整张 data URL 的 SVG，换图插不了值；SVG
  * 的 d 能插值，但这一条 path 的大弧标记在 50% 处会从 0 跳到 1，插到一半会翻面；conic-gradient 能靠
@@ -46,17 +45,17 @@ const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]'
 const READING_PATTERN = /^(\d{1,3})%$/
 
 /**
- * 六个色标在占用上的位置：15 绿、20 浅绿、25 黄、30 橙黄、35 橙红、40 红。低于 15 一律绿、40 及
+ * 六个色标在占用上的位置：20 绿、24 浅绿、28 黄、32 橙黄、36 橙红、40 红。低于 20 一律绿、40 及
  * 以后一律红，与样式表里那几段一一对应。
  */
-const CONTEXT_STOPS = [15, 20, 25, 30, 35, 40]
+const CONTEXT_STOPS = [20, 24, 28, 32, 36, 40]
 
 /**
  * 饼的边长：20px。
  *
- * 原来那圈环的外轮廓只有 13px（半径 6.5），那个尺寸上「切开的一块」与那道缝都认不出来，所以把它做
- * 大。20px 正好是这颗按钮那一行的行高，上下一点不外溢；左右各借 3px（左面是按钮的内边距，右面是
- * 图标与读数之间那 6px 的间隔），离读数还剩 3px。
+ * 原来那圈环的外轮廓只有 13px（半径 6.5），那个尺寸上圆弧与那道切口都认不出来，所以把它做大。20px
+ * 正好是这颗按钮那一行的行高，上下一点不外溢；左右各借 3px（左面是按钮的内边距，右面是图标与读数
+ * 之间那 6px 的间隔），离读数还剩 3px。
  */
 export const PIE_SIZE = 20
 
@@ -64,32 +63,30 @@ export const PIE_SIZE = 20
 const ICON_SIZE = 14
 
 /**
- * 那一块被推开多远，像素——**唯一的旋钮**。
+ * 那道切口的宽度，像素——**唯一的旋钮**。
  *
- * 分界是一条折点在圆心的折线：两段都是从圆心到圆上的直线，也就是两条半径（像时针与分针指的那两个
- * 方向，只是等长）。切开的两块因此是**全等**的扇形，一块留在原地、一块推开；缝是「推开」让出来的，
- * **不是**把缺口的角度放宽让出来的——那样两块就不全等，读者看到的是「被咬掉一口」而不是「切下来
- * 一块端在边上」。
+ * 切口就是那条折线本身：折点在圆心，两段各是一条半径，沿线开出等宽的一道缝（缝宽不随半径变），把
+ * 圆分成两块。两块**都不动位置**，所以把缝补上还是一整个圆——读者看到的是「这个圆被切了一刀」，
+ * 而不是「一块被端了出去」。
  *
- * 这一格图标上 2px 出头已经推得很开；再大，那一块就要离盘太远、也不像同一枚饼了。
+ * 这一格图标上 1px 出头已经看得很清楚；再宽，两块就要散开了。
+ */
+const CUT_GAP = 1.2
+
+/**
+ * 推出去那一套沿角平分线推开多远，像素——**只在开关打开时用**。
+ *
+ * 1px 出头已经看得出「那一块被端了出去」；再大，扇形顶点离圆心太远，形状就不像同一枚饼了。
  */
 const SLICE_LIFT = 2.6
 
-/** 推开距离随占用长大：占满四成以后推到底，不再变。 */
-const LIFT_FULL_AT = 40
+/** 盘面的半径：占满这一格。切口开在圆里，圆外不必留白。 */
+const RADIUS = PIE_SIZE / 2
 
-/** 占用很小时也不完全贴住，否则「切下来」这件事看不出来。 */
-const LIFT_MIN_RATIO = 0.35
+/** 推出去那一套的半径：得让出推开那一段，否则那一块的外缘会被 20px 的容器裁掉。 */
+const PUSH_RADIUS = (PIE_SIZE - SLICE_LIFT) / 2
 
-/**
- * 盘面的半径。
- *
- * 留白是给推出去的那一块的：切开的两块全等，一块沿角平分线推开之后，整幅图的包围盒在推开那个方向
- * 上是 `[-半径, 半径 + 推开距离]`，所以直径要缩到 `PIE_SIZE - 最大推开距离` 才不会被裁掉。
- */
-const RADIUS = (PIE_SIZE - SLICE_LIFT) / 2
-
-/** 容器正中：没有推开时圆心就在这儿，推开了由 `centerFor` 退让半个位置。 */
+/** 圆心：这一格的正中。 */
 const CENTER = PIE_SIZE / 2
 
 /** 一整圈，弧度。 */
@@ -98,10 +95,17 @@ const FULL_TURN = Math.PI * 2
 /** path 坐标的小数位取两位：再多的位数只是噪声。 */
 const PATH_PRECISION = 100
 
-/** 那一块的形状参数：只有探针与预览用它试参数，生产调用不带。 */
-export interface SliceShape {
-    /** 那一块沿角平分线推开多远，像素。 */
-    lift: number
+/** 折线切开之后，那一块的两种去处。 */
+export type PieStyle = 'push' | 'cut'
+
+/** 画法参数：生产调用只给 style，探针与预览还会试 gap / lift。 */
+export interface PieShape {
+    /** 折线切开之后，那一块推不推出去。 */
+    style: PieStyle
+    /** 切口宽度（「只切一刀」那一套用），像素。 */
+    gap?: number
+    /** 推开多远（「推出去」那一套用），像素。 */
+    lift?: number
 }
 
 /** 扩张那一下用多久。与数字轮同一个时长：两件事通常同时发生，一起收才像一件事。 */
@@ -117,6 +121,8 @@ interface PaintedPie {
     tone: string
     /** 这一档的未占用底色。 */
     rest: string
+    /** 上一次画出来用的是哪一套画法；开关翻了要按它判断该不该重画。 */
+    style: PieStyle
     /** 这一次扩张的起点读数。 */
     from: number
     /** 这一次扩张的终点读数。 */
@@ -128,12 +134,21 @@ interface PaintedPie {
 /** 每一枚饼当前的状态；键是那颗按钮。 */
 const paintedPies = new WeakMap<Element, PaintedPie>()
 
+/** 装上这一处之后的把手。 */
+export interface ContextMeterPieHandle {
+    /** 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。 */
+    dispose: () => void
+    /** 开关变了就再落一次：每一枚饼按新画法立刻重画，不必等读数下一次变化。 */
+    resync: () => void
+}
+
 
 /**
  * 装上这一处。
- * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
+ * @param shouldPush - 折线切开之后那一块推不推出去（插件管理页上那个开关）。
+ * @returns 卸下这一处，以及开关变化后重新落一次。
  */
-export function installContextMeterPie(): () => void {
+export function installContextMeterPie(shouldPush: () => boolean): ContextMeterPieHandle {
     let dock: Element | null = null
     let frame = 0
 
@@ -150,7 +165,7 @@ export function installContextMeterPie(): () => void {
         for (const child of seat.children) {
             if (!(child instanceof HTMLSpanElement)) continue
             if (child.hasAttribute(STAT_ATTRIBUTE)) continue
-            paint(child)
+            paint(child, shouldPush() ? 'push' : 'cut')
         }
     }
 
@@ -165,71 +180,91 @@ export function installContextMeterPie(): () => void {
     })
     observer.observe(document.body, {subtree: true, childList: true, characterData: true})
 
-    return () => {
-        observer.disconnect()
-        if (frame !== 0) cancelAnimationFrame(frame)
-        release()
+    return {
+        dispose: () => {
+            observer.disconnect()
+            if (frame !== 0) cancelAnimationFrame(frame)
+            release()
+        },
+        resync: sync,
     }
 }
 
 /**
- * 一枚饼的样子：一张带缺口的灰盘，加一块从盘子上推开去的扇形。
+ * 一枚饼的样子：一整枚圆，被一条折点在圆心的折线切开。
  *
- * 缺口与那一块走的是**同一个函数、同一组角度与半径**，差别只有顶点落在哪：缺口就是它没被推开时的
- * 原位。两块全等，差的就是那一次平移，所以读者看到的必然是「这一块从那块地方被端了出来」。这条路径
- * 也是探针的采样依据，所以它是公开的。
+ * 切开之后那一块有两种去处，由 `style` 决定：`cut` 只切一刀——两块都留在原位，中间一道等宽的切口，
+ * 把切口补上还是一整个圆；`push` 是那一块沿角平分线推开一段——缺口就是它原来的位置，盘上因此留下
+ * 同形状的一块空位。两套的折线是同一条，差别只在推不推。
+ *
+ * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
  * @param percent - 已占用的百分比。
- * @param tone - 扇形颜色。
- * @param rest - 未占用那一角的颜色。
+ * @param tone - 已占用那一块的颜色。
+ * @param rest - 剩下那一块的颜色。
+ * @param shape - 画法；不带时按「只切一刀」画。
  * @returns 可以直接当 background-image 用的 url()。
  */
-export function pieImage(percent: number, tone: string, rest: string, shape?: SliceShape): string {
-    // 两头都要单独走：满值时扇形已经是一整圈，弧的两端重合，按 SVG 的规矩整段弧会被忽略（画出来是
-    // 空的）；空值时该画的本来就是整枚灰盘，也没有「切下来」可言。两档都不留缺口、不推开。
-    if (percent >= 100) return inlineSvg('<path d="' + discPath(CENTER, CENTER) + '" fill="' + tone + '"/>')
-    if (percent <= 0) return inlineSvg('<path d="' + discPath(CENTER, CENTER) + '" fill="' + rest + '"/>')
+export function pieImage(percent: number, tone: string, rest: string, shape?: PieShape): string {
+    const style = shape?.style ?? 'cut'
+    // 两头都单独走：满值时两条切口会重合成一条、而且「切了一刀还占满」本就说不通；空值时该画的就是
+    // 一枚完整的灰盘（什么都没有，也不该有切口）。两档都画整圆，不切。
+    if (percent >= 100) return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + tone + '"/>')
+    if (percent <= 0) return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + rest + '"/>')
 
     const occupied = percent / 100 * 360
-    const lift = liftFor(percent, shape)
-    // 角平分线：那一块往外走的方向；0 度是 12 点。
-    const direction = occupied / 2
-    const center = centerFor(lift, direction)
-    const plate = '<path d="' + discPath(center.x, center.y) + ' '
-        + sectorPath(center.x, center.y, 0, occupied) + '" fill="' + rest + '" fill-rule="evenodd"/>'
-    // 那一块的顶点沿角平分线挪开 lift，角度与半径都不动——形状因此与缺口一模一样，只是被推了出去。
-    const apexX = round2(center.x + lift * Math.sin(rad(direction)))
-    const apexY = round2(center.y - lift * Math.cos(rad(direction)))
-    const slice = '<path d="' + sectorPath(apexX, apexY, 0, occupied) + '" fill="' + tone + '"/>'
+    if (style === 'push') return pushImage(occupied, tone, rest, shape?.lift ?? SLICE_LIFT)
+    return cutImage(occupied, tone, rest, shape?.gap ?? CUT_GAP)
+}
+
+/**
+ * 只切一刀：两块都在原位，各自把同一道切口挖掉一半，所以缝的两侧都干净。
+ * @param occupied - 已占用的角度，度。
+ * @param tone - 已占用那一块的颜色。
+ * @param rest - 剩下那一块的颜色。
+ * @param gap - 切口宽度，像素。
+ * @returns url()。
+ */
+function cutImage(occupied: number, tone: string, rest: string, gap: number): string {
+    // 折线：0 度那一段与 occupied 那一段，各是一条半径。**两块各让出自己那一侧的半个缝宽**——缝因此
+    // 完全落在各块自己的地界里，evenodd 挖得干净（跨在两块边界上的话，缝的外半条会在对方那一侧被当成
+    // 「多出来的一块」而填上色）。缝是**透明**的，露出的是按钮底下的页面底色，深浅两套主题都自动对得上。
+    const half = gap / 2
+    const plate = '<path d="' + discPath(CENTER, CENTER, RADIUS)
+        + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, -1)
+        + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, 1)
+        + '" fill="' + rest + '" fill-rule="evenodd"/>'
+    const slice = '<path d="' + sectorPath(CENTER, CENTER, RADIUS, 0, occupied)
+        + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, 1)
+        + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, -1)
+        + '" fill="' + tone + '" fill-rule="evenodd"/>'
     return inlineSvg(plate + slice)
 }
 
 /**
- * 那一块推开多远：占用越大推得越开，占满四成以后推到底。
- * @param percent - 已占用的百分比。
- * @param shape - 探针与预览传进来的试参数；生产调用不带。
- * @returns 像素。
+ * 推出去：两块是**全等**的扇形，一块留在原位（那就是盘上的缺口），另一块沿角平分线挪开 lift。
+ *
+ * 整幅图（盘加上推出去那一块）要落在容器正中，所以圆心先沿角平分线的反面退半个 lift——不退的话，
+ * 推开的那一侧会被 20px 的容器裁掉一角。
+ * @param occupied - 已占用的角度，度。
+ * @param tone - 已占用那一块的颜色。
+ * @param rest - 剩下那一块的颜色。
+ * @param lift - 推开多远，像素。
+ * @returns url()。
  */
-function liftFor(percent: number, shape?: SliceShape): number {
-    const full = shape?.lift ?? SLICE_LIFT
-    const ratio = Math.min(1, Math.max(LIFT_MIN_RATIO, percent / LIFT_FULL_AT))
-    return round2(full * ratio)
+function pushImage(occupied: number, tone: string, rest: string, lift: number): string {
+    const direction = occupied / 2
+    const half = lift / 2
+    const centerX = round2(CENTER - half * Math.sin(rad(direction)))
+    const centerY = round2(CENTER + half * Math.cos(rad(direction)))
+    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS) + ' '
+        + sectorPath(centerX, centerY, PUSH_RADIUS, 0, occupied)
+        + '" fill="' + rest + '" fill-rule="evenodd"/>'
+    const apexX = round2(centerX + lift * Math.sin(rad(direction)))
+    const apexY = round2(centerY - lift * Math.cos(rad(direction)))
+    const slice = '<path d="' + sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied) + '" fill="' + tone + '"/>'
+    return inlineSvg(plate + slice)
 }
 
-/**
- * 圆心摆在哪：整枚盘加上推出去的那一块，让它落在容器正中。
- *
- * 不这么让的话，推开的那一侧会被容器裁掉一角——20px 的背景图只有这么大。
- * @param lift - 那一块被推开多远，像素。
- * @param direction - 推开的方向，度；0 是 12 点。
- * @returns 圆心的坐标。
- */
-function centerFor(lift: number, direction: number): {x: number; y: number} {
-    const half = lift / 2
-    return {
-        x: round2(CENTER - half * Math.sin(rad(direction))),
-        y: round2(CENTER + half * Math.cos(rad(direction))),
-    }
-}
 
 /**
  * 一整圈：两段半圆拼起来。
@@ -237,39 +272,70 @@ function centerFor(lift: number, direction: number): {x: number; y: number} {
  * 不能只用一段弧——起点与终点重合时，那段弧按 SVG 的规矩会被整段忽略，画出来什么都没有。
  * @param cx - 圆心横坐标。
  * @param cy - 圆心纵坐标。
+ * @param radius - 半径。
  * @returns SVG path 的 d。
  */
-function discPath(cx: number, cy: number): string {
+function discPath(cx: number, cy: number, radius: number): string {
     const x = round2(cx)
-    const top = round2(cy - RADIUS)
-    const bottom = round2(cy + RADIUS)
+    const top = round2(cy - radius)
+    const bottom = round2(cy + radius)
     return 'M ' + x + ' ' + top
-        + ' A ' + RADIUS + ' ' + RADIUS + ' 0 1 1 ' + x + ' ' + bottom
-        + ' A ' + RADIUS + ' ' + RADIUS + ' 0 1 1 ' + x + ' ' + top + ' Z'
+        + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + bottom
+        + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + top + ' Z'
 }
 
 /**
  * 一角扇形：从顶点出发，走到 from 度那一点，再沿弧顺时针走到 to 度。
  *
- * 灰盘上挖掉的缺口与推出去的那一块都用它、都用同一组角度与半径，差别只有顶点：缺口那一次的顶点在
- * 圆心，那一块那一次的顶点沿角平分线挪开了 lift。两块全等就是这么保证的。
+ * 两套画法都用它、都用同一组角度与半径，差别只有顶点落在哪：只切一刀时两块都从容器正中那颗圆心起，
+ * 推出去时拿一块从那颗圆心起、另一块从挪开 lift 的那一点起。
  * @param cx - 顶点的横坐标。
  * @param cy - 顶点的纵坐标。
+ * @param radius - 半径。
  * @param from - 起始角度，度；0 是 12 点。
  * @param to - 结束角度，度，顺时针。
  * @returns SVG path 的 d。
  */
-function sectorPath(cx: number, cy: number, from: number, to: number): string {
+function sectorPath(cx: number, cy: number, radius: number, from: number, to: number): string {
     const x = round2(cx)
     const y = round2(cy)
-    const x0 = round2(cx + RADIUS * Math.sin(rad(from)))
-    const y0 = round2(cy - RADIUS * Math.cos(rad(from)))
-    const x1 = round2(cx + RADIUS * Math.sin(rad(to)))
-    const y1 = round2(cy - RADIUS * Math.cos(rad(to)))
+    const x0 = round2(cx + radius * Math.sin(rad(from)))
+    const y0 = round2(cy - radius * Math.cos(rad(from)))
+    const x1 = round2(cx + radius * Math.sin(rad(to)))
+    const y1 = round2(cy - radius * Math.cos(rad(to)))
     // 过了半个圈要走大弧，否则圆弧会挑另一侧那条近路。
     const largeArc = to - from > 180 ? 1 : 0
     return 'M ' + x + ' ' + y + ' L ' + x0 + ' ' + y0
-        + ' A ' + RADIUS + ' ' + RADIUS + ' 0 ' + largeArc + ' 1 ' + x1 + ' ' + y1 + ' Z'
+        + ' A ' + radius + ' ' + radius + ' 0 ' + largeArc + ' 1 ' + x1 + ' ' + y1 + ' Z'
+}
+
+/**
+ * 一段切口：从圆心沿 direction 那条半径走出去的一个窄长条，一条边就压在半径线上。
+ *
+ * 它只往**一侧**让出 half 宽——盘让盘那一侧、那一块让扇形那一侧，两边一起才是等宽的一道缝。缝的末端
+ * 停在圆边上，所以整块都落在各自的地界里，evenodd 挖出来是干净的。
+ * @param cx - 圆心横坐标。
+ * @param cy - 圆心纵坐标。
+ * @param radius - 半径；缝到圆边为止。
+ * @param direction - 这一段开在哪条半径上，度；0 是 12 点。
+ * @param half - 让出的宽度（也就是缝宽的一半），像素。
+ * @param side - 往哪一侧让：`1` 是角度增大（顺时针）那一侧，`-1` 是另一侧。
+ * @returns SVG path 的 d。
+ */
+function slotPath(
+    cx: number, cy: number, radius: number, direction: number, half: number, side: number,
+): string {
+    const sin = Math.sin(rad(direction))
+    const cos = Math.cos(rad(direction))
+    // 沿半径走出去的那个长度，以及法线方向上让出的那一点宽度。
+    const outX = sin * radius
+    const outY = -cos * radius
+    const nx = cos * half * side
+    const ny = sin * half * side
+    return 'M ' + round2(cx) + ' ' + round2(cy)
+        + ' L ' + round2(cx + outX) + ' ' + round2(cy + outY)
+        + ' L ' + round2(cx + outX + nx) + ' ' + round2(cy + outY + ny)
+        + ' L ' + round2(cx + nx) + ' ' + round2(cy + ny) + ' Z'
 }
 
 /** 度换弧度。0 度是 12 点，顺时针为正。 */
@@ -298,7 +364,7 @@ function round2(value: number): number {
  * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
  * @param root - 候选元素；认不出来就什么都不做。
  */
-function paint(root: HTMLSpanElement): void {
+function paint(root: HTMLSpanElement, style: PieStyle): void {
     const trigger = root.querySelector(TRIGGER_SELECTOR)
     if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null) return
     const reading = trigger.querySelector('span')
@@ -328,7 +394,7 @@ function paint(root: HTMLSpanElement): void {
     // 「刚打开是灰的，聊一句才变色」）。
     root.setAttribute(CONTEXT_PIE_ATTRIBUTE, '')
     // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是「环被藏起来、饼又没有」的空格。
-    if (!paintPie(trigger, percent, reading)) root.removeAttribute(CONTEXT_PIE_ATTRIBUTE)
+    if (!paintPie(trigger, percent, reading, style)) root.removeAttribute(CONTEXT_PIE_ATTRIBUTE)
 }
 
 /**
@@ -341,7 +407,7 @@ function paint(root: HTMLSpanElement): void {
  * @param reading - 读数那一截；它的 `color` 就是扇形色。
  * @returns 这一帧接上了没有；没接上时调用方不该让原环让位。
  */
-function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement): boolean {
+function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement, style: PieStyle): boolean {
     // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
     // 探针里那组 fill 写法对照（.probe/ramp.mjs）量过，图片文档认它，与 rgb 字面值画出同一个像素。
     const tone = getComputedStyle(reading).color
@@ -351,7 +417,7 @@ function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement): b
     const existing = paintedPies.get(trigger)
     // 读数与色都没变、也没有一帧在跑：不写第二遍。
     if (existing !== undefined && existing.handle === 0 && existing.percent === target
-        && existing.tone === tone && existing.rest === rest) return true
+        && existing.tone === tone && existing.rest === rest && existing.style === style) return true
     // 上一次还在跑就被新读数打断了：从它当前显示的那一格接着往新目标走，不从起点重来。
     if (existing !== undefined && existing.handle !== 0) cancelAnimationFrame(existing.handle)
     const from = existing === undefined ? 0 : existing.percent
@@ -370,16 +436,17 @@ function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement): b
         handle: 0,
         tone,
         rest,
+        style,
         from,
         to: target,
         startedAt: performance.now(),
     }
     paintedPies.set(trigger, record)
-    paintImage(trigger, from, tone, rest)
+    paintImage(trigger, from, tone, rest, style)
     // 刚挂上就从 0 长出来（与数字轮那个先例一致），以及读数没变、系统要求减少动态效果：都不跑帧。
     if (from === target || reduceMotion()) {
         record.percent = target
-        paintImage(trigger, target, tone, rest)
+        paintImage(trigger, target, tone, rest, style)
         return true
     }
     record.handle = requestAnimationFrame((now) => { advance(trigger, now) })
@@ -387,8 +454,8 @@ function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement): b
 }
 
 /** 把读数对应的那张图写进那颗按钮。 */
-function paintImage(trigger: HTMLElement, percent: number, tone: string, rest: string): void {
-    trigger.style.backgroundImage = pieImage(percent, tone, rest)
+function paintImage(trigger: HTMLElement, percent: number, tone: string, rest: string, style: PieStyle): void {
+    trigger.style.backgroundImage = pieImage(percent, tone, rest, {style})
 }
 
 /**
@@ -406,12 +473,12 @@ function advance(trigger: HTMLElement, now: number): void {
     if (progress >= 1) {
         record.percent = record.to
         record.handle = 0
-        paintImage(trigger, record.to, record.tone, record.rest)
+        paintImage(trigger, record.to, record.tone, record.rest, record.style)
         return
     }
     const eased = 1 - (1 - progress) ** 3
     record.percent = record.from + (record.to - record.from) * eased
-    paintImage(trigger, record.percent, record.tone, record.rest)
+    paintImage(trigger, record.percent, record.tone, record.rest, record.style)
     record.handle = requestAnimationFrame((next) => { advance(trigger, next) })
 }
 

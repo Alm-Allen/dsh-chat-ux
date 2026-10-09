@@ -94,6 +94,14 @@ export const DEFAULT_TOKEN_FADE = true
 export const DEFAULT_HIT_REEL = true
 
 /**
+ * 上下文占用那枚饼的默认画法：折线切开之后，那一块**推出去**。
+ *
+ * 前端有一份同样的常量（`client/settings/settings-scope.ts`），改一处就要改另一处。默认推出去——
+ * 「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ */
+export const DEFAULT_PIE_PUSH = true
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -119,6 +127,8 @@ export interface Config {
     tokenFade: Volatile<boolean>
     // 命中率读数变化时，每一位数字是否像老虎机那样滚到新值。关掉时数字直接换掉。
     hitReel: Volatile<boolean>
+    // 上下文占用那枚饼：折线切开之后，那一块是否沿角平分线推开一段。关掉就只留一道切口，两块都留在原位。
+    piePush: Volatile<boolean>
 }
 
 /**
@@ -135,6 +145,7 @@ export const Config = Schema.object({
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
+    piePush: Schema.boolean().default(DEFAULT_PIE_PUSH).volatile(),
 })
 
 /**
