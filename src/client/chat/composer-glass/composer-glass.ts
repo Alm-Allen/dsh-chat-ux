@@ -1,9 +1,9 @@
 /**
- * 输入框那块玻璃的几何。
+ * 输入框那块玻璃的几何，外加卡片里那枚主操作按钮的认定。
  *
  * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
  * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
- * 样式表里的 `clip-path` 拿它们切开那块底。
+ * 座位的两层背景拿它们让开那一段。
  *
  * 只在读者打开这个开关时安装（见 `index.tsx` 的 `syncGlass`）。要量的只有两个盒子，观察者也
  * 只有两个来源：座位与卡片各挂一个 `ResizeObserver`（卡片换行、加附件、上方卡片出现或消失，都会让
@@ -12,7 +12,7 @@
  *
  * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
  */
-import {GLASS_BOTTOM_VARIABLE, GLASS_TOP_VARIABLE} from './composer-glass-styles'
+import {GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_TOP_VARIABLE} from './composer-glass-styles'
 
 /** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
 const SEAT_SELECTOR = '[data-composer-seat]'
@@ -21,14 +21,14 @@ const CARD_SELECTOR = '[data-composer-card]'
 /**
  * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
  *
- * @returns 卸下观察者、并把写过的两个属性清干净的函数。
+ * @returns 卸下观察者、并把写过的属性都清干净的函数。
  */
 export function installComposerGlass(): () => void {
     const bound = new Set<HTMLElement>()
     let scheduled = false
     let stopped = false
 
-    /** 量一次座位：卡片在就写两条边，不在就清掉（缺口回退成零高，也就是整块底）。 */
+    /** 量一次座位：卡片在就写两条边并认一次主按钮，不在就清掉（缺口回退成零高，也就是整块底）。 */
     const measure = (seat: HTMLElement): void => {
         const card = seat.querySelector<HTMLElement>(CARD_SELECTOR)
         if (card === null) {
@@ -36,6 +36,7 @@ export function installComposerGlass(): () => void {
             seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
             return
         }
+        markPrimary(card)
         const seatBox = seat.getBoundingClientRect()
         const cardBox = card.getBoundingClientRect()
         // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
@@ -99,6 +100,34 @@ export function installComposerGlass(): () => void {
             seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
         }
         bound.clear()
+        for (const marked of document.querySelectorAll(`[${GLASS_PRIMARY_ATTRIBUTE}]`)) {
+            marked.removeAttribute(GLASS_PRIMARY_ATTRIBUTE)
+        }
+    }
+}
+
+/**
+ * 认一次卡片里那枚主操作按钮（发送，跑起来时是停止），把属性打在它身上。
+ *
+ * dsh 那枚按钮既不带语义属性、class 名又带构建期 hash，所以只能由这里认出来、自己打一个。判据只有
+ * 一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个 trailing 行的
+ * 末尾），加号、模式、附件那些按钮都在它前面。
+ *
+ * 它只在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
+ * 不会因为这一处再被叫醒。反面是 dsh 哪天在它后面再加一个按钮——那时被打上的是新按钮，蓝跑到了别人
+ * 身上，一眼看得出来，也好修。
+ *
+ * @param card - 输入卡片。
+ */
+function markPrimary(card: HTMLElement): void {
+    const buttons = card.querySelectorAll<HTMLButtonElement>('button')
+    const target = buttons.length === 0 ? null : buttons[buttons.length - 1]
+    for (const button of buttons) {
+        if (button === target) {
+            if (!button.hasAttribute(GLASS_PRIMARY_ATTRIBUTE)) button.setAttribute(GLASS_PRIMARY_ATTRIBUTE, '')
+        } else if (button.hasAttribute(GLASS_PRIMARY_ATTRIBUTE)) {
+            button.removeAttribute(GLASS_PRIMARY_ATTRIBUTE)
+        }
     }
 }
 

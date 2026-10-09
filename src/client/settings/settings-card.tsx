@@ -118,8 +118,8 @@ const ZH_COPY: Copy = {
         + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
     glassLabel: '输入框毛玻璃',
     glassHint:
-        '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里。'
-        + '关掉就回到 dsh 原来的输入框。',
+        '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
+        + '右下角那枚发送（跑起来时是停止）按钮跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
     fontsLabel: '自带字体',
     fontsHint:
         '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
@@ -179,7 +179,8 @@ const EN_COPY: Copy = {
     glassLabel: 'Composer glass',
     glassHint:
         'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
-        + 'highlight and inner shadow belong to this too. Turning it off restores dsh\'s original composer.',
+        + 'highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the '
+        + 'same material. Turning it off restores dsh\'s own composer and button.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
         'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
