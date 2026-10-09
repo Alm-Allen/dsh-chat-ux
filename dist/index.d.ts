@@ -54,6 +54,12 @@ export declare const DEFAULT_SEND_FLIGHT = true;
  */
 export declare const DEFAULT_TOKEN_FADE = true;
 /**
+ * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
+ */
+export declare const DEFAULT_HIT_REEL = true;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
@@ -66,6 +72,7 @@ export interface Config {
     fontCode: Volatile<string>;
     sendFlight: Volatile<boolean>;
     tokenFade: Volatile<boolean>;
+    hitReel: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -80,6 +87,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
+    hitReel: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
@@ -89,6 +97,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
+    hitReel: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。

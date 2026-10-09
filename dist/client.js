@@ -924,7 +924,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
+const hit_reel_1 = require("./hit-reel");
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8;
 /** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
@@ -935,6 +937,8 @@ const MEASURE_STYLE = { visibility: 'hidden', left: 0, top: 0 };
 const DEFAULT_PERFORMANCE_USAGE = 'detailed';
 /** dsh 那份「性能与用量」表单的条目 id。 */
 const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
+/** 本插件自己那一份表单的条目 id：转轮开关就在它上面。 */
+const PLUGIN_SETTINGS_NAMESPACE = 'dsh-chat-ux';
 /** 一位小数：千分之一是这条口径的最小单位。 */
 const PERCENT_UNITS_PER_TENTH = 1000;
 /** 部分命中的上限：读作 100.0% 之前必须真的全中。 */
@@ -968,7 +972,8 @@ const HIT_TONE_CLASS = {
  */
 function installCacheHitPill(slots, configForms) {
     slots.inject('conversation.composer.dock', () => {
-        const releaseUsageMode = adoptUsageMode(configForms.get(CHAT_SETTINGS_NAMESPACE));
+        const releaseUsageMode = usageModeMirror.adopt(configForms.get(CHAT_SETTINGS_NAMESPACE));
+        const releaseHitReel = hitReelMirror.adopt(configForms.get(PLUGIN_SETTINGS_NAMESPACE));
         const releaseSeat = slots.register({
             name: 'conversation.composer.dock',
             id: USAGE_STAT_ID,
@@ -979,6 +984,7 @@ function installCacheHitPill(slots, configForms) {
         return () => {
             releaseSeat();
             releaseUsageMode();
+            releaseHitReel();
         };
     });
 }
@@ -990,6 +996,7 @@ function installCacheHitPill(slots, configForms) {
 function CacheHitPill({ useProjection, t }) {
     const usage = useProjection('tokenUsage');
     const mode = useUsageMode();
+    const rolling = useHitReel();
     const [open, setOpen] = (0, react_1.useState)(false);
     const rootRef = (0, react_1.useRef)(null);
     const panelRef = (0, react_1.useRef)(null);
@@ -1010,13 +1017,13 @@ function CacheHitPill({ useProjection, t }) {
     if (mode === 'compact') {
         if (hit === null)
             return null;
-        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)("span", { className: [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' '), children: hit.text })] })] }) }));
+        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(hit_reel_1.HitReel, { text: hit.text, toneClass: hit.toneClass, rolling: rolling })] })] }) }));
     }
     const total = billedInput + usage.outputTokens;
     const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) });
     const title = t('stats.dialog.usageTitle');
     const summary = hit === null ? totalText : totalText + ' · ' + hitLabel + ' ' + hit.text;
-    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)("span", { className: [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' '), children: hit.text })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)(hit_reel_1.HitReel, { text: hit.text, toneClass: hit.toneClass, rolling: rolling })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
 }
 /**
  * 命中率读数，恒一位小数。
@@ -1106,7 +1113,11 @@ function exactCount(value, t) {
 }
 /** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
 function useUsageMode() {
-    return (0, react_1.useSyncExternalStore)(subscribeUsageMode, readUsageMode);
+    return (0, react_1.useSyncExternalStore)(usageModeMirror.subscribe, usageModeMirror.read);
+}
+/** 转轮开着没有：订阅本插件那份表单里的取值。 */
+function useHitReel() {
+    return (0, react_1.useSyncExternalStore)(hitReelMirror.subscribe, hitReelMirror.read);
 }
 /**
  * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也
@@ -1139,43 +1150,99 @@ function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
         };
     }, [open, setOpen, rootRef, panelRef]);
 }
-/** 当前档位。模块级一份：这个座位只有一处安装，订阅跟着装卸走。 */
-let usageMode = DEFAULT_PERFORMANCE_USAGE;
-/** 档位变化时要叫的那些回调，由 `useSyncExternalStore` 提供。 */
-const usageModeListeners = new Set();
-/** @returns 当前档位。 */
-function readUsageMode() {
-    return usageMode;
-}
-/** @param listener - 档位变化时要叫的回调。 @returns 撤下这次订阅。 */
-function subscribeUsageMode(listener) {
-    usageModeListeners.add(listener);
-    return () => {
-        usageModeListeners.delete(listener);
-    };
-}
 /**
- * 把档位接上 dsh 那份 `ui-chat` 表单。
+ * 造一份模块级镜像。
  *
- * 没有这一份表单时（别的部署不向这个客户端暴露它）保持默认档，而不是整枚胶囊不挂。
- * @param form - 共享表单。
- * @returns 撤下这次订阅。
+ * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里。
+ * @param initial - 表单缺席时的取值。
+ * @param pick - 从表单的取值里挑出这个字段。
+ * @returns 那一份镜像。
  */
-function adoptUsageMode(form) {
-    if (form === undefined)
-        return () => { };
-    const adopt = () => {
-        const next = form.getSnapshot().value?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE;
-        if (next === usageMode)
-            return;
-        usageMode = next;
-        for (const listener of usageModeListeners)
-            listener();
+function createSettingMirror(initial, pick) {
+    let current = initial;
+    const listeners = new Set();
+    return {
+        read: () => current,
+        subscribe: (listener) => {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+        adopt: (form) => {
+            if (form === undefined)
+                return () => {
+                };
+            const adopt = () => {
+                const next = pick(form.getSnapshot().value);
+                if (next === current)
+                    return;
+                current = next;
+                for (const listener of listeners)
+                    listener();
+            };
+            const unsubscribe = form.subscribe(adopt);
+            adopt();
+            return unsubscribe;
+        },
     };
-    const unsubscribe = form.subscribe(adopt);
-    adopt();
-    return unsubscribe;
 }
+/** 档位的镜像。 */
+const usageModeMirror = createSettingMirror(DEFAULT_PERFORMANCE_USAGE, section => section?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE);
+/** 命中率转轮的镜像。 */
+const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, section => section?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL);
+    };
+
+    __registry["settings/settings-scope.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+/**
+ * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：它修的是读者没碰过键鼠时的那一类丢失。
+ */
+exports.DEFAULT_ENHANCED_FOLLOW = true;
+/**
+ * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
+ */
+exports.DEFAULT_AUTO_FOLD = true;
+/**
+ * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：两端一致，且装插件的人不必自己装字体。
+ */
+exports.DEFAULT_EMBEDDED_FONTS = true;
+/**
+ * 自定义字体栈的默认值。空串是「没有自定义」。host 侧有一份同样的常量。
+ */
+exports.DEFAULT_FONT_FAMILY = '';
+/**
+ * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
+ */
+exports.DEFAULT_CARET_MOTION = 'typing';
+/**
+ * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
+ */
+exports.DEFAULT_SEND_FLIGHT = true;
+/**
+ * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
+ */
+exports.DEFAULT_TOKEN_FADE = true;
+/**
+ * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
+ */
+exports.DEFAULT_HIT_REEL = true;
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -1191,7 +1258,9 @@ function adoptUsageMode(form) {
  * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_BAD_CLASS = exports.CACHE_HIT_WARN_CLASS = exports.CACHE_HIT_FAIR_CLASS = exports.CACHE_HIT_GOOD_CLASS = exports.CACHE_HIT_VALUE_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_BAD_CLASS = exports.CACHE_HIT_WARN_CLASS = exports.CACHE_HIT_FAIR_CLASS = exports.CACHE_HIT_GOOD_CLASS = exports.HIT_REEL_SPOKEN_CLASS = exports.HIT_REEL_STATIC_CLASS = exports.HIT_REEL_WAS_CLASS = exports.HIT_REEL_CELL_CLASS = exports.HIT_REEL_CLASS = exports.CACHE_HIT_VALUE_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+/** 一次翻动用多久；与 hit-reel.tsx 的 `REEL_TURN_MS` 是同一个数，改一处就要改另一处。 */
+const REEL_TURN_MS = 220;
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
 exports.CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor';
 /** 胶囊本体。静态读数是 `span`，能展开明细的是 `button`。 */
@@ -1202,6 +1271,16 @@ exports.CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label';
 exports.CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep';
 /** 命中率那一截：四档取色挂在它与下面四个档位类名的组合上。 */
 exports.CACHE_HIT_VALUE_CLASS = 'dsh-chat-ux-hit-value';
+/** 一个数字位：一格窗口，只负责裁。 */
+exports.HIT_REEL_CLASS = 'dsh-chat-ux-hit-reel';
+/** 窗口里现在的那个数字：从下面一格上来，终态零位移。 */
+exports.HIT_REEL_CELL_CLASS = 'dsh-chat-ux-hit-reel-cell';
+/** 上一个数字：往上面一格走。 */
+exports.HIT_REEL_WAS_CLASS = 'dsh-chat-ux-hit-reel-was';
+/** 读数里的小数点与百分号：不滚，与数字轮并排。 */
+exports.HIT_REEL_STATIC_CLASS = 'dsh-chat-ux-hit-static';
+/** 给读屏的那一份读数，视觉上藏起来。 */
+exports.HIT_REEL_SPOKEN_CLASS = 'dsh-chat-ux-hit-spoken';
 /** 命中率 ≥ 98%。 */
 exports.CACHE_HIT_GOOD_CLASS = 'dsh-chat-ux-hit-good';
 /** 命中率 93% ~ 98%。 */
@@ -1297,6 +1376,96 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   margin: 0 6px;
 }
 
+/* 命中率那一截：几位数字、小数点、百分号并排，**全部落在同一个写死的行盒里**。
+   一格的高写死 20px：字形盒 17px 放在里面，上下各余一点，读者换字体也裁不到；小数点与百分号跟着
+   用同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑。翻动的位移**不用**这个数——它是相对
+   各自行盒的百分比（下面那两条关键帧），所以这一处没有「算一格」的地方，停位与字号、字体度量、
+   页面缩放全都无关。 */
+
+.${exports.CACHE_HIT_VALUE_CLASS} {
+  --dsh-chat-ux-reel-cell: 20px;
+  display: inline-flex;
+  align-items: center;
+  height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 一个数字位：一格的窗口，只负责裁。position 定在这里，好让上一个数字压在同一格上。 */
+.${exports.HIT_REEL_CLASS} {
+  display: block;
+  position: relative;
+  /* 胶囊挤的时候，这一格也不许被压窄。 */
+  flex: none;
+  overflow: hidden;
+  height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 新数字从下面一格上来：位移是相对**这一格自己的行盒**的百分比，所以一格有多高、字号多大、
+   页面缩放多少都不参与；而终态是零位移——动画走完，数字就落在它本来的位置上，没有可歪的余地。 */
+.${exports.HIT_REEL_CELL_CLASS} {
+  display: block;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-hit-in ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+/* 上一个数字往上面一格走；走完停在窗口外，被列口裁着，不碍事。
+   它必须**脱离文档流**压在同一个格上：两个 display: block 上下排的话，新数字会被推到下一格，
+   正好落在窗口外面——那样读者只会看到旧数字往上走、新数字永远不出现。 */
+.${exports.HIT_REEL_WAS_CLASS} {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-hit-out ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+@keyframes dsh-chat-ux-hit-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes dsh-chat-ux-hit-out {
+  from { transform: none; }
+  to { transform: translateY(-100%); }
+}
+
+/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示。 */
+@media (prefers-reduced-motion: reduce) {
+  .${exports.HIT_REEL_CELL_CLASS},
+  .${exports.HIT_REEL_WAS_CLASS} {
+    animation: none;
+  }
+
+  .${exports.HIT_REEL_WAS_CLASS} {
+    display: none;
+  }
+}
+
+/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
+   flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
+   「小数点不见了」；数字列口一直有这一条，它们两个漏了。 */
+.${exports.HIT_REEL_STATIC_CLASS} {
+  display: block;
+  flex: none;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」。 */
+.${exports.HIT_REEL_SPOKEN_CLASS} {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，档位一路看得见。 */
 .${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_GOOD_CLASS} {
   color: var(--dsh-chat-ux-hit-good);
@@ -1388,6 +1557,89 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
 `;
     };
 
+    __registry["chat/cache-hit/hit-reel.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HitReel = HitReel;
+const jsx_runtime_1 = require("react/jsx-runtime");
+/**
+ * 命中率读数里那几位数字的翻新动画：一格一格地翻。
+ *
+ * 读数一有新值，**变了的那一位**把新数字从下面一格托上来，同时把上一个数字往上面一格送走
+ * （220 ms，低位比高位晚 15 ms 起手）。位移写的是 `translateY(±100%)`——百分比相对的是**这一格
+ * 自己的行盒**，所以与一格有多高、字号多大、字体度量、页面缩放统统无关；而**终态是零位移**：
+ * 动画走完，数字就在它本来的位置上。
+ *
+ * 这两条合起来，这一处不可能「停歪」：没有中间格、没有归一、没有事后纠正，也不需要问元素任何尺寸。
+ *
+ * 2026-10 的前两版都栽在「算一格」上：
+ *
+ * - 第一版按 CSS 变量算整格滚动，位移与每格真实高度每格差 0.84px，误差按格数累积——滚到第 9 格
+ *   累计 7.55px，已经超过半格（6.90px），窗口里于是同时露着上下两个数字的各一半；
+ * - 第二版整条带滚动加记账，位移换成了百分比，但仍然依赖「条带的高度正好是三十格」。
+ *
+ * 现在把这条依赖也去掉了：条带没了，只剩下这一格与上一格。
+ *
+ * 整枚刚挂上（刷新页面、切换会话）与位数变了新长出来的那一位也照滚：没有上一个数字，就只有
+ * 新数字从下面一格上来——这正是「换了会话，读数翻了一下」那一下。
+ *
+ * 给读屏的那一份：视觉块标 `aria-hidden`，读数另给一份视觉隐藏的纯文本。
+ *
+ * @module dsh-chat-ux/client/chat/cache-hit/hit-reel
+ */
+const react_1 = require("react");
+const cache_hit_styles_1 = require("./cache-hit-styles");
+/** 一次翻动用多久。与样式表里那两条关键帧的时长是同一个数，改一处就要改另一处。 */
+const REEL_TURN_MS = 220;
+/** 低位比高位晚这么多起手，动起来的次序从左往右。 */
+const REEL_STAGGER_MS = 15;
+/** 读数的形状：一至三位整数、一位小数、百分号，与 `formatHitPercent` 的产物对上。 */
+const READING_PATTERN = /^(\d{1,3})\.(\d)%$/;
+/**
+ * 命中率那一截：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
+ * @param props - 读数、档位色与开关。
+ * @returns 命中率那一截。
+ */
+function HitReel({ text, toneClass, rolling }) {
+    const reading = splitReading(text);
+    const valueClass = [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, toneClass].join(' ');
+    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一枚照旧是那个读数。
+    if (!rolling || reading === null)
+        return (0, jsx_runtime_1.jsx)("span", { className: valueClass, children: text });
+    const digits = reading.integer.split('');
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: valueClass, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_STATIC_CLASS, children: "%" })] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_SPOKEN_CLASS, children: text })] }));
+}
+/**
+ * 一个数字位：一格窗口，里头最多两个数字——现在的从下面上来，上一个往上面走。
+ * @param props - 数字与次序。
+ * @returns 这一位。
+ */
+function Digit({ digit, place }) {
+    // 读数一变就把原来那个挪到上面去，新数字接替它。key 用的是数字本身，所以**没变的那一位不会
+    // 重新挂载**、也就不会播动画：读数一变就让每位都翻，看着像一直在抽。
+    const [pair, setPair] = (0, react_1.useState)({ shown: digit, previous: null });
+    if (pair.shown !== digit)
+        setPair({ shown: digit, previous: pair.shown });
+    const delay = { animationDelay: String(place * REEL_STAGGER_MS) + 'ms' };
+    return ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.HIT_REEL_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
+}
+/**
+ * 把读数拆成整数部分与那一位小数。
+ * @param text - `97.3%` 这样的读数。
+ * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
+ */
+function splitReading(text) {
+    const matched = READING_PATTERN.exec(text);
+    if (matched === null)
+        return null;
+    const integer = matched[1];
+    const decimal = matched[2];
+    if (integer === undefined || decimal === undefined)
+        return null;
+    return { integer, decimal };
+}
+    };
+
     __registry["chat/context-meter/context-meter-pie.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1422,9 +1674,18 @@ const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]';
 const READING_PATTERN = /^(\d{1,3})%$/;
 /** 饼的边长，取原环 svg 的 14px；两者占的是同一格，所以不必再量。 */
 const PIE_SIZE = 14;
-/** 圆心与半径，都由 PIE_SIZE 定。 */
+/** 原环的几何（`ContextMeter.tsx` 的 RADIUS 与 `.module.css` 的 stroke-width）。 */
+const RING_RADIUS = 5.5;
+const RING_STROKE = 2;
+/**
+ * 饼的半径取原环的**外轮廓**：环带从 5.5 往两边各铺 1，最外圈就是 6.5。
+ *
+ * 这一格是 14px，但原环画不满它——四周各留 0.5px。照 14px 画满会一眼看出比原来大一圈，所以
+ * 实心饼也停在 6.5。
+ */
+const RADIUS = RING_RADIUS + RING_STROKE / 2;
+/** 圆心：那一格的正中，与原环的 cx/cy 同值。 */
 const CENTER = PIE_SIZE / 2;
-const RADIUS = PIE_SIZE / 2;
 /** 一整圈，弧度。 */
 const FULL_TURN = Math.PI * 2;
 /** path 坐标的小数位取两位：再多的位数只是噪声。 */
@@ -1652,9 +1913,14 @@ body[data-ds-dark-theme] {
   visibility: hidden;
 }
 
-/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。 */
+/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。
+
+   字号按输入框下方另一枚胶囊那一份来（StatsPills.module.css 的 .anchor，同样减 1px）。dsh 自己
+   这两处本来就差 1px——它这一处用的是没减的 --dsh-content-font-size-secondary，于是同一行里两个
+   挨着的数字不一样大，读者一眼看得出不齐。 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
   color: var(--dsh-chat-ux-context-tone, currentColor);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
 }
 
 [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_CALM}'] {
@@ -5362,6 +5628,7 @@ const FONTS_FIELD = 'fonts';
 const FONT_SANS_FIELD = 'fontSans';
 const FONT_CODE_FIELD = 'fontCode';
 const SEND_FLIGHT_FIELD = 'sendFlight';
+const HIT_REEL_FIELD = 'hitReel';
 const ZH_COPY = {
     summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标、气泡动效与字体也在这里调。',
     followLabel: '增强跟随',
@@ -5381,6 +5648,9 @@ const ZH_COPY = {
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
     sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
+    reelLabel: '命中率转轮',
+    reelHint: '输入框下方那枚胶囊里的命中率变化时，变了的那些数字滚到新读数，像老虎机那样翻过去。'
+        + '关掉就直接换成新数字。',
     fontsLabel: '自带字体',
     fontsHint: '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
         + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
@@ -5419,6 +5689,9 @@ const EN_COPY = {
     sendLabel: 'Chat bubble motion',
     sendHint: 'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
         + 'so a send is something you can see.',
+    reelLabel: 'Cache-hit reels',
+    reelHint: 'When the cache-hit rate in the pill below the composer changes, the digits that changed roll to their new '
+        + 'values like a slot reel. Off swaps the number instantly.',
     fontsLabel: 'Bundled fonts',
     fontsHint: 'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
         + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
@@ -5466,6 +5739,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const autoFoldOn = storedAutoFold(snapshot.value);
     const tokenFadeOn = storedTokenFade(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
+    const reelOn = storedHitReel(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const fontsOn = storedFonts(snapshot.value);
     const sans = sansDraft ?? storedSans(snapshot.value);
@@ -5518,7 +5792,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
      */
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
                             setSansDraft(null);
                             void reset(FONT_SANS_FIELD);
                         } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
@@ -5569,6 +5843,10 @@ function storedTokenFade(value) {
 /** 从 host 的值里读聊天气泡动效的开关。 */
 function storedSendOn(value) {
     return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
+}
+/** 从 host 的值里读命中率转轮的开关。 */
+function storedHitReel(value) {
+    return value?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL;
 }
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value) {
@@ -5811,52 +6089,6 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   flex: none;
 }
 `;
-    };
-
-    __registry["settings/settings-scope.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
-/**
- * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：它修的是读者没碰过键鼠时的那一类丢失。
- */
-exports.DEFAULT_ENHANCED_FOLLOW = true;
-/**
- * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
- */
-exports.DEFAULT_AUTO_FOLD = true;
-/**
- * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：两端一致，且装插件的人不必自己装字体。
- */
-exports.DEFAULT_EMBEDDED_FONTS = true;
-/**
- * 自定义字体栈的默认值。空串是「没有自定义」。host 侧有一份同样的常量。
- */
-exports.DEFAULT_FONT_FAMILY = '';
-/**
- * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
- */
-exports.DEFAULT_CARET_MOTION = 'typing';
-/**
- * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
- */
-exports.DEFAULT_SEND_FLIGHT = true;
-/**
- * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
- */
-exports.DEFAULT_TOKEN_FADE = true;
     };
 
     __registry["settings/transcript-default.js"] = function (module, exports, require) {

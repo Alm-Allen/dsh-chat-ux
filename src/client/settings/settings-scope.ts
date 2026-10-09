@@ -56,6 +56,13 @@ export const DEFAULT_SEND_FLIGHT = true
  */
 export const DEFAULT_TOKEN_FADE = true
 
+/**
+ * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
+ *
+ * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
+ */
+export const DEFAULT_HIT_REEL = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
     /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
@@ -74,6 +81,8 @@ export interface ChatUxSection {
     sendFlight?: boolean
     /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
     tokenFade?: boolean
+    /** 命中率读数变化时，每一位数字是否滚到新值；默认开着。 */
+    hitReel?: boolean
 }
 
 /**

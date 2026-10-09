@@ -28,7 +28,7 @@ import {CARD_CLASS} from './config-card-styles'
 import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_FONT_FAMILY,
-    DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_HIT_REEL, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -41,6 +41,7 @@ const FONTS_FIELD = 'fonts'
 const FONT_SANS_FIELD = 'fontSans'
 const FONT_CODE_FIELD = 'fontCode'
 const SEND_FLIGHT_FIELD = 'sendFlight'
+const HIT_REEL_FIELD = 'hitReel'
 
 /** 一种语言的文案。 */
 interface Copy {
@@ -58,6 +59,8 @@ interface Copy {
     caretTyping: string
     sendLabel: string
     sendHint: string
+    reelLabel: string
+    reelHint: string
     fontsLabel: string
     fontsHint: string
     fontsOffHint: string
@@ -99,6 +102,10 @@ const ZH_COPY: Copy = {
     caretTyping: '无论何时',
     sendLabel: '聊天气泡动效',
     sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
+    reelLabel: '命中率转轮',
+    reelHint:
+        '输入框下方那枚胶囊里的命中率变化时，变了的那些数字滚到新读数，像老虎机那样翻过去。'
+        + '关掉就直接换成新数字。',
     fontsLabel: '自带字体',
     fontsHint:
         '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
@@ -146,6 +153,10 @@ const EN_COPY: Copy = {
     sendHint:
         'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
         + 'so a send is something you can see.',
+    reelLabel: 'Cache-hit reels',
+    reelHint:
+        'When the cache-hit rate in the pill below the composer changes, the digits that changed roll to their new '
+        + 'values like a slot reel. Off swaps the number instantly.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
         'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
@@ -214,6 +225,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const autoFoldOn = storedAutoFold(snapshot.value)
     const tokenFadeOn = storedTokenFade(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
+    const reelOn = storedHitReel(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
     const fontsOn = storedFonts(snapshot.value)
     const sans = sansDraft ?? storedSans(snapshot.value)
@@ -337,6 +349,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.sendLabel}
                     onChange={(next: boolean) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn)}
+                />
+            ))}
+            {rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, (
+                <Switch
+                    checked={reelOn}
+                    disabled={controlsDisabled}
+                    label={copy.reelLabel}
+                    onChange={(next: boolean) => void writeField(HIT_REEL_FIELD, next, storedHitReel)}
                 />
             ))}
             {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
@@ -485,6 +505,11 @@ function storedTokenFade(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读聊天气泡动效的开关。 */
 function storedSendOn(value: ChatUxSection | undefined): boolean {
     return value?.sendFlight ?? DEFAULT_SEND_FLIGHT
+}
+
+/** 从 host 的值里读命中率转轮的开关。 */
+function storedHitReel(value: ChatUxSection | undefined): boolean {
+    return value?.hitReel ?? DEFAULT_HIT_REEL
 }
 
 /** 从 host 的值里读光标动效档位。 */

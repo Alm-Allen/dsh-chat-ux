@@ -37,9 +37,20 @@ const READING_PATTERN = /^(\d{1,3})%$/
 /** 饼的边长，取原环 svg 的 14px；两者占的是同一格，所以不必再量。 */
 const PIE_SIZE = 14
 
-/** 圆心与半径，都由 PIE_SIZE 定。 */
+/** 原环的几何（`ContextMeter.tsx` 的 RADIUS 与 `.module.css` 的 stroke-width）。 */
+const RING_RADIUS = 5.5
+const RING_STROKE = 2
+
+/**
+ * 饼的半径取原环的**外轮廓**：环带从 5.5 往两边各铺 1，最外圈就是 6.5。
+ *
+ * 这一格是 14px，但原环画不满它——四周各留 0.5px。照 14px 画满会一眼看出比原来大一圈，所以
+ * 实心饼也停在 6.5。
+ */
+const RADIUS = RING_RADIUS + RING_STROKE / 2
+
+/** 圆心：那一格的正中，与原环的 cx/cy 同值。 */
 const CENTER = PIE_SIZE / 2
-const RADIUS = PIE_SIZE / 2
 
 /** 一整圈，弧度。 */
 const FULL_TURN = Math.PI * 2

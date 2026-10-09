@@ -19,13 +19,15 @@ import {
     IconDatabaseOutlineRegular, useAnchoredPosition, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {SlotsService} from '../file-mutation/file-mutation-row'
-import type {ConfigForm} from '../../settings/settings-scope'
+import {DEFAULT_HIT_REEL} from '../../settings/settings-scope'
+import type {ChatUxSection, ConfigForm} from '../../settings/settings-scope'
 import {
     CACHE_HIT_ANCHOR_CLASS, CACHE_HIT_BAD_CLASS, CACHE_HIT_DETAILS_CLASS, CACHE_HIT_FAIR_CLASS,
     CACHE_HIT_GOOD_CLASS, CACHE_HIT_LABEL_CLASS, CACHE_HIT_PANEL_CLASS, CACHE_HIT_PILL_CLASS,
     CACHE_HIT_RULE_CLASS, CACHE_HIT_SEP_CLASS, CACHE_HIT_TITLE_CLASS, CACHE_HIT_TITLE_LABEL_CLASS,
-    CACHE_HIT_TITLE_VALUE_CLASS, CACHE_HIT_VALUE_CLASS, CACHE_HIT_WARN_CLASS,
+    CACHE_HIT_TITLE_VALUE_CLASS, CACHE_HIT_WARN_CLASS,
 } from './cache-hit-styles'
+import {HitReel} from './hit-reel'
 
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8
@@ -41,6 +43,9 @@ const DEFAULT_PERFORMANCE_USAGE = 'detailed'
 
 /** dsh 那份「性能与用量」表单的条目 id。 */
 const CHAT_SETTINGS_NAMESPACE = 'ui-chat'
+
+/** 本插件自己那一份表单的条目 id：转轮开关就在它上面。 */
+const PLUGIN_SETTINGS_NAMESPACE = 'dsh-chat-ux'
 
 /** 一位小数：千分之一是这条口径的最小单位。 */
 const PERCENT_UNITS_PER_TENTH = 1000
@@ -118,9 +123,10 @@ export interface CacheHitPillProps {
  */
 export function installCacheHitPill(slots: SlotsService, configForms: ConfigFormsReader): void {
     slots.inject('conversation.composer.dock', () => {
-        const releaseUsageMode = adoptUsageMode(
-            configForms.get<{performanceUsage?: PerformanceUsageMode}>(CHAT_SETTINGS_NAMESPACE),
+        const releaseUsageMode = usageModeMirror.adopt(
+            configForms.get<UsageSettingsSection>(CHAT_SETTINGS_NAMESPACE),
         )
+        const releaseHitReel = hitReelMirror.adopt(configForms.get<ChatUxSection>(PLUGIN_SETTINGS_NAMESPACE))
         const releaseSeat = slots.register({
             name: 'conversation.composer.dock',
             id: USAGE_STAT_ID,
@@ -131,6 +137,7 @@ export function installCacheHitPill(slots: SlotsService, configForms: ConfigForm
         return () => {
             releaseSeat()
             releaseUsageMode()
+            releaseHitReel()
         }
     })
 }
@@ -143,6 +150,7 @@ export function installCacheHitPill(slots: SlotsService, configForms: ConfigForm
 export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElement | null {
     const usage = useProjection('tokenUsage')
     const mode = useUsageMode()
+    const rolling = useHitReel()
     const [open, setOpen] = useState(false)
     const rootRef = useRef<HTMLSpanElement | null>(null)
     const panelRef = useRef<HTMLDivElement | null>(null)
@@ -169,7 +177,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                     {icon}
                     <span className={CACHE_HIT_LABEL_CLASS}>
                         {hitLabel}{' '}
-                        <span className={[CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' ')}>{hit.text}</span>
+                        <HitReel text={hit.text} toneClass={hit.toneClass} rolling={rolling}/>
                     </span>
                 </span>
             </span>
@@ -197,7 +205,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                         <>
                             <span className={CACHE_HIT_SEP_CLASS} aria-hidden>·</span>
                             {hitLabel}{' '}
-                            <span className={[CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' ')}>{hit.text}</span>
+                            <HitReel text={hit.text} toneClass={hit.toneClass} rolling={rolling}/>
                         </>
                     )}
                 </span>
@@ -339,7 +347,12 @@ function exactCount(value: number, t: Translate): string {
 
 /** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
 function useUsageMode(): PerformanceUsageMode {
-    return useSyncExternalStore(subscribeUsageMode, readUsageMode)
+    return useSyncExternalStore(usageModeMirror.subscribe, usageModeMirror.read)
+}
+
+/** 转轮开着没有：订阅本插件那份表单里的取值。 */
+function useHitReel(): boolean {
+    return useSyncExternalStore(hitReelMirror.subscribe, hitReelMirror.read)
 }
 
 /**
@@ -377,41 +390,73 @@ function useEscapeAndOutsideClick(
     }, [open, setOpen, rootRef, panelRef])
 }
 
-/** 当前档位。模块级一份：这个座位只有一处安装，订阅跟着装卸走。 */
-let usageMode: PerformanceUsageMode = DEFAULT_PERFORMANCE_USAGE
-
-/** 档位变化时要叫的那些回调，由 `useSyncExternalStore` 提供。 */
-const usageModeListeners = new Set<() => void>()
-
-/** @returns 当前档位。 */
-function readUsageMode(): PerformanceUsageMode {
-    return usageMode
+/** dsh 那份 `ui-chat` 表单里这一枚读到的取值。 */
+interface UsageSettingsSection {
+    /** 「简洁」只留命中率读数，「详细」另给总量与明细。 */
+    performanceUsage?: PerformanceUsageMode
 }
 
-/** @param listener - 档位变化时要叫的回调。 @returns 撤下这次订阅。 */
-function subscribeUsageMode(listener: () => void): () => void {
-    usageModeListeners.add(listener)
-    return () => {
-        usageModeListeners.delete(listener)
-    }
+/** 一份共享表单里的某个字段，镜像到模块级：值一变就叫订阅者。 */
+interface SettingMirror<T, S> {
+    /** @param listener - 值变化时要叫的回调。 @returns 撤下这次订阅。 */
+    subscribe(listener: () => void): () => void
+
+    /** @returns 当前值。 */
+    read(): T
+
+    /**
+     * 把一份共享表单接上这一份镜像。
+     *
+     * 没有这一份表单时（别的部署不向这个客户端暴露它）保持默认值，而不是整枚胶囊不挂。
+     * @param form - 共享表单。
+     * @returns 撤下这次订阅。
+     */
+    adopt(form: ConfigForm<S> | undefined): () => void
 }
 
 /**
- * 把档位接上 dsh 那份 `ui-chat` 表单。
+ * 造一份模块级镜像。
  *
- * 没有这一份表单时（别的部署不向这个客户端暴露它）保持默认档，而不是整枚胶囊不挂。
- * @param form - 共享表单。
- * @returns 撤下这次订阅。
+ * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里。
+ * @param initial - 表单缺席时的取值。
+ * @param pick - 从表单的取值里挑出这个字段。
+ * @returns 那一份镜像。
  */
-function adoptUsageMode(form: ConfigForm<{performanceUsage?: PerformanceUsageMode}> | undefined): () => void {
-    if (form === undefined) return () => {}
-    const adopt = (): void => {
-        const next = form.getSnapshot().value?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE
-        if (next === usageMode) return
-        usageMode = next
-        for (const listener of usageModeListeners) listener()
+function createSettingMirror<T, S>(initial: T, pick: (section: S | undefined) => T): SettingMirror<T, S> {
+    let current = initial
+    const listeners = new Set<() => void>()
+    return {
+        read: () => current,
+        subscribe: (listener) => {
+            listeners.add(listener)
+            return () => {
+                listeners.delete(listener)
+            }
+        },
+        adopt: (form) => {
+            if (form === undefined) return () => {
+            }
+            const adopt = (): void => {
+                const next = pick(form.getSnapshot().value)
+                if (next === current) return
+                current = next
+                for (const listener of listeners) listener()
+            }
+            const unsubscribe = form.subscribe(adopt)
+            adopt()
+            return unsubscribe
+        },
     }
-    const unsubscribe = form.subscribe(adopt)
-    adopt()
-    return unsubscribe
 }
+
+/** 档位的镜像。 */
+const usageModeMirror = createSettingMirror<PerformanceUsageMode, UsageSettingsSection>(
+    DEFAULT_PERFORMANCE_USAGE,
+    section => section?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE,
+)
+
+/** 命中率转轮的镜像。 */
+const hitReelMirror = createSettingMirror<boolean, ChatUxSection>(
+    DEFAULT_HIT_REEL,
+    section => section?.hitReel ?? DEFAULT_HIT_REEL,
+)

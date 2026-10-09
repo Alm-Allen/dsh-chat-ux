@@ -9,6 +9,9 @@
  * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
  */
 
+/** 一次翻动用多久；与 hit-reel.tsx 的 `REEL_TURN_MS` 是同一个数，改一处就要改另一处。 */
+const REEL_TURN_MS = 220
+
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
 export const CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor'
 
@@ -23,6 +26,21 @@ export const CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep'
 
 /** 命中率那一截：四档取色挂在它与下面四个档位类名的组合上。 */
 export const CACHE_HIT_VALUE_CLASS = 'dsh-chat-ux-hit-value'
+
+/** 一个数字位：一格窗口，只负责裁。 */
+export const HIT_REEL_CLASS = 'dsh-chat-ux-hit-reel'
+
+/** 窗口里现在的那个数字：从下面一格上来，终态零位移。 */
+export const HIT_REEL_CELL_CLASS = 'dsh-chat-ux-hit-reel-cell'
+
+/** 上一个数字：往上面一格走。 */
+export const HIT_REEL_WAS_CLASS = 'dsh-chat-ux-hit-reel-was'
+
+/** 读数里的小数点与百分号：不滚，与数字轮并排。 */
+export const HIT_REEL_STATIC_CLASS = 'dsh-chat-ux-hit-static'
+
+/** 给读屏的那一份读数，视觉上藏起来。 */
+export const HIT_REEL_SPOKEN_CLASS = 'dsh-chat-ux-hit-spoken'
 
 /** 命中率 ≥ 98%。 */
 export const CACHE_HIT_GOOD_CLASS = 'dsh-chat-ux-hit-good'
@@ -127,6 +145,96 @@ button.${CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
 .${CACHE_HIT_SEP_CLASS} {
   color: var(--dsw-alias-separator-primary);
   margin: 0 6px;
+}
+
+/* 命中率那一截：几位数字、小数点、百分号并排，**全部落在同一个写死的行盒里**。
+   一格的高写死 20px：字形盒 17px 放在里面，上下各余一点，读者换字体也裁不到；小数点与百分号跟着
+   用同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑。翻动的位移**不用**这个数——它是相对
+   各自行盒的百分比（下面那两条关键帧），所以这一处没有「算一格」的地方，停位与字号、字体度量、
+   页面缩放全都无关。 */
+
+.${CACHE_HIT_VALUE_CLASS} {
+  --dsh-chat-ux-reel-cell: 20px;
+  display: inline-flex;
+  align-items: center;
+  height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 一个数字位：一格的窗口，只负责裁。position 定在这里，好让上一个数字压在同一格上。 */
+.${HIT_REEL_CLASS} {
+  display: block;
+  position: relative;
+  /* 胶囊挤的时候，这一格也不许被压窄。 */
+  flex: none;
+  overflow: hidden;
+  height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 新数字从下面一格上来：位移是相对**这一格自己的行盒**的百分比，所以一格有多高、字号多大、
+   页面缩放多少都不参与；而终态是零位移——动画走完，数字就落在它本来的位置上，没有可歪的余地。 */
+.${HIT_REEL_CELL_CLASS} {
+  display: block;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-hit-in ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+/* 上一个数字往上面一格走；走完停在窗口外，被列口裁着，不碍事。
+   它必须**脱离文档流**压在同一个格上：两个 display: block 上下排的话，新数字会被推到下一格，
+   正好落在窗口外面——那样读者只会看到旧数字往上走、新数字永远不出现。 */
+.${HIT_REEL_WAS_CLASS} {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-hit-out ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+@keyframes dsh-chat-ux-hit-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes dsh-chat-ux-hit-out {
+  from { transform: none; }
+  to { transform: translateY(-100%); }
+}
+
+/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示。 */
+@media (prefers-reduced-motion: reduce) {
+  .${HIT_REEL_CELL_CLASS},
+  .${HIT_REEL_WAS_CLASS} {
+    animation: none;
+  }
+
+  .${HIT_REEL_WAS_CLASS} {
+    display: none;
+  }
+}
+
+/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
+   flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
+   「小数点不见了」；数字列口一直有这一条，它们两个漏了。 */
+.${HIT_REEL_STATIC_CLASS} {
+  display: block;
+  flex: none;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」。 */
+.${HIT_REEL_SPOKEN_CLASS} {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，档位一路看得见。 */

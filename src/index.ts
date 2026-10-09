@@ -87,6 +87,13 @@ export const DEFAULT_SEND_FLIGHT = true
 export const DEFAULT_TOKEN_FADE = true
 
 /**
+ * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
+ */
+export const DEFAULT_HIT_REEL = true
+
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts'
@@ -110,6 +117,8 @@ export interface Config {
     sendFlight: Volatile<boolean>
     // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
     tokenFade: Volatile<boolean>
+    // 命中率读数变化时，每一位数字是否像老虎机那样滚到新值。关掉时数字直接换掉。
+    hitReel: Volatile<boolean>
 }
 
 /**
@@ -125,6 +134,7 @@ export const Config = Schema.object({
     fontCode: Schema.string().default(DEFAULT_FONT_FAMILY).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
+    hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
 })
 
 /**

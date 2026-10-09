@@ -59,9 +59,14 @@ body[data-ds-dark-theme] {
   visibility: hidden;
 }
 
-/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。 */
+/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。
+
+   字号按输入框下方另一枚胶囊那一份来（StatsPills.module.css 的 .anchor，同样减 1px）。dsh 自己
+   这两处本来就差 1px——它这一处用的是没减的 --dsh-content-font-size-secondary，于是同一行里两个
+   挨着的数字不一样大，读者一眼看得出不齐。 */
 [${CONTEXT_PIE_ATTRIBUTE}] button > span {
   color: var(--dsh-chat-ux-context-tone, currentColor);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
 }
 
 [${CONTEXT_TONE_ATTRIBUTE}='${CONTEXT_TONE_CALM}'] {
