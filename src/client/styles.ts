@@ -10,6 +10,8 @@
  */
 import {CARET_MOTION_CSS} from './chat/caret/caret-motion-styles'
 import {CARD_CSS} from './settings/config-card-styles'
+import {CACHE_HIT_CSS} from './chat/cache-hit/cache-hit-styles'
+import {CONTEXT_METER_CSS} from './chat/context-meter/context-meter-styles'
 import {FILE_MUTATION_CSS} from './chat/file-mutation/file-mutation-styles'
 import {FOLD_MOTION_CSS} from './chat/fold/fold-motion-styles'
 import {FONT_CSS} from './chat/fonts/font-styles'
@@ -113,4 +115,4 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')
+export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')

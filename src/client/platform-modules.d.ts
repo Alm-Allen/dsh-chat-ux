@@ -15,7 +15,7 @@
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-    import type {ReactElement, ReactNode} from 'react'
+    import type {CSSProperties, ReactElement, ReactNode} from 'react'
 
     /**
      * 一个只读胶囊徽标。
@@ -156,4 +156,45 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     export function IconEditOutlineRegular(props: IconProps): ReactElement
 
     export function IconInspectOutlineRegular(props: IconProps): ReactElement
+
+    export function IconDatabaseOutlineRegular(props: IconProps): ReactElement
+
+    /** 弹窗定位的输入：锚点、面板与夹取量。 */
+    export interface AnchoredPositionOptions {
+        /** 面板是否开着；关着时不测量。 */
+        open: boolean
+        /** 触发点，定位以它为准。 */
+        anchorRef: { current: HTMLElement | null }
+        /** 面板本身，量的是它的尺寸。 */
+        panelRef: { current: HTMLElement | null }
+        /** 面板落在锚点哪一侧。 */
+        side: 'top'
+        /** 锚点与面板之间那道缝。 */
+        gap: number
+        /** 与视口边缘留的余量。 */
+        margin: number
+    }
+
+    /** @returns 夹进视口之后的固定定位；还没量出来时是 null。 */
+    export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProperties | null
+
+    /** 点到锚点与面板之外时关掉。 */
+    export function useDismissOnOutsidePointer(
+        rootRef: { current: HTMLElement | null },
+        open: boolean,
+        setOpen: (open: boolean) => void,
+        panelRef: { current: HTMLElement | null },
+    ): void
+}
+
+declare module 'react-dom' {
+    import type {ReactElement, ReactNode} from 'react'
+
+    /**
+     * 把一段节点挂到别的容器下：明细面板要脱开输入框那一层的布局去定位。
+     * @param children - 要挂上去的节点。
+     * @param container - 挂到哪儿。
+     * @returns 挂上去的节点。
+     */
+    export function createPortal(children: ReactNode, container: Element | DocumentFragment): ReactElement
 }

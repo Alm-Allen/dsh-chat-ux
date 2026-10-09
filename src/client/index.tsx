@@ -15,6 +15,8 @@
 import type {Context as ClientContext} from '@deepseek-ai/cordis'
 import {installCaretMotion} from './chat/caret/caret-motion'
 import type {CaretMotionMode} from './chat/caret/caret-motion'
+import {installCacheHitPill} from './chat/cache-hit/cache-hit-pill'
+import {installContextMeterPie} from './chat/context-meter/context-meter-pie'
 import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
 import type {SlotsService} from './chat/file-mutation/file-mutation-row'
 import {installFoldGlide} from './chat/fold/fold-glide'
@@ -165,6 +167,15 @@ export function apply(ctx: ClientContext): void {
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。
     installFileMutationRow(services.slots)
+
+    // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
+    // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
+    // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
+    installCacheHitPill(services.slots, services.configForms)
+
+    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染
+    // 的那一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。
+    ctx.effect(() => installContextMeterPie(), 'dsh-chat-ux: context meter pie')
 
     // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
     // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply

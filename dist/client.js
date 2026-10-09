@@ -46,6 +46,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.inject = void 0;
 exports.apply = apply;
 const caret_motion_1 = require("./chat/caret/caret-motion");
+const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
+const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
 const fold_glide_1 = require("./chat/fold/fold-glide");
 const follow_guard_1 = require("./chat/follow/follow-guard");
@@ -175,6 +177,13 @@ function apply(ctx) {
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。
     (0, file_mutation_row_1.installFileMutationRow)(services.slots);
+    // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
+    // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
+    // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
+    (0, cache_hit_pill_1.installCacheHitPill)(services.slots, services.configForms);
+    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染
+    // 的那一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。
+    ctx.effect(() => (0, context_meter_pie_1.installContextMeterPie)(), 'dsh-chat-ux: context meter pie');
     // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
     // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
     // 执行时的原因。
@@ -890,6 +899,804 @@ exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode';
 exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
 /** 过程组体里的内容层；组体滚的就是它。 */
 exports.PROCESS_CONTENT_SELECTOR = '[data-step-process-content]';
+    };
+
+    __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installCacheHitPill = installCacheHitPill;
+exports.CacheHitPill = CacheHitPill;
+const jsx_runtime_1 = require("react/jsx-runtime");
+/**
+ * 输入框下方那枚「缓存命中」胶囊。
+ *
+ * dsh 在 `conversation.composer.dock` 上发两个座位条目（`activity` order 0、`usage` order 1），
+ * 同一个 id 与同一个 order 上按 priority 取最低的那个渲染，内置那两个是默认的 0。这里用 -1 遮蔽
+ * 掉 `usage` 重画一份：命中率恒取一位小数，并按四档取色——≥98 绿、93~98 浅绿、90~93 黄、<90 红，
+ * 判据用的是显示值本身（读者看到 98.0 就该是绿的）。简洁档只留这一截读数，详细档另加 token 总量
+ * 与点开的明细，明细里的命中率走同一个小数口径。
+ *
+ * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
+ * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
+ *
+ * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-pill
+ */
+const react_1 = require("react");
+const react_dom_1 = require("react-dom");
+const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const cache_hit_styles_1 = require("./cache-hit-styles");
+/** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
+const PANEL_GAP = 8;
+/** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
+const PANEL_MARGIN = 12;
+/** 还没量出位置的那一帧：先按隐藏布局画出来，让夹取量到真实尺寸。 */
+const MEASURE_STYLE = { visibility: 'hidden', left: 0, top: 0 };
+/** 没有读到 host 分节时的档位，与 dsh 自己的默认值一致。 */
+const DEFAULT_PERFORMANCE_USAGE = 'detailed';
+/** dsh 那份「性能与用量」表单的条目 id。 */
+const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
+/** 一位小数：千分之一是这条口径的最小单位。 */
+const PERCENT_UNITS_PER_TENTH = 1000;
+/** 部分命中的上限：读作 100.0% 之前必须真的全中。 */
+const PERCENT_UNITS_CAP = 999;
+/** token 计数的两个进位点，与 dsh 的 formatTokens 同规则。 */
+const THOUSAND = 1_000;
+const MILLION = 1_000_000;
+/** 每三位一组，做精确计数的千分位。 */
+const GROUP_SIZE = 3;
+/** 这一枚在 chat 命名空间里读文案。 */
+const CHAT_LOCALE_NAMESPACE = 'chat';
+/** 这个座位的 id 与顺序，与内置那一枚一模一样：遮蔽靠的是更低的 priority。 */
+const USAGE_STAT_ID = 'usage';
+const USAGE_STAT_ORDER = 1;
+/** 遮蔽内置那一枚：同一个 id 与 order 上，priority 最低的那个渲染，内置是 0。 */
+const USAGE_STAT_PRIORITY = -1;
+/** 四档对应的类名，取色写在样式表里。 */
+const HIT_TONE_CLASS = {
+    good: cache_hit_styles_1.CACHE_HIT_GOOD_CLASS,
+    fair: cache_hit_styles_1.CACHE_HIT_FAIR_CLASS,
+    warn: cache_hit_styles_1.CACHE_HIT_WARN_CLASS,
+    bad: cache_hit_styles_1.CACHE_HIT_BAD_CLASS,
+};
+/**
+ * 遮蔽 `conversation.composer.dock` 上的 `usage` 座位，换成自带一位小数与四档取色的那一枚。
+ *
+ * 档位读的是 dsh 自己那份 `ui-chat` 表单，而不是本插件的配置：简洁档只留命中率读数，详细档另加
+ * 总量与明细，跟着读者在设置页里的选择走。
+ * @param slots - 客户端座位注册表。
+ * @param configForms - 共享配置表单的提供者。
+ */
+function installCacheHitPill(slots, configForms) {
+    slots.inject('conversation.composer.dock', () => {
+        const releaseUsageMode = adoptUsageMode(configForms.get(CHAT_SETTINGS_NAMESPACE));
+        const releaseSeat = slots.register({
+            name: 'conversation.composer.dock',
+            id: USAGE_STAT_ID,
+            order: USAGE_STAT_ORDER,
+            priority: USAGE_STAT_PRIORITY,
+            locale: CHAT_LOCALE_NAMESPACE,
+        }, CacheHitPill);
+        return () => {
+            releaseSeat();
+            releaseUsageMode();
+        };
+    });
+}
+/**
+ * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
+ * @param props - 投影读取座位与文案座位。
+ * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
+ */
+function CacheHitPill({ useProjection, t }) {
+    const usage = useProjection('tokenUsage');
+    const mode = useUsageMode();
+    const [open, setOpen] = (0, react_1.useState)(false);
+    const rootRef = (0, react_1.useRef)(null);
+    const panelRef = (0, react_1.useRef)(null);
+    const pos = (0, dsh_client_ui_primitives_1.useAnchoredPosition)({
+        open, anchorRef: rootRef, panelRef, side: 'top', gap: PANEL_GAP, margin: PANEL_MARGIN,
+    });
+    (0, dsh_client_ui_primitives_1.useDismissOnOutsidePointer)(rootRef, open, setOpen, panelRef);
+    useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
+    if (usage === undefined)
+        return null;
+    const billedInput = billedInputTokens(usage);
+    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
+    if (billedInput === 0 && usage.outputTokens === 0)
+        return null;
+    const hit = hitReading(usage.cacheReadTokens, billedInput);
+    const icon = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconDatabaseOutlineRegular, {});
+    const hitLabel = t('message.turnUsage.cacheHit');
+    if (mode === 'compact') {
+        if (hit === null)
+            return null;
+        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)("span", { className: [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' '), children: hit.text })] })] }) }));
+    }
+    const total = billedInput + usage.outputTokens;
+    const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) });
+    const title = t('stats.dialog.usageTitle');
+    const summary = hit === null ? totalText : totalText + ' · ' + hitLabel + ' ' + hit.text;
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)("span", { className: [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, hit.toneClass].join(' '), children: hit.text })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
+}
+/**
+ * 命中率读数，恒一位小数。
+ * @param cacheReadTokens - 从缓存读到的输入。
+ * @param billedInputTokens - 三个输入计费桶之和。
+ * @returns 文本与档位；没有计过价的输入时是 null。
+ */
+function hitReading(cacheReadTokens, billedInputTokens) {
+    const percent = formatHitPercent(cacheReadTokens, billedInputTokens);
+    if (percent === null)
+        return null;
+    return { text: percent + '%', toneClass: HIT_TONE_CLASS[hitTone(Number(percent))] };
+}
+/**
+ * 命中率文本，恒一位小数。
+ *
+ * 先把千分之一的整数单位算出来再落成文本，躲开浮点误差在 x.x5 上翻面。部分命中不许读成满命中：
+ * 舍进 100.0 但没有全中的压回 99.9。
+ * @param cacheReadTokens - 从缓存读到的输入。
+ * @param billedInputTokens - 三个输入计费桶之和。
+ * @returns `97.3` 这样的文本；没有计过价的输入时是 null。
+ */
+function formatHitPercent(cacheReadTokens, billedInputTokens) {
+    if (billedInputTokens === 0)
+        return null;
+    const units = Math.round(cacheReadTokens * PERCENT_UNITS_PER_TENTH / billedInputTokens);
+    const capped = cacheReadTokens < billedInputTokens && units > PERCENT_UNITS_CAP
+        ? PERCENT_UNITS_CAP
+        : units;
+    return (capped / 10).toFixed(1);
+}
+/**
+ * 一档命中率落在哪一档。
+ *
+ * 判据用的是**显示值**那一份（一位小数）：读者看到 98.0 就该是绿的，而不是因为精确值 97.96
+ * 落进浅绿。
+ * @param percent - 显示用的百分比数值。
+ * @returns 四档里的那一档。
+ */
+function hitTone(percent) {
+    if (percent >= 98)
+        return 'good';
+    if (percent >= 93)
+        return 'fair';
+    if (percent >= 90)
+        return 'warn';
+    return 'bad';
+}
+/** 三个互不重叠的输入计费桶之和。 */
+function billedInputTokens(usage) {
+    return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+}
+/**
+ * 紧凑的 token 计数：517 / 12.2K / 517K / 1.2M，与 dsh 的 formatTokens 同规则。
+ * @param value - token 数。
+ * @param t - chat 文案座位。
+ * @returns 显示文本。
+ */
+function formatTokens(value, t) {
+    if (value < THOUSAND)
+        return String(value);
+    if (value < MILLION)
+        return t('number.thousand', { value: scaledCount(value / THOUSAND) });
+    return t('number.million', { value: scaledCount(value / MILLION) });
+}
+/** 进位之后的缩放数：过百取整，否则留一位小数。 */
+function scaledCount(value) {
+    return value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
+}
+/**
+ * 精确 token 计数，带 chat 命名空间的千分位。
+ * @param value - token 数。
+ * @param t - chat 文案座位。
+ * @returns 分组后的数字文本。
+ */
+function formatExactTokens(value, t) {
+    const digits = String(value);
+    const groups = [];
+    for (let end = digits.length; end > 0; end -= GROUP_SIZE) {
+        groups.unshift(digits.slice(Math.max(0, end - GROUP_SIZE), end));
+    }
+    return groups.join(t('number.groupSeparator'));
+}
+/** 明细里的一行：精确计数加 chat 自己的计数单位。 */
+function exactCount(value, t) {
+    return t('message.turnUsage.count', { count: formatExactTokens(value, t) });
+}
+/** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
+function useUsageMode() {
+    return (0, react_1.useSyncExternalStore)(subscribeUsageMode, readUsageMode);
+}
+/**
+ * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也
+ * 关——后者走捕获阶段，让键盘激活旁边那个胶囊时这一颗先关掉，而不是两张面板叠在一起。
+ * @param open - 面板是否开着。
+ * @param setOpen - 开合状态。
+ * @param rootRef - 触发点。
+ * @param panelRef - 面板。
+ */
+function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
+    (0, react_1.useEffect)(() => {
+        if (!open)
+            return;
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape')
+                setOpen(false);
+        };
+        const onClick = (event) => {
+            if (event.target instanceof Node
+                && rootRef.current?.contains(event.target) !== true
+                && panelRef.current?.contains(event.target) !== true) {
+                setOpen(false);
+            }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('click', onClick, true);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            document.removeEventListener('click', onClick, true);
+        };
+    }, [open, setOpen, rootRef, panelRef]);
+}
+/** 当前档位。模块级一份：这个座位只有一处安装，订阅跟着装卸走。 */
+let usageMode = DEFAULT_PERFORMANCE_USAGE;
+/** 档位变化时要叫的那些回调，由 `useSyncExternalStore` 提供。 */
+const usageModeListeners = new Set();
+/** @returns 当前档位。 */
+function readUsageMode() {
+    return usageMode;
+}
+/** @param listener - 档位变化时要叫的回调。 @returns 撤下这次订阅。 */
+function subscribeUsageMode(listener) {
+    usageModeListeners.add(listener);
+    return () => {
+        usageModeListeners.delete(listener);
+    };
+}
+/**
+ * 把档位接上 dsh 那份 `ui-chat` 表单。
+ *
+ * 没有这一份表单时（别的部署不向这个客户端暴露它）保持默认档，而不是整枚胶囊不挂。
+ * @param form - 共享表单。
+ * @returns 撤下这次订阅。
+ */
+function adoptUsageMode(form) {
+    if (form === undefined)
+        return () => { };
+    const adopt = () => {
+        const next = form.getSnapshot().value?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE;
+        if (next === usageMode)
+            return;
+        usageMode = next;
+        for (const listener of usageModeListeners)
+            listener();
+    };
+    const unsubscribe = form.subscribe(adopt);
+    adopt();
+    return unsubscribe;
+}
+    };
+
+    __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 缓存命中胶囊自己的样式表。
+ *
+ * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
+ * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
+ * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一截
+ * 是新的：它按四档取色（见下面的自定义属性），这是 dsh 原版没有的。
+ *
+ * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_BAD_CLASS = exports.CACHE_HIT_WARN_CLASS = exports.CACHE_HIT_FAIR_CLASS = exports.CACHE_HIT_GOOD_CLASS = exports.CACHE_HIT_VALUE_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+/** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
+exports.CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor';
+/** 胶囊本体。静态读数是 `span`，能展开明细的是 `button`。 */
+exports.CACHE_HIT_PILL_CLASS = 'dsh-chat-ux-hit-pill';
+/** 胶囊里的文本容器。 */
+exports.CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label';
+/** token 总量与命中率之间的那个点。 */
+exports.CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep';
+/** 命中率那一截：四档取色挂在它与下面四个档位类名的组合上。 */
+exports.CACHE_HIT_VALUE_CLASS = 'dsh-chat-ux-hit-value';
+/** 命中率 ≥ 98%。 */
+exports.CACHE_HIT_GOOD_CLASS = 'dsh-chat-ux-hit-good';
+/** 命中率 93% ~ 98%。 */
+exports.CACHE_HIT_FAIR_CLASS = 'dsh-chat-ux-hit-fair';
+/** 命中率 90% ~ 93%。 */
+exports.CACHE_HIT_WARN_CLASS = 'dsh-chat-ux-hit-warn';
+/** 命中率 < 90%。 */
+exports.CACHE_HIT_BAD_CLASS = 'dsh-chat-ux-hit-bad';
+/** 弹窗面板。 */
+exports.CACHE_HIT_PANEL_CLASS = 'dsh-chat-ux-hit-panel';
+/** 弹窗标题行：左边图标加标题，右边精确总量。 */
+exports.CACHE_HIT_TITLE_CLASS = 'dsh-chat-ux-hit-title';
+/** 标题左侧那一半。 */
+exports.CACHE_HIT_TITLE_LABEL_CLASS = 'dsh-chat-ux-hit-title-label';
+/** 标题右侧那个精确总量。 */
+exports.CACHE_HIT_TITLE_VALUE_CLASS = 'dsh-chat-ux-hit-title-value';
+/** 标题下那条发丝线。 */
+exports.CACHE_HIT_RULE_CLASS = 'dsh-chat-ux-hit-rule';
+/** 明细的 dt/dd 栅格。 */
+exports.CACHE_HIT_DETAILS_CLASS = 'dsh-chat-ux-hit-details';
+/**
+ * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
+ *
+ * 四档取色用的是自定义属性而不是字面色值：深浅两套主题各一份，改档只改这一段。两套的色相不变、
+ * 明度各自适配画布——「浅绿」在两套里都读作比「绿」淡的那一档。
+ */
+exports.CACHE_HIT_CSS = `
+body {
+  --dsh-chat-ux-hit-good: #1a7f37;
+  --dsh-chat-ux-hit-fair: #4ba95b;
+  --dsh-chat-ux-hit-warn: #9a6700;
+  --dsh-chat-ux-hit-bad: #cf222e;
+}
+
+body[data-ds-dark-theme] {
+  --dsh-chat-ux-hit-good: #3fb950;
+  --dsh-chat-ux-hit-fair: #7ee787;
+  --dsh-chat-ux-hit-warn: #d29922;
+  --dsh-chat-ux-hit-bad: #f85149;
+}
+
+/* 座位根：尺寸对齐内置胶囊的 anchor，只包住胶囊本身。 */
+.${exports.CACHE_HIT_ANCHOR_CLASS} {
+  display: inline-flex;
+  min-width: 0;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+}
+
+.${exports.CACHE_HIT_PILL_CLASS} {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 999px;
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.${exports.CACHE_HIT_PILL_CLASS} svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+/* 只有能点开明细的 button 形才邀请交互；静态读数保持三级文字色。 */
+button.${exports.CACHE_HIT_PILL_CLASS} {
+  cursor: pointer;
+}
+
+button.${exports.CACHE_HIT_PILL_CLASS}:hover,
+button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${exports.CACHE_HIT_LABEL_CLASS} {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.${exports.CACHE_HIT_SEP_CLASS} {
+  color: var(--dsw-alias-separator-primary);
+  margin: 0 6px;
+}
+
+/* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，档位一路看得见。 */
+.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_GOOD_CLASS} {
+  color: var(--dsh-chat-ux-hit-good);
+}
+
+.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_FAIR_CLASS} {
+  color: var(--dsh-chat-ux-hit-fair);
+}
+
+.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_WARN_CLASS} {
+  color: var(--dsh-chat-ux-hit-warn);
+}
+
+.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_BAD_CLASS} {
+  color: var(--dsh-chat-ux-hit-bad);
+}
+
+/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给。 */
+.${exports.CACHE_HIT_PANEL_CLASS} {
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(300px, calc(100vw - 24px));
+  max-width: min(440px, calc(100vw - 24px));
+  padding: 16px;
+  border: 0;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-menu);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
+}
+
+.${exports.CACHE_HIT_TITLE_CLASS} {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.${exports.CACHE_HIT_TITLE_LABEL_CLASS} {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.${exports.CACHE_HIT_TITLE_LABEL_CLASS} svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.${exports.CACHE_HIT_TITLE_VALUE_CLASS} {
+  font-variant-numeric: tabular-nums;
+}
+
+.${exports.CACHE_HIT_RULE_CLASS} {
+  margin-bottom: 10px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.${exports.CACHE_HIT_DETAILS_CLASS} {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.${exports.CACHE_HIT_DETAILS_CLASS} dt,
+.${exports.CACHE_HIT_DETAILS_CLASS} dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.${exports.CACHE_HIT_DETAILS_CLASS} dd {
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+`;
+    };
+
+    __registry["chat/context-meter/context-meter-pie.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installContextMeterPie = installContextMeterPie;
+/**
+ * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，并按占用取五档色。
+ *
+ * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
+ * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
+ * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
+ * 一个 svg 的 span。
+ *
+ * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
+ * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
+ * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
+ * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度由这里算。
+ *
+ * 颜色仍归样式表：这里只把计算值读出来涂进图里，档位与色值都写在 context-meter-styles。
+ *
+ * 判据失效时的表现是「什么都不变」：认不出就不动手，不会把别的元素改花。
+ *
+ * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
+ */
+const context_meter_styles_1 = require("./context-meter-styles");
+/** 草稿坞：统计胶囊与这个比例圆都住在它里面。 */
+const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
+/** 统计胶囊才带的座位 id 属性；带着它的子元素不归这一处管。 */
+const STAT_ATTRIBUTE = 'data-composer-stat';
+/** 比例圆那颗按钮：会开对话弹窗，并且画着一枚 svg。 */
+const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]';
+/** 读数文本的形状；dsh 写的就是「26%」。 */
+const READING_PATTERN = /^(\d{1,3})%$/;
+/** 饼的边长，取原环 svg 的 14px；两者占的是同一格，所以不必再量。 */
+const PIE_SIZE = 14;
+/** 圆心与半径，都由 PIE_SIZE 定。 */
+const CENTER = PIE_SIZE / 2;
+const RADIUS = PIE_SIZE / 2;
+/** 一整圈，弧度。 */
+const FULL_TURN = Math.PI * 2;
+/** path 坐标的小数位取两位：再多的位数只是噪声。 */
+const PATH_PRECISION = 100;
+/** 上一次画进这颗按钮的那张图；读数与档位都没变就不再写一遍内联样式。 */
+const paintedPies = new WeakMap();
+/**
+ * 装上这一处。
+ * @returns 卸下这一处：断开观察，并把写过的标记、属性与内联样式撤干净。
+ */
+function installContextMeterPie() {
+    let dock = null;
+    let frame = 0;
+    /** 草稿坞：认过之后就记住它，换会话把它换掉时重认。 */
+    const composerDock = () => {
+        if (dock !== null && dock.isConnected)
+            return dock;
+        dock = document.querySelector(COMPOSER_DOCK_SELECTOR);
+        return dock;
+    };
+    const sync = () => {
+        const seat = composerDock();
+        if (seat === null)
+            return;
+        for (const child of seat.children) {
+            if (!(child instanceof HTMLSpanElement))
+                continue;
+            if (child.hasAttribute(STAT_ATTRIBUTE))
+                continue;
+            paint(child);
+        }
+    };
+    sync();
+    const observer = new MutationObserver(() => {
+        // 流式期间每一次字符变化都会叫到这里，所以只登记一帧：一帧最多认一次。
+        if (frame !== 0)
+            return;
+        frame = requestAnimationFrame(() => {
+            frame = 0;
+            sync();
+        });
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    return () => {
+        observer.disconnect();
+        if (frame !== 0)
+            cancelAnimationFrame(frame);
+        release();
+    };
+}
+/**
+ * 认一枚比例圆：读它的百分比，把档位写到按钮上，再把饼画成按钮的背景图。
+ * @param root - 候选元素；认不出来就什么都不做。
+ */
+function paint(root) {
+    const trigger = root.querySelector(TRIGGER_SELECTOR);
+    if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null)
+        return;
+    const reading = READING_PATTERN.exec(trigger.textContent?.trim() ?? '');
+    if (reading === null)
+        return;
+    const captured = reading[1];
+    if (captured === undefined)
+        return;
+    const percent = Number(captured);
+    const tone = contextTone(percent);
+    if (trigger.getAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE) !== tone) {
+        trigger.setAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE, tone);
+    }
+    // 画成功了才让原环让位：样式表那一半要是没上（比如选择器被写坏），这里该什么都不动，
+    // 而不是留下一个「环被藏起来、饼又没有」的空格。
+    if (!paintPie(trigger, percent))
+        return;
+    root.setAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE, '');
+}
+/**
+ * 把饼画成按钮的背景图，落在原来那枚图标所占据的那一格上。
+ *
+ * 底色与档位色从计算样式里读：档位属性刚写上去，读到的就是这一档的颜色。读不到就什么都不画——
+ * 那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
+ * @param trigger - 那颗按钮。
+ * @param percent - 已占用的百分比。
+ * @returns 这一帧画上了没有；没画上时调用方不该让原环让位。
+ */
+function paintPie(trigger, percent) {
+    const computed = getComputedStyle(trigger);
+    const tone = computed.getPropertyValue(context_meter_styles_1.CONTEXT_TONE_VAR).trim();
+    const rest = computed.getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
+    if (tone === '' || rest === '')
+        return false;
+    const image = pieImage(percent, tone, rest);
+    if (paintedPies.get(trigger) === image)
+        return true;
+    paintedPies.set(trigger, image);
+    trigger.style.backgroundImage = image;
+    trigger.style.backgroundRepeat = 'no-repeat';
+    trigger.style.backgroundSize = PIE_SIZE + 'px ' + PIE_SIZE + 'px';
+    // 内容框的原点就是图标那一格的左边缘，不必再去量按钮的内边距。
+    trigger.style.backgroundOrigin = 'content-box';
+    trigger.style.backgroundPosition = '0 center';
+    return true;
+}
+/**
+ * 一张内联 SVG：一个底色圆，叠一块从 12 点顺时针切到读数的扇形。
+ * @param percent - 已占用的百分比。
+ * @param tone - 扇形颜色。
+ * @param rest - 未占用那一角的颜色。
+ * @returns 可以直接当 background-image 用的 url()。
+ */
+function pieImage(percent, tone, rest) {
+    const disc = '<circle cx="' + CENTER + '" cy="' + CENTER + '" r="' + RADIUS + '"';
+    const filled = disc + ' fill="' + tone + '"/>';
+    const empty = disc + ' fill="' + rest + '"/>';
+    const sector = percent <= 0 ? '' : '<path d="' + sectorPath(percent) + '" fill="' + tone + '"/>';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + PIE_SIZE + ' ' + PIE_SIZE + '">'
+        + (percent >= 100 ? filled : empty + sector) + '</svg>';
+    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+}
+/**
+ * 扇形那一段路径：从圆心出发，到 12 点，再沿弧顺时针切到读数所在的角度。
+ * @param percent - 已占用的百分比。
+ * @returns SVG path 的 d。
+ */
+function sectorPath(percent) {
+    const angle = percent / 100 * FULL_TURN;
+    const x = round2(CENTER + RADIUS * Math.sin(angle));
+    const y = round2(CENTER - RADIUS * Math.cos(angle));
+    // 过了半个圈要走大弧，否则圆弧会挑另一侧那条近路。
+    const largeArc = percent > 50 ? 1 : 0;
+    return 'M ' + CENTER + ' ' + CENTER + ' L ' + CENTER + ' ' + (CENTER - RADIUS)
+        + ' A ' + RADIUS + ' ' + RADIUS + ' 0 ' + largeArc + ' 1 ' + x + ' ' + y + ' Z';
+}
+/** 两位小数，给 path 坐标用。 */
+function round2(value) {
+    return Math.round(value * PATH_PRECISION) / PATH_PRECISION;
+}
+/**
+ * 占用落在哪一档。
+ *
+ * 判据用的是 dsh 显示的那个整数（它自己就是四舍五入后的读数）：读者看到 30 就该是浅绿。端点按
+ * 「超过」的口径算，所以 30 仍是浅绿、40 仍是黄、50 仍是橙黄。
+ * @param percent - 显示用的占用百分比。
+ * @returns 五档里的那一档。
+ */
+function contextTone(percent) {
+    if (percent > 50)
+        return context_meter_styles_1.CONTEXT_TONE_FULL;
+    if (percent > 40)
+        return context_meter_styles_1.CONTEXT_TONE_HOT;
+    if (percent > 30)
+        return context_meter_styles_1.CONTEXT_TONE_WARM;
+    if (percent >= 20)
+        return context_meter_styles_1.CONTEXT_TONE_STEADY;
+    return context_meter_styles_1.CONTEXT_TONE_CALM;
+}
+/** 把写过的标记、档位与内联样式撤干净，让原环原样回来。 */
+function release() {
+    for (const root of document.querySelectorAll('[' + context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE + ']')) {
+        root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
+        const trigger = root.querySelector(TRIGGER_SELECTOR);
+        if (!(trigger instanceof HTMLElement))
+            continue;
+        trigger.removeAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE);
+        trigger.style.removeProperty('background-image');
+        trigger.style.removeProperty('background-repeat');
+        trigger.style.removeProperty('background-size');
+        trigger.style.removeProperty('background-origin');
+        trigger.style.removeProperty('background-position');
+    }
+}
+    };
+
+    __registry["chat/context-meter/context-meter-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 上下文占用那枚比例圆的样式。
+ *
+ * 这一处只管三件事：把原环留成占位（不塌格）、给出五档取色、给出未占用那一角的底色。饼本身是
+ * 浏览器半区画上去的——内联 SVG 作为那颗按钮的背景图，几何在 JS 里算。为什么不用伪元素 +
+ * conic-gradient（那种写法不碰内联样式，本来更干净）：dsh 的主题把 corner-shape 全局设成
+ * superellipse(1.5)（连 :before/:after 一起），任何 border-radius: 50% 都画成圆角方块；而伪元素
+ * 又只能从自定义属性里取值。改成自己画一张图，这两处一起绕开。
+ *
+ * 颜色仍留在这一侧：浏览器半区只是把计算值读出来涂进图里。
+ *
+ * @module dsh-chat-ux/client/chat/context-meter/context-meter-styles
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CONTEXT_METER_CSS = exports.CONTEXT_TONE_FULL = exports.CONTEXT_TONE_HOT = exports.CONTEXT_TONE_WARM = exports.CONTEXT_TONE_STEADY = exports.CONTEXT_TONE_CALM = exports.CONTEXT_REST_VAR = exports.CONTEXT_TONE_VAR = exports.CONTEXT_TONE_ATTRIBUTE = exports.CONTEXT_PIE_ATTRIBUTE = void 0;
+/** 挂在这个比例圆的根上：在，就说明这一处已经接管。 */
+exports.CONTEXT_PIE_ATTRIBUTE = 'data-dsh-chat-ux-context-pie';
+/** 挂在它的按钮上：占用落在哪一档。 */
+exports.CONTEXT_TONE_ATTRIBUTE = 'data-dsh-chat-ux-context-tone';
+/** 按钮上的档位色，由下面那些档位规则提供；浏览器半区读它来涂扇形。 */
+exports.CONTEXT_TONE_VAR = '--dsh-chat-ux-context-tone';
+/** 按钮上的未占用底色；浏览器半区读它来涂底。 */
+exports.CONTEXT_REST_VAR = '--dsh-chat-ux-context-rest';
+/** 占用不到 20%：绿。 */
+exports.CONTEXT_TONE_CALM = 'calm';
+/** 占用 20% ~ 30%：浅绿。 */
+exports.CONTEXT_TONE_STEADY = 'steady';
+/** 占用 30% ~ 40%：黄。 */
+exports.CONTEXT_TONE_WARM = 'warm';
+/** 占用 40% ~ 50%：橙黄。 */
+exports.CONTEXT_TONE_HOT = 'hot';
+/** 占用超过 50%：红。 */
+exports.CONTEXT_TONE_FULL = 'full';
+/**
+ * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
+ *
+ * 档位色与底色都写成字面值，不经过第二层变量：浏览器半区要用 `getComputedStyle` 把它们读出来，
+ * 而那个接口对「值本身又是一个 var()」的自定义属性只会返回原文。
+ */
+exports.CONTEXT_METER_CSS = `
+body {
+  --dsh-chat-ux-context-rest: rgba(127, 127, 127, 0.3);
+}
+
+body[data-ds-dark-theme] {
+  --dsh-chat-ux-context-rest: rgba(255, 255, 255, 0.16);
+}
+
+/* 原环让位但不塌格：图标那一格还在原处，饼就是按那一格画的。 */
+[${exports.CONTEXT_PIE_ATTRIBUTE}] button > svg {
+  visibility: hidden;
+}
+
+/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。 */
+[${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
+  color: var(--dsh-chat-ux-context-tone, currentColor);
+}
+
+[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_CALM}'] {
+  --dsh-chat-ux-context-tone: #1a7f37;
+}
+
+[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_STEADY}'] {
+  --dsh-chat-ux-context-tone: #4ba95b;
+}
+
+[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_WARM}'] {
+  --dsh-chat-ux-context-tone: #9a6700;
+}
+
+[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_HOT}'] {
+  --dsh-chat-ux-context-tone: #c76a00;
+}
+
+[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_FULL}'] {
+  --dsh-chat-ux-context-tone: #cf222e;
+}
+
+body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_CALM}'] {
+  --dsh-chat-ux-context-tone: #3fb950;
+}
+
+body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_STEADY}'] {
+  --dsh-chat-ux-context-tone: #7ee787;
+}
+
+body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_WARM}'] {
+  --dsh-chat-ux-context-tone: #d29922;
+}
+
+body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_HOT}'] {
+  --dsh-chat-ux-context-tone: #e3873c;
+}
+
+body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_FULL}'] {
+  --dsh-chat-ux-context-tone: #f85149;
+}
+`;
     };
 
     __registry["chat/file-mutation/file-mutation-row.js"] = function (module, exports, require) {
@@ -5122,6 +5929,8 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  */
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const config_card_styles_1 = require("./settings/config-card-styles");
+const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
+const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
 const font_styles_1 = require("./chat/fonts/font-styles");
@@ -5222,7 +6031,7 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
