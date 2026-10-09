@@ -2530,6 +2530,10 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  *
  * 本插件要的正是被钉掉的那一半，所以这里自己写一份派生，唯一的差别就是不放行那行检查。
  *
+ * 除此之外这一行还多给准备态一次：内置要等参数 JSON 收齐（`parsedToolCall` 在 preparing 直接返回
+ * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
+ * 的内容一出现就有 `+n -0`，并随流式增长。
+ *
  * 代价说得明白些：子调用不持久化 `presentationMeta`，所以结算之后拿不到"实际应用了什么"，
  * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
  * 或写入失败时可能与实际不符）。
@@ -2590,8 +2594,10 @@ function FileMutationRow(props) {
     // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
     // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
     const running = model.state === 'running' || model.state === 'preparing';
-    const totals = (0, react_1.useMemo)(() => (hunks === null ? null : (0, dsh_client_ui_primitives_1.diffTotals)(hunks)), [hunks]);
-    const expandable = hunks !== null || model.output !== null || model.bodyRaw !== null;
+    const totals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
+    // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
+    const expandable = model.state !== 'preparing'
+        && (hunks !== null || model.output !== null || model.bodyRaw !== null);
     const open = expanded && expandable;
     const summaryText = model.errorSummary ?? model.summary;
     // 输入大小跨阶段保留，与内置的 `summarySuffix` 同一条规则：有路径才显示，所以准备态还没
@@ -2630,8 +2636,8 @@ function FileMutationRow(props) {
 function diffHunks(block, args) {
     if (!('kind' in block)) {
         if (block.phase === 'preparing')
-            return null;
-        return intendedHunks(block.name, args);
+            return streamedHunks(block.name, block.args);
+        return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args);
     }
     if (block.isError)
         return null;
@@ -2667,6 +2673,39 @@ function intendedHunks(name, args) {
         return null;
     const replaceAll = args.replace_all;
     if (replaceAll !== undefined && typeof replaceAll !== 'boolean')
+        return null;
+    return [{ path, oldText: oldText === '' ? null : oldText, newText }];
+}
+/**
+ * 从参数视图派生改动：准备态唯一拿得到的材料就是视图给出的字段文本——已解码，可能还没收尾。
+ *
+ * write 用已收到的那一截内容：`oldText` 为 null 时它同时就是「新增了多少行」的答案，与结算后的
+ * 口径（`diffTotals` 对一份全 `+` 的改动计数）恒等。edit 要等价的两个字段都收尾才画——行级匹配
+ * 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），宁可不画，也不给一个会
+ * 上下跳的数字。
+ * @param name - 线上工具名。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 单个 hunk，或 null（阶段或字段还不成形状）。
+ */
+function streamedHunks(name, view) {
+    if (view === undefined)
+        return null;
+    const path = viewPath(view);
+    if (path === undefined)
+        return null;
+    if (name === 'write') {
+        if (!view.has('content'))
+            return null;
+        const content = view.text('content');
+        return content === undefined ? null : [{ path, oldText: null, newText: content }];
+    }
+    if (name !== 'edit')
+        return null;
+    if (!view.complete('old_string') || !view.complete('new_string'))
+        return null;
+    const oldText = view.text('old_string');
+    const newText = view.text('new_string');
+    if (oldText === undefined || newText === undefined)
         return null;
     return [{ path, oldText: oldText === '' ? null : oldText, newText }];
 }
@@ -2788,24 +2827,32 @@ function pickString(args, keys) {
 }
 /**
  * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
- *
- * 与内置的文件变更行同一条规则：字段收尾了才算数，解码失败（转义不完整）也当没有。
  * @param block - 运行中或已结算的调用块。
  * @param args - 已解析的原始参数；解析不出来时为 null。
  * @returns 路径，或 undefined。
  */
 function argumentPath(block, args) {
-    const view = block.args;
-    if (view !== undefined) {
-        for (const key of ['path', 'file_path']) {
-            if (!view.has(key) || !view.complete(key))
-                continue;
-            const text = view.text(key);
-            if (text !== undefined && text !== '')
-                return text;
-        }
+    return viewPath(block.args) ?? (args === null ? undefined : pickString(args, ['path', 'file_path']));
+}
+/**
+ * 路径的视图读法。
+ *
+ * 与内置的文件变更行同一条规则：字段收尾了才算数——准备态可能只到了半截——解码失败
+ * （转义不完整）也当没有。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 路径，或 undefined。
+ */
+function viewPath(view) {
+    if (view === undefined)
+        return undefined;
+    for (const key of ['path', 'file_path']) {
+        if (!view.has(key) || !view.complete(key))
+            continue;
+        const text = view.text(key);
+        if (text !== undefined && text !== '')
+            return text;
     }
-    return args === null ? undefined : pickString(args, ['path', 'file_path']);
+    return undefined;
 }
 /**
  * 已收到的输入大小（KB）：内容字段的解码长度之和。
@@ -2827,6 +2874,47 @@ function contentKilobytes(view) {
     }
     const chars = completed + (view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0);
     return Math.ceil(chars / KILOBYTE);
+}
+/** 每个参数视图一份数行记忆：视图是原地追加的，所以只数新来的那一截。这一行只数 write 的 content。 */
+const countedLines = new WeakMap();
+/**
+ * 内容字段已收到的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。
+ *
+ * 流式期每一批都要问一次，所以记住上一次数到哪、数出多少行，只扫新来的后缀；视图被换成新的
+ * 一份（字段收尾，或 `settle` 用权威文本替换）时记忆自然落空，整段重数一次。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @param key - 内容字段名。
+ * @returns 行数。
+ */
+function streamedLineCount(view, key) {
+    const text = view?.text(key) ?? '';
+    const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+    if (body === '')
+        return 0;
+    const remembered = view === undefined ? undefined : countedLines.get(view);
+    let lines = remembered?.lines ?? 1;
+    for (let at = remembered?.length ?? 0; at < body.length; at++)
+        if (body[at] === '\n')
+            lines++;
+    if (view !== undefined)
+        countedLines.set(view, { length: body.length, lines });
+    return lines;
+}
+/**
+ * 行尾那两个数。
+ *
+ * 准备态的 write 不走 `diffTotals`：它那一侧没有旧文本，diff 的结果恒等于「内容行数 / 0」，而在
+ * 每一批上跑一次 `structuredPatch` 只是白付一次整段文本的分配与匹配。其余情形与内置同序。
+ * @param block - 运行中或已结算的调用块。
+ * @param hunks - 已派生的改动。
+ * @returns 增删两个数，或 null（这一行没有可画的改动）。
+ */
+function rowTotals(block, hunks) {
+    if (hunks === null)
+        return null;
+    if ('kind' in block || block.phase !== 'preparing' || block.name !== 'write')
+        return (0, dsh_client_ui_primitives_1.diffTotals)(hunks);
+    return { added: streamedLineCount(block.args, 'content'), removed: 0 };
 }
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
