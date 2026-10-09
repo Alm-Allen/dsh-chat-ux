@@ -5,9 +5,12 @@ name: Release
 # GitHub 不会把标签自动变成 Release —— 它只为显式创建的标签建 Release，
 # 所以这里在打标签的那一刻替你做掉那一步。
 #
-# 注意：本文件必须存在于标签指向的那个提交里，标签才会触发它。
-# 改过本文件之后打的标签才享受自动发布；之前的标签要手动建 Release，
-# 或者把标签挪到含本文件的提交上。
+# 报告取自 CHANGELOG.md 里与这个标签同名的那一段（`## [0.2.4] …`）：发版前的规矩只有一条 ——
+# **先在 CHANGELOG.md 顶上补一段，再打标签**。仓库里没有这一段、或者这一段是空的，
+# 就退回 GitHub 自动生成的提交清单（不会因此挂掉）。
+#
+# 注意：本文件与 CHANGELOG.md 都必须存在于标签指向的那个提交里才会被用到。
+# 改过本文件之后打的标签才享受自动发布；之前的标签要手动建 Release，或者把标签挪到含本文件的提交上。
 
 on:
   push:
@@ -22,11 +25,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Take this version's notes out of CHANGELOG.md
+        run: |
+          : > notes.md
+          if [ -f CHANGELOG.md ]; then
+            awk -v want="## [${GITHUB_REF_NAME#v}]" 'substr($0, 1, length(want)) == want { inside = 1; next } /^## \[/ { inside = 0 } inside' CHANGELOG.md > notes.md
+          fi
+          echo "抽到的报告 $(wc -c < notes.md) 字节"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --generate-notes
+          if [ -s notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --verify-tag --notes-file notes.md
+          else
+            echo "CHANGELOG.md 里没有 $GITHUB_REF_NAME 这一段，退回自动生成的提交清单。"
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          fi
