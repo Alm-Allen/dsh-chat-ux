@@ -20,7 +20,7 @@ With it installed, model output fades in token by token instead of appearing in 
 - **Work details default to Standard**: on the web client, dsh's "Work details" setting is filled in as **Standard** (dsh's own web default is Detailed). Once you pick a mode yourself under Settings → **General**, your choice wins and the plugin leaves it alone.
 - **Cache-hit rate**: the pill under the composer keeps one decimal, and its colour walks a six-stop ramp from 90% to 99% — red below 90, deep green at 99 and above. When the reading changes, the digits that changed roll to their new values (220 ms, lower digits starting later); a switch on the Plugins page turns it off.
 - **Context occupancy as a pie**: the ring becomes a solid 20px pie on a 20%–40% ramp (green below 20, red at 40 and above), with the reading in the same colour. The occupied slice is cut along a fold line pivoted at the centre: by default the slice slides out along the bisector, and the gap between the two pieces is a constant 1.2px wide; switch it to "cut only" on the Plugins page and both pieces stay put — close the cut and you have the whole circle back. The percentage beside it rolls too.
-- **Composer glass** (on by default): the input card keeps its own blue gradient — the same two-ends-tinted, middle-clear shape DSH uses on its sidebar — lets just under a tenth of it through, and adds a light blur plus a top highlight, an inner rim and a bottom inner shadow. The stats row below and the cards above are untouched, and the fade band above it still fades to the canvas colour. A switch on the Plugins page turns it off.
+- **Composer glass** (on by default): the input card keeps its own blue gradient — the same two-ends-tinted, middle-clear shape DSH uses on its sidebar — lets just under a tenth of it through, and adds a light blur plus a top highlight, an inner rim and a bottom inner shadow. The send button (stop while it runs) wears the same material. The stats row below and the cards above are untouched, and the fade band above it still fades to the canvas colour. A switch on the Plugins page turns it off.
 
 ## Install
 
@@ -70,7 +70,7 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Chat bubble motion | on | When off, the send has no flight and the message simply appears. |
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |
 | Slice pulled out | on | When off, the slice stays in place and only the cut remains. |
-| Composer glass | on | When off, the composer keeps dsh's own fill and nothing behind it is blurred. |
+| Composer glass | on | When off, the composer and the send button both go back to dsh's own look, and nothing behind it is blurred. |
 | Bundled fonts | on | When off, the system font stack is used. |
 | Text font | empty | Your own font stack, overriding the bundled text font. |
 | Code font | empty | Same, for the bundled code font. |
