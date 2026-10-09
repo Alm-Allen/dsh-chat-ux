@@ -80,6 +80,17 @@ const CUT_GAP = 1.2
  */
 const SLICE_LIFT = 2.6
 
+/**
+ * 圆心那个小孔的半径，像素。
+ *
+ * 两条缝各自只让到自己那一侧的半径线为止，圆心恰好落在四条半缝的交点上——谁也挖不到它，会留下一
+ * 点扇形色的残渣（读者看到的是「这一刀没切透」）。所以另给一个以圆心为心的小圆，两块都把它挖掉。
+ */
+const PIVOT_HOLE = 0.7
+
+/** 遮罩的 id：每次画的都是一份独立的图片文档，同一个 id 不会跟别处撞。 */
+const PIVOT_MASK_ID = 'dsh-chat-ux-pivot'
+
 /** 盘面的半径：占满这一格。切口开在圆里，圆外不必留白。 */
 const RADIUS = PIE_SIZE / 2
 
@@ -229,15 +240,16 @@ function cutImage(occupied: number, tone: string, rest: string, gap: number): st
     // 完全落在各块自己的地界里，evenodd 挖得干净（跨在两块边界上的话，缝的外半条会在对方那一侧被当成
     // 「多出来的一块」而填上色）。缝是**透明**的，露出的是按钮底下的页面底色，深浅两套主题都自动对得上。
     const half = gap / 2
+    const mask = ' mask="url(#' + PIVOT_MASK_ID + ')"'
     const plate = '<path d="' + discPath(CENTER, CENTER, RADIUS)
         + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, -1)
         + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, 1)
-        + '" fill="' + rest + '" fill-rule="evenodd"/>'
+        + '" fill="' + rest + '" fill-rule="evenodd"' + mask + '/>'
     const slice = '<path d="' + sectorPath(CENTER, CENTER, RADIUS, 0, occupied)
         + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, 1)
         + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, -1)
-        + '" fill="' + tone + '" fill-rule="evenodd"/>'
-    return inlineSvg(plate + slice)
+        + '" fill="' + tone + '" fill-rule="evenodd"' + mask + '/>'
+    return inlineSvg(pivotMask(CENTER, CENTER) + plate + slice)
 }
 
 /**
@@ -256,13 +268,14 @@ function pushImage(occupied: number, tone: string, rest: string, lift: number): 
     const half = lift / 2
     const centerX = round2(CENTER - half * Math.sin(rad(direction)))
     const centerY = round2(CENTER + half * Math.cos(rad(direction)))
-    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS) + ' '
-        + sectorPath(centerX, centerY, PUSH_RADIUS, 0, occupied)
-        + '" fill="' + rest + '" fill-rule="evenodd"/>'
+    // 缺口的顶点正落在圆心上，那一点的填充也只是「一半」——同样套上遮罩，缺口那一头才干净。
+    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS)
+        + ' ' + sectorPath(centerX, centerY, PUSH_RADIUS, 0, occupied)
+        + '" fill="' + rest + '" fill-rule="evenodd" mask="url(#' + PIVOT_MASK_ID + ')"/>'
     const apexX = round2(centerX + lift * Math.sin(rad(direction)))
     const apexY = round2(centerY - lift * Math.cos(rad(direction)))
     const slice = '<path d="' + sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied) + '" fill="' + tone + '"/>'
-    return inlineSvg(plate + slice)
+    return inlineSvg(pivotMask(centerX, centerY) + plate + slice)
 }
 
 
@@ -282,6 +295,24 @@ function discPath(cx: number, cy: number, radius: number): string {
     return 'M ' + x + ' ' + top
         + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + bottom
         + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + top + ' Z'
+}
+
+/**
+ * 圆心那一小圈的遮罩：整幅图铺白，再把圆心那一圈涂黑——涂黑的地方就是透明的。
+ *
+ * 为什么用遮罩，而不是在 path 的 d 里塞一个小圆（那条路试过，两种弧的写法都试过）：那个小圆的半径
+ * 不到 1px，即使 d 算得完全正确（dump 出来那个圆明明在），Chromium 也会当成「小到不必画」而放过，圆心
+ * 那一点照样留着扇形色。遮罩是一次涂黑，跟路径的尺寸无关。
+ * @param cx - 圆心的横坐标。
+ * @param cy - 圆心的纵坐标。
+ * @returns mask 元素的文本。
+ */
+function pivotMask(cx: number, cy: number): string {
+    return '<mask id="' + PIVOT_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
+        + ' width="' + PIE_SIZE + '" height="' + PIE_SIZE + '">'
+        + '<rect x="0" y="0" width="' + PIE_SIZE + '" height="' + PIE_SIZE + '" fill="#ffffff"/>'
+        + '<circle cx="' + round2(cx) + '" cy="' + round2(cy) + '" r="' + PIVOT_HOLE + '" fill="#000000"/>'
+        + '</mask>'
 }
 
 /**
