@@ -73,6 +73,12 @@ const ICON_SIZE = 14
  */
 const CUT_GAP = 1.2
 
+/** 缝宽随占用长大：占用到这个数以后用满 `CUT_GAP`。 */
+const CUT_GAP_FULL_AT = 25
+
+/** 占用很小时缝宽也留个底（`CUT_GAP` 的几成），不然「切了一刀」这件事就看不出来了。 */
+const CUT_GAP_MIN_RATIO = 0.5
+
 /**
  * 推出去那一套沿角平分线推开多远，像素——**只在开关打开时用**。
  *
@@ -239,7 +245,12 @@ function cutImage(occupied: number, tone: string, rest: string, gap: number): st
     // 折线：0 度那一段与 occupied 那一段，各是一条半径。**两块各让出自己那一侧的半个缝宽**——缝因此
     // 完全落在各块自己的地界里，evenodd 挖得干净（跨在两块边界上的话，缝的外半条会在对方那一侧被当成
     // 「多出来的一块」而填上色）。缝是**透明**的，露出的是按钮底下的页面底色，深浅两套主题都自动对得上。
-    const half = gap / 2
+    //
+    // 缝宽随占用长大：扇形在圆心那一头本来就窄（10% 只有 36 度，半径 1px 处的弧宽还不到 0.7px），一条
+    // 等宽的缝会把根部整段吃掉——读者看到的是「扇形被剩下那个圆侵蚀了」。所以小占用时把缝收窄，
+    // CUT_GAP_FULL_AT 以后才用满。
+    const scale = Math.min(1, Math.max(CUT_GAP_MIN_RATIO, occupied / 3.6 / CUT_GAP_FULL_AT))
+    const half = gap * scale / 2
     const mask = ' mask="url(#' + PIVOT_MASK_ID + ')"'
     const plate = '<path d="' + discPath(CENTER, CENTER, RADIUS)
         + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, -1)
@@ -268,14 +279,15 @@ function pushImage(occupied: number, tone: string, rest: string, lift: number): 
     const half = lift / 2
     const centerX = round2(CENTER - half * Math.sin(rad(direction)))
     const centerY = round2(CENTER + half * Math.cos(rad(direction)))
-    // 缺口的顶点正落在圆心上，那一点的填充也只是「一半」——同样套上遮罩，缺口那一头才干净。
+    // 这一套**不套遮罩**：圆心本来就在缺口里（缺口的顶点就是圆心），那一圈不必再挖；挖了反倒会在盘上
+    // 多出一个小豁口，看着像圆缺了一块。
     const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS)
         + ' ' + sectorPath(centerX, centerY, PUSH_RADIUS, 0, occupied)
-        + '" fill="' + rest + '" fill-rule="evenodd" mask="url(#' + PIVOT_MASK_ID + ')"/>'
+        + '" fill="' + rest + '" fill-rule="evenodd"/>'
     const apexX = round2(centerX + lift * Math.sin(rad(direction)))
     const apexY = round2(centerY - lift * Math.cos(rad(direction)))
     const slice = '<path d="' + sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied) + '" fill="' + tone + '"/>'
-    return inlineSvg(pivotMask(centerX, centerY) + plate + slice)
+    return inlineSvg(plate + slice)
 }
 
 
