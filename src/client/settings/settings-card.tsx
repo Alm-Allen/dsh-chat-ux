@@ -28,7 +28,8 @@ import {CARD_CLASS} from './config-card-styles'
 import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
-    DEFAULT_FONT_FAMILY, DEFAULT_HIT_REEL, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_FONT_FAMILY, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT,
+    DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -44,6 +45,7 @@ const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
 const PIE_PUSH_FIELD = 'piePush'
 const COMPOSER_GLASS_FIELD = 'composerGlass'
+const LIVE_DIFF_FIELD = 'liveDiff'
 
 /** 一种语言的文案。 */
 interface Copy {
@@ -67,6 +69,8 @@ interface Copy {
     piePushHint: string
     glassLabel: string
     glassHint: string
+    liveDiffLabel: string
+    liveDiffHint: string
     fontsLabel: string
     fontsHint: string
     fontsOffHint: string
@@ -120,6 +124,10 @@ const ZH_COPY: Copy = {
     glassHint:
         '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
         + '右下角那枚发送（跑起来时是停止）按钮跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
+    liveDiffLabel: '实时改动行数',
+    liveDiffHint:
+        '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
+        + '这一段还在收，标着 beta，默认关着。',
     fontsLabel: '自带字体',
     fontsHint:
         '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
@@ -181,6 +189,11 @@ const EN_COPY: Copy = {
         'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
         + 'highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the '
         + 'same material. Turning it off restores dsh\'s own composer and button.',
+    liveDiffLabel: 'Live change counts',
+    liveDiffHint:
+        'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
+        + 'is still streaming, instead of appearing only once it finishes. This stretch is still settling, so it is '
+        + 'marked beta and off by default.',
     fontsLabel: 'Bundled fonts',
     fontsHint:
         'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
@@ -252,6 +265,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const reelOn = storedHitReel(snapshot.value)
     const piePushOn = storedPiePush(snapshot.value)
     const glassOn = storedGlass(snapshot.value)
+    const liveDiffOn = storedLiveDiff(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
     const fontsOn = storedFonts(snapshot.value)
     const sans = sansDraft ?? storedSans(snapshot.value)
@@ -311,18 +325,21 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     }
 
     /**
-     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
+     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，开关行与文本字段行共用。
+     * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (
         field: string,
         label: string,
         hint: string,
         control: ReactElement,
+        badge?: ReactElement | undefined,
     ): ReactElement => (
         <div className={CARD_CLASS.row}>
             <div className={CARD_CLASS.rowText}>
                 <div className={CARD_CLASS.labelLine}>
                     <span className={CARD_CLASS.label}>{label}</span>
+                    {badge}
                 </div>
                 <p className={CARD_CLASS.hint}>{hint}</p>
             </div>
@@ -401,6 +418,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     onChange={(next: boolean) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass)}
                 />
             ))}
+            {rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, (
+                <Switch
+                    checked={liveDiffOn}
+                    disabled={controlsDisabled}
+                    label={copy.liveDiffLabel}
+                    onChange={(next: boolean) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff)}
+                />
+            ), <Tag tone="info">beta</Tag>)}
             {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
                 <Switch
                     checked={fontsOn}
@@ -552,6 +577,11 @@ function storedSendOn(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读命中率转轮的开关。 */
 function storedHitReel(value: ChatUxSection | undefined): boolean {
     return value?.hitReel ?? DEFAULT_HIT_REEL
+}
+
+/** 从 host 的值里读准备态改动行数的开关。 */
+function storedLiveDiff(value: ChatUxSection | undefined): boolean {
+    return value?.liveDiff ?? DEFAULT_LIVE_DIFF
 }
 
 /** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */

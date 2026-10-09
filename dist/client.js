@@ -101,6 +101,7 @@ function apply(ctx) {
         tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
         piePush: settings_scope_1.DEFAULT_PIE_PUSH,
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
+        liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
@@ -155,6 +156,7 @@ function apply(ctx) {
         settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         settings.piePush = value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+        settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         syncGlass();
         (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
@@ -210,8 +212,8 @@ function apply(ctx) {
     // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
-    // 内置那两行是默认的 0。
-    (0, file_mutation_row_1.installFileMutationRow)(services.slots);
+    // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认关，卡片上标 beta）。
+    (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiff);
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
@@ -1210,7 +1212,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1270,6 +1272,13 @@ exports.DEFAULT_PIE_PUSH = true;
  * 默认开着：它就是读者要的那一层磨砂。关掉后 body 上不挂属性，那一整张规则表一条都不命中。
  */
 exports.DEFAULT_COMPOSER_GLASS = true;
+/**
+ * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。host 侧 `src/index.ts` 里有一份同样的
+ * 常量，改一处就要改另一处。
+ *
+ * 默认关着、卡片上标 beta：这一段还在收，而且它只对**直接调用**的 write / edit 有意义。
+ */
+exports.DEFAULT_LIVE_DIFF = false;
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -3002,6 +3011,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
  * 的内容一出现就有 `+n -0`，并随流式增长。
  *
+ * 这一段默认关着（插件管理页上的「实时改动行数」，标 beta）：关掉时这一行回到接管之前的样子——
+ * 准备态不画那两个数，派发后只看参数 JSON。
+ *
  * 代价说得明白些：子调用不持久化 `presentationMeta`，所以结算之后拿不到"实际应用了什么"，
  * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
  * 或写入失败时可能与实际不符）。
@@ -3030,10 +3042,17 @@ const KILOBYTE = 1024;
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
 const FILE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 14 });
 /**
+ * 准备态那两个数开着没有。由 `installFileMutationRow` 装进来，渲染期现读——所以插件管理页上
+ * 一改，下一次渲染就跟着变。
+ */
+let liveDiffEnabled = () => false;
+/**
  * 在 edit / write 两个座位上遮蔽内置的文件变更行。
  * @param slots - 客户端座位注册表。
+ * @param liveDiff - 准备态那两个数开着没有；渲染期现读，所以卡片上一改就跟着变。
  */
-function installFileMutationRow(slots) {
+function installFileMutationRow(slots, liveDiff) {
+    liveDiffEnabled = liveDiff;
     slots.inject('tool.call.toolview', () => {
         const seat = { name: 'tool.call.toolview', priority: -1, locale: 'conversation' };
         const disposeEdit = slots.register({ ...seat, key: 'edit' }, FileMutationRow);
@@ -3103,6 +3122,9 @@ function FileMutationRow(props) {
  */
 function diffHunks(block, args) {
     if (!('kind' in block)) {
+        // 关掉时这一支与接管之前逐字一样：准备态不画，派发后只看参数 JSON。
+        if (!liveDiffEnabled())
+            return block.phase === 'preparing' ? null : intendedHunks(block.name, args);
         if (block.phase === 'preparing')
             return streamedHunks(block.name, block.args);
         return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args);
@@ -6732,6 +6754,7 @@ const SEND_FLIGHT_FIELD = 'sendFlight';
 const HIT_REEL_FIELD = 'hitReel';
 const PIE_PUSH_FIELD = 'piePush';
 const COMPOSER_GLASS_FIELD = 'composerGlass';
+const LIVE_DIFF_FIELD = 'liveDiff';
 const ZH_COPY = {
     summary: (followOn) => '跟随守护：' + (followOn ? '开' : '关') + '。光标、气泡动效与字体也在这里调。',
     followLabel: '增强跟随',
@@ -6760,6 +6783,9 @@ const ZH_COPY = {
     glassLabel: '输入框毛玻璃',
     glassHint: '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
         + '右下角那枚发送（跑起来时是停止）按钮跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
+    liveDiffLabel: '实时改动行数',
+    liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
+        + '这一段还在收，标着 beta，默认关着。',
     fontsLabel: '自带字体',
     fontsHint: '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
         + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
@@ -6809,6 +6835,10 @@ const EN_COPY = {
     glassHint: 'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
         + 'highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the '
         + 'same material. Turning it off restores dsh\'s own composer and button.',
+    liveDiffLabel: 'Live change counts',
+    liveDiffHint: 'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
+        + 'is still streaming, instead of appearing only once it finishes. This stretch is still settling, so it is '
+        + 'marked beta and off by default.',
     fontsLabel: 'Bundled fonts',
     fontsHint: 'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
         + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
@@ -6859,6 +6889,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const reelOn = storedHitReel(snapshot.value);
     const piePushOn = storedPiePush(snapshot.value);
     const glassOn = storedGlass(snapshot.value);
+    const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const fontsOn = storedFonts(snapshot.value);
     const sans = sansDraft ?? storedSans(snapshot.value);
@@ -6908,10 +6939,11 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaving(false);
     };
     /**
-     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，五种字段共用。
+     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，开关行与文本字段行共用。
+     * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
-    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
+    const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
                             setSansDraft(null);
                             void reset(FONT_SANS_FIELD);
                         } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
@@ -6966,6 +6998,10 @@ function storedSendOn(value) {
 /** 从 host 的值里读命中率转轮的开关。 */
 function storedHitReel(value) {
     return value?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL;
+}
+/** 从 host 的值里读准备态改动行数的开关。 */
+function storedLiveDiff(value) {
+    return value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
 }
 /** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
 function storedPiePush(value) {

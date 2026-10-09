@@ -75,6 +75,14 @@ export declare const DEFAULT_PIE_PUSH = true;
  */
 export declare const DEFAULT_COMPOSER_GLASS = true;
 /**
+ * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。前端有一份同样的常量
+ * （`client/settings/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认关着、卡片上标 beta：这一段还在收，而且它只在**直接调用**的 write / edit 上有意义——
+ * run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐。
+ */
+export declare const DEFAULT_LIVE_DIFF = false;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
@@ -90,6 +98,7 @@ export interface Config {
     hitReel: Volatile<boolean>;
     piePush: Volatile<boolean>;
     composerGlass: Volatile<boolean>;
+    liveDiff: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -107,6 +116,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     hitReel: Schema<boolean, boolean, "volatile-defined">;
     piePush: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
+    liveDiff: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
@@ -119,6 +129,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     hitReel: Schema<boolean, boolean, "volatile-defined">;
     piePush: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
+    liveDiff: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。

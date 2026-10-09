@@ -16,6 +16,9 @@
  * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
  * 的内容一出现就有 `+n -0`，并随流式增长。
  *
+ * 这一段默认关着（插件管理页上的「实时改动行数」，标 beta）：关掉时这一行回到接管之前的样子——
+ * 准备态不画那两个数，派发后只看参数 JSON。
+ *
  * 代价说得明白些：子调用不持久化 `presentationMeta`，所以结算之后拿不到"实际应用了什么"，
  * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
  * 或写入失败时可能与实际不符）。
@@ -58,6 +61,12 @@ const KILOBYTE = 1024
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
 const FILE_ICON = <IconEditOutlineRegular size={14}/>
 
+/**
+ * 准备态那两个数开着没有。由 `installFileMutationRow` 装进来，渲染期现读——所以插件管理页上
+ * 一改，下一次渲染就跟着变。
+ */
+let liveDiffEnabled: () => boolean = () => false
+
 /** 这一行要用的文案座位：conversation 命名空间下的 `t`。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
@@ -93,8 +102,10 @@ export interface SlotsService {
 /**
  * 在 edit / write 两个座位上遮蔽内置的文件变更行。
  * @param slots - 客户端座位注册表。
+ * @param liveDiff - 准备态那两个数开着没有；渲染期现读，所以卡片上一改就跟着变。
  */
-export function installFileMutationRow(slots: SlotsService): void {
+export function installFileMutationRow(slots: SlotsService, liveDiff: () => boolean): void {
+    liveDiffEnabled = liveDiff
     slots.inject('tool.call.toolview', () => {
         const seat = {name: 'tool.call.toolview', priority: -1, locale: 'conversation'}
         const disposeEdit = slots.register({...seat, key: 'edit'}, FileMutationRow)
@@ -344,6 +355,8 @@ interface RowModel {
  */
 function diffHunks(block: ToolCallBlock, args: Record<string, unknown> | null): DiffHunk[] | null {
     if (!('kind' in block)) {
+        // 关掉时这一支与接管之前逐字一样：准备态不画，派发后只看参数 JSON。
+        if (!liveDiffEnabled()) return block.phase === 'preparing' ? null : intendedHunks(block.name, args)
         if (block.phase === 'preparing') return streamedHunks(block.name, block.args)
         return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args)
     }

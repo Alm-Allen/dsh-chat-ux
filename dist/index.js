@@ -87,6 +87,14 @@ export const DEFAULT_PIE_PUSH = true;
  */
 export const DEFAULT_COMPOSER_GLASS = true;
 /**
+ * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。前端有一份同样的常量
+ * （`client/settings/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认关着、卡片上标 beta：这一段还在收，而且它只在**直接调用**的 write / edit 上有意义——
+ * run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐。
+ */
+export const DEFAULT_LIVE_DIFF = false;
+/**
  * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
  */
 export const FONT_ROUTE_PATH = '/dsh-chat-ux/fonts';
@@ -106,6 +114,7 @@ export const Config = Schema.object({
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
     piePush: Schema.boolean().default(DEFAULT_PIE_PUSH).volatile(),
     composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
+    liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
 });
 /**
  * host 侧入口。

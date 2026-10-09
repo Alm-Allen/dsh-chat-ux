@@ -32,7 +32,7 @@ import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
-    DEFAULT_FONT_FAMILY, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_FONT_FAMILY, DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -80,6 +80,7 @@ export function apply(ctx: ClientContext): void {
         tokenFade: DEFAULT_TOKEN_FADE,
         piePush: DEFAULT_PIE_PUSH,
         glass: DEFAULT_COMPOSER_GLASS,
+        liveDiff: DEFAULT_LIVE_DIFF,
     }
 
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -133,6 +134,7 @@ export function apply(ctx: ClientContext): void {
         settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
         settings.piePush = value?.piePush ?? DEFAULT_PIE_PUSH
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
+        settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         syncGlass()
         applyFontChoice(settings.font)
         caret.resync()
@@ -202,8 +204,8 @@ export function apply(ctx: ClientContext): void {
     // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
-    // 内置那两行是默认的 0。
-    installFileMutationRow(services.slots)
+    // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认关，卡片上标 beta）。
+    installFileMutationRow(services.slots, () => settings.liveDiff)
 
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
@@ -259,6 +261,8 @@ interface ChatUxSettings {
     piePush: boolean
     /** 输入框那块玻璃开着没有；它是 body 上的一层常驻状态，改一次就得重落一次。 */
     glass: boolean
+    /** 文件变更行的 `+n -m` 是否在准备态就长出来；那一行在渲染期现读它。 */
+    liveDiff: boolean
 }
 
 /** 共享配置表单的提供者，收窄到 `get`。 */
