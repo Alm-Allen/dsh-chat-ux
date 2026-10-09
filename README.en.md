@@ -18,6 +18,8 @@ With it installed, model output fades in token by token instead of appearing in 
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (on by default): the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
 - **Work details default to Standard**: on the web client, dsh's "Work details" setting is filled in as **Standard** (dsh's own web default is Detailed). Once you pick a mode yourself under Settings → **General**, your choice wins and the plugin leaves it alone.
+- **Cache-hit rate**: the pill under the composer keeps one decimal, and its colour walks a six-stop ramp from 90% to 99% — red below 90, deep green at 99 and above. When the reading changes, the digits that changed roll to their new values (220 ms, lower digits starting later); a switch on the Plugins page turns it off.
+- **Context occupancy as a pie**: the ring becomes a solid 20px pie on a 20%–40% ramp (green below 20, red at 40 and above), with the reading in the same colour. The occupied slice is cut along a fold line pivoted at the centre: by default the slice slides out along the bisector, and the gap between the two pieces is a constant 1.2px wide; switch it to "cut only" on the Plugins page and both pieces stay put — close the cut and you have the whole circle back. The percentage beside it rolls too.
 
 ## Install
 
@@ -60,24 +62,29 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | Enhanced follow | on | When off, a bottom-parked reader is no longer handed back to dsh's follow at thinking-end / tool-call moments. |
-| Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
 | Group follow | follows "Enhanced follow" | Not a row of its own: the card has one "Enhanced follow" switch, which also governs whether reasoning and tool output keep up inside height-capped process groups. |
+| Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
+| Token fade-in | on | When off, new text appears immediately. If the page stutters noticeably alongside other plugins, turn this off. |
 | Caret motion | always | Three steps: off / on move / always. |
 | Chat bubble motion | on | When off, the send has no flight and the message simply appears. |
+| Cache-hit reels | on | When off, a changed rate swaps instantly. |
+| Slice pulled out | on | When off, the slice stays in place and only the cut remains. |
 | Bundled fonts | on | When off, the system font stack is used. |
-| Custom text font | empty | Your own font stack, overriding the bundled text font. |
-| Custom mono font | empty | Same, for the bundled code font. |
+| Text font | empty | Your own font stack, overriding the bundled text font. |
+| Code font | empty | Same, for the bundled code font. |
 
 "Work details" is not on the plugin card: it lives in dsh's own Settings → **General**, and the plugin only fills in Standard while you have not chosen a mode yourself.
 
 ## Compatibility
 
-- Developed and verified on dsh 0.1.7-rc.2.
+- Developed and verified on dsh 0.2.1-alpha.1.
 - Node `^22.19.0 || >=24.0.0`.
 
 ## About this repository
 
 This repository carries the plugin's source and release notes. Build scripts and internal design docs are not part of it, so a fresh clone cannot run `npm run build`; install the package from npm instead.
+
+Every release is recorded in [CHANGELOG.md](./CHANGELOG.md) — the tag-triggered workflow takes the release notes out of it.
 
 ## License
 
