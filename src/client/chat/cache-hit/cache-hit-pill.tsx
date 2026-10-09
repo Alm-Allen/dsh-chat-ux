@@ -3,9 +3,11 @@
  *
  * dsh 在 `conversation.composer.dock` 上发两个座位条目（`activity` order 0、`usage` order 1），
  * 同一个 id 与同一个 order 上按 priority 取最低的那个渲染，内置那两个是默认的 0。这里用 -1 遮蔽
- * 掉 `usage` 重画一份：命中率恒取一位小数，并按四档取色——≥98 绿、93~98 浅绿、90~93 黄、<90 红，
- * 判据用的是显示值本身（读者看到 98.0 就该是绿的）。简洁档只留这一截读数，详细档另加 token 总量
- * 与点开的明细，明细里的命中率走同一个小数口径。
+ * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
+ * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
+ * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
+ * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
+ * 小数口径。
  *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
@@ -22,12 +24,13 @@ import type {SlotsService} from '../file-mutation/file-mutation-row'
 import {DEFAULT_HIT_REEL} from '../../settings/settings-scope'
 import type {ChatUxSection, ConfigForm} from '../../settings/settings-scope'
 import {
-    CACHE_HIT_ANCHOR_CLASS, CACHE_HIT_BAD_CLASS, CACHE_HIT_DETAILS_CLASS, CACHE_HIT_FAIR_CLASS,
-    CACHE_HIT_GOOD_CLASS, CACHE_HIT_LABEL_CLASS, CACHE_HIT_PANEL_CLASS, CACHE_HIT_PILL_CLASS,
-    CACHE_HIT_RULE_CLASS, CACHE_HIT_SEP_CLASS, CACHE_HIT_TITLE_CLASS, CACHE_HIT_TITLE_LABEL_CLASS,
-    CACHE_HIT_TITLE_VALUE_CLASS, CACHE_HIT_WARN_CLASS,
+    CACHE_HIT_ANCHOR_CLASS, CACHE_HIT_DETAILS_CLASS, CACHE_HIT_LABEL_CLASS, CACHE_HIT_PANEL_CLASS,
+    CACHE_HIT_PILL_CLASS, CACHE_HIT_RULE_CLASS, CACHE_HIT_SEP_CLASS, CACHE_HIT_TITLE_CLASS,
+    CACHE_HIT_TITLE_LABEL_CLASS, CACHE_HIT_TITLE_VALUE_CLASS,
 } from './cache-hit-styles'
-import {HitReel} from './hit-reel'
+import {rampPosition} from '../ramp'
+import type {RampPosition} from '../ramp'
+import {DigitReel} from '../reel/digit-reel'
 
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8
@@ -73,16 +76,8 @@ const USAGE_STAT_PRIORITY = -1
 /** dsh 的「性能与用量」档位：简洁只留命中率读数，详细另给 token 总量与明细。 */
 type PerformanceUsageMode = 'compact' | 'detailed'
 
-/** 命中率落在四档里的哪一档。 */
-type HitTone = 'good' | 'fair' | 'warn' | 'bad'
-
-/** 四档对应的类名，取色写在样式表里。 */
-const HIT_TONE_CLASS: Readonly<Record<HitTone, string>> = {
-    good: CACHE_HIT_GOOD_CLASS,
-    fair: CACHE_HIT_FAIR_CLASS,
-    warn: CACHE_HIT_WARN_CLASS,
-    bad: CACHE_HIT_BAD_CLASS,
-}
+/** 命中率那六个色标在显示值上的位置，与样式表里那几段一一对应；末一个落在 99.0，之后一律深绿。 */
+const HIT_TONE_STOPS = [90, 92, 94, 96, 98, 99]
 
 /** token 用量投影里这一枚用到的几个桶。 */
 interface TokenUsageProjection {
@@ -177,7 +172,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                     {icon}
                     <span className={CACHE_HIT_LABEL_CLASS}>
                         {hitLabel}{' '}
-                        <HitReel text={hit.text} toneClass={hit.toneClass} rolling={rolling}/>
+                        <DigitReel text={hit.text} tone={hit.tone} rolling={rolling} spoken/>
                     </span>
                 </span>
             </span>
@@ -205,7 +200,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                         <>
                             <span className={CACHE_HIT_SEP_CLASS} aria-hidden>·</span>
                             {hitLabel}{' '}
-                            <HitReel text={hit.text} toneClass={hit.toneClass} rolling={rolling}/>
+                            <DigitReel text={hit.text} tone={hit.tone} rolling={rolling} spoken/>
                         </>
                     )}
                 </span>
@@ -250,24 +245,24 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     )
 }
 
-/** 命中率那一截的文本与档位类名；没有计过价的输入时是 null。 */
+/** 命中率那一截的文本与色阶位置；没有计过价的输入时是 null。 */
 interface HitReading {
     /** `97.3%` 这样的文本。 */
     text: string
-    /** 四档里的那一档。 */
-    toneClass: string
+    /** 读数落在色标的哪一段、段内位置多少。 */
+    tone: RampPosition
 }
 
 /**
  * 命中率读数，恒一位小数。
  * @param cacheReadTokens - 从缓存读到的输入。
  * @param billedInputTokens - 三个输入计费桶之和。
- * @returns 文本与档位；没有计过价的输入时是 null。
+ * @returns 文本与色阶位置；没有计过价的输入时是 null。
  */
 function hitReading(cacheReadTokens: number, billedInputTokens: number): HitReading | null {
     const percent = formatHitPercent(cacheReadTokens, billedInputTokens)
     if (percent === null) return null
-    return {text: percent + '%', toneClass: HIT_TONE_CLASS[hitTone(Number(percent))]}
+    return {text: percent + '%', tone: rampPosition(Number(percent), HIT_TONE_STOPS)}
 }
 
 /**
@@ -286,21 +281,6 @@ function formatHitPercent(cacheReadTokens: number, billedInputTokens: number): s
         ? PERCENT_UNITS_CAP
         : units
     return (capped / 10).toFixed(1)
-}
-
-/**
- * 一档命中率落在哪一档。
- *
- * 判据用的是**显示值**那一份（一位小数）：读者看到 98.0 就该是绿的，而不是因为精确值 97.96
- * 落进浅绿。
- * @param percent - 显示用的百分比数值。
- * @returns 四档里的那一档。
- */
-function hitTone(percent: number): HitTone {
-    if (percent >= 98) return 'good'
-    if (percent >= 93) return 'fair'
-    if (percent >= 90) return 'warn'
-    return 'bad'
 }
 
 /** 三个互不重叠的输入计费桶之和。 */

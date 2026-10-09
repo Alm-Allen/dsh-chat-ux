@@ -912,9 +912,11 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  *
  * dsh 在 `conversation.composer.dock` 上发两个座位条目（`activity` order 0、`usage` order 1），
  * 同一个 id 与同一个 order 上按 priority 取最低的那个渲染，内置那两个是默认的 0。这里用 -1 遮蔽
- * 掉 `usage` 重画一份：命中率恒取一位小数，并按四档取色——≥98 绿、93~98 浅绿、90~93 黄、<90 红，
- * 判据用的是显示值本身（读者看到 98.0 就该是绿的）。简洁档只留这一截读数，详细档另加 token 总量
- * 与点开的明细，明细里的命中率走同一个小数口径。
+ * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
+ * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
+ * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
+ * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
+ * 小数口径。
  *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
@@ -926,7 +928,8 @@ const react_dom_1 = require("react-dom");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
-const hit_reel_1 = require("./hit-reel");
+const ramp_1 = require("../ramp");
+const digit_reel_1 = require("../reel/digit-reel");
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8;
 /** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
@@ -955,13 +958,8 @@ const USAGE_STAT_ID = 'usage';
 const USAGE_STAT_ORDER = 1;
 /** 遮蔽内置那一枚：同一个 id 与 order 上，priority 最低的那个渲染，内置是 0。 */
 const USAGE_STAT_PRIORITY = -1;
-/** 四档对应的类名，取色写在样式表里。 */
-const HIT_TONE_CLASS = {
-    good: cache_hit_styles_1.CACHE_HIT_GOOD_CLASS,
-    fair: cache_hit_styles_1.CACHE_HIT_FAIR_CLASS,
-    warn: cache_hit_styles_1.CACHE_HIT_WARN_CLASS,
-    bad: cache_hit_styles_1.CACHE_HIT_BAD_CLASS,
-};
+/** 命中率那六个色标在显示值上的位置，与样式表里那几段一一对应；末一个落在 99.0，之后一律深绿。 */
+const HIT_TONE_STOPS = [90, 92, 94, 96, 98, 99];
 /**
  * 遮蔽 `conversation.composer.dock` 上的 `usage` 座位，换成自带一位小数与四档取色的那一枚。
  *
@@ -1017,25 +1015,25 @@ function CacheHitPill({ useProjection, t }) {
     if (mode === 'compact') {
         if (hit === null)
             return null;
-        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(hit_reel_1.HitReel, { text: hit.text, toneClass: hit.toneClass, rolling: rolling })] })] }) }));
+        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, tone: hit.tone, rolling: rolling, spoken: true })] })] }) }));
     }
     const total = billedInput + usage.outputTokens;
     const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) });
     const title = t('stats.dialog.usageTitle');
     const summary = hit === null ? totalText : totalText + ' · ' + hitLabel + ' ' + hit.text;
-    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)(hit_reel_1.HitReel, { text: hit.text, toneClass: hit.toneClass, rolling: rolling })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, tone: hit.tone, rolling: rolling, spoken: true })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
 }
 /**
  * 命中率读数，恒一位小数。
  * @param cacheReadTokens - 从缓存读到的输入。
  * @param billedInputTokens - 三个输入计费桶之和。
- * @returns 文本与档位；没有计过价的输入时是 null。
+ * @returns 文本与色阶位置；没有计过价的输入时是 null。
  */
 function hitReading(cacheReadTokens, billedInputTokens) {
     const percent = formatHitPercent(cacheReadTokens, billedInputTokens);
     if (percent === null)
         return null;
-    return { text: percent + '%', toneClass: HIT_TONE_CLASS[hitTone(Number(percent))] };
+    return { text: percent + '%', tone: (0, ramp_1.rampPosition)(Number(percent), HIT_TONE_STOPS) };
 }
 /**
  * 命中率文本，恒一位小数。
@@ -1054,23 +1052,6 @@ function formatHitPercent(cacheReadTokens, billedInputTokens) {
         ? PERCENT_UNITS_CAP
         : units;
     return (capped / 10).toFixed(1);
-}
-/**
- * 一档命中率落在哪一档。
- *
- * 判据用的是**显示值**那一份（一位小数）：读者看到 98.0 就该是绿的，而不是因为精确值 97.96
- * 落进浅绿。
- * @param percent - 显示用的百分比数值。
- * @returns 四档里的那一档。
- */
-function hitTone(percent) {
-    if (percent >= 98)
-        return 'good';
-    if (percent >= 93)
-        return 'fair';
-    if (percent >= 90)
-        return 'warn';
-    return 'bad';
 }
 /** 三个互不重叠的输入计费桶之和。 */
 function billedInputTokens(usage) {
@@ -1247,20 +1228,23 @@ exports.DEFAULT_HIT_REEL = true;
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
 /**
  * 缓存命中胶囊自己的样式表。
  *
  * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
  * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
  * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一截
- * 是新的：它按四档取色（见下面的自定义属性），这是 dsh 原版没有的。
+ * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的。
+ *
+ * 数字轮的类名与规则**不在这里**：那是两处共用的（上下文占用那串百分比也在用），在
+ * `../reel/reel-styles`；色阶的段标记与位置也不在这里，在 `../ramp`。
  *
  * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_BAD_CLASS = exports.CACHE_HIT_WARN_CLASS = exports.CACHE_HIT_FAIR_CLASS = exports.CACHE_HIT_GOOD_CLASS = exports.HIT_REEL_SPOKEN_CLASS = exports.HIT_REEL_STATIC_CLASS = exports.HIT_REEL_WAS_CLASS = exports.HIT_REEL_CELL_CLASS = exports.HIT_REEL_CLASS = exports.CACHE_HIT_VALUE_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
-/** 一次翻动用多久；与 hit-reel.tsx 的 `REEL_TURN_MS` 是同一个数，改一处就要改另一处。 */
-const REEL_TURN_MS = 220;
+const ramp_1 = require("../ramp");
+const reel_styles_1 = require("../reel/reel-styles");
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
 exports.CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor';
 /** 胶囊本体。静态读数是 `span`，能展开明细的是 `button`。 */
@@ -1269,26 +1253,6 @@ exports.CACHE_HIT_PILL_CLASS = 'dsh-chat-ux-hit-pill';
 exports.CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label';
 /** token 总量与命中率之间的那个点。 */
 exports.CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep';
-/** 命中率那一截：四档取色挂在它与下面四个档位类名的组合上。 */
-exports.CACHE_HIT_VALUE_CLASS = 'dsh-chat-ux-hit-value';
-/** 一个数字位：一格窗口，只负责裁。 */
-exports.HIT_REEL_CLASS = 'dsh-chat-ux-hit-reel';
-/** 窗口里现在的那个数字：从下面一格上来，终态零位移。 */
-exports.HIT_REEL_CELL_CLASS = 'dsh-chat-ux-hit-reel-cell';
-/** 上一个数字：往上面一格走。 */
-exports.HIT_REEL_WAS_CLASS = 'dsh-chat-ux-hit-reel-was';
-/** 读数里的小数点与百分号：不滚，与数字轮并排。 */
-exports.HIT_REEL_STATIC_CLASS = 'dsh-chat-ux-hit-static';
-/** 给读屏的那一份读数，视觉上藏起来。 */
-exports.HIT_REEL_SPOKEN_CLASS = 'dsh-chat-ux-hit-spoken';
-/** 命中率 ≥ 98%。 */
-exports.CACHE_HIT_GOOD_CLASS = 'dsh-chat-ux-hit-good';
-/** 命中率 93% ~ 98%。 */
-exports.CACHE_HIT_FAIR_CLASS = 'dsh-chat-ux-hit-fair';
-/** 命中率 90% ~ 93%。 */
-exports.CACHE_HIT_WARN_CLASS = 'dsh-chat-ux-hit-warn';
-/** 命中率 < 90%。 */
-exports.CACHE_HIT_BAD_CLASS = 'dsh-chat-ux-hit-bad';
 /** 弹窗面板。 */
 exports.CACHE_HIT_PANEL_CLASS = 'dsh-chat-ux-hit-panel';
 /** 弹窗标题行：左边图标加标题，右边精确总量。 */
@@ -1304,24 +1268,12 @@ exports.CACHE_HIT_DETAILS_CLASS = 'dsh-chat-ux-hit-details';
 /**
  * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
  *
- * 四档取色用的是自定义属性而不是字面色值：深浅两套主题各一份，改档只改这一段。两套的色相不变、
- * 明度各自适配画布——「浅绿」在两套里都读作比「绿」淡的那一档。
+ * 色阶的六个色标：90.0 红、92.0 橙黄、94.0 黄、96.0 黄绿、98.0 浅绿、99.0 深绿。低于 90.0 一律红；
+ * **99.0 及以后一律深绿**——读者不必等到 100.0 才看见绿。六个都从 `../ramp` 那组共用的色调里取，
+ * 锚点之间的颜色由浏览器在 OKLCH 里自己插出来（`color-mix(in oklch, …)`）：浏览器半区只给「落在哪
+ * 一段、段内位置多少」，一个色值都不碰，所以主题一切它自动跟着重算。
  */
 exports.CACHE_HIT_CSS = `
-body {
-  --dsh-chat-ux-hit-good: #1a7f37;
-  --dsh-chat-ux-hit-fair: #4ba95b;
-  --dsh-chat-ux-hit-warn: #9a6700;
-  --dsh-chat-ux-hit-bad: #cf222e;
-}
-
-body[data-ds-dark-theme] {
-  --dsh-chat-ux-hit-good: #3fb950;
-  --dsh-chat-ux-hit-fair: #7ee787;
-  --dsh-chat-ux-hit-warn: #d29922;
-  --dsh-chat-ux-hit-bad: #f85149;
-}
-
 /* 座位根：尺寸对齐内置胶囊的 anchor，只包住胶囊本身。 */
 .${exports.CACHE_HIT_ANCHOR_CLASS} {
   display: inline-flex;
@@ -1376,111 +1328,64 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   margin: 0 6px;
 }
 
-/* 命中率那一截：几位数字、小数点、百分号并排，**全部落在同一个写死的行盒里**。
-   一格的高写死 20px：字形盒 17px 放在里面，上下各余一点，读者换字体也裁不到；小数点与百分号跟着
-   用同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑。翻动的位移**不用**这个数——它是相对
-   各自行盒的百分比（下面那两条关键帧），所以这一处没有「算一格」的地方，停位与字号、字体度量、
-   页面缩放全都无关。 */
+/* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，色阶一路看得见。
 
-.${exports.CACHE_HIT_VALUE_CLASS} {
-  --dsh-chat-ux-reel-cell: 20px;
-  display: inline-flex;
-  align-items: center;
-  height: var(--dsh-chat-ux-reel-cell);
+   颜色分两步走：下面这几条段规则把这一段的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
+   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），浏览器半区只写一个段内
+   位置。这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——这一侧没有任何 JS 去
+   getComputedStyle。 */
+
+/* 低于 90%：两端都是红，所以插值恒等于红，不另开一档颜色。 */
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
 }
 
-/* 一个数字位：一格的窗口，只负责裁。position 定在这里，好让上一个数字压在同一格上。 */
-.${exports.HIT_REEL_CLASS} {
-  display: block;
-  position: relative;
-  /* 胶囊挤的时候，这一格也不许被压窄。 */
-  flex: none;
-  overflow: hidden;
-  height: var(--dsh-chat-ux-reel-cell);
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='0'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
+  --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-orange);
 }
 
-/* 新数字从下面一格上来：位移是相对**这一格自己的行盒**的百分比，所以一格有多高、字号多大、
-   页面缩放多少都不参与；而终态是零位移——动画走完，数字就落在它本来的位置上，没有可歪的余地。 */
-.${exports.HIT_REEL_CELL_CLASS} {
-  display: block;
-  height: var(--dsh-chat-ux-reel-cell);
-  line-height: var(--dsh-chat-ux-reel-cell);
-  text-align: center;
-  animation: dsh-chat-ux-hit-in ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='1'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-orange);
+  --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-yellow);
 }
 
-/* 上一个数字往上面一格走；走完停在窗口外，被列口裁着，不碍事。
-   它必须**脱离文档流**压在同一个格上：两个 display: block 上下排的话，新数字会被推到下一格，
-   正好落在窗口外面——那样读者只会看到旧数字往上走、新数字永远不出现。 */
-.${exports.HIT_REEL_WAS_CLASS} {
-  display: block;
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: var(--dsh-chat-ux-reel-cell);
-  line-height: var(--dsh-chat-ux-reel-cell);
-  text-align: center;
-  animation: dsh-chat-ux-hit-out ${REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='2'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-yellow);
+  --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-lime);
 }
 
-@keyframes dsh-chat-ux-hit-in {
-  from { transform: translateY(100%); }
-  to { transform: none; }
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='3'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-lime);
+  --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green-light);
 }
 
-@keyframes dsh-chat-ux-hit-out {
-  from { transform: none; }
-  to { transform: translateY(-100%); }
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='4'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green-light);
+  --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green);
 }
 
-/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示。 */
-@media (prefers-reduced-motion: reduce) {
-  .${exports.HIT_REEL_CELL_CLASS},
-  .${exports.HIT_REEL_WAS_CLASS} {
-    animation: none;
+/* 99.0 及以后：不必等到 100.0，两端都是深绿。 */
+.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
+  --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green);
+}
+
+/* 撑不起 color-mix 的浏览器停在段起点色上：退成六档取色，读数、布局与翻动一个都不受影响。
+   段标记也没写上时退回胶囊自己的文字色，而不是变成看不出的一团。 */
+.${reel_styles_1.REEL_TEXT_CLASS} {
+  color: var(--dsh-chat-ux-hit-from, currentColor);
+}
+
+/* 括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入「未知的
+   函数形式」而恒为假，整块规则静默跳过——与 styles.ts 里那道流光同一个坑。 */
+@supports (color: color-mix(in oklch, red, blue 50%)) {
+  .${reel_styles_1.REEL_TEXT_CLASS} {
+    color: color-mix(
+      in oklch,
+      var(--dsh-chat-ux-hit-from),
+      var(--dsh-chat-ux-hit-to, var(--dsh-chat-ux-hit-from)) var(${ramp_1.RAMP_POSITION_VAR}, 0%)
+    );
   }
-
-  .${exports.HIT_REEL_WAS_CLASS} {
-    display: none;
-  }
-}
-
-/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
-   flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
-   「小数点不见了」；数字列口一直有这一条，它们两个漏了。 */
-.${exports.HIT_REEL_STATIC_CLASS} {
-  display: block;
-  flex: none;
-  height: var(--dsh-chat-ux-reel-cell);
-  line-height: var(--dsh-chat-ux-reel-cell);
-}
-
-/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」。 */
-.${exports.HIT_REEL_SPOKEN_CLASS} {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，档位一路看得见。 */
-.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_GOOD_CLASS} {
-  color: var(--dsh-chat-ux-hit-good);
-}
-
-.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_FAIR_CLASS} {
-  color: var(--dsh-chat-ux-hit-fair);
-}
-
-.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_WARN_CLASS} {
-  color: var(--dsh-chat-ux-hit-warn);
-}
-
-.${exports.CACHE_HIT_VALUE_CLASS}.${exports.CACHE_HIT_BAD_CLASS} {
-  color: var(--dsh-chat-ux-hit-bad);
 }
 
 /* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给。 */
@@ -1557,13 +1462,231 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
 `;
     };
 
-    __registry["chat/cache-hit/hit-reel.js"] = function (module, exports, require) {
+    __registry["chat/ramp.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 无极色阶的公共部分：把读数落成「段标记 + 段内位置」。
+ *
+ * 色值不在这里——它们留在各自的样式表里（命中率那六个色标、上下文占用那六个色标），这一侧只算
+ * 「落在哪一段、段内位置多少」，锚点之间的插值交给 CSS 的 `color-mix(in oklch, …)`。两处共用它，
+ * 是因为要的是同一件事：在一个区间里连续取色，而两头各自恒定——命中率到 99.0 就绿、占用到 40 就红，
+ * 都不必等到满。
+ *
+ * @module dsh-chat-ux/chat/ramp
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RAMP_TONE_CSS = exports.RAMP_SPAN_HIGH = exports.RAMP_SPAN_LOW = exports.RAMP_POSITION_VAR = exports.RAMP_SPAN_ATTRIBUTE = void 0;
+exports.rampPosition = rampPosition;
+/** 段标记与段内位置写在这两个名字上：样式表按段标记选段，按位置算色。 */
+exports.RAMP_SPAN_ATTRIBUTE = 'data-dsh-chat-ux-ramp-span';
+/** 段内位置的变量名。 */
+exports.RAMP_POSITION_VAR = '--dsh-chat-ux-ramp-position';
+/** 低于第一个色标的那一段：两端同色，插值恒等。 */
+exports.RAMP_SPAN_LOW = 'low';
+/** 从最后一个色标起的那一段：同样恒定。 */
+exports.RAMP_SPAN_HIGH = 'high';
+/**
+ * 两处色阶共用的七个色调，深浅两套各一份。
+ *
+ * 写成字面值而不是再套一层 `var()`：读色值的那一侧——上下文占用那颗饼要把色涂进内联 SVG——读的是
+ * 求值后的 `color`，但这条约定仍然守着，免得下一个人以为可以随手改掉。深浅两套的色相不变、明度各自
+ * 适配画布。
+ */
+exports.RAMP_TONE_CSS = `
+body {
+  --dsh-chat-ux-tone-red: #cf222e;
+  --dsh-chat-ux-tone-red-orange: #cd4400;
+  --dsh-chat-ux-tone-orange: #c76a00;
+  --dsh-chat-ux-tone-yellow: #9a6700;
+  --dsh-chat-ux-tone-lime: #699d1a;
+  --dsh-chat-ux-tone-green-light: #4ba95b;
+  --dsh-chat-ux-tone-green: #1a7f37;
+}
+
+body[data-ds-dark-theme] {
+  --dsh-chat-ux-tone-red: #f85149;
+  --dsh-chat-ux-tone-red-orange: #f26e3d;
+  --dsh-chat-ux-tone-orange: #e3873c;
+  --dsh-chat-ux-tone-yellow: #d29922;
+  --dsh-chat-ux-tone-lime: #a7cf5a;
+  --dsh-chat-ux-tone-green-light: #7ee787;
+  --dsh-chat-ux-tone-green: #3fb950;
+}
+`;
+/**
+ * 把一个读数落到色标上。
+ *
+ * `stops` 是色标在读数轴上的位置（升序、至少两个），个数与样式表里那组色标一一对应。落在第一个
+ * 之前（`'low'`）或最后一个之后（`'high'`）时只给段标记：那两段的两端是同一个色，插值走不出别的颜色。
+ * @param value - 显示值（读者看到的那一份读数）。
+ * @param stops - 色标位置，升序。
+ * @returns 段标记与段内位置。
+ */
+function rampPosition(value, stops) {
+    const floor = stops[0] ?? value;
+    const top = stops[stops.length - 1] ?? value;
+    if (value < floor)
+        return { span: exports.RAMP_SPAN_LOW, mix: '0%' };
+    if (value >= top)
+        return { span: exports.RAMP_SPAN_HIGH, mix: '0%' };
+    let segment = 0;
+    for (let index = 1; index < stops.length - 1; index += 1) {
+        const stop = stops[index];
+        if (stop !== undefined && value >= stop)
+            segment = index;
+    }
+    const from = stops[segment] ?? floor;
+    const to = stops[segment + 1] ?? top;
+    // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM。
+    return { span: String(segment), mix: (Math.round((value - from) / (to - from) * 1000) / 10) + '%' };
+}
+    };
+
+    __registry["chat/reel/reel-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 数字轮自己的样式：一格一格翻的那几位数字。
+ *
+ * 两处都用它——「缓存命中」那枚胶囊的读数（座位里由 React 渲染）与上下文占用那串百分比（dsh 自己
+ * 渲染的文本，插件从 DOM 上接管）。两处形状不同（一个带一位小数、一个是整数），但一格怎么裁、怎么
+ * 翻、终态落在哪里完全一样，所以类名与规则只有这一份。
+ *
+ * 接管那一处的规矩：读数原文本留在 DOM 里、读屏照旧读得到，只是让出视觉位置（由接管方把字号归零），
+ * 轮子挂在同一个父节点下。这样 dsh 重渲染它自己那个文本节点时碰不到我们，读屏也不会读到两遍。
+ *
+ * @module dsh-chat-ux/chat/reel/reel-styles
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.REEL_CSS = exports.REEL_HOST_CLASS = exports.REEL_TAKEOVER_ATTRIBUTE = exports.REEL_SPOKEN_CLASS = exports.REEL_STATIC_CLASS = exports.REEL_WAS_CLASS = exports.REEL_CELL_CLASS = exports.REEL_CLASS = exports.REEL_TEXT_CLASS = exports.REEL_STAGGER_MS = exports.REEL_TURN_MS = void 0;
+/** 一次翻动用多久。与下面那两条关键帧的时长是同一个数，改一处就要改另一处。 */
+exports.REEL_TURN_MS = 220;
+/** 低位比高位晚这么多起手，动起来的次序从左往右。 */
+exports.REEL_STAGGER_MS = 15;
+/** 这一截的容器：几位数字、小数点、百分号并排。 */
+exports.REEL_TEXT_CLASS = 'dsh-chat-ux-reel-text';
+/** 一个数字位：一格窗口，只负责裁。 */
+exports.REEL_CLASS = 'dsh-chat-ux-reel';
+/** 窗口里现在的那个数字：从下面一格上来，终态零位移。 */
+exports.REEL_CELL_CLASS = 'dsh-chat-ux-reel-cell';
+/** 上一个数字：往上面一格走。 */
+exports.REEL_WAS_CLASS = 'dsh-chat-ux-reel-was';
+/** 读数里的小数点与百分号：不滚，与数字轮并排。 */
+exports.REEL_STATIC_CLASS = 'dsh-chat-ux-reel-static';
+/** 给读屏的那一份读数，视觉上藏起来。 */
+exports.REEL_SPOKEN_CLASS = 'dsh-chat-ux-reel-spoken';
+/** 挂在被接管的那一截读数上：原文本让位，数字轮接手。 */
+exports.REEL_TAKEOVER_ATTRIBUTE = 'data-dsh-chat-ux-reel';
+/**
+ * 接手方自己那层容器：挂在被接管那一截读数的**父级**里（不是它里面，原因见 reel-host）。
+ *
+ * 带类名是为了能认：排查时一眼看得出这一层是本插件的，卸载时也靠它定位。
+ */
+exports.REEL_HOST_CLASS = 'dsh-chat-ux-reel-host';
+/**
+ * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
+ *
+ * 一格的高写死 20px：字形盒 17px 放在里面，上下各余一点，读者换字体也裁不到；小数点与百分号跟着用
+ * 同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑。翻动的位移**不用**这个数——它是相对各自行盒
+ * 的百分比（下面那两条关键帧），所以这一处没有「算一格」的地方。
+ */
+exports.REEL_CSS = `
+/* 字号写在这一层自己身上，不靠父级给。接管那一处的父级是 dsh 的按钮，它的字号 dsh 自己会按主题与
+   字号档位重算，靠继承就意味着「读者把正文调大之后，接管方必须跟着重算」；自带一份反而稳：两处
+   （命中率胶囊与上下文占用）本来就都是「次级文字再减一档」，与 dsh 在那两处用的表达式同值。 */
+.${exports.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: 20px;
+  display: inline-flex;
+  align-items: center;
+  height: var(--dsh-chat-ux-reel-cell);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+}
+
+/* 一个数字位：一格的窗口，只负责裁。position 定在这里，好让上一个数字压在同一格上。 */
+.${exports.REEL_CLASS} {
+  display: block;
+  position: relative;
+  /* 胶囊挤的时候，这一格也不许被压窄。 */
+  flex: none;
+  overflow: hidden;
+  height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 新数字从下面一格上来：位移是相对**这一格自己的行盒**的百分比，所以一格有多高、字号多大、
+   页面缩放多少都不参与；而终态是零位移——动画走完，数字就落在它本来的位置上，没有可歪的余地。 */
+.${exports.REEL_CELL_CLASS} {
+  display: block;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-reel-in ${exports.REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+/* 上一个数字往上面一格走；走完停在窗口外，被列口裁着，不碍事。
+   它必须**脱离文档流**压在同一个格上：两个 display: block 上下排的话，新数字会被推到下一格，
+   正好落在窗口外面——那样读者只会看到旧数字往上走、新数字永远不出现。 */
+.${exports.REEL_WAS_CLASS} {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+  text-align: center;
+  animation: dsh-chat-ux-reel-out ${exports.REEL_TURN_MS}ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+}
+
+@keyframes dsh-chat-ux-reel-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes dsh-chat-ux-reel-out {
+  from { transform: none; }
+  to { transform: translateY(-100%); }
+}
+
+/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示。 */
+@media (prefers-reduced-motion: reduce) {
+  .${exports.REEL_CELL_CLASS},
+  .${exports.REEL_WAS_CLASS} {
+    animation: none;
+  }
+
+  .${exports.REEL_WAS_CLASS} {
+    display: none;
+  }
+}
+
+/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
+   flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
+   「小数点不见了」。 */
+.${exports.REEL_STATIC_CLASS} {
+  display: block;
+  flex: none;
+  height: var(--dsh-chat-ux-reel-cell);
+  line-height: var(--dsh-chat-ux-reel-cell);
+}
+
+/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」。 */
+.${exports.REEL_SPOKEN_CLASS} {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+`;
+    };
+
+    __registry["chat/reel/digit-reel.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HitReel = HitReel;
+exports.DigitReel = DigitReel;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 命中率读数里那几位数字的翻新动画：一格一格地翻。
+ * 数字轮的翻新动画：一格一格地翻。
  *
  * 读数一有新值，**变了的那一位**把新数字从下面一格托上来，同时把上一个数字往上面一格送走
  * （220 ms，低位比高位晚 15 ms 起手）。位移写的是 `translateY(±100%)`——百分比相对的是**这一格
@@ -1580,34 +1703,36 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  *
  * 现在把这条依赖也去掉了：条带没了，只剩下这一格与上一格。
  *
- * 整枚刚挂上（刷新页面、切换会话）与位数变了新长出来的那一位也照滚：没有上一个数字，就只有
- * 新数字从下面一格上来——这正是「换了会话，读数翻了一下」那一下。
+ * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照滚：
+ * 没有上一个数字，就只有新数字从下面一格上来——这正是「换了会话，读数翻了一下」那一下。
  *
- * 给读屏的那一份：视觉块标 `aria-hidden`，读数另给一份视觉隐藏的纯文本。
+ * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
+ * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
+ * + 百分号」。
  *
- * @module dsh-chat-ux/client/chat/cache-hit/hit-reel
+ * @module dsh-chat-ux/chat/reel/digit-reel
  */
 const react_1 = require("react");
-const cache_hit_styles_1 = require("./cache-hit-styles");
-/** 一次翻动用多久。与样式表里那两条关键帧的时长是同一个数，改一处就要改另一处。 */
-const REEL_TURN_MS = 220;
-/** 低位比高位晚这么多起手，动起来的次序从左往右。 */
-const REEL_STAGGER_MS = 15;
-/** 读数的形状：一至三位整数、一位小数、百分号，与 `formatHitPercent` 的产物对上。 */
-const READING_PATTERN = /^(\d{1,3})\.(\d)%$/;
+const ramp_1 = require("../ramp");
+const reel_styles_1 = require("./reel-styles");
+/** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
+const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/;
 /**
- * 命中率那一截：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
- * @param props - 读数、档位色与开关。
- * @returns 命中率那一截。
+ * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
+ * @param props - 读数、色阶位置、开关与读屏那一份。
+ * @returns 这一截。
  */
-function HitReel({ text, toneClass, rolling }) {
+function DigitReel({ text, tone, rolling, spoken }) {
     const reading = splitReading(text);
-    const valueClass = [cache_hit_styles_1.CACHE_HIT_VALUE_CLASS, toneClass].join(' ');
-    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一枚照旧是那个读数。
-    if (!rolling || reading === null)
-        return (0, jsx_runtime_1.jsx)("span", { className: valueClass, children: text });
+    // 段标记与段内位置是这一枚交给样式表的全部：色标、插值与主题切换都在那一侧，这里不碰色值。
+    const toneAttribute = tone === undefined ? {} : { [ramp_1.RAMP_SPAN_ATTRIBUTE]: tone.span };
+    const toneStyle = tone === undefined ? undefined : { [ramp_1.RAMP_POSITION_VAR]: tone.mix };
+    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
+    if (!rolling || reading === null) {
+        return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, ...toneAttribute, style: toneStyle, children: text });
+    }
     const digits = reading.integer.split('');
-    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: valueClass, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_STATIC_CLASS, children: "%" })] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_SPOKEN_CLASS, children: text })] }));
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, ...toneAttribute, style: toneStyle, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "%" })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
 }
 /**
  * 一个数字位：一格窗口，里头最多两个数字——现在的从下面上来，上一个往上面走。
@@ -1620,12 +1745,12 @@ function Digit({ digit, place }) {
     const [pair, setPair] = (0, react_1.useState)({ shown: digit, previous: null });
     if (pair.shown !== digit)
         setPair({ shown: digit, previous: pair.shown });
-    const delay = { animationDelay: String(place * REEL_STAGGER_MS) + 'ms' };
-    return ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.HIT_REEL_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.HIT_REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
+    const delay = { animationDelay: String(place * reel_styles_1.REEL_STAGGER_MS) + 'ms' };
+    return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
 }
 /**
  * 把读数拆成整数部分与那一位小数。
- * @param text - `97.3%` 这样的读数。
+ * @param text - `97.3%` 或 `26%` 这样的读数。
  * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
  */
 function splitReading(text) {
@@ -1633,10 +1758,9 @@ function splitReading(text) {
     if (matched === null)
         return null;
     const integer = matched[1];
-    const decimal = matched[2];
-    if (integer === undefined || decimal === undefined)
+    if (integer === undefined)
         return null;
-    return { integer, decimal };
+    return { integer, decimal: matched[2] ?? null };
 }
     };
 
@@ -1645,7 +1769,7 @@ function splitReading(text) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installContextMeterPie = installContextMeterPie;
 /**
- * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，并按占用取五档色。
+ * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，并按占用取无极色阶。
  *
  * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
  * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
@@ -1657,12 +1781,17 @@ exports.installContextMeterPie = installContextMeterPie;
  * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
  * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度由这里算。
  *
- * 颜色仍归样式表：这里只把计算值读出来涂进图里，档位与色值都写在 context-meter-styles。
+ * 颜色仍归样式表：这里只把**求值后的颜色**读出来涂进图里（`color-mix` 的结果），色标与插值都写在
+ * context-meter-styles。读数那一串百分比由 reel-host 挂上同一枚数字轮——它同样不是座位，所以那一侧
+ * 挂的是一棵自己的 React 树。段标记与段内位置走 `../ramp`，与命中率共用同一套机制。
  *
  * 判据失效时的表现是「什么都不变」：认不出就不动手，不会把别的元素改花。
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
  */
+const ramp_1 = require("../ramp");
+const reel_host_1 = require("../reel/reel-host");
+const reel_styles_1 = require("../reel/reel-styles");
 const context_meter_styles_1 = require("./context-meter-styles");
 /** 草稿坞：统计胶囊与这个比例圆都住在它里面。 */
 const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
@@ -1672,6 +1801,11 @@ const STAT_ATTRIBUTE = 'data-composer-stat';
 const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]';
 /** 读数文本的形状；dsh 写的就是「26%」。 */
 const READING_PATTERN = /^(\d{1,3})%$/;
+/**
+ * 六个色标在占用上的位置：15 绿、20 浅绿、25 黄、30 橙黄、35 橙红、40 红。低于 15 一律绿、40 及
+ * 以后一律红，与样式表里那几段一一对应。
+ */
+const CONTEXT_STOPS = [15, 20, 25, 30, 35, 40];
 /** 饼的边长，取原环 svg 的 14px；两者占的是同一格，所以不必再量。 */
 const PIE_SIZE = 14;
 /** 原环的几何（`ContextMeter.tsx` 的 RADIUS 与 `.module.css` 的 stroke-width）。 */
@@ -1690,11 +1824,11 @@ const CENTER = PIE_SIZE / 2;
 const FULL_TURN = Math.PI * 2;
 /** path 坐标的小数位取两位：再多的位数只是噪声。 */
 const PATH_PRECISION = 100;
-/** 上一次画进这颗按钮的那张图；读数与档位都没变就不再写一遍内联样式。 */
+/** 上一次画进这颗按钮的那张图；读数与色阶位置都没变就不再写一遍内联样式。 */
 const paintedPies = new WeakMap();
 /**
  * 装上这一处。
- * @returns 卸下这一处：断开观察，并把写过的标记、属性与内联样式撤干净。
+ * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
  */
 function installContextMeterPie() {
     let dock = null;
@@ -1737,43 +1871,60 @@ function installContextMeterPie() {
     };
 }
 /**
- * 认一枚比例圆：读它的百分比，把档位写到按钮上，再把饼画成按钮的背景图。
+ * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
  * @param root - 候选元素；认不出来就什么都不做。
  */
 function paint(root) {
     const trigger = root.querySelector(TRIGGER_SELECTOR);
     if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null)
         return;
-    const reading = READING_PATTERN.exec(trigger.textContent?.trim() ?? '');
-    if (reading === null)
+    const reading = trigger.querySelector('span');
+    if (!(reading instanceof HTMLElement))
         return;
-    const captured = reading[1];
+    const text = reading.textContent?.trim() ?? '';
+    const matched = READING_PATTERN.exec(text);
+    if (matched === null)
+        return;
+    const captured = matched[1];
     if (captured === undefined)
         return;
     const percent = Number(captured);
-    const tone = contextTone(percent);
-    if (trigger.getAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE) !== tone) {
-        trigger.setAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE, tone);
+    const ramp = (0, ramp_1.rampPosition)(percent, CONTEXT_STOPS);
+    // 值没变就不写：属性与内联样式虽然不喂观察者（那只盯 childList 与 characterData），但每次同步都
+    // 重写一遍会让样式失效白白重算。
+    if (trigger.getAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE) !== ramp.span) {
+        trigger.setAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE, ramp.span);
     }
-    // 画成功了才让原环让位：样式表那一半要是没上（比如选择器被写坏），这里该什么都不动，
-    // 而不是留下一个「环被藏起来、饼又没有」的空格。
-    if (!paintPie(trigger, percent))
-        return;
+    if (trigger.style.getPropertyValue(ramp_1.RAMP_POSITION_VAR) !== ramp.mix) {
+        trigger.style.setProperty(ramp_1.RAMP_POSITION_VAR, ramp.mix);
+    }
+    // 数字轮挂在那串读数的**旁边**（按钮上），不是它里面：那一截归 dsh 的 React 管，读数一变它会重设
+    // 那一截的 textContent，塞在里面的节点会被一起清掉（见 reel-host 的说明）。读数形状对不上时
+    // 它自己什么都不挂，原文本照旧。
+    (0, reel_host_1.paintReel)(trigger, reading, text);
+    // 先让位、再读色：让位与色阶都由这条属性开门，属性晚一步的话 `getComputedStyle` 读到的还是 dsh
+    // 给那颗按钮的默认文字色——饼会画成灰的，而且要等到下一次 DOM 变化才会重画（读者的观感是
+    // 「刚打开是灰的，聊一句才变色」）。
     root.setAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE, '');
+    // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是「环被藏起来、饼又没有」的空格。
+    if (!paintPie(trigger, percent, reading))
+        root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
 }
 /**
  * 把饼画成按钮的背景图，落在原来那枚图标所占据的那一格上。
  *
- * 底色与档位色从计算样式里读：档位属性刚写上去，读到的就是这一档的颜色。读不到就什么都不画——
- * 那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
+ * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 `color` 就是这一档的颜色。读不到底色就
+ * 什么都不画——那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
  * @param trigger - 那颗按钮。
  * @param percent - 已占用的百分比。
+ * @param reading - 读数那一截；它的 `color` 就是扇形色。
  * @returns 这一帧画上了没有；没画上时调用方不该让原环让位。
  */
-function paintPie(trigger, percent) {
-    const computed = getComputedStyle(trigger);
-    const tone = computed.getPropertyValue(context_meter_styles_1.CONTEXT_TONE_VAR).trim();
-    const rest = computed.getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
+function paintPie(trigger, percent, reading) {
+    // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
+    // 探针里那组 fill 写法对照（.probe/ramp.mjs）量过，图片文档认它，与 rgb 字面值画出同一个像素。
+    const tone = getComputedStyle(reading).color;
+    const rest = getComputedStyle(trigger).getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
     if (tone === '' || rest === '')
         return false;
     const image = pieImage(percent, tone, rest);
@@ -1822,33 +1973,20 @@ function sectorPath(percent) {
 function round2(value) {
     return Math.round(value * PATH_PRECISION) / PATH_PRECISION;
 }
-/**
- * 占用落在哪一档。
- *
- * 判据用的是 dsh 显示的那个整数（它自己就是四舍五入后的读数）：读者看到 30 就该是浅绿。端点按
- * 「超过」的口径算，所以 30 仍是浅绿、40 仍是黄、50 仍是橙黄。
- * @param percent - 显示用的占用百分比。
- * @returns 五档里的那一档。
- */
-function contextTone(percent) {
-    if (percent > 50)
-        return context_meter_styles_1.CONTEXT_TONE_FULL;
-    if (percent > 40)
-        return context_meter_styles_1.CONTEXT_TONE_HOT;
-    if (percent > 30)
-        return context_meter_styles_1.CONTEXT_TONE_WARM;
-    if (percent >= 20)
-        return context_meter_styles_1.CONTEXT_TONE_STEADY;
-    return context_meter_styles_1.CONTEXT_TONE_CALM;
-}
-/** 把写过的标记、档位与内联样式撤干净，让原环原样回来。 */
+/** 把写过的标记、色阶、数字轮与内联样式撤干净，让原环原样回来。 */
 function release() {
+    for (const reading of document.querySelectorAll('[' + reel_styles_1.REEL_TAKEOVER_ATTRIBUTE + ']')) {
+        if (reading instanceof HTMLElement)
+            (0, reel_host_1.releaseReel)(reading);
+    }
     for (const root of document.querySelectorAll('[' + context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE + ']')) {
         root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
-        const trigger = root.querySelector(TRIGGER_SELECTOR);
+    }
+    for (const trigger of document.querySelectorAll('[' + ramp_1.RAMP_SPAN_ATTRIBUTE + ']')) {
         if (!(trigger instanceof HTMLElement))
             continue;
-        trigger.removeAttribute(context_meter_styles_1.CONTEXT_TONE_ATTRIBUTE);
+        trigger.removeAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE);
+        trigger.style.removeProperty(ramp_1.RAMP_POSITION_VAR);
         trigger.style.removeProperty('background-image');
         trigger.style.removeProperty('background-repeat');
         trigger.style.removeProperty('background-size');
@@ -1858,46 +1996,115 @@ function release() {
 }
     };
 
+    __registry["chat/reel/reel-host.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.paintReel = paintReel;
+exports.releaseReel = releaseReel;
+const jsx_runtime_1 = require("react/jsx-runtime");
+/**
+ * 把数字轮挂进 dsh 自己渲染的那串读数旁边。
+ *
+ * 上下文占用那串百分比不是座位——dsh 在 ContextMeter 里直接渲染 `<span>26%</span>`，插件接不过来，
+ * 所以这里不走座位：认到那一截之后挂一棵只属于自己的 React 树，渲染同一枚 `DigitReel`，两处的翻动
+ * 必然同款。
+ *
+ * 挂的位置是那一截读数的**父级**（那颗按钮），不是读数自己里面——这一处唯一脆的地方就在这里。dsh 用
+ * React 渲染 `<span>{reading}</span>`，读数一变 React 走 `setTextContent`：它在「首尾是同一个文本
+ * 节点」时才只改 nodeValue，否则整段 `textContent =` 重设，**连带清掉我们塞进去的节点**。塞在读数里
+ * 的写法因此每次读数更新都被抹掉一次（挂上、被抹、再挂），流式期间几乎看不见；更糟的是那一截的
+ * `textContent` 会读成 `26%26%`，判据随即认不出读数，连饼也不再重画。挂在父级上没有这两回事：React
+ * 只管它自己那两个子节点（图标与读数），我们这一个它不感知。
+ *
+ * 读数那一截留给读屏：视觉上由各处的让位规则收起，读出来还是那个读数。
+ *
+ * @module dsh-chat-ux/chat/reel/reel-host
+ */
+const client_1 = require("react-dom/client");
+const digit_reel_1 = require("./digit-reel");
+const reel_styles_1 = require("./reel-styles");
+/** 读数的形状；dsh 写的就是「26%」。 */
+const READING_PATTERN = /^(\d{1,3})%$/;
+/** 每一处挂载：那棵树、它的容器，以及上一帧喂进去的读数；键是容器所在的元素。 */
+const hosts = new WeakMap();
+/**
+ * 在读数那一截旁边放上（或更新）数字轮。
+ *
+ * 读数形状对不上就什么都不做：调用方照旧留着原文本。
+ * @param host - 容器挂载的元素：读数那一截的父级，React 不管它的直接子节点。
+ * @param reading - 读数那一截元素；只用来挂让位标记。
+ * @param text - 当前读数，`26%` 这样。
+ * @returns 这一帧接上了没有。
+ */
+function paintReel(host, reading, text) {
+    if (READING_PATTERN.exec(text) === null)
+        return false;
+    reading.setAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE, '');
+    const existing = hosts.get(host);
+    if (existing !== undefined && existing.container.isConnected) {
+        if (existing.text === text)
+            return true;
+        existing.text = text;
+        existing.root.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
+        return true;
+    }
+    // 上一棵已经不在这棵树里（dsh 把那个父级连同我们一起换掉了）：先卸掉再重挂。
+    if (existing !== undefined)
+        existing.root.unmount();
+    const container = document.createElement('span');
+    container.className = reel_styles_1.REEL_HOST_CLASS;
+    host.appendChild(container);
+    const root = (0, client_1.createRoot)(container);
+    root.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
+    hosts.set(host, { root, container, text });
+    return true;
+}
+/**
+ * 卸下这一处的数字轮：原文本回到原样。
+ * @param reading - 读数那一截元素；让位标记挂在它上面，容器在它的父级里。
+ */
+function releaseReel(reading) {
+    const host = reading.parentElement;
+    const existing = host === null ? undefined : hosts.get(host);
+    if (host !== null && existing !== undefined) {
+        existing.root.unmount();
+        existing.container.remove();
+        hosts.delete(host);
+    }
+    reading.removeAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE);
+}
+    };
+
     __registry["chat/context-meter/context-meter-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CONTEXT_METER_CSS = exports.CONTEXT_REST_VAR = exports.CONTEXT_PIE_ATTRIBUTE = void 0;
 /**
- * 上下文占用那枚比例圆的样式。
+ * 上下文占用那枚比例饼的样式。
  *
- * 这一处只管三件事：把原环留成占位（不塌格）、给出五档取色、给出未占用那一角的底色。饼本身是
- * 浏览器半区画上去的——内联 SVG 作为那颗按钮的背景图，几何在 JS 里算。为什么不用伪元素 +
- * conic-gradient（那种写法不碰内联样式，本来更干净）：dsh 的主题把 corner-shape 全局设成
- * superellipse(1.5)（连 :before/:after 一起），任何 border-radius: 50% 都画成圆角方块；而伪元素
- * 又只能从自定义属性里取值。改成自己画一张图，这两处一起绕开。
+ * 这一处只管三件事：把原环留成占位（不塌格）、给出色阶、给出未占用那一角的底色。饼本身是浏览器
+ * 半区画上去的——内联 SVG 作为那颗按钮的背景图，几何在 JS 里算。为什么不用伪元素 + conic-gradient
+ * （那种写法不碰内联样式，本来更干净）：dsh 的主题把 corner-shape 全局设成 superellipse(1.5)
+ * （连 :before/:after 一起），任何 border-radius: 50% 都画成圆角方块；而伪元素又只能从自定义属性里
+ * 取值。改成自己画一张图，这两处一起绕开。
  *
- * 颜色仍留在这一侧：浏览器半区只是把计算值读出来涂进图里。
+ * 色阶与命中率同一套机制（见 `../ramp`）：六个色标、每 5 个点一个锚点，锚点之间由浏览器的
+ * `color-mix(in oklch, …)` 插值；**15% 之前一律绿、40% 起一律红**。色只写在这一份样式表里读数那一
+ * 截的 `color` 上，浏览器半区把它读出来涂进 SVG——读到的必须是求值后的真实颜色，所以这一处的色值
+ * 不能写成 `var()` 串。
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-styles
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.CONTEXT_METER_CSS = exports.CONTEXT_TONE_FULL = exports.CONTEXT_TONE_HOT = exports.CONTEXT_TONE_WARM = exports.CONTEXT_TONE_STEADY = exports.CONTEXT_TONE_CALM = exports.CONTEXT_REST_VAR = exports.CONTEXT_TONE_VAR = exports.CONTEXT_TONE_ATTRIBUTE = exports.CONTEXT_PIE_ATTRIBUTE = void 0;
+const ramp_1 = require("../ramp");
+const reel_styles_1 = require("../reel/reel-styles");
 /** 挂在这个比例圆的根上：在，就说明这一处已经接管。 */
 exports.CONTEXT_PIE_ATTRIBUTE = 'data-dsh-chat-ux-context-pie';
-/** 挂在它的按钮上：占用落在哪一档。 */
-exports.CONTEXT_TONE_ATTRIBUTE = 'data-dsh-chat-ux-context-tone';
-/** 按钮上的档位色，由下面那些档位规则提供；浏览器半区读它来涂扇形。 */
-exports.CONTEXT_TONE_VAR = '--dsh-chat-ux-context-tone';
 /** 按钮上的未占用底色；浏览器半区读它来涂底。 */
 exports.CONTEXT_REST_VAR = '--dsh-chat-ux-context-rest';
-/** 占用不到 20%：绿。 */
-exports.CONTEXT_TONE_CALM = 'calm';
-/** 占用 20% ~ 30%：浅绿。 */
-exports.CONTEXT_TONE_STEADY = 'steady';
-/** 占用 30% ~ 40%：黄。 */
-exports.CONTEXT_TONE_WARM = 'warm';
-/** 占用 40% ~ 50%：橙黄。 */
-exports.CONTEXT_TONE_HOT = 'hot';
-/** 占用超过 50%：红。 */
-exports.CONTEXT_TONE_FULL = 'full';
 /**
  * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
  *
- * 档位色与底色都写成字面值，不经过第二层变量：浏览器半区要用 `getComputedStyle` 把它们读出来，
- * 而那个接口对「值本身又是一个 var()」的自定义属性只会返回原文。
+ * 档位色与底色都写成字面值，不经过第二层变量：浏览器半区要用 `getComputedStyle` 把它们读出来。
  */
 exports.CONTEXT_METER_CSS = `
 body {
@@ -1913,54 +2120,81 @@ body[data-ds-dark-theme] {
   visibility: hidden;
 }
 
-/* 读数也跟着档位走：饼与那串百分比同色，一眼对得上。tone 就定义在这颗按钮上，读数继承得到。
+/* 读数与饼同色（就是下面那条 color 算出来的色）。
 
    字号按输入框下方另一枚胶囊那一份来（StatsPills.module.css 的 .anchor，同样减 1px）。dsh 自己
    这两处本来就差 1px——它这一处用的是没减的 --dsh-content-font-size-secondary，于是同一行里两个
    挨着的数字不一样大，读者一眼看得出不齐。 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
-  color: var(--dsh-chat-ux-context-tone, currentColor);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
 }
 
-[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_CALM}'] {
-  --dsh-chat-ux-context-tone: #1a7f37;
+/* 接管之后原文本让位：视觉上收起，读屏照旧读得到。不用 display: none（文本节点不生成盒子，藏了
+   读屏也没了），也不用 font-size: 0——那一手要靠接手方从父级那里把字号再拿回来，多一层继承；这里
+   用惯常的「视觉隐藏」：绝对定位加 1px 加裁剪，既不占位也不显示。
+
+   绝对定位同时把这一截从按钮那个 flex 行里摘出去——图标与它之间那道 6px 的 gap 也就不再算它——
+   接手的数字轮（挂在按钮上，见 reel-host）紧跟在图标后面，落点与原来的读数完全一样。 */
+[${exports.CONTEXT_PIE_ATTRIBUTE}] button > span[${reel_styles_1.REEL_TAKEOVER_ATTRIBUTE}] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
-[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_STEADY}'] {
-  --dsh-chat-ux-context-tone: #4ba95b;
+/* 六个色标：15 绿、20 浅绿、25 黄、30 橙黄、35 橙红、40 红。低于 15 一律绿，40 及以后一律红——
+   读者不必等到 50 才看见红。段规则只把这一段的两个端点挂上去（端点只是引用那组共用的色调，主题不同
+   解析出来的就不同），插值交给浏览器的 color-mix；两条饱和段只有一个端点，所以恒色。 */
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-green);
 }
 
-[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_WARM}'] {
-  --dsh-chat-ux-context-tone: #9a6700;
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='0'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-green);
+  --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-green-light);
 }
 
-[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_HOT}'] {
-  --dsh-chat-ux-context-tone: #c76a00;
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='1'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-green-light);
+  --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-yellow);
 }
 
-[${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_FULL}'] {
-  --dsh-chat-ux-context-tone: #cf222e;
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='2'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-yellow);
+  --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-orange);
 }
 
-body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_CALM}'] {
-  --dsh-chat-ux-context-tone: #3fb950;
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='3'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-orange);
+  --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-red-orange);
 }
 
-body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_STEADY}'] {
-  --dsh-chat-ux-context-tone: #7ee787;
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='4'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-red-orange);
+  --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-red);
 }
 
-body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_WARM}'] {
-  --dsh-chat-ux-context-tone: #d29922;
+/* 40 及以后：不必等到 50，两端都是红。 */
+[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
+  --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-red);
 }
 
-body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_HOT}'] {
-  --dsh-chat-ux-context-tone: #e3873c;
+/* 扇形色与读数色是同一个：色只写在这一处，浏览器半区把它读出来涂进 SVG。兜底那一条给的是段起点色
+   （撑不起 color-mix 时退成六档取色），读数与饼仍然同色。 */
+[${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
+  color: var(--dsh-chat-ux-context-from, currentColor);
 }
 
-body[data-ds-dark-theme] [${exports.CONTEXT_TONE_ATTRIBUTE}='${exports.CONTEXT_TONE_FULL}'] {
-  --dsh-chat-ux-context-tone: #f85149;
+@supports (color: color-mix(in oklch, red, blue 50%)) {
+  [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
+    color: color-mix(
+      in oklch,
+      var(--dsh-chat-ux-context-from),
+      var(--dsh-chat-ux-context-to, var(--dsh-chat-ux-context-from)) var(${ramp_1.RAMP_POSITION_VAR}, 0%)
+    );
+  }
 }
 `;
     };
@@ -6153,13 +6387,15 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
- * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上卡片、插入符、文件变更行、折叠体入场
- * 与字体那几份各自的 `*-styles.ts`。
+ * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
+ * 卡片、插入符、文件变更行、折叠体入场与字体那几份各自的 `*-styles.ts`。
  *
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
  */
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
+const ramp_1 = require("./chat/ramp");
+const reel_styles_1 = require("./chat/reel/reel-styles");
 const config_card_styles_1 = require("./settings/config-card-styles");
 const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
@@ -6263,7 +6499,7 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {

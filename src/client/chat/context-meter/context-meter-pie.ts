@@ -1,5 +1,5 @@
 /**
- * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，并按占用取五档色。
+ * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，并按占用取无极色阶。
  *
  * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
  * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
@@ -11,16 +11,18 @@
  * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
  * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度由这里算。
  *
- * 颜色仍归样式表：这里只把计算值读出来涂进图里，档位与色值都写在 context-meter-styles。
+ * 颜色仍归样式表：这里只把**求值后的颜色**读出来涂进图里（`color-mix` 的结果），色标与插值都写在
+ * context-meter-styles。读数那一串百分比由 reel-host 挂上同一枚数字轮——它同样不是座位，所以那一侧
+ * 挂的是一棵自己的 React 树。段标记与段内位置走 `../ramp`，与命中率共用同一套机制。
  *
  * 判据失效时的表现是「什么都不变」：认不出就不动手，不会把别的元素改花。
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
  */
-import {
-    CONTEXT_PIE_ATTRIBUTE, CONTEXT_REST_VAR, CONTEXT_TONE_ATTRIBUTE, CONTEXT_TONE_CALM, CONTEXT_TONE_FULL,
-    CONTEXT_TONE_HOT, CONTEXT_TONE_STEADY, CONTEXT_TONE_VAR, CONTEXT_TONE_WARM,
-} from './context-meter-styles'
+import {rampPosition, RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
+import {paintReel, releaseReel} from '../reel/reel-host'
+import {REEL_TAKEOVER_ATTRIBUTE} from '../reel/reel-styles'
+import {CONTEXT_PIE_ATTRIBUTE, CONTEXT_REST_VAR} from './context-meter-styles'
 
 /** 草稿坞：统计胶囊与这个比例圆都住在它里面。 */
 const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]'
@@ -33,6 +35,12 @@ const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]'
 
 /** 读数文本的形状；dsh 写的就是「26%」。 */
 const READING_PATTERN = /^(\d{1,3})%$/
+
+/**
+ * 六个色标在占用上的位置：15 绿、20 浅绿、25 黄、30 橙黄、35 橙红、40 红。低于 15 一律绿、40 及
+ * 以后一律红，与样式表里那几段一一对应。
+ */
+const CONTEXT_STOPS = [15, 20, 25, 30, 35, 40]
 
 /** 饼的边长，取原环 svg 的 14px；两者占的是同一格，所以不必再量。 */
 const PIE_SIZE = 14
@@ -58,20 +66,13 @@ const FULL_TURN = Math.PI * 2
 /** path 坐标的小数位取两位：再多的位数只是噪声。 */
 const PATH_PRECISION = 100
 
-/** 五档。取值由样式表那边持有，这里跟着它取窄。 */
-type ContextTone =
-    | typeof CONTEXT_TONE_CALM
-    | typeof CONTEXT_TONE_STEADY
-    | typeof CONTEXT_TONE_WARM
-    | typeof CONTEXT_TONE_HOT
-    | typeof CONTEXT_TONE_FULL
-
-/** 上一次画进这颗按钮的那张图；读数与档位都没变就不再写一遍内联样式。 */
+/** 上一次画进这颗按钮的那张图；读数与色阶位置都没变就不再写一遍内联样式。 */
 const paintedPies = new WeakMap<Element, string>()
+
 
 /**
  * 装上这一处。
- * @returns 卸下这一处：断开观察，并把写过的标记、属性与内联样式撤干净。
+ * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
  */
 export function installContextMeterPie(): () => void {
     let dock: Element | null = null
@@ -113,41 +114,57 @@ export function installContextMeterPie(): () => void {
 }
 
 /**
- * 认一枚比例圆：读它的百分比，把档位写到按钮上，再把饼画成按钮的背景图。
+ * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
  * @param root - 候选元素；认不出来就什么都不做。
  */
 function paint(root: HTMLSpanElement): void {
     const trigger = root.querySelector(TRIGGER_SELECTOR)
     if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null) return
-    const reading = READING_PATTERN.exec(trigger.textContent?.trim() ?? '')
-    if (reading === null) return
-
-    const captured = reading[1]
+    const reading = trigger.querySelector('span')
+    if (!(reading instanceof HTMLElement)) return
+    const text = reading.textContent?.trim() ?? ''
+    const matched = READING_PATTERN.exec(text)
+    if (matched === null) return
+    const captured = matched[1]
     if (captured === undefined) return
+
     const percent = Number(captured)
-    const tone = contextTone(percent)
-    if (trigger.getAttribute(CONTEXT_TONE_ATTRIBUTE) !== tone) {
-        trigger.setAttribute(CONTEXT_TONE_ATTRIBUTE, tone)
+    const ramp = rampPosition(percent, CONTEXT_STOPS)
+    // 值没变就不写：属性与内联样式虽然不喂观察者（那只盯 childList 与 characterData），但每次同步都
+    // 重写一遍会让样式失效白白重算。
+    if (trigger.getAttribute(RAMP_SPAN_ATTRIBUTE) !== ramp.span) {
+        trigger.setAttribute(RAMP_SPAN_ATTRIBUTE, ramp.span)
     }
-    // 画成功了才让原环让位：样式表那一半要是没上（比如选择器被写坏），这里该什么都不动，
-    // 而不是留下一个「环被藏起来、饼又没有」的空格。
-    if (!paintPie(trigger, percent)) return
+    if (trigger.style.getPropertyValue(RAMP_POSITION_VAR) !== ramp.mix) {
+        trigger.style.setProperty(RAMP_POSITION_VAR, ramp.mix)
+    }
+    // 数字轮挂在那串读数的**旁边**（按钮上），不是它里面：那一截归 dsh 的 React 管，读数一变它会重设
+    // 那一截的 textContent，塞在里面的节点会被一起清掉（见 reel-host 的说明）。读数形状对不上时
+    // 它自己什么都不挂，原文本照旧。
+    paintReel(trigger, reading, text)
+    // 先让位、再读色：让位与色阶都由这条属性开门，属性晚一步的话 `getComputedStyle` 读到的还是 dsh
+    // 给那颗按钮的默认文字色——饼会画成灰的，而且要等到下一次 DOM 变化才会重画（读者的观感是
+    // 「刚打开是灰的，聊一句才变色」）。
     root.setAttribute(CONTEXT_PIE_ATTRIBUTE, '')
+    // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是「环被藏起来、饼又没有」的空格。
+    if (!paintPie(trigger, percent, reading)) root.removeAttribute(CONTEXT_PIE_ATTRIBUTE)
 }
 
 /**
  * 把饼画成按钮的背景图，落在原来那枚图标所占据的那一格上。
  *
- * 底色与档位色从计算样式里读：档位属性刚写上去，读到的就是这一档的颜色。读不到就什么都不画——
- * 那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
+ * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 `color` 就是这一档的颜色。读不到底色就
+ * 什么都不画——那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
  * @param trigger - 那颗按钮。
  * @param percent - 已占用的百分比。
+ * @param reading - 读数那一截；它的 `color` 就是扇形色。
  * @returns 这一帧画上了没有；没画上时调用方不该让原环让位。
  */
-function paintPie(trigger: HTMLElement, percent: number): boolean {
-    const computed = getComputedStyle(trigger)
-    const tone = computed.getPropertyValue(CONTEXT_TONE_VAR).trim()
-    const rest = computed.getPropertyValue(CONTEXT_REST_VAR).trim()
+function paintPie(trigger: HTMLElement, percent: number, reading: HTMLElement): boolean {
+    // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
+    // 探针里那组 fill 写法对照（.probe/ramp.mjs）量过，图片文档认它，与 rgb 字面值画出同一个像素。
+    const tone = getComputedStyle(reading).color
+    const rest = getComputedStyle(trigger).getPropertyValue(CONTEXT_REST_VAR).trim()
     if (tone === '' || rest === '') return false
 
     const image = pieImage(percent, tone, rest)
@@ -199,29 +216,18 @@ function round2(value: number): number {
     return Math.round(value * PATH_PRECISION) / PATH_PRECISION
 }
 
-/**
- * 占用落在哪一档。
- *
- * 判据用的是 dsh 显示的那个整数（它自己就是四舍五入后的读数）：读者看到 30 就该是浅绿。端点按
- * 「超过」的口径算，所以 30 仍是浅绿、40 仍是黄、50 仍是橙黄。
- * @param percent - 显示用的占用百分比。
- * @returns 五档里的那一档。
- */
-function contextTone(percent: number): ContextTone {
-    if (percent > 50) return CONTEXT_TONE_FULL
-    if (percent > 40) return CONTEXT_TONE_HOT
-    if (percent > 30) return CONTEXT_TONE_WARM
-    if (percent >= 20) return CONTEXT_TONE_STEADY
-    return CONTEXT_TONE_CALM
-}
-
-/** 把写过的标记、档位与内联样式撤干净，让原环原样回来。 */
+/** 把写过的标记、色阶、数字轮与内联样式撤干净，让原环原样回来。 */
 function release(): void {
+    for (const reading of document.querySelectorAll('[' + REEL_TAKEOVER_ATTRIBUTE + ']')) {
+        if (reading instanceof HTMLElement) releaseReel(reading)
+    }
     for (const root of document.querySelectorAll('[' + CONTEXT_PIE_ATTRIBUTE + ']')) {
         root.removeAttribute(CONTEXT_PIE_ATTRIBUTE)
-        const trigger = root.querySelector(TRIGGER_SELECTOR)
+    }
+    for (const trigger of document.querySelectorAll('[' + RAMP_SPAN_ATTRIBUTE + ']')) {
         if (!(trigger instanceof HTMLElement)) continue
-        trigger.removeAttribute(CONTEXT_TONE_ATTRIBUTE)
+        trigger.removeAttribute(RAMP_SPAN_ATTRIBUTE)
+        trigger.style.removeProperty(RAMP_POSITION_VAR)
         trigger.style.removeProperty('background-image')
         trigger.style.removeProperty('background-repeat')
         trigger.style.removeProperty('background-size')

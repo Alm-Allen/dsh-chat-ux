@@ -187,6 +187,30 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     ): void
 }
 
+declare module 'react-dom/client' {
+    import type {ReactNode} from 'react'
+
+    /** 一棵挂在文档里的 React 树。 */
+    export interface Root {
+        /**
+         * 换一份节点上去。
+         * @param children - 新的节点。
+         */
+        render(children: ReactNode): void
+
+        /** 卸下这棵树。 */
+        unmount(): void
+    }
+
+    /**
+     * 把一棵 React 树挂到容器里：上下文占用那串百分比不是座位（那是 dsh 自己渲染的文本），数字轮
+     * 只能挂进它里面。
+     * @param container - 挂到哪儿。
+     * @returns 那棵树。
+     */
+    export function createRoot(container: Element | DocumentFragment): Root
+}
+
 declare module 'react-dom' {
     import type {ReactElement, ReactNode} from 'react'
 

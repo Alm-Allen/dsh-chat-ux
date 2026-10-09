@@ -2,13 +2,15 @@
  * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
- * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上卡片、插入符、文件变更行、折叠体入场
- * 与字体那几份各自的 `*-styles.ts`。
+ * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
+ * 卡片、插入符、文件变更行、折叠体入场与字体那几份各自的 `*-styles.ts`。
  *
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
  */
 import {CARET_MOTION_CSS} from './chat/caret/caret-motion-styles'
+import {RAMP_TONE_CSS} from './chat/ramp'
+import {REEL_CSS} from './chat/reel/reel-styles'
 import {CARD_CSS} from './settings/config-card-styles'
 import {CACHE_HIT_CSS} from './chat/cache-hit/cache-hit-styles'
 import {CONTEXT_METER_CSS} from './chat/context-meter/context-meter-styles'
@@ -115,4 +117,4 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-export const ALL_CSS = [CHAT_AREA_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')
+export const ALL_CSS = [CHAT_AREA_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, FONT_CSS, SEND_FLIGHT_CSS].join('\n')
