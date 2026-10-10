@@ -1,4 +1,15 @@
-import type { Context, Volatile } from '@deepseek-ai/cordis';
+/**
+ * dsh-chat-ux —— 后端。
+ *
+ * 聊天区本身由前端渲染（见 `src/client/`），DSH 之所以从 `exports["./client"]` 加载它，
+ * 是因为这个包声明了 `dsh.client`。这一半做两件事：
+ *
+ * 这一行存在。设置服务把 `Config` 里标了 `.volatile()` 的字段投影成表单，值由前端通过自己的
+ * config form 读写，host 侧不看这些值——它们的消费者全在浏览器里。
+ *
+ * @module dsh-chat-ux
+ */
+import type { Volatile } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 export declare const name = "dsh-chat-ux";
 /**
@@ -19,17 +30,6 @@ export declare const DEFAULT_ENHANCED_FOLLOW = true;
  * 照常——卷帘门过渡仍留给手动点击。
  */
 export declare const DEFAULT_AUTO_FOLD = true;
-/**
- * 自带字体是否默认接管界面。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：装插件的人不必自己装字体，两端看到的也是同一套字。
- */
-export declare const DEFAULT_EMBEDDED_FONTS = true;
-/**
- * 自定义字体栈的默认值。空串是「没有自定义」，也就是用插件自带的那两套。
- * 前端有一份同样的常量，改一处就要改另一处。
- */
-export declare const DEFAULT_FONT_FAMILY = "";
 /**
  * 插入符动效的档位。前端 `client/caret-motion.ts` 里有同一组字面量，改一处就要改另一处。
  *
@@ -82,17 +82,10 @@ export declare const DEFAULT_COMPOSER_GLASS = true;
  * run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐。
  */
 export declare const DEFAULT_LIVE_DIFF = false;
-/**
- * 内嵌字体对外的路径前缀。前端 `client/font-styles.ts` 里有同一个字符串，改一处就要改另一处。
- */
-export declare const FONT_ROUTE_PATH = "/dsh-chat-ux/fonts";
 export interface Config {
     enhancedFollow: Volatile<boolean>;
     autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
-    fonts: Volatile<boolean>;
-    fontSans: Volatile<string>;
-    fontCode: Volatile<string>;
     sendFlight: Volatile<boolean>;
     tokenFade: Volatile<boolean>;
     hitReel: Volatile<boolean>;
@@ -108,9 +101,6 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
-    fonts: Schema<boolean, boolean, "volatile-defined">;
-    fontSans: Schema<string, string, "volatile-defined">;
-    fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
@@ -121,9 +111,6 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     enhancedFollow: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
-    fonts: Schema<boolean, boolean, "volatile-defined">;
-    fontSans: Schema<string, string, "volatile-defined">;
-    fontCode: Schema<string, string, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
@@ -135,4 +122,4 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
  * host 侧入口。
  * @param ctx - host 根 context。
  */
-export declare function apply(ctx: Context): void;
+export declare function apply(): void;

@@ -53,7 +53,6 @@ const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
 const fold_glide_1 = require("./chat/fold/fold-glide");
 const follow_guard_1 = require("./chat/follow/follow-guard");
-const font_override_1 = require("./chat/fonts/font-override");
 const process_follow_1 = require("./chat/follow/process-follow");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
@@ -96,7 +95,6 @@ function apply(ctx) {
         follow: settings_scope_1.DEFAULT_ENHANCED_FOLLOW,
         autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
-        font: { embedded: settings_scope_1.DEFAULT_EMBEDDED_FONTS, sans: settings_scope_1.DEFAULT_FONT_FAMILY, code: settings_scope_1.DEFAULT_FONT_FAMILY },
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
         tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
         piePush: settings_scope_1.DEFAULT_PIE_PUSH,
@@ -149,16 +147,12 @@ function apply(ctx) {
         settings.follow = value?.enhancedFollow ?? settings_scope_1.DEFAULT_ENHANCED_FOLLOW;
         settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
         settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
-        settings.font.embedded = value?.fonts ?? settings_scope_1.DEFAULT_EMBEDDED_FONTS;
-        settings.font.sans = value?.fontSans ?? settings_scope_1.DEFAULT_FONT_FAMILY;
-        settings.font.code = value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         settings.piePush = value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         syncGlass();
-        (0, font_override_1.applyFontChoice)(settings.font);
         caret.resync();
         tokenMotion.resync();
         pie.resync();
@@ -167,7 +161,6 @@ function apply(ctx) {
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
-    ctx.effect(() => font_override_1.clearFontChoice, 'dsh-chat-ux: font override');
     ctx.effect(() => {
         syncGlass();
         return () => {
@@ -859,7 +852,7 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -934,6 +927,20 @@ exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode';
 exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
 /** 过程组体里的内容层；组体滚的就是它。 */
 exports.PROCESS_CONTENT_SELECTOR = '[data-step-process-content]';
+/**
+ * DisclosureRow 的**被点那一行**。展开体是它的兄弟——0.2.1-alpha.2 起改成外层 header 的兄弟。
+ *
+ * 谁取展开体，就得同时认下面那个 header：只认这一个的话，alpha.2 上取到的是空槽位，
+ * 于是「不报错、只是不动了」。
+ */
+exports.DISCLOSURE_ROW_SELECTOR = '[data-disclosure-row]';
+/**
+ * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
+ *
+ * 它把被点行与 `headerAccessory` 槽位一起裹住，展开体因此从「行的兄弟」变成「它的兄弟」；
+ * 旧版没有这一层（`closest` 返回 null），两处取展开体的地方都按「有就用、没有就退回行自己」。
+ */
+exports.DISCLOSURE_HEADER_SELECTOR = '[data-disclosure-header]';
     };
 
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
@@ -1212,7 +1219,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_FONT_FAMILY = exports.DEFAULT_EMBEDDED_FONTS = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1225,16 +1232,6 @@ exports.DEFAULT_ENHANCED_FOLLOW = true;
  * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
  */
 exports.DEFAULT_AUTO_FOLD = true;
-/**
- * 自带字体是否默认接管界面。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：两端一致，且装插件的人不必自己装字体。
- */
-exports.DEFAULT_EMBEDDED_FONTS = true;
-/**
- * 自定义字体栈的默认值。空串是「没有自定义」。host 侧有一份同样的常量。
- */
-exports.DEFAULT_FONT_FAMILY = '';
 /**
  * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -3834,8 +3831,6 @@ const ROLL_MS = 200;
 const VISIBLE_SHARE = 0.9;
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500;
-/** DisclosureRow 的行。展开体是它的下一个兄弟。 */
-const DISCLOSURE_SELECTOR = '[data-disclosure-row]';
 /** 其余可开合的控件（过程组头等）。 */
 const TOGGLE_SELECTOR = '[aria-expanded]';
 /** 弹出层控件（菜单、对话框、列表）。它们开的不是折叠体，本模块整块跳过。 */
@@ -3922,8 +3917,9 @@ function installFoldGlide() {
     };
     /**
      * 控件的展开体。控件自己发 aria-controls 时以它为准（那个 id 由 useId 生成、带冒号，只能走
-     * getElementById）；否则按卸载式那一族的形状取「控件之后那一个兄弟」。返回 null 就说明这个控件
-     * 当前是收起的。
+     * getElementById）；否则按卸载式那一族的形状取「控件所在的折叠根里最后那个孩子」——旧版那个根
+     * 就是被点行的父级，0.2.1-alpha.2 起外层多了一个 `[data-disclosure-header]`，根在它上面一层。
+     * 返回 null 就说明这个控件当前是收起的。
      *
      * 过程组头到不了这里——它先被 processBodyOf 认走，那条路动的是组根，不是展开体自己的高度。
      */
@@ -3933,8 +3929,11 @@ function installFoldGlide() {
             const target = document.getElementById(controls);
             return target instanceof HTMLElement ? target : null;
         }
-        const last = control.parentElement?.lastElementChild;
-        return last instanceof HTMLElement && last !== control ? last : null;
+        // 认 header 优先：它里面那个 `headerAccessory` 槽位正好落在旧写法会取到的位置上，取过来的
+        // 话收起时会把那个按钮压扁。收起态里最后那个孩子是 header 自己，`last !== row` 正好挡掉。
+        const row = control.closest(dom_contract_1.DISCLOSURE_HEADER_SELECTOR) ?? control;
+        const last = row.parentElement?.lastElementChild;
+        return last instanceof HTMLElement && last !== row ? last : null;
     };
     /**
      * 控件控制的过程组体。
@@ -4268,7 +4267,7 @@ function installFoldGlide() {
         intent?.watch.stop();
         intent = null;
         // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
-        const control = target.closest(DISCLOSURE_SELECTOR)
+        const control = target.closest(dom_contract_1.DISCLOSURE_ROW_SELECTOR)
             ?? target.closest(TOGGLE_SELECTOR);
         if (control === null)
             return;
@@ -4527,6 +4526,13 @@ const CALL_SELECTOR = '[data-chat-call-id]';
 const STRUCTURE_SELECTOR = dom_contract_1.FLOW_BLOCK_SELECTOR + ', ' + CALL_SELECTOR;
 /** 现在有内容正在流：两个标记都由 dsh 发，有它，才有「跟随」可言。 */
 const RUNNING_CONTENT_SELECTOR = dom_contract_1.STREAMING_SELECTOR + ', ' + dom_contract_1.SHIMMER_SELECTOR;
+/**
+ * dsh 自己的折叠动效正在走的那一行。
+ *
+ * `flow-motion.ts` 收起时给行挂 `data-chat-motion="collapse"`、长出来时挂 `"reveal"`，动完撤掉。
+ * 折叠期间它会关掉原生滚动锚定、并吞掉滚动归因，这一处插进去只会跟它的收尾抢同一段高度。
+ */
+const DSH_FOLDING_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]';
 /** 读者接管滚动的意图。与 dsh 自己的 `READING_INTENTS` 同源。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'beforematch'];
 /** 两次交还之间至少隔这么久，免得一串工具调用把位置按在底部反复写。 */
@@ -4596,8 +4602,9 @@ function installFollowGuard(readEnabled) {
         // 离底超过一屏就不动手：那是读者自己在看上面，不是跟随丢了一步。
         if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > scroller.clientHeight)
             return;
-        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。
-        if ((0, fold_glide_1.isFoldGlideBusy)()) {
+        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。插件自己的卷帘门与
+        // dsh 自己那套折叠都算：等满几次就整轮放弃，把它交给 dsh 的折叠收尾。
+        if ((0, fold_glide_1.isFoldGlideBusy)() || document.querySelector(DSH_FOLDING_SELECTOR) !== null) {
             if (attempt >= FOLD_WAIT_ATTEMPTS)
                 return;
             window.setTimeout(() => {
@@ -4704,192 +4711,6 @@ function installFollowGuard(readEnabled) {
             document.removeEventListener(type, noteReaderIntent, true);
     };
 }
-    };
-
-    __registry["chat/fonts/font-override.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.isFontFamilyValue = isFontFamilyValue;
-exports.applyFontChoice = applyFontChoice;
-exports.clearFontChoice = clearFontChoice;
-/**
- * 字体接管的可调部分：那个开关，以及读者自己填的两条字体栈。
- *
- * 样式表里那一条 `body[data-chat-ux-fonts]` 给的是自带那两套的默认值，这一份负责它做不到的两件事：
- * 把开关写成属性，以及把读者填的栈写到同一条规则的三个自定义属性上。用 inline 覆盖而不是重新生成
- * 样式表：同元素的 inline 声明一定赢过样式表规则，所以换字体不必动那一张表。
- *
- * 读者填的是**前置**不是替换——最终值是 `<他填的栈>, <自带的那条栈>`。所以名字打错、字体没装、语法
- * 写岔，退回去的就是自带那一套，最坏也不比不填更差。合法性交给浏览器自己判（`CSS.supports`），
- * 也没有拼接字符串带来的注入面：写值走的是 CSSOM。
- *
- * @module dsh-chat-ux/client/chat/fonts/font-override
- */
-const font_styles_1 = require("./font-styles");
-/**
- * 一串字是不是合法的 `font-family` 声明。空串不算——那是「没有自定义」，不是一条字体栈。
- *
- * 判据用浏览器自己的解析器：`CSS.supports` 对声明值的宽严就是它渲染时的那一套，不用另外写一份
- * 语法。dsh 面向的浏览器都有它（2015 年起）。
- * @param value - 读者填的那串字体名。
- * @returns 浏览器认它为一个字体栈时为真。
- */
-function isFontFamilyValue(value) {
-    const text = value.trim();
-    if (text === '')
-        return false;
-    // 引号是不是成对。落单的那个引号会把**后面整条栈**吞进它自己——CSS 会把 `"Microsoft YaHei, 'Chat
-    // UX Sans', …` 读成**一个**字体名，那个名字谁的机器上都没有，接在后面的自带字体于是接不住，界面
-    // 掉到浏览器默认字体。这不是假设：实测 Chromium 就是这么解的，而 CSS.supports 认它合法。漏打一个
-    // 后引号是最像样的手误，所以这一道得自己来。它只做配平、不判语法：剩下的交给浏览器，代价是一个
-    // 真在引号里带撇号的名字（`"a'b"`）会被误拒，而那种写法的字体名不值得为它放宽。
-    let singles = 0;
-    let doubles = 0;
-    for (const character of text) {
-        if (character === "'")
-            singles += 1;
-        if (character === '"')
-            doubles += 1;
-    }
-    if (singles % 2 !== 0 || doubles % 2 !== 0)
-        return false;
-    return CSS.supports('font-family', text);
-}
-/**
- * 把当前选择写到 body 上。属性使样式表里那一条命中，三个自定义属性各自覆盖对应的那一条栈。
- * @param choice - 开关与两条自定义栈。
- */
-function applyFontChoice(choice) {
-    if (!choice.embedded) {
-        clearFontChoice();
-        return;
-    }
-    document.body.setAttribute(font_styles_1.FONT_ATTRIBUTE, '');
-    applyFamily(font_styles_1.SANS_VARIABLE, choice.sans, font_styles_1.EMBEDDED_SANS);
-    applyFamily(font_styles_1.CODE_VARIABLE, choice.code, font_styles_1.EMBEDDED_MONO);
-    applyFamily(font_styles_1.MONO_VARIABLE, choice.code, font_styles_1.EMBEDDED_MONO);
-}
-/**
- * 撤掉这一处写在 body 上的一切：属性与三个自定义属性。界面回到 dsh 自己的字体栈，字体文件也回到
- * 谁都不引用它们的状态（浏览器就不会去取）。
- */
-function clearFontChoice() {
-    const { body } = document;
-    body.removeAttribute(font_styles_1.FONT_ATTRIBUTE);
-    body.style.removeProperty(font_styles_1.SANS_VARIABLE);
-    body.style.removeProperty(font_styles_1.CODE_VARIABLE);
-    body.style.removeProperty(font_styles_1.MONO_VARIABLE);
-}
-/**
- * 写一条自定义属性：读者填的栈排在最前，自带的那条接在后面接住它缺的字。
- * @param variable - 要写的自定义属性名。
- * @param custom - 读者填的栈；空串或不合法的值只是清掉覆盖，样式表里的默认值接手。
- * @param embedded - 自带的那条栈。
- */
-function applyFamily(variable, custom, embedded) {
-    if (!isFontFamilyValue(custom)) {
-        document.body.style.removeProperty(variable);
-        return;
-    }
-    document.body.style.setProperty(variable, custom.trim() + ', ' + embedded);
-}
-    };
-
-    __registry["chat/fonts/font-styles.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 字体接管：让 dsh 用插件自带的两套字体，或者用读者自己填的那一套。
- *
- * 这里原本把 --dsw-font-family 换成裸通用族，让字体跟随浏览器的字体设置。通用族在浏览器里由
- * 「设置 → 外观 → 自定义字体」决定，而那个设置只有浏览器有：桌面 App 用的是 Electron 自己的
- * 用户目录，没有字体设置界面，通用族于是落到 Chromium 的内置默认（中文 Windows 上是 Noto Sans SC
- * 与 NSimSun）。要两端一致、还要让没装字体的人一装插件就有，就得自己带字。
- *
- * 所以这里声明 5 条 @font-face，指向 host 半区挂在 dsh web 服务器上的子集
- * （`/dsh-chat-ux/fonts/`，见 src/index.ts）：HarmonyOS Sans SC 的 400/500/700，Maple Mono NF CN
- * 的 400/700。浏览器只在真正用到某个字重时才取那一份，取过的按一天缓存。
- *
- * face 名不叫字体的本名，而是自起的两个名字，后面再跟上本名：
- *
- * - `--dsw-font-family` —— ui-theme 在 :root 上写的原生 UI 字体栈，这里是正文。
- * - `--ds-font-family-code` —— 代码字体。dsh 原栈末尾没有裸 monospace，正是为了避开 Windows 上
- *   中文掉到 SimSun；这里换成自带的中文等宽，中文与拉丁同一套。
- * - `--dsw-font-mono` —— 被引用七次却从未定义，一律走内联兜底；这里补上同一套。
- *
- * 三条都声明在 body 上，且**只在 `FONT_ATTRIBUTE` 挂着时**：ui-theme 把变量声明在 :root，更近的
- * 祖先赢，与注入顺序无关。属性不在（读者关掉了这个开关）时这一条不命中，dsh 自己那套原样生效——
- * 不需要第二份「什么都不做」的规则。
- *
- * 后面的本名不是装饰：自带的只是子集（GB2312 全集与常用符号），生僻字要靠本名接住——装了字体的人
- * 由系统那份接，没装的人由本名后面的通用族接。
- *
- * 接管不到的两项：标准字体只在元素完全不指定 font-family 时生效，而 dsh 处处显式指定；
- * 字号同理——dsh 用自己的 --dsh-content-font-size（12–17px），与浏览器的字号设置是两套。
- *
- * @module dsh-chat-ux/client/chat/fonts/font-styles
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FONT_CSS = exports.EMBEDDED_MONO = exports.EMBEDDED_SANS = exports.MONO_VARIABLE = exports.CODE_VARIABLE = exports.SANS_VARIABLE = exports.FONT_ATTRIBUTE = void 0;
-/**
- * 自带字体那一条规则认的属性。它由 `font-override.ts` 按开关写上或摘掉，所以「用不用自带字体」
- * 这件事不必重新生成样式表。
- */
-exports.FONT_ATTRIBUTE = 'data-chat-ux-fonts';
-/** dsh 声明正文字体的那个自定义属性。 */
-exports.SANS_VARIABLE = '--dsw-font-family';
-/** dsh 声明代码字体的那个自定义属性。 */
-exports.CODE_VARIABLE = '--ds-font-family-code';
-/** dsh 引用七次、却从未定义的那个等宽属性；这里补上同一套。 */
-exports.MONO_VARIABLE = '--dsw-font-mono';
-/**
- * 自带的正文栈与等宽栈。样式表拿它们写默认值，`font-override.ts` 拿它们给读者填的那一串收尾——
- * 两处必须是同一个字符串，所以只写在这里。
- */
-exports.EMBEDDED_SANS = "'Chat UX Sans', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif";
-exports.EMBEDDED_MONO = "'Chat UX Mono', 'Maple Mono NF CN', Consolas, monospace";
-/** 内嵌字体的全部 CSS。路径前缀必须与 host 半区的 FONT_ROUTE_PATH 一致。 */
-exports.FONT_CSS = `
-@font-face {
-  font-family: 'Chat UX Sans';
-  src: url(/dsh-chat-ux/fonts/harmonyos-sans-sc-regular.woff2) format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Chat UX Sans';
-  src: url(/dsh-chat-ux/fonts/harmonyos-sans-sc-medium.woff2) format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Chat UX Sans';
-  src: url(/dsh-chat-ux/fonts/harmonyos-sans-sc-bold.woff2) format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Chat UX Mono';
-  src: url(/dsh-chat-ux/fonts/maple-mono-nf-cn-regular.woff2) format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Chat UX Mono';
-  src: url(/dsh-chat-ux/fonts/maple-mono-nf-cn-bold.woff2) format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-body[${exports.FONT_ATTRIBUTE}] {
-  ${exports.SANS_VARIABLE}: ${exports.EMBEDDED_SANS};
-  ${exports.CODE_VARIABLE}: ${exports.EMBEDDED_MONO};
-  ${exports.MONO_VARIABLE}: ${exports.EMBEDDED_MONO};
-}
-`;
     };
 
     __registry["chat/follow/process-follow.js"] = function (module, exports, require) {
@@ -6740,16 +6561,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
-const font_override_1 = require("../chat/fonts/font-override");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const FOLLOW_FIELD = 'enhancedFollow';
 const AUTO_FOLD_FIELD = 'autoFold';
 const TOKEN_FADE_FIELD = 'tokenFade';
 const CARET_FIELD = 'caretMotion';
-const FONTS_FIELD = 'fonts';
-const FONT_SANS_FIELD = 'fontSans';
-const FONT_CODE_FIELD = 'fontCode';
 const SEND_FLIGHT_FIELD = 'sendFlight';
 const HIT_REEL_FIELD = 'hitReel';
 const PIE_PUSH_FIELD = 'piePush';
@@ -6786,18 +6603,6 @@ const ZH_COPY = {
     liveDiffLabel: '实时改动行数',
     liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '这一段还在收，标着 beta，默认关着。',
-    fontsLabel: '自带字体',
-    fontsHint: '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
-        + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
-    fontsOffHint: '自带字体已关，这一项暂时不生效。',
-    sansLabel: '正文字体',
-    sansHint: '填一个你喜欢的字体名，界面会优先用它。这台机器上没有这个名字时自动回到自带字体，'
-        + '填错也不会更糟。留空即用自带的。',
-    sansPlaceholder: '例如 Microsoft YaHei, sans-serif',
-    codeLabel: '代码字体',
-    codeHint: '代码块与代码样式文字使用的字体。留空即用自带的。',
-    codePlaceholder: '例如 JetBrains Mono, monospace',
-    fontInvalid: '这不是一个有效的字体名，回车不会保存。',
     overridden: '已覆盖',
     reset: '重置',
     failed: '保存未生效，请重试。',
@@ -6839,18 +6644,6 @@ const EN_COPY = {
     liveDiffHint: 'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
         + 'is still streaming, instead of appearing only once it finishes. This stretch is still settling, so it is '
         + 'marked beta and off by default.',
-    fontsLabel: 'Bundled fonts',
-    fontsHint: 'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
-        + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
-    fontsOffHint: 'Bundled fonts are off, so this field has no effect right now.',
-    sansLabel: 'Text font',
-    sansHint: 'A family you would like the interface to prefer. If this machine does not have it, the bundled font takes '
-        + 'over, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
-    sansPlaceholder: 'e.g. Georgia, serif',
-    codeLabel: 'Code font',
-    codeHint: 'The font used by code blocks and code-styled text. Leave blank to use the bundled one.',
-    codePlaceholder: 'e.g. JetBrains Mono, monospace',
-    fontInvalid: 'That is not a valid font family, so Enter will not save it.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
@@ -6859,7 +6652,7 @@ const EN_COPY = {
     readOnly: 'These settings cannot be changed, so edits cannot be saved.',
 };
 /**
- * 渲染这个插件的配置：几个开关、光标动效的三档，以及两条自定义字体栈。
+ * 渲染这个插件的配置：几个开关与光标动效的三档。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -6877,10 +6670,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [failed, setFailed] = (0, react_1.useState)(false);
-    // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
-    // host 值相同，所以不必清；只有「重置」要把草稿丢掉，否则它会盖住刚被清掉的字段。
-    const [sansDraft, setSansDraft] = (0, react_1.useState)(null);
-    const [codeDraft, setCodeDraft] = (0, react_1.useState)(null);
     const fieldId = (0, react_1.useId)();
     const followOn = storedFollow(snapshot.value);
     const autoFoldOn = storedAutoFold(snapshot.value);
@@ -6891,9 +6680,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const glassOn = storedGlass(snapshot.value);
     const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
-    const fontsOn = storedFonts(snapshot.value);
-    const sans = sansDraft ?? storedSans(snapshot.value);
-    const code = codeDraft ?? storedCode(snapshot.value);
     const unavailable = snapshot.status === 'unavailable';
     const readOnly = snapshot.writable === false;
     const controlsDisabled = saving || unavailable || readOnly;
@@ -6916,19 +6702,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setFailed(!landed);
         setSaving(false);
     };
-    /** 提交一个字体字段：留空写的是清除（回到默认层），有值就写那串字。 */
-    const commitFont = async (field, draft, readBack) => {
-        const text = draft.trim();
-        // 不合法的那串一个字都不写：输入框下面已经说了它不合法，写进去只会让界面悄悄回落到自带字体。
-        if (text !== '' && !(0, font_override_1.isFontFamilyValue)(text))
-            return;
-        setSaving(true);
-        setFailed(false);
-        const accepted = text === '' ? await scope.unset(field) : await scope.set(field, text);
-        const landed = accepted && readBack(scope.getSnapshot().value) === (text === '' ? settings_scope_1.DEFAULT_FONT_FAMILY : text);
-        setFailed(!landed);
-        setSaving(false);
-    };
     /** 清掉用户层里的覆盖，让取值退回默认层。 */
     const reset = async (field) => {
         setSaving(true);
@@ -6939,38 +6712,14 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaving(false);
     };
     /**
-     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，开关行与文本字段行共用。
+     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，几行开关共用。
      * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: fontsOn, disabled: controlsDisabled, label: copy.fontsLabel, onChange: (next) => void writeField(FONTS_FIELD, next, storedFonts) }))), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.subfields, children: [(0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-sans', label: copy.sansLabel, hint: fontsOn ? copy.sansHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.sansPlaceholder, value: sans, invalid: sans.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(sans), overridden: userLayerHasField(snapshot.user, FONT_SANS_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setSansDraft, onCommit: () => void commitFont(FONT_SANS_FIELD, sans, storedSans), onReset: () => {
-                            setSansDraft(null);
-                            void reset(FONT_SANS_FIELD);
-                        } }), (0, jsx_runtime_1.jsx)(DraftField, { id: fieldId + '-code', label: copy.codeLabel, hint: fontsOn ? copy.codeHint : copy.fontsOffHint, invalidHint: copy.fontInvalid, placeholder: copy.codePlaceholder, value: code, invalid: code.trim() !== '' && !(0, font_override_1.isFontFamilyValue)(code), overridden: userLayerHasField(snapshot.user, FONT_CODE_FIELD), disabled: controlsDisabled || !fontsOn, copy: copy, onEdit: setCodeDraft, onCommit: () => void commitFont(FONT_CODE_FIELD, code, storedCode), onReset: () => {
-                            setCodeDraft(null);
-                            void reset(FONT_CODE_FIELD);
-                        } })] }), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
- * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
- * `invalidHint`，输入框自己也标红——两种字段各有各的「什么算不合法」。
- */
-function DraftField(props) {
-    const { copy } = props;
-    const inputId = props.id + '-input';
-    const hintId = props.id + '-hint';
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.field, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.fieldHead, children: [(0, jsx_runtime_1.jsx)("label", { className: config_card_styles_1.CARD_CLASS.label, htmlFor: inputId, children: props.label }), props.overridden && overrideBadges(copy, props.disabled, props.onReset)] }), (0, jsx_runtime_1.jsx)("input", { id: inputId, className: config_card_styles_1.CARD_CLASS.input, type: "text", autoComplete: "off", spellCheck: false, placeholder: props.placeholder, value: props.value, disabled: props.disabled, "aria-invalid": props.invalid || undefined, "aria-describedby": hintId, onChange: (event) => {
-                    props.onEdit(event.target.value);
-                }, onBlur: props.onCommit, onKeyDown: (event) => {
-                    if (event.key !== 'Enter')
-                        return;
-                    event.preventDefault();
-                    props.onCommit();
-                } }), (0, jsx_runtime_1.jsx)("p", { id: hintId, className: props.invalid ? config_card_styles_1.CARD_CLASS.invalid : config_card_styles_1.CARD_CLASS.hint, children: props.invalid ? props.invalidHint : props.hint })] }));
-}
-/**
- * 「已覆盖」徽标与它旁边那个重置按钮：开关行与文本字段行共用同一份，两边的差别只有谁来判
- * 「被覆盖了」、谁来清。
+ * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
  * @param copy - 当前语言的文案。
  * @param disabled - 写入在途、这一行不可用、或设置文档只读时锁住它。
  * @param onReset - 清掉用户层里的覆盖，让取值退回默认层。
@@ -7014,18 +6763,6 @@ function storedGlass(value) {
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value) {
     return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
-}
-/** 从 host 的值里读自带字体开关。 */
-function storedFonts(value) {
-    return value?.fonts ?? settings_scope_1.DEFAULT_EMBEDDED_FONTS;
-}
-/** 从 host 的值里读自定义正文字体栈。 */
-function storedSans(value) {
-    return value?.fontSans ?? settings_scope_1.DEFAULT_FONT_FAMILY;
-}
-/** 从 host 的值里读自定义等宽字体栈。 */
-function storedCode(value) {
-    return value?.fontCode ?? settings_scope_1.DEFAULT_FONT_FAMILY;
 }
 /**
  * 只放行非空字符串。
@@ -7082,12 +6819,7 @@ exports.CARD_CLASS = {
     reset: 'dsh-chat-ux-card-reset',
     hint: 'dsh-chat-ux-card-hint',
     failed: 'dsh-chat-ux-card-failed',
-    field: 'dsh-chat-ux-card-field',
-    fieldHead: 'dsh-chat-ux-card-field-head',
-    input: 'dsh-chat-ux-card-input',
-    invalid: 'dsh-chat-ux-card-invalid',
     segment: 'dsh-chat-ux-card-segment',
-    subfields: 'dsh-chat-ux-card-subfields',
 };
 /**
  * 卡片的样式表。每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则。
@@ -7175,75 +6907,9 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-/* 字体字段是竖排：标签一行、输入框一行、说明一行。官方配置页的文本字段就是这个版式
-   （ui-primitives 的 fields.module.css），输入框要占满整行，所以不能沿用开关行的横排。 */
-.${exports.CARD_CLASS.field} {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 0;
-}
-
-/* 首行之外每个字段行都带一条分隔线，各行于是有同一个节奏。 */
-.${exports.CARD_CLASS.row}:not(:first-child),
-.${exports.CARD_CLASS.field}:not(:first-child) {
+/* 首行之外每一行都带一条分隔线，各行于是有同一个节奏。 */
+.${exports.CARD_CLASS.row}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
-}
-
-/* 两条自定义字体栈是「自带字体」那一行的下属，不是并列的第三、第四项：它们缩进一档、左侧挂一条
-   同粗的竖线，与上面那一行连成一组。**组内不画横线**——横线一画，三项就又读成彼此独立了；
-   组的边界交给上面那条线（它本来就分隔「自带字体」与它前一行）和这条竖线。 */
-.${exports.CARD_CLASS.subfields} {
-  margin-left: 2px;
-  padding-left: 14px;
-  border-left: 0.5px solid var(--dsw-alias-border-l2);
-}
-
-.${exports.CARD_CLASS.subfields} .${exports.CARD_CLASS.field} {
-  border-top: none;
-}
-
-.${exports.CARD_CLASS.fieldHead} {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.${exports.CARD_CLASS.fieldHead} > .${exports.CARD_CLASS.label} {
-  flex: 1;
-}
-
-.${exports.CARD_CLASS.input} {
-  height: 34px;
-  padding: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-3);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--dsw-alias-label-primary);
-}
-
-.${exports.CARD_CLASS.input}:focus-visible {
-  outline: none;
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
-.${exports.CARD_CLASS.input}:disabled {
-  color: var(--dsw-alias-label-tertiary);
-  cursor: default;
-}
-
-.${exports.CARD_CLASS.input}[aria-invalid='true'] {
-  border-color: var(--dsw-alias-state-error-primary);
-}
-
-.${exports.CARD_CLASS.invalid} {
-  margin: 0;
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 /* 分段控件由平台自己画（ui-primitives 的 SegmentedControl），这里只保证它不被左侧文字挤扁：
@@ -7317,7 +6983,7 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * （DSH 的 client 模块加载器不提供任何资源 URL）。
  *
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
- * 卡片、插入符、文件变更行、折叠体入场、字体与输入框那块玻璃那几份各自的 `*-styles.ts`。
+ * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
  *
  * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
  * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
@@ -7331,7 +6997,6 @@ const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-st
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
-const font_styles_1 = require("./chat/fonts/font-styles");
 const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
 const token_motion_1 = require("./chat/token-motion");
 /** 注入样式表的固定 id，用于卸载和排查。 */
@@ -7429,7 +7094,7 @@ body[data-ds-dark-theme] {
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
  * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, font_styles_1.FONT_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
@@ -7561,22 +7226,23 @@ exports.FOLD_MOTION_CSS = void 0;
  *
  * @module dsh-chat-ux/client/chat/fold/fold-motion-styles
  */
+const dom_contract_1 = require("../../dom-contract");
 const fold_glide_1 = require("./fold-glide");
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 exports.FOLD_MOTION_CSS = `
 @starting-style {
-  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+  [data-chat-flow] :is(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR}, ${dom_contract_1.DISCLOSURE_ROW_SELECTOR}) ~ *:not(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
     opacity: 0;
     translate: 0 -2px;
   }
 }
 
-[data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+[data-chat-flow] :is(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR}, ${dom_contract_1.DISCLOSURE_ROW_SELECTOR}) ~ *:not(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
   transition: opacity 120ms ease-out, translate 120ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+  [data-chat-flow] :is(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR}, ${dom_contract_1.DISCLOSURE_ROW_SELECTOR}) ~ *:not(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
 }
