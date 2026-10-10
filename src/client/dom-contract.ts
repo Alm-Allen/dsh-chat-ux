@@ -73,6 +73,21 @@ export const COMPOSER_INPUT_SELECTOR = '[data-composer-input]'
  */
 export const COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea'
 
+/**
+ * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
+ *
+ * 它是 dsh 0.2.1-alpha.1 起才有的——0.2.0-rc.2 及更早的坞只有类名（带构建期 hash，认不得），
+ * 那一版里统计是**一枚**胶囊（带下面那个属性），比例圆是它的兄弟。
+ */
+export const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]'
+
+/**
+ * 统计胶囊那一整行；更早的 dsh（0.2.0-rc.2 及以前）靠它认这一块。
+ *
+ * 它同时是「哪些 span 不归插件管」的边界：统计行里的读数不能当成比例圆。
+ */
+export const COMPOSER_STATS_ROW_SELECTOR = '[data-composer-stats]'
+
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 export const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
 

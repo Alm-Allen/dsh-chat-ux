@@ -15,6 +15,9 @@
  * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
  * 一个 svg 的 span。
  *
+ * 坞那一层本身分两代：dsh 0.2.1-alpha.1 起 `data-composer-dock` 挂在它身上，更早的
+ * 0.2.0-rc.2 只有类名。所以旧版退回「输入区里、不在统计行里的那些 span」，形状判据一字不改。
+ *
  * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
  * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
  * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
@@ -34,13 +37,13 @@
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
  */
+import {
+    COMPOSER_DOCK_SELECTOR, COMPOSER_SELECTOR, COMPOSER_STATS_ROW_SELECTOR,
+} from '../../dom-contract'
 import {rampPosition, RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
 import {paintReel, releaseReel} from '../reel/reel-host'
 import {REEL_TAKEOVER_ATTRIBUTE} from '../reel/reel-styles'
 import {CONTEXT_PIE_ATTRIBUTE, CONTEXT_REST_VAR} from './context-meter-styles'
-
-/** 草稿坞：统计胶囊与这个比例圆都住在它里面。 */
-const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]'
 
 /** 统计胶囊才带的座位 id 属性；带着它的子元素不归这一处管。 */
 const STAT_ATTRIBUTE = 'data-composer-stat'
@@ -188,20 +191,31 @@ export function installContextMeterPie(shouldPush: () => boolean): ContextMeterP
     let dock: Element | null = null
     let frame = 0
 
-    /** 草稿坞：认过之后就记住它，换会话把它换掉时重认。 */
-    const composerDock = (): Element | null => {
-        if (dock !== null && dock.isConnected) return dock
+    /**
+     * 这一轮要认的候选。
+     *
+     * 新版（dsh 0.2.1-alpha.1 起）坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接
+     * 子元素，认它这一层最省事，认过就记住、换会话把它换掉时重认。更早的版本（0.2.0-rc.2 及以前）
+     * 坞那一层没有属性，而比例圆与统计之间夹着几层、层数会随渲染实现变，所以退回「输入区里、不在
+     * 统计行里的那些 span」——真正的形状判据在 paint 里，认不出就什么都不做。
+     * @returns 候选元素；页面上还没有输入区时是空的。
+     */
+    const candidates = (): readonly Element[] => {
+        if (dock !== null && dock.isConnected) return Array.from(dock.children)
         dock = document.querySelector(COMPOSER_DOCK_SELECTOR)
-        return dock
+        if (dock !== null) return Array.from(dock.children)
+        const seat = document.querySelector(COMPOSER_SELECTOR)
+        if (seat === null) return []
+        return Array.from(seat.querySelectorAll('span')).filter(
+            (span) => span.closest(COMPOSER_STATS_ROW_SELECTOR) === null,
+        )
     }
 
     const sync = (): void => {
-        const seat = composerDock()
-        if (seat === null) return
-        for (const child of seat.children) {
-            if (!(child instanceof HTMLSpanElement)) continue
-            if (child.hasAttribute(STAT_ATTRIBUTE)) continue
-            paint(child, shouldPush() ? 'push' : 'cut')
+        for (const candidate of candidates()) {
+            if (!(candidate instanceof HTMLSpanElement)) continue
+            if (candidate.hasAttribute(STAT_ATTRIBUTE)) continue
+            paint(candidate, shouldPush() ? 'push' : 'cut')
         }
     }
 

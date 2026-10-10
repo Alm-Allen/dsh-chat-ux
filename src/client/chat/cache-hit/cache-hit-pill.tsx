@@ -9,6 +9,10 @@
  * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
  * 小数口径。
  *
+ * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
+ * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
+ * 这一枚只在认得出新版坞那一层时才画（见 CacheHitPill 里那道闸门）。
+ *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
  *
@@ -20,6 +24,7 @@ import {createPortal} from 'react-dom'
 import {
     IconDatabaseOutlineRegular, useAnchoredPosition, useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import {COMPOSER_DOCK_SELECTOR} from '../../dom-contract'
 import type {SlotsService} from '../file-mutation/file-mutation-row'
 import {DEFAULT_HIT_REEL} from '../../settings/settings-scope'
 import type {ChatUxSection, ConfigForm} from '../../settings/settings-scope'
@@ -138,6 +143,26 @@ export function installCacheHitPill(slots: SlotsService, configForms: ConfigForm
 }
 
 /**
+ * 坞那一层是不是带 data-composer-dock 的那一代；读一次就记住。
+ *
+ * 一个页面生命周期里 dsh 的版本不会变，所以缓存安全；缓存的用处是重挂载时不必再从「还没量过」
+ * 起一帧。
+ */
+let composerDockIsModern: boolean | null = null
+
+/**
+ * 读一次坞的形态，结果留在 composerDockIsModern 里。
+ * @returns 页面上的坞带不带新版属性。
+ */
+function dshHasComposerDock(): boolean {
+    // 只把「是新版」这个肯定结论记住：认不出时每次都重探，免得某一次探测时机不巧（坞还没挂上）
+    // 就把这一枚永久关掉。
+    if (composerDockIsModern === true) return true
+    composerDockIsModern = document.querySelector(COMPOSER_DOCK_SELECTOR) !== null
+    return composerDockIsModern
+}
+
+/**
  * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
  * @param props - 投影读取座位与文案座位。
  * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
@@ -154,7 +179,14 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     })
     useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef)
+    // 坞的形态先按上一次读到的值起手，重挂载时不必再从「还没量过」起一帧。effect 跑在这一帧的
+    // DOM 提交之后，那时坞已经在页面里。
+    const [shadowing, setShadowing] = useState(composerDockIsModern === true)
+    useEffect(() => { setShadowing(dshHasComposerDock()) }, [])
 
+    // 认不出新版坞那一层就什么都不画：读者看到的是 dsh 自己那一枚（整数口径、没有档位色），
+    // 而不是两枚并列的命中率。
+    if (!shadowing) return null
     if (usage === undefined) return null
     const billedInput = billedInputTokens(usage)
     // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。

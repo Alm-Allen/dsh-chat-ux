@@ -76,7 +76,8 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 
 ## Compatibility
 
-- Developed and verified on dsh 0.2.1-alpha.1.
+- Developed and verified on dsh `0.2.1-alpha.2` (web) and `0.2.1-alpha.1` (desktop); **`0.2.0-rc.2` and older keep working** (the two adaptation rounds in 2026-10 had silently broken two things on older releases; both are now keyed off the dock's shape).
+- On older releases one difference is visible: the **cache-hit pill** does not apply on `0.2.0-rc.2` and earlier — dsh had a single `stats` pill there and registering `usage` would add a second pill instead of shadowing it, so the plugin draws nothing and you see dsh's own reading.
 - Node `^22.19.0 || >=24.0.0`.
 
 ## About this repository

@@ -852,7 +852,7 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_STATS_ROW_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
 /** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
 exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
 /** 聊天列。 */
@@ -904,6 +904,19 @@ exports.COMPOSER_INPUT_SELECTOR = '[data-composer-input]';
  * 输入区座位里，主会话与侧栏里的子智能体会话都一样。
  */
 exports.COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea';
+/**
+ * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
+ *
+ * 它是 dsh 0.2.1-alpha.1 起才有的——0.2.0-rc.2 及更早的坞只有类名（带构建期 hash，认不得），
+ * 那一版里统计是**一枚**胶囊（带下面那个属性），比例圆是它的兄弟。
+ */
+exports.COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
+/**
+ * 统计胶囊那一整行；更早的 dsh（0.2.0-rc.2 及以前）靠它认这一块。
+ *
+ * 它同时是「哪些 span 不归插件管」的边界：统计行里的读数不能当成比例圆。
+ */
+exports.COMPOSER_STATS_ROW_SELECTOR = '[data-composer-stats]';
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 exports.COMPOSER_CARD_SELECTOR = '[data-composer-card]';
 /**
@@ -960,6 +973,10 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
  * 小数口径。
  *
+ * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
+ * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
+ * 这一枚只在认得出新版坞那一层时才画（见 CacheHitPill 里那道闸门）。
+ *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
  *
@@ -968,6 +985,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const dom_contract_1 = require("../../dom-contract");
 const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
 const ramp_1 = require("../ramp");
@@ -1029,6 +1047,25 @@ function installCacheHitPill(slots, configForms) {
     });
 }
 /**
+ * 坞那一层是不是带 data-composer-dock 的那一代；读一次就记住。
+ *
+ * 一个页面生命周期里 dsh 的版本不会变，所以缓存安全；缓存的用处是重挂载时不必再从「还没量过」
+ * 起一帧。
+ */
+let composerDockIsModern = null;
+/**
+ * 读一次坞的形态，结果留在 composerDockIsModern 里。
+ * @returns 页面上的坞带不带新版属性。
+ */
+function dshHasComposerDock() {
+    // 只把「是新版」这个肯定结论记住：认不出时每次都重探，免得某一次探测时机不巧（坞还没挂上）
+    // 就把这一枚永久关掉。
+    if (composerDockIsModern === true)
+        return true;
+    composerDockIsModern = document.querySelector(dom_contract_1.COMPOSER_DOCK_SELECTOR) !== null;
+    return composerDockIsModern;
+}
+/**
  * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
  * @param props - 投影读取座位与文案座位。
  * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
@@ -1045,6 +1082,14 @@ function CacheHitPill({ useProjection, t }) {
     });
     (0, dsh_client_ui_primitives_1.useDismissOnOutsidePointer)(rootRef, open, setOpen, panelRef);
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
+    // 坞的形态先按上一次读到的值起手，重挂载时不必再从「还没量过」起一帧。effect 跑在这一帧的
+    // DOM 提交之后，那时坞已经在页面里。
+    const [shadowing, setShadowing] = (0, react_1.useState)(composerDockIsModern === true);
+    (0, react_1.useEffect)(() => { setShadowing(dshHasComposerDock()); }, []);
+    // 认不出新版坞那一层就什么都不画：读者看到的是 dsh 自己那一枚（整数口径、没有档位色），
+    // 而不是两枚并列的命中率。
+    if (!shadowing)
+        return null;
     if (usage === undefined)
         return null;
     const billedInput = billedInputTokens(usage);
@@ -2319,6 +2364,9 @@ exports.pieImage = pieImage;
  * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
  * 一个 svg 的 span。
  *
+ * 坞那一层本身分两代：dsh 0.2.1-alpha.1 起 `data-composer-dock` 挂在它身上，更早的
+ * 0.2.0-rc.2 只有类名。所以旧版退回「输入区里、不在统计行里的那些 span」，形状判据一字不改。
+ *
  * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
  * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
  * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
@@ -2338,12 +2386,11 @@ exports.pieImage = pieImage;
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
  */
+const dom_contract_1 = require("../../dom-contract");
 const ramp_1 = require("../ramp");
 const reel_host_1 = require("../reel/reel-host");
 const reel_styles_1 = require("../reel/reel-styles");
 const context_meter_styles_1 = require("./context-meter-styles");
-/** 草稿坞：统计胶囊与这个比例圆都住在它里面。 */
-const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
 /** 统计胶囊才带的座位 id 属性；带着它的子元素不归这一处管。 */
 const STAT_ATTRIBUTE = 'data-composer-stat';
 /** 比例圆那颗按钮：会开对话弹窗，并且画着一枚 svg。 */
@@ -2426,23 +2473,33 @@ const paintedPies = new WeakMap();
 function installContextMeterPie(shouldPush) {
     let dock = null;
     let frame = 0;
-    /** 草稿坞：认过之后就记住它，换会话把它换掉时重认。 */
-    const composerDock = () => {
+    /**
+     * 这一轮要认的候选。
+     *
+     * 新版（dsh 0.2.1-alpha.1 起）坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接
+     * 子元素，认它这一层最省事，认过就记住、换会话把它换掉时重认。更早的版本（0.2.0-rc.2 及以前）
+     * 坞那一层没有属性，而比例圆与统计之间夹着几层、层数会随渲染实现变，所以退回「输入区里、不在
+     * 统计行里的那些 span」——真正的形状判据在 paint 里，认不出就什么都不做。
+     * @returns 候选元素；页面上还没有输入区时是空的。
+     */
+    const candidates = () => {
         if (dock !== null && dock.isConnected)
-            return dock;
-        dock = document.querySelector(COMPOSER_DOCK_SELECTOR);
-        return dock;
+            return Array.from(dock.children);
+        dock = document.querySelector(dom_contract_1.COMPOSER_DOCK_SELECTOR);
+        if (dock !== null)
+            return Array.from(dock.children);
+        const seat = document.querySelector(dom_contract_1.COMPOSER_SELECTOR);
+        if (seat === null)
+            return [];
+        return Array.from(seat.querySelectorAll('span')).filter((span) => span.closest(dom_contract_1.COMPOSER_STATS_ROW_SELECTOR) === null);
     };
     const sync = () => {
-        const seat = composerDock();
-        if (seat === null)
-            return;
-        for (const child of seat.children) {
-            if (!(child instanceof HTMLSpanElement))
+        for (const candidate of candidates()) {
+            if (!(candidate instanceof HTMLSpanElement))
                 continue;
-            if (child.hasAttribute(STAT_ATTRIBUTE))
+            if (candidate.hasAttribute(STAT_ATTRIBUTE))
                 continue;
-            paint(child, shouldPush() ? 'push' : 'cut');
+            paint(candidate, shouldPush() ? 'push' : 'cut');
         }
     };
     sync();
