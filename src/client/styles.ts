@@ -109,6 +109,21 @@ body[data-ds-dark-theme] {
     }
   }
 }
+
+/* 轨迹视图里收掉输入区。dsh 的 Trajectory 会让会话壳把输入框当浮层压在记录表上（座位从
+   sticky 改成 absolute，卡片位置一个像素都不动），于是这张卡片永远盖在记录表下方——切到轨迹
+   就是想看记录，输入区在那一页上没有用处。这里把整条座位收掉，记录表铺到底。
+
+   判据只用 dsh 的两个语义属性：[data-conversation-composer-overlay] 是「这个视图要求浮层
+   composer」的标记（dsh 自己的契约，只有轨迹视图挂它），[data-conversation-scroll] 是它所在
+   的滚动容器，而座位正是那个容器的直接子元素。末端的子选择器不是装饰：同页其他会话（侧栏里
+   的子智能体会话）各有各的滚动容器，容器里没有那个标记，所以不会跟着一起没。
+
+   底部不留补丁：座上高度由 dsh 的 ResizeObserver 写进滚动容器的 --dsh-composer-height，
+   座位一收起它自己变成 0px，轨迹的 --dsh-trajectory-bottom-clearance 跟着落到 16px。 */
+[data-conversation-scroll]:has([data-conversation-composer-overlay]) > [data-composer-seat] {
+  display: none;
+}
 `
 
 /**

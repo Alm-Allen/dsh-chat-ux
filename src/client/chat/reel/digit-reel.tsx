@@ -1,12 +1,11 @@
 /**
- * 数字轮的翻新动画：一格一格地翻。
+ * 数字轮：变了的那一位原地弹一下。
  *
- * 读数一有新值，**变了的那一位**把新数字从下面一格托上来，同时把上一个数字往上面一格送走
- * （220 ms，低位比高位晚 15 ms 起手）。位移写的是 `translateY(±100%)`——百分比相对的是**这一格
- * 自己的行盒**，所以与一格有多高、字号多大、字体度量、页面缩放统统无关；而**终态是零位移**：
- * 动画走完，数字就在它本来的位置上。
+ * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入（同时从 1.1px 的模糊里聚清），上一个
+ * 数字朝反方向淡出（500 ms，低位比高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前
+ * 会先越过去一点再弹回来；**终态是零位移、零模糊**：动画走完，数字就在它本来的位置上。
  *
- * 这两条合起来，这一处不可能「停歪」：没有中间格、没有归一、没有事后纠正，也不需要问元素任何尺寸。
+ * 这一处不可能「停歪」：位移是固定的 6px，不参与排版，也不问元素任何尺寸。
  *
  * 2026-10 的前两版都栽在「算一格」上：
  *
@@ -14,10 +13,13 @@
  *   累计 7.55px，已经超过半格（6.90px），窗口里于是同时露着上下两个数字的各一半；
  * - 第二版整条带滚动加记账，位移换成了百分比，但仍然依赖「条带的高度正好是三十格」。
  *
- * 现在把这条依赖也去掉了：条带没了，只剩下这一格与上一格。
+ * 第三版去掉条带，只留一格窗口与两条 100% 位移的关键帧：稳是稳了，但整格位移下带过冲的曲线会把
+ * 数字顶出窗口、切掉小半个字，所以那一版只能用一条不带过冲的缓动。
  *
- * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照滚：
- * 没有上一个数字，就只有新数字从下面一格上来——这正是「换了会话，读数翻了一下」那一下。
+ * 现在连窗口也不要了——位移收到 6px，过冲与模糊都接得住，也不再需要「一格有多高」这个数。
+ *
+ * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
+ * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
  *
  * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
  * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
@@ -30,8 +32,8 @@ import type {CSSProperties, ReactElement} from 'react'
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
 import type {RampPosition} from '../ramp'
 import {
-    REEL_CELL_CLASS, REEL_CLASS, REEL_SPOKEN_CLASS, REEL_STAGGER_MS, REEL_STATIC_CLASS, REEL_TEXT_CLASS,
-    REEL_WAS_CLASS,
+    REEL_CELL_CLASS, REEL_SLOT_CLASS, REEL_SPOKEN_CLASS, REEL_STAGGER_MS, REEL_STATIC_CLASS,
+    REEL_TEXT_CLASS, REEL_WAS_CLASS,
 } from './reel-styles'
 
 /** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
@@ -91,7 +93,7 @@ interface DigitProps {
     place: number
 }
 
-/** 这一位现在的数字，以及正在往上面走的那一个。 */
+/** 这一位现在的数字，以及正在退场的那个。 */
 interface ReelPair {
     /** 窗口里现在的数字。 */
     shown: number
@@ -100,18 +102,18 @@ interface ReelPair {
 }
 
 /**
- * 一个数字位：一格窗口，里头最多两个数字——现在的从下面上来，上一个往上面走。
+ * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
  * @param props - 数字与次序。
  * @returns 这一位。
  */
 function Digit({digit, place}: DigitProps): ReactElement {
-    // 读数一变就把原来那个挪到上面去，新数字接替它。key 用的是数字本身，所以**没变的那一位不会
-    // 重新挂载**、也就不会播动画：读数一变就让每位都翻，看着像一直在抽。
+    // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以**没变的那一
+    // 位不会重新挂载**、也就不会播动画：读数一变就让每位都弹，看着像一直在抽。
     const [pair, setPair] = useState<ReelPair>({shown: digit, previous: null})
     if (pair.shown !== digit) setPair({shown: digit, previous: pair.shown})
     const delay: CSSProperties = {animationDelay: String(place * REEL_STAGGER_MS) + 'ms'}
     return (
-        <span className={REEL_CLASS}>
+        <span className={REEL_SLOT_CLASS}>
             {pair.previous !== null && (
                 <span key={'was-' + String(pair.previous)} className={REEL_WAS_CLASS} style={delay}>
                     {pair.previous}
