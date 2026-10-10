@@ -2138,9 +2138,11 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   /* ── 三、玻璃本体：卡片自己的 ::before，铺满卡片那个矩形 ── */
   /* 底是两层：先一条照 dsh 自己做法（AppFrame.module.css 的 .sidebarCol）的四停渐变——两端各自一片
      极淡的色、中间**完全透明**，再垫一层掺了一点蓝的底色。方向转成横向：卡片又宽又扁，左端就是
-     「左上角」、右端就是「右下角」，横向的两端色读起来正是读者要的那对角。深色沿用 dsh 那两个档
+     「左上角」、右端就是「右下角」，横向的两端色读起来正是读者要的那对角。深色起初沿用 dsh 那两个档
      （0.08 / 0.07，AppFrame 第 164-167 行）；浅色起初也是 dsh 那两档（0.1 / 0.09），读者在浅色下又看
-     过一轮，说两端也要「再浅一点」，现在是 0.07 / 0.06——底压过灰之后，两端就不必再出那么多力。
+     过一轮，说两端也要「再浅一点」，先是 0.07 / 0.06。第三轮他说整条
+     渐变「再低调点、隐约能看出有渐变色就行」，两档一起再砍一半多——深色 0.035 / 0.03、浅色
+     0.03 / 0.025（深色下实测两端只比中间亮两三个灰阶、蓝通道最多六阶）。底压过灰之后，两端本来就不必出那么多力。
      第一遍按 0.14 / 0.12 写，比 dsh 浓了一倍，那也是「看着有点脏脏的」的一半。
      伪元素没有后代，所以它的 backdrop-filter 只会给自己那层模糊，不会再给谁造出祖先 backdrop root
      （这正是卡片本体做不了这件事的原因，见模块头）。 */
@@ -2160,10 +2162,10 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     background-image:
       linear-gradient(
         to right,
-        rgb(122 155 240 / 0.07) 0%,
+        rgb(122 155 240 / 0.03) 0%,
         rgb(122 155 240 / 0) 38%,
         rgb(143 137 184 / 0) 64%,
-        rgb(143 137 184 / 0.06) 100%
+        rgb(143 137 184 / 0.025) 100%
       ),
       linear-gradient(
         color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
@@ -2187,10 +2189,10 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     background-image:
       linear-gradient(
         to right,
-        rgb(122 155 240 / 0.08) 0%,
+        rgb(122 155 240 / 0.035) 0%,
         rgb(122 155 240 / 0) 38%,
         rgb(143 137 184 / 0) 64%,
-        rgb(143 137 184 / 0.07) 100%
+        rgb(143 137 184 / 0.03) 100%
       ),
       linear-gradient(
         color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
