@@ -35,6 +35,14 @@ const STRUCTURE_SELECTOR = FLOW_BLOCK_SELECTOR + ', ' + CALL_SELECTOR
 /** 现在有内容正在流：两个标记都由 dsh 发，有它，才有「跟随」可言。 */
 const RUNNING_CONTENT_SELECTOR = STREAMING_SELECTOR + ', ' + SHIMMER_SELECTOR
 
+/**
+ * dsh 自己的折叠动效正在走的那一行。
+ *
+ * `flow-motion.ts` 收起时给行挂 `data-chat-motion="collapse"`、长出来时挂 `"reveal"`，动完撤掉。
+ * 折叠期间它会关掉原生滚动锚定、并吞掉滚动归因，这一处插进去只会跟它的收尾抢同一段高度。
+ */
+const DSH_FOLDING_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]'
+
 /** 读者接管滚动的意图。与 dsh 自己的 `READING_INTENTS` 同源。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'beforematch'] as const
 
@@ -105,8 +113,9 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
         if (scroller === null) return
         // 离底超过一屏就不动手：那是读者自己在看上面，不是跟随丢了一步。
         if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > scroller.clientHeight) return
-        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。
-        if (isFoldGlideBusy()) {
+        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。插件自己的卷帘门与
+        // dsh 自己那套折叠都算：等满几次就整轮放弃，把它交给 dsh 的折叠收尾。
+        if (isFoldGlideBusy() || document.querySelector(DSH_FOLDING_SELECTOR) !== null) {
             if (attempt >= FOLD_WAIT_ATTEMPTS) return
             window.setTimeout(() => {
                 ensure(attempt + 1)

@@ -34,23 +34,24 @@
  *
  * @module dsh-chat-ux/client/chat/fold/fold-motion-styles
  */
+import {DISCLOSURE_HEADER_SELECTOR, DISCLOSURE_ROW_SELECTOR} from '../../dom-contract'
 import {ROLLING_ATTRIBUTE} from './fold-glide'
 
 /** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
 export const FOLD_MOTION_CSS = `
 @starting-style {
-  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+  [data-chat-flow] :is(${DISCLOSURE_HEADER_SELECTOR}, ${DISCLOSURE_ROW_SELECTOR}) ~ *:not(${DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
     opacity: 0;
     translate: 0 -2px;
   }
 }
 
-[data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+[data-chat-flow] :is(${DISCLOSURE_HEADER_SELECTOR}, ${DISCLOSURE_ROW_SELECTOR}) ~ *:not(${DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
   transition: opacity 120ms ease-out, translate 120ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-chat-flow] [data-disclosure-row] ~ *:not([data-turn-process-member] *, [data-turn-trigger] *) {
+  [data-chat-flow] :is(${DISCLOSURE_HEADER_SELECTOR}, ${DISCLOSURE_ROW_SELECTOR}) ~ *:not(${DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
     transition: none;
   }
 }

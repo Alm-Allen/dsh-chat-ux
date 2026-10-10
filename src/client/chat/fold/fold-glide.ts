@@ -53,6 +53,8 @@
 import {
     CHAT_FLOW_SELECTOR,
     CONVERSATION_SCROLL_SELECTOR,
+    DISCLOSURE_HEADER_SELECTOR,
+    DISCLOSURE_ROW_SELECTOR,
     FOLLOW_THRESHOLD_PX,
     PROCESS_BODY_SELECTOR,
     PROCESS_GROUP_SELECTOR,
@@ -75,8 +77,6 @@ const VISIBLE_SHARE = 0.9
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500
 
-/** DisclosureRow 的行。展开体是它的下一个兄弟。 */
-const DISCLOSURE_SELECTOR = '[data-disclosure-row]'
 /** 其余可开合的控件（过程组头等）。 */
 const TOGGLE_SELECTOR = '[aria-expanded]'
 /** 弹出层控件（菜单、对话框、列表）。它们开的不是折叠体，本模块整块跳过。 */
@@ -218,8 +218,9 @@ export function installFoldGlide(): () => void {
 
     /**
      * 控件的展开体。控件自己发 aria-controls 时以它为准（那个 id 由 useId 生成、带冒号，只能走
-     * getElementById）；否则按卸载式那一族的形状取「控件之后那一个兄弟」。返回 null 就说明这个控件
-     * 当前是收起的。
+     * getElementById）；否则按卸载式那一族的形状取「控件所在的折叠根里最后那个孩子」——旧版那个根
+     * 就是被点行的父级，0.2.1-alpha.2 起外层多了一个 `[data-disclosure-header]`，根在它上面一层。
+     * 返回 null 就说明这个控件当前是收起的。
      *
      * 过程组头到不了这里——它先被 processBodyOf 认走，那条路动的是组根，不是展开体自己的高度。
      */
@@ -229,8 +230,11 @@ export function installFoldGlide(): () => void {
             const target = document.getElementById(controls)
             return target instanceof HTMLElement ? target : null
         }
-        const last = control.parentElement?.lastElementChild
-        return last instanceof HTMLElement && last !== control ? last : null
+        // 认 header 优先：它里面那个 `headerAccessory` 槽位正好落在旧写法会取到的位置上，取过来的
+        // 话收起时会把那个按钮压扁。收起态里最后那个孩子是 header 自己，`last !== row` 正好挡掉。
+        const row = control.closest(DISCLOSURE_HEADER_SELECTOR) ?? control
+        const last = row.parentElement?.lastElementChild
+        return last instanceof HTMLElement && last !== row ? last : null
     }
 
     /**
@@ -568,7 +572,7 @@ export function installFoldGlide(): () => void {
         intent?.watch.stop()
         intent = null
         // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
-        const control = target.closest<HTMLElement>(DISCLOSURE_SELECTOR)
+        const control = target.closest<HTMLElement>(DISCLOSURE_ROW_SELECTOR)
             ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
         if (control === null) return
         // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。

@@ -25,11 +25,9 @@ import {SegmentedControl, Switch, Tag} from '@deepseek-ai/dsh-client-ui-primitiv
 import type {SegmentedControlOption} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
-import {isFontFamilyValue} from '../chat/fonts/font-override'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
-    DEFAULT_FONT_FAMILY, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT,
-    DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_HIT_REEL,
+    DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -38,9 +36,6 @@ const FOLLOW_FIELD = 'enhancedFollow'
 const AUTO_FOLD_FIELD = 'autoFold'
 const TOKEN_FADE_FIELD = 'tokenFade'
 const CARET_FIELD = 'caretMotion'
-const FONTS_FIELD = 'fonts'
-const FONT_SANS_FIELD = 'fontSans'
-const FONT_CODE_FIELD = 'fontCode'
 const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
 const PIE_PUSH_FIELD = 'piePush'
@@ -71,16 +66,6 @@ interface Copy {
     glassHint: string
     liveDiffLabel: string
     liveDiffHint: string
-    fontsLabel: string
-    fontsHint: string
-    fontsOffHint: string
-    sansLabel: string
-    sansHint: string
-    sansPlaceholder: string
-    codeLabel: string
-    codeHint: string
-    codePlaceholder: string
-    fontInvalid: string
     overridden: string
     reset: string
     failed: string
@@ -128,20 +113,6 @@ const ZH_COPY: Copy = {
     liveDiffHint:
         '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '这一段还在收，标着 beta，默认关着。',
-    fontsLabel: '自带字体',
-    fontsHint:
-        '界面使用随插件附带的字体：正文 HarmonyOS Sans SC，代码 Maple Mono NF CN，'
-        + '装好就有，不必自己安装。关掉就回到 dsh 原本的字体，下面两项也会停用。',
-    fontsOffHint: '自带字体已关，这一项暂时不生效。',
-    sansLabel: '正文字体',
-    sansHint:
-        '填一个你喜欢的字体名，界面会优先用它。这台机器上没有这个名字时自动回到自带字体，'
-        + '填错也不会更糟。留空即用自带的。',
-    sansPlaceholder: '例如 Microsoft YaHei, sans-serif',
-    codeLabel: '代码字体',
-    codeHint: '代码块与代码样式文字使用的字体。留空即用自带的。',
-    codePlaceholder: '例如 JetBrains Mono, monospace',
-    fontInvalid: '这不是一个有效的字体名，回车不会保存。',
     overridden: '已覆盖',
     reset: '重置',
     failed: '保存未生效，请重试。',
@@ -194,20 +165,6 @@ const EN_COPY: Copy = {
         'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
         + 'is still streaming, instead of appearing only once it finishes. This stretch is still settling, so it is '
         + 'marked beta and off by default.',
-    fontsLabel: 'Bundled fonts',
-    fontsHint:
-        'The interface uses the fonts that come with this plugin — HarmonyOS Sans SC for text, Maple Mono NF CN for '
-        + 'code — so nothing has to be installed. Turning this off restores dsh\'s own fonts and disables the two fields below.',
-    fontsOffHint: 'Bundled fonts are off, so this field has no effect right now.',
-    sansLabel: 'Text font',
-    sansHint:
-        'A family you would like the interface to prefer. If this machine does not have it, the bundled font takes '
-        + 'over, so a typo is never worse than leaving it blank. Leave blank to use the bundled one.',
-    sansPlaceholder: 'e.g. Georgia, serif',
-    codeLabel: 'Code font',
-    codeHint: 'The font used by code blocks and code-styled text. Leave blank to use the bundled one.',
-    codePlaceholder: 'e.g. JetBrains Mono, monospace',
-    fontInvalid: 'That is not a valid font family, so Enter will not save it.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
@@ -228,7 +185,7 @@ export interface ChatUxConfigCardProps {
 }
 
 /**
- * 渲染这个插件的配置：几个开关、光标动效的三档，以及两条自定义字体栈。
+ * 渲染这个插件的配置：几个开关与光标动效的三档。
  * @param props - 绑定好的设置 scope、locale 服务，以及视图。
  * @returns 那个表单，或者页面要的一行摘要。
  */
@@ -252,10 +209,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY
     const [saving, setSaving] = useState(false)
     const [failed, setFailed] = useState(false)
-    // 两个输入框各留一份草稿：null 是「没有本地编辑」，显示的就是 host 上的值。提交成功后草稿与
-    // host 值相同，所以不必清；只有「重置」要把草稿丢掉，否则它会盖住刚被清掉的字段。
-    const [sansDraft, setSansDraft] = useState<string | null>(null)
-    const [codeDraft, setCodeDraft] = useState<string | null>(null)
     const fieldId = useId()
 
     const followOn = storedFollow(snapshot.value)
@@ -267,9 +220,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const glassOn = storedGlass(snapshot.value)
     const liveDiffOn = storedLiveDiff(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
-    const fontsOn = storedFonts(snapshot.value)
-    const sans = sansDraft ?? storedSans(snapshot.value)
-    const code = codeDraft ?? storedCode(snapshot.value)
     const unavailable = snapshot.status === 'unavailable'
     const readOnly = snapshot.writable === false
     const controlsDisabled = saving || unavailable || readOnly
@@ -297,23 +247,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
         setSaving(false)
     }
 
-    /** 提交一个字体字段：留空写的是清除（回到默认层），有值就写那串字。 */
-    const commitFont = async (
-        field: string,
-        draft: string,
-        readBack: (value: ChatUxSection | undefined) => string,
-    ): Promise<void> => {
-        const text = draft.trim()
-        // 不合法的那串一个字都不写：输入框下面已经说了它不合法，写进去只会让界面悄悄回落到自带字体。
-        if (text !== '' && !isFontFamilyValue(text)) return
-        setSaving(true)
-        setFailed(false)
-        const accepted = text === '' ? await scope.unset(field) : await scope.set(field, text)
-        const landed = accepted && readBack(scope.getSnapshot().value) === (text === '' ? DEFAULT_FONT_FAMILY : text)
-        setFailed(!landed)
-        setSaving(false)
-    }
-
     /** 清掉用户层里的覆盖，让取值退回默认层。 */
     const reset = async (field: string): Promise<void> => {
         setSaving(true)
@@ -325,7 +258,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     }
 
     /**
-     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，开关行与文本字段行共用。
+     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，几行开关共用。
      * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (
@@ -426,118 +359,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     onChange={(next: boolean) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff)}
                 />
             ), <Tag tone="info">beta</Tag>)}
-            {rowChrome(FONTS_FIELD, copy.fontsLabel, copy.fontsHint, (
-                <Switch
-                    checked={fontsOn}
-                    disabled={controlsDisabled}
-                    label={copy.fontsLabel}
-                    onChange={(next: boolean) => void writeField(FONTS_FIELD, next, storedFonts)}
-                />
-            ))}
-            {/* 这两项是上面那一行的下属，不是并列的两项：样式把它们缩进一档、左侧挂一条竖线，
-          与「自带字体」连成一组，组内也不画横线。 */}
-            <div className={CARD_CLASS.subfields}>
-                <DraftField
-                    id={fieldId + '-sans'}
-                    label={copy.sansLabel}
-                    hint={fontsOn ? copy.sansHint : copy.fontsOffHint}
-                    invalidHint={copy.fontInvalid}
-                    placeholder={copy.sansPlaceholder}
-                    value={sans}
-                    invalid={sans.trim() !== '' && !isFontFamilyValue(sans)}
-                    overridden={userLayerHasField(snapshot.user, FONT_SANS_FIELD)}
-                    disabled={controlsDisabled || !fontsOn}
-                    copy={copy}
-                    onEdit={setSansDraft}
-                    onCommit={() => void commitFont(FONT_SANS_FIELD, sans, storedSans)}
-                    onReset={() => {
-                        setSansDraft(null);
-                        void reset(FONT_SANS_FIELD)
-                    }}
-                />
-                <DraftField
-                    id={fieldId + '-code'}
-                    label={copy.codeLabel}
-                    hint={fontsOn ? copy.codeHint : copy.fontsOffHint}
-                    invalidHint={copy.fontInvalid}
-                    placeholder={copy.codePlaceholder}
-                    value={code}
-                    invalid={code.trim() !== '' && !isFontFamilyValue(code)}
-                    overridden={userLayerHasField(snapshot.user, FONT_CODE_FIELD)}
-                    disabled={controlsDisabled || !fontsOn}
-                    copy={copy}
-                    onEdit={setCodeDraft}
-                    onCommit={() => void commitFont(FONT_CODE_FIELD, code, storedCode)}
-                    onReset={() => {
-                        setCodeDraft(null);
-                        void reset(FONT_CODE_FIELD)
-                    }}
-                />
-            </div>
             {failed && <p className={CARD_CLASS.failed} role="status">{copy.failed}</p>}
         </div>
     )
 }
 
-/**
- * 一行文本输入：标签、覆盖徽标、输入框与说明。回车或失焦才提交；不合法时下面那行说明换成
- * `invalidHint`，输入框自己也标红——两种字段各有各的「什么算不合法」。
- */
-function DraftField(props: {
-    id: string
-    label: string
-    hint: string
-    invalidHint: string
-    placeholder?: string | undefined
-    value: string
-    invalid: boolean
-    overridden: boolean
-    disabled: boolean
-    copy: Copy
-    onEdit: (text: string) => void
-    onCommit: () => void
-    onReset: () => void
-}): ReactElement {
-    const {copy} = props
-    const inputId = props.id + '-input'
-    const hintId = props.id + '-hint'
-    return (
-        <div className={CARD_CLASS.field}>
-            <div className={CARD_CLASS.fieldHead}>
-                <label className={CARD_CLASS.label} htmlFor={inputId}>{props.label}</label>
-                {props.overridden && overrideBadges(copy, props.disabled, props.onReset)}
-            </div>
-            <input
-                id={inputId}
-                className={CARD_CLASS.input}
-                type="text"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={props.placeholder}
-                value={props.value}
-                disabled={props.disabled}
-                aria-invalid={props.invalid || undefined}
-                aria-describedby={hintId}
-                onChange={(event) => {
-                    props.onEdit(event.target.value)
-                }}
-                onBlur={props.onCommit}
-                onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    event.preventDefault()
-                    props.onCommit()
-                }}
-            />
-            <p id={hintId} className={props.invalid ? CARD_CLASS.invalid : CARD_CLASS.hint}>
-                {props.invalid ? props.invalidHint : props.hint}
-            </p>
-        </div>
-    )
-}
 
 /**
- * 「已覆盖」徽标与它旁边那个重置按钮：开关行与文本字段行共用同一份，两边的差别只有谁来判
- * 「被覆盖了」、谁来清。
+ * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
  * @param copy - 当前语言的文案。
  * @param disabled - 写入在途、这一行不可用、或设置文档只读时锁住它。
  * @param onReset - 清掉用户层里的覆盖，让取值退回默认层。
@@ -597,21 +426,6 @@ function storedGlass(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value: ChatUxSection | undefined): CaretMotionMode {
     return value?.caretMotion ?? DEFAULT_CARET_MOTION
-}
-
-/** 从 host 的值里读自带字体开关。 */
-function storedFonts(value: ChatUxSection | undefined): boolean {
-    return value?.fonts ?? DEFAULT_EMBEDDED_FONTS
-}
-
-/** 从 host 的值里读自定义正文字体栈。 */
-function storedSans(value: ChatUxSection | undefined): string {
-    return value?.fontSans ?? DEFAULT_FONT_FAMILY
-}
-
-/** 从 host 的值里读自定义等宽字体栈。 */
-function storedCode(value: ChatUxSection | undefined): string {
-    return value?.fontCode ?? DEFAULT_FONT_FAMILY
 }
 
 /**

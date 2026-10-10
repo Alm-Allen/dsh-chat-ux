@@ -102,3 +102,19 @@ export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
 
 /** 过程组体里的内容层；组体滚的就是它。 */
 export const PROCESS_CONTENT_SELECTOR = '[data-step-process-content]'
+
+/**
+ * DisclosureRow 的**被点那一行**。展开体是它的兄弟——0.2.1-alpha.2 起改成外层 header 的兄弟。
+ *
+ * 谁取展开体，就得同时认下面那个 header：只认这一个的话，alpha.2 上取到的是空槽位，
+ * 于是「不报错、只是不动了」。
+ */
+export const DISCLOSURE_ROW_SELECTOR = '[data-disclosure-row]'
+
+/**
+ * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
+ *
+ * 它把被点行与 `headerAccessory` 槽位一起裹住，展开体因此从「行的兄弟」变成「它的兄弟」；
+ * 旧版没有这一层（`closest` 返回 null），两处取展开体的地方都按「有就用、没有就退回行自己」。
+ */
+export const DISCLOSURE_HEADER_SELECTOR = '[data-disclosure-header]'

@@ -14,7 +14,6 @@ With it installed, model output fades in token by token instead of appearing in 
 - **Enhanced follow**: at the moments content jumps—thinking ends, a tool call appears—a reader parked at the bottom is handed back to dsh's own follow. If you scrolled away yourself, it stays out of your way.
 - **Group follow**: inside height-capped process groups (standard / compact), reasoning and tool output keep up, scrolling vertically only.
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, with `+n` growing as the content arrives (this stretch is marked beta and off by default; turn it on on the Plugins page).
-- **Bundled fonts**: HarmonyOS Sans SC for text and Maple Mono NF CN for code, shipped with the plugin—nothing to install, same type on both ends.
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (on by default): the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
 - **Work details default to Standard**: on the web client, dsh's "Work details" setting is filled in as **Standard** (dsh's own web default is Detailed). Once you pick a mode yourself under Settings → **General**, your choice wins and the plugin leaves it alone.
@@ -71,9 +70,6 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |
 | Slice pulled out | on | When off, the slice stays in place and only the cut remains. |
 | Composer glass | on | When off, the composer and the send button both go back to dsh's own look, and nothing behind it is blurred. |
-| Bundled fonts | on | When off, the system font stack is used. |
-| Text font | empty | Your own font stack, overriding the bundled text font. |
-| Code font | empty | Same, for the bundled code font. |
 
 "Work details" is not on the plugin card: it lives in dsh's own Settings → **General**, and the plugin only fills in Standard while you have not chosen a mode yourself.
 

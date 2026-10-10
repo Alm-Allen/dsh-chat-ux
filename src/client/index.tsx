@@ -23,16 +23,14 @@ import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
 import type {SlotsService} from './chat/file-mutation/file-mutation-row'
 import {installFoldGlide} from './chat/fold/fold-glide'
 import {installFollowGuard} from './chat/follow/follow-guard'
-import {applyFontChoice, clearFontChoice} from './chat/fonts/font-override'
-import type {FontChoice} from './chat/fonts/font-override'
 import {installProcessFollow} from './chat/follow/process-follow'
 import {installProcessFold} from './chat/fold/process-fold'
 import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_EMBEDDED_FONTS, DEFAULT_ENHANCED_FOLLOW,
-    DEFAULT_FONT_FAMILY, DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_ENHANCED_FOLLOW,
+    DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -75,7 +73,6 @@ export function apply(ctx: ClientContext): void {
         follow: DEFAULT_ENHANCED_FOLLOW,
         autoFold: DEFAULT_AUTO_FOLD,
         caret: DEFAULT_CARET_MOTION,
-        font: {embedded: DEFAULT_EMBEDDED_FONTS, sans: DEFAULT_FONT_FAMILY, code: DEFAULT_FONT_FAMILY},
         sendOn: DEFAULT_SEND_FLIGHT,
         tokenFade: DEFAULT_TOKEN_FADE,
         piePush: DEFAULT_PIE_PUSH,
@@ -127,16 +124,12 @@ export function apply(ctx: ClientContext): void {
         settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
         settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
-        settings.font.embedded = value?.fonts ?? DEFAULT_EMBEDDED_FONTS
-        settings.font.sans = value?.fontSans ?? DEFAULT_FONT_FAMILY
-        settings.font.code = value?.fontCode ?? DEFAULT_FONT_FAMILY
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
         settings.piePush = value?.piePush ?? DEFAULT_PIE_PUSH
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         syncGlass()
-        applyFontChoice(settings.font)
         caret.resync()
         tokenMotion.resync()
         pie.resync()
@@ -145,7 +138,6 @@ export function apply(ctx: ClientContext): void {
     syncSettings()
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
     ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion')
-    ctx.effect(() => clearFontChoice, 'dsh-chat-ux: font override')
     ctx.effect(
         () => {
             syncGlass()
@@ -251,8 +243,6 @@ interface ChatUxSettings {
     autoFold: boolean
     /** 插入符动效的档位。 */
     caret: CaretMotionMode
-    /** 字体那三项，原样交给 `applyFontChoice`。 */
-    font: FontChoice
     /** 聊天气泡动效开着没有，每一段起手前现读。 */
     sendOn: boolean
     /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
