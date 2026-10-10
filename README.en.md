@@ -13,7 +13,7 @@ With it installed, model output fades in token by token instead of appearing in 
 - **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page.
 - **Enhanced follow**: at the moments content jumps—thinking ends, a tool call appears—a reader parked at the bottom is handed back to dsh's own follow. If you scrolled away yourself, it stays out of your way.
 - **Group follow**: inside height-capped process groups (standard / compact), reasoning and tool output keep up, scrolling vertically only.
-- **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, with `+n` growing as the content arrives (this stretch is marked beta and off by default; turn it on on the Plugins page).
+- **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, both counts growing as the content arrives, and a changed digit pops to its new value the way the readouts do (this stretch is marked beta and off by default; turn it on on the Plugins page).
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (on by default): the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
 - **Work details default to Standard**: on the web client, dsh's "Work details" setting is filled in as **Standard** (dsh's own web default is Detailed). Once you pick a mode yourself under Settings → **General**, your choice wins and the plugin leaves it alone.
@@ -71,6 +71,7 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |
 | Context pie | on | When off, dsh's own ring comes back. |
 | Composer glass | on | When off, the composer, the send button and the add button all go back to dsh's own look, and nothing behind it is blurred. |
+| Live change counts | off (beta) | When on, the `+n -m` at the end of a directly-called write / edit row grows while the content streams, and a changed digit pops in place the way the readouts do. |
 
 "Work details" is not on the plugin card: it lives in dsh's own Settings → **General**, and the plugin only fills in Standard while you have not chosen a mode yourself.
 
