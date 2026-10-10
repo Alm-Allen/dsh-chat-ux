@@ -109,7 +109,7 @@ export interface Config {
     sendFlight: Volatile<boolean>
     // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
     tokenFade: Volatile<boolean>
-    // 命中率读数变化时，每一位数字是否像老虎机那样滚到新值。关掉时数字直接换掉。
+    // 命中率读数变化时，变了的那一位是否原地弹到新值。关掉时数字直接换掉。
     hitReel: Volatile<boolean>
     // 上下文占用那枚饼：折线切开之后，那一块是否沿角平分线推开一段。关掉就只留一道切口，两块都留在原位。
     piePush: Volatile<boolean>

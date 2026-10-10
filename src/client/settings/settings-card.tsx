@@ -99,8 +99,8 @@ const ZH_COPY: Copy = {
     sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
     reelLabel: '命中率转轮',
     reelHint:
-        '输入框下方那枚胶囊里的命中率变化时，变了的那些数字滚到新读数，像老虎机那样翻过去。'
-        + '关掉就直接换成新数字。',
+        '输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——'
+        + '新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。',
     piePushLabel: '切块推开',
     piePushHint:
         '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
@@ -148,8 +148,9 @@ const EN_COPY: Copy = {
         + 'so a send is something you can see.',
     reelLabel: 'Cache-hit reels',
     reelHint:
-        'When the cache-hit rate in the pill below the composer changes, the digits that changed roll to their new '
-        + 'values like a slot reel. Off swaps the number instantly.',
+        'When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new '
+        + 'values — each one drops back in from just below while the old digit fades out the other way. Off swaps '
+        + 'the number instantly.',
     piePushLabel: 'Slice pulled out',
     piePushHint:
         'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '

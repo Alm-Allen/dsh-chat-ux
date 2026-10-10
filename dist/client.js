@@ -1782,9 +1782,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 /**
  * 数字轮：变了的那一位原地弹一下。
  *
- * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入（同时从 1.1px 的模糊里聚清），上一个
- * 数字朝反方向淡出（500 ms，低位比高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前
- * 会先越过去一点再弹回来；**终态是零位移、零模糊**：动画走完，数字就在它本来的位置上。
+ * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入，上一个数字朝反方向淡出（500 ms，低位比
+ * 高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前会先越过去一点再弹回来；**终态是
+ * 零位移**：动画走完，数字就在它本来的位置上（进场那一帧的模糊试过又退掉了，见 reel-styles.ts）。
  *
  * 这一处不可能「停歪」：位移是固定的 6px，不参与排版，也不问元素任何尺寸。
  *
@@ -6638,8 +6638,8 @@ const ZH_COPY = {
     sendLabel: '聊天气泡动效',
     sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
     reelLabel: '命中率转轮',
-    reelHint: '输入框下方那枚胶囊里的命中率变化时，变了的那些数字滚到新读数，像老虎机那样翻过去。'
-        + '关掉就直接换成新数字。',
+    reelHint: '输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——'
+        + '新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。',
     piePushLabel: '切块推开',
     piePushHint: '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
         + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
@@ -6676,8 +6676,9 @@ const EN_COPY = {
     sendHint: 'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
         + 'so a send is something you can see.',
     reelLabel: 'Cache-hit reels',
-    reelHint: 'When the cache-hit rate in the pill below the composer changes, the digits that changed roll to their new '
-        + 'values like a slot reel. Off swaps the number instantly.',
+    reelHint: 'When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new '
+        + 'values — each one drops back in from just below while the old digit fades out the other way. Off swaps '
+        + 'the number instantly.',
     piePushLabel: 'Slice pulled out',
     piePushHint: 'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
         + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '

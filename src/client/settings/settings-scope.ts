@@ -86,7 +86,7 @@ export interface ChatUxSection {
     sendFlight?: boolean
     /** 流式回答里新出现的字符是否先淡后实；默认开着。 */
     tokenFade?: boolean
-    /** 命中率读数变化时，每一位数字是否滚到新值；默认开着。 */
+    /** 命中率读数变化时，变了的那一位是否原地弹到新值；默认开着。 */
     hitReel?: boolean
     /** 上下文占用那枚饼是否把切开的那一块推出去；默认开着。关掉就只留一道切口。 */
     piePush?: boolean
