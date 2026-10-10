@@ -1,6 +1,6 @@
 /**
- * 输入框那块玻璃的几何，外加卡片里那两枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）与
- * 左下角那枚加号（添加文件 / 调指令）。
+ * 输入框那块玻璃的几何，外加卡片里几枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）、它旁边
+ * 可能在的那枚独立停止圆，与左下角那枚加号（添加文件 / 调指令）。
  *
  * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
  * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
@@ -14,7 +14,8 @@
  * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
  */
 import {
-    GLASS_ADD_ATTRIBUTE, GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_TOP_VARIABLE,
+    GLASS_ADD_ATTRIBUTE, GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_STOP_ATTRIBUTE,
+    GLASS_TOP_VARIABLE,
 } from './composer-glass-styles'
 
 /** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
@@ -113,35 +114,72 @@ export function installComposerGlass(): () => void {
             seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
         }
         bound.clear()
-        for (const attribute of [GLASS_PRIMARY_ATTRIBUTE, GLASS_ADD_ATTRIBUTE]) {
+        for (const attribute of [GLASS_PRIMARY_ATTRIBUTE, GLASS_STOP_ATTRIBUTE, GLASS_ADD_ATTRIBUTE]) {
             for (const marked of document.querySelectorAll(`[${attribute}]`)) marked.removeAttribute(attribute)
         }
     }
 }
 
 /**
- * 认一次卡片里那枚主操作按钮（发送，跑起来时是停止），把属性打在它身上。
+ * 认一次卡片里那两枚圆形按钮，把属性打在它们身上：右下角的主操作按钮（发送 / 停止），以及它旁边可能
+ * 在的那枚**独立停止圆**。
  *
- * dsh 那枚按钮既不带语义属性、class 名又带构建期 hash，所以只能由这里认出来、自己打一个。判据只有
- * 一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个 trailing 行的
- * 末尾），加号、模式、附件那些按钮都在它前面。
+ * 主按钮的判据只有一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个
+ * trailing 行的末尾），加号、模式、附件那些按钮都在它前面。它既不带语义属性、class 名又带构建期
+ * hash，所以只能由这里认出来、自己打一个。
  *
- * 它只在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
- * 不会因为这一处再被叫醒。反面是 dsh 哪天在它后面再加一个按钮——那时被打上的是新按钮，蓝跑到了别人
- * 身上，一眼看得出来，也好修。
+ * 独立那枚的判据是两个条件的**合**：紧邻主按钮的那一个 `button`，且 className 与主按钮逐字相同。
+ * dsh 只在一种状态下渲染它——**可继续的子智能体在跑**时（`InputBar.tsx` 的 `interruptible`），
+ * 主按钮那时仍是发送 / 排队，停止被单独摆成一枚放在它前面，两枚共用同一个 class。两条缺一不可：
+ * 只按位置会把 activity、模型选择那些按钮认进来，只按 class 会认到更远处碰巧同名的东西。
+ *
+ * 两处都在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
+ * 不会因为这一处再被叫醒。反面是 dsh 哪天把独立那枚挪到别处、或给两枚换上不同的 class——那时它退回
+ * dsh 原来的样子（与没有这一条时一样），不报错、也不牵连主按钮与玻璃。
  *
  * @param card - 输入卡片。
  */
 function markPrimary(card: HTMLElement): void {
     const buttons = card.querySelectorAll<HTMLButtonElement>('button')
-    const target = buttons.length === 0 ? null : buttons[buttons.length - 1]
+    const primary = buttons.item(buttons.length - 1)
+    const stop = independentStop(buttons, primary)
     for (const button of buttons) {
-        if (button === target) {
-            if (!button.hasAttribute(GLASS_PRIMARY_ATTRIBUTE)) button.setAttribute(GLASS_PRIMARY_ATTRIBUTE, '')
-        } else if (button.hasAttribute(GLASS_PRIMARY_ATTRIBUTE)) {
-            button.removeAttribute(GLASS_PRIMARY_ATTRIBUTE)
-        }
+        applyGlassMark(button, GLASS_PRIMARY_ATTRIBUTE, button === primary)
+        applyGlassMark(button, GLASS_STOP_ATTRIBUTE, button === stop)
     }
+}
+
+/**
+ * 主按钮旁边那枚独立的停止圆：紧邻它、且 className 与它逐字相同的那一个。
+ *
+ * @param buttons - 卡片里全部按钮，按文档序。
+ * @param primary - 主按钮（最后一个）；认不出来时为 null。
+ * @returns 要一并接管的那一枚；认不出来时为 null。
+ */
+function independentStop(
+    buttons: NodeListOf<HTMLButtonElement>,
+    primary: HTMLButtonElement | null,
+): HTMLButtonElement | null {
+    if (primary === null) return null
+    if (primary.className === '') return null
+    const before = buttons.item(buttons.length - 2)
+    if (before === null || before === primary) return null
+    return before.className === primary.className ? before : null
+}
+
+/**
+ * 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它（少一次属性写入）。
+ *
+ * @param button - 目标按钮。
+ * @param attribute - 属性名。
+ * @param on - 这一枚是不是当前要标记的那一枚。
+ */
+function applyGlassMark(button: HTMLButtonElement, attribute: string, on: boolean): void {
+    if (!on) {
+        if (button.hasAttribute(attribute)) button.removeAttribute(attribute)
+        return
+    }
+    if (!button.hasAttribute(attribute)) button.setAttribute(attribute, '')
 }
 
 /**

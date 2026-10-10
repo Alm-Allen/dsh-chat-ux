@@ -1695,9 +1695,13 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
  * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
  *
- * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
- * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
- * + 百分号」。
+ * 三处都用它：命中率那枚胶囊（座位里由 React 渲染）、上下文占用那串百分比（挂在 dsh 自己的文本
+ * 节点旁边，见 reel-host），以及文件变更行行尾那两个 `+n` / `-m`（座位里由 React 渲染，见
+ * ../file-mutation/file-mutation-row）。
+ *
+ * 读数的形状由调用方那一侧决定，这里只认「一个可选的不变前缀 + 几位数字 + 可选的一位小数 + 一个
+ * 可选的不变后缀」：命中率与占用是 `97.3%` / `26%`（后缀 `%`），行尾统计是 `+96` / `-3`
+ * （前缀正负号、没有后缀），整数位比三位的占用多也照认——行数会过千。
  *
  * 颜色不在这里：这一截**不写 color**，从调用方挂在它外面那一层继承——命中率那一处挂的是「缓存命中 +
  * 读数」那一组（名字与读数同色），占用那一处挂的是 dsh 那颗按钮；段标记与段内位置也归调用方写。
@@ -1706,21 +1710,21 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  */
 const react_1 = require("react");
 const reel_styles_1 = require("./reel-styles");
-/** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
-const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/;
+/** 读数中间那一段的形状：一至六位整数，可带一位小数。首尾那两个不变的标记由调用方给。 */
+const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/;
 /**
- * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
- * @param props - 读数、开关与读屏那一份。
+ * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
+ * @param props - 读数、首尾标记、开关与读屏那一份。
  * @returns 这一截。
  */
-function DigitReel({ text, rolling, spoken }) {
-    const reading = splitReading(text);
+function DigitReel({ text, prefix = '', suffix = '%', rolling, spoken }) {
+    const reading = splitReading(text, prefix, suffix);
     // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
     if (!rolling || reading === null) {
         return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, children: text });
     }
     const digits = reading.integer.split('');
-    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "%" })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, "aria-hidden": true, children: [prefix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: prefix }), digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), suffix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: suffix })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
 }
 /**
  * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
@@ -1737,12 +1741,18 @@ function Digit({ digit, place }) {
     return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_SLOT_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
 }
 /**
- * 把读数拆成整数部分与那一位小数。
- * @param text - `97.3%` 或 `26%` 这样的读数。
+ * 把读数拆成整数部分与那一位小数：先按调用方给的形状削掉首尾那两个不变的标记，再认中间那一段。
+ *
+ * 两个标记都是空串时（行尾统计没有后缀）就是「削掉零个字符」，所以「有没有标记」这一层不必单独判。
+ * @param text - `97.3%` 或 `+96` 这样的读数。
+ * @param prefix - 前缀标记；没有时是空串。
+ * @param suffix - 后缀标记；没有时是空串。
  * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
  */
-function splitReading(text) {
-    const matched = READING_PATTERN.exec(text);
+function splitReading(text, prefix, suffix) {
+    if (!text.startsWith(prefix) || !text.endsWith(suffix))
+        return null;
+    const matched = READING_PATTERN.exec(text.slice(prefix.length, text.length - suffix.length));
     if (matched === null)
         return null;
     const integer = matched[1];
@@ -1937,8 +1947,8 @@ exports.REEL_CSS = `
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installComposerGlass = installComposerGlass;
 /**
- * 输入框那块玻璃的几何，外加卡片里那两枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）与
- * 左下角那枚加号（添加文件 / 调指令）。
+ * 输入框那块玻璃的几何，外加卡片里几枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）、它旁边
+ * 可能在的那枚独立停止圆，与左下角那枚加号（添加文件 / 调指令）。
  *
  * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
  * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
@@ -2048,37 +2058,72 @@ function installComposerGlass() {
             seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
         }
         bound.clear();
-        for (const attribute of [composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, composer_glass_styles_1.GLASS_ADD_ATTRIBUTE]) {
+        for (const attribute of [composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, composer_glass_styles_1.GLASS_ADD_ATTRIBUTE]) {
             for (const marked of document.querySelectorAll(`[${attribute}]`))
                 marked.removeAttribute(attribute);
         }
     };
 }
 /**
- * 认一次卡片里那枚主操作按钮（发送，跑起来时是停止），把属性打在它身上。
+ * 认一次卡片里那两枚圆形按钮，把属性打在它们身上：右下角的主操作按钮（发送 / 停止），以及它旁边可能
+ * 在的那枚**独立停止圆**。
  *
- * dsh 那枚按钮既不带语义属性、class 名又带构建期 hash，所以只能由这里认出来、自己打一个。判据只有
- * 一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个 trailing 行的
- * 末尾），加号、模式、附件那些按钮都在它前面。
+ * 主按钮的判据只有一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个
+ * trailing 行的末尾），加号、模式、附件那些按钮都在它前面。它既不带语义属性、class 名又带构建期
+ * hash，所以只能由这里认出来、自己打一个。
  *
- * 它只在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
- * 不会因为这一处再被叫醒。反面是 dsh 哪天在它后面再加一个按钮——那时被打上的是新按钮，蓝跑到了别人
- * 身上，一眼看得出来，也好修。
+ * 独立那枚的判据是两个条件的**合**：紧邻主按钮的那一个 `button`，且 className 与主按钮逐字相同。
+ * dsh 只在一种状态下渲染它——**可继续的子智能体在跑**时（`InputBar.tsx` 的 `interruptible`），
+ * 主按钮那时仍是发送 / 排队，停止被单独摆成一枚放在它前面，两枚共用同一个 class。两条缺一不可：
+ * 只按位置会把 activity、模型选择那些按钮认进来，只按 class 会认到更远处碰巧同名的东西。
+ *
+ * 两处都在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
+ * 不会因为这一处再被叫醒。反面是 dsh 哪天把独立那枚挪到别处、或给两枚换上不同的 class——那时它退回
+ * dsh 原来的样子（与没有这一条时一样），不报错、也不牵连主按钮与玻璃。
  *
  * @param card - 输入卡片。
  */
 function markPrimary(card) {
     const buttons = card.querySelectorAll('button');
-    const target = buttons.length === 0 ? null : buttons[buttons.length - 1];
+    const primary = buttons.item(buttons.length - 1);
+    const stop = independentStop(buttons, primary);
     for (const button of buttons) {
-        if (button === target) {
-            if (!button.hasAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE))
-                button.setAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, '');
-        }
-        else if (button.hasAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE)) {
-            button.removeAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE);
-        }
+        applyGlassMark(button, composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, button === primary);
+        applyGlassMark(button, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, button === stop);
     }
+}
+/**
+ * 主按钮旁边那枚独立的停止圆：紧邻它、且 className 与它逐字相同的那一个。
+ *
+ * @param buttons - 卡片里全部按钮，按文档序。
+ * @param primary - 主按钮（最后一个）；认不出来时为 null。
+ * @returns 要一并接管的那一枚；认不出来时为 null。
+ */
+function independentStop(buttons, primary) {
+    if (primary === null)
+        return null;
+    if (primary.className === '')
+        return null;
+    const before = buttons.item(buttons.length - 2);
+    if (before === null || before === primary)
+        return null;
+    return before.className === primary.className ? before : null;
+}
+/**
+ * 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它（少一次属性写入）。
+ *
+ * @param button - 目标按钮。
+ * @param attribute - 属性名。
+ * @param on - 这一枚是不是当前要标记的那一枚。
+ */
+function applyGlassMark(button, attribute, on) {
+    if (!on) {
+        if (button.hasAttribute(attribute))
+            button.removeAttribute(attribute);
+        return;
+    }
+    if (!button.hasAttribute(attribute))
+        button.setAttribute(attribute, '');
 }
 /**
  * 认一次卡片里那枚加号，把属性打在它身上。
@@ -2194,7 +2239,7 @@ function touchesGlass(node) {
  * @module dsh-chat-ux/client/chat/composer-glass/composer-glass-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.COMPOSER_GLASS_CSS = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
+exports.COMPOSER_GLASS_CSS = exports.GLASS_STOP_ATTRIBUTE = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
 /**
  * 玻璃生效的属性。它由 `index.tsx` 按开关写上或摘掉；表里每一组规则都拿它当前缀，所以
  * 「用不用这块玻璃」不必重新生成样式表。
@@ -2211,6 +2256,11 @@ exports.GLASS_BOTTOM_VARIABLE = '--dsh-chat-ux-glass-bottom';
 exports.GLASS_PRIMARY_ATTRIBUTE = 'data-chat-ux-glass-primary';
 /** 左下角那枚加号（添加文件 / 调指令）身上的属性，同样由 `composer-glass.ts` 打。 */
 exports.GLASS_ADD_ATTRIBUTE = 'data-chat-ux-glass-add';
+/**
+ * 挂在主按钮旁边那枚**独立停止圆**上：可继续的子智能体在跑时 dsh 会另给一枚（那时主按钮仍是发送 /
+ * 排队），它与主按钮同一个 class、紧排在它前面。两枚共用同一套材质，所以它也吃下面那份样式。
+ */
+exports.GLASS_STOP_ATTRIBUTE = 'data-chat-ux-glass-stop';
 /** 输入框毛玻璃的全部 CSS。 */
 exports.COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
 body[${exports.GLASS_ATTRIBUTE}] {
@@ -2369,10 +2419,10 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
      34px 的小圆重调一遍——卡片那三笔是给 700×80 的大面写的，照搬上去会糊成一团。
      这里**不加 backdrop-filter**：按钮背后就是卡片那块已经模糊过的玻璃，再糊一次看不出来，白多一层
      重采样；按钮本身也没有任何后代，加不加都不牵连别人。 */
-  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}] {
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]) {
     background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #4176e6) 84%, transparent) !important;
     box-shadow:
       inset 0 1px 0 0 rgb(255 255 255 / 0.55),
@@ -2383,18 +2433,18 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   /* dsh 那条 hover 规则（.primary:hover:not(:disabled)）没有 !important，会被上面基础规则里的
      !important 一起压掉，所以 hover 得自己写一条。浓淡照 dsh 的 hover 令牌，也让出一成多——比静止
      那档更实一点，指上去才看得出是「亮了一点」而不是「换了个色」。 */
-  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled) {
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled) {
     background: color-mix(in srgb, var(--dsw-alias-button-info-hover, #7aaaff) 92%, transparent) !important;
   }
 
   /* 深色下那三笔：亮边与微光收得更紧（深色里一点点白就很跳），底部内阴影加重。 */
-  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}],
-  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_PRIMARY_ATTRIBUTE}] {
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]) {
     box-shadow:
       inset 0 1px 0 0 rgb(255 255 255 / 0.28),
       inset 0 0 0 1px rgb(255 255 255 / 0.1),
@@ -3124,6 +3174,11 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
  * 所以这一行与内置同序：只看路径与字段类型。
  *
+ * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
+ * 上下文占用同款。外部仍套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点
+ * 另渲染一棵惰性副本（平台契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，
+ * 代价只是动画期间那一位的透明度叠了一层。
+ *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
@@ -3133,6 +3188,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const digit_reel_1 = require("../reel/digit-reel");
 const file_mutation_styles_1 = require("./file-mutation-styles");
 /** 聊天行里 diff 卡片折叠中段前展示的行数；与内置的 `CHAT_DIFF_MAX_LINES` 取同一个值。 */
 const CHAT_DIFF_MAX_LINES = 9;
@@ -3208,7 +3264,7 @@ function FileMutationRow(props) {
         if (event.key === 'Enter' || event.key === ' ')
             event.stopPropagation();
     }, []);
-    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: '+' + totals.added }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: '-' + totals.removed })] }))] }))] }));
+    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, spoken: true }) })] }))] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -3226,8 +3282,10 @@ function diffHunks(block, args) {
         // 关掉时这一支与接管之前逐字一样：准备态不画，派发后只看参数 JSON。
         if (!liveDiffEnabled())
             return block.phase === 'preparing' ? null : intendedHunks(block.name, args);
+        // 开着时准备态不产出 hunks：那两个数由 streamedTotals 直接读参数视图给出（见 rowTotals），
+        // 而这一份半截内容摊成 diff 只会被读成改完了（准备态本来也不给展开）。
         if (block.phase === 'preparing')
-            return streamedHunks(block.name, block.args);
+            return null;
         return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args);
     }
     if (block.isError)
@@ -3460,14 +3518,26 @@ function contentKilobytes(view) {
     const completed = CONTENT_FIELDS.reduce((total, key) => key !== open && view.complete(key)
         ? total + (view.stringLength(key, { step: KILOBYTE }) ?? 0)
         : total, 0);
-    if (open === undefined) {
-        return CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null;
-    }
-    const chars = completed + (view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0);
-    return Math.ceil(chars / KILOBYTE);
+    const remembered = countedKilobytes.get(view);
+    const next = open === undefined
+        ? CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
+        : Math.ceil((completed + (view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0)) / KILOBYTE);
+    if (next === null)
+        return remembered ?? null;
+    // 解码一时读不出来时 `stringLength` 给 undefined，上面按 0 计——那会让这个数掉回来。参数只追加，
+    // 它本该只往上长，所以拿上一次的数兜底、取两者的较大值。
+    const value = remembered === undefined ? next : Math.max(remembered, next);
+    countedKilobytes.set(view, value);
+    return value;
 }
-/** 每个参数视图一份数行记忆：视图是原地追加的，所以只数新来的那一截。这一行只数 write 的 content。 */
+/**
+ * 每份参数视图、每个字段一份数行记忆：视图是原地追加的，所以只数新来的那一截。
+ *
+ * 键必须带上字段名——edit 那一对字段（`old_string` / `new_string`）各数各的，共用一个键会互相算错。
+ */
 const countedLines = new WeakMap();
+/** 每份参数视图一份 KB 记忆：用来兜住解码一时读不出来的那些帧，不让这个数回落。 */
+const countedKilobytes = new WeakMap();
 /**
  * 内容字段已收到的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。
  *
@@ -3478,34 +3548,72 @@ const countedLines = new WeakMap();
  * @returns 行数。
  */
 function streamedLineCount(view, key) {
-    const text = view?.text(key) ?? '';
+    let memory;
+    let remembered;
+    if (view !== undefined) {
+        memory = countedLines.get(view);
+        if (memory === undefined) {
+            memory = new Map();
+            countedLines.set(view, memory);
+        }
+        remembered = memory.get(key);
+    }
+    const text = view?.text(key);
+    // 转义序列还在路上时这一字段解码不出来（`text` 给 undefined）。那不能读成「这一段是空的」——
+    // 参数只追加，这个数本该只往上长，归零就是一次假的回落，所以保留上一次数过的结果。
+    if (text === undefined)
+        return remembered?.lines ?? 0;
     const body = text.endsWith('\n') ? text.slice(0, -1) : text;
     if (body === '')
         return 0;
-    const remembered = view === undefined ? undefined : countedLines.get(view);
     let lines = remembered?.lines ?? 1;
     for (let at = remembered?.length ?? 0; at < body.length; at++)
         if (body[at] === '\n')
             lines++;
-    if (view !== undefined)
-        countedLines.set(view, { length: body.length, lines });
+    memory?.set(key, { length: body.length, lines });
     return lines;
 }
 /**
  * 行尾那两个数。
  *
- * 准备态的 write 不走 `diffTotals`：它那一侧没有旧文本，diff 的结果恒等于「内容行数 / 0」，而在
- * 每一批上跑一次 `structuredPatch` 只是白付一次整段文本的分配与匹配。其余情形与内置同序。
+ * 准备态（开关开着时）走 `streamedTotals`，只看参数视图。其余情形与内置同序：结算后优先用结果
+ * 元数据里真实应用的 hunks，拿不到就用参数派生的那一份。
  * @param block - 运行中或已结算的调用块。
  * @param hunks - 已派生的改动。
  * @returns 增删两个数，或 null（这一行没有可画的改动）。
  */
 function rowTotals(block, hunks) {
+    if (!('kind' in block) && block.phase === 'preparing' && liveDiffEnabled()) {
+        return streamedTotals(block.name, block.args);
+    }
     if (hunks === null)
         return null;
-    if ('kind' in block || block.phase !== 'preparing' || block.name !== 'write')
-        return (0, dsh_client_ui_primitives_1.diffTotals)(hunks);
-    return { added: streamedLineCount(block.args, 'content'), removed: 0 };
+    return (0, dsh_client_ui_primitives_1.diffTotals)(hunks);
+}
+/**
+ * 准备态那两个数：只看参数视图，不跑行级 diff。
+ *
+ * write 是「已收到的内容行数 / 0」；edit 是「已收到的新文本行数 / 已收到的旧文本行数」——两段各自数
+ * 原始行数，所以两个数都只往上长，不会因为另一半补齐而回头。派发或结算之后换成真实应用的 hunks，
+ * 于是落定那一下会按真实 diff 修正一次。
+ *
+ * 行级 diff 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），而这一处要的是一个
+ * 只会往上跳的数——与数字轮那边的口径一致。
+ * @param name - 线上工具名。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 增删两个数，或 null（参数还没到那一步）。
+ */
+function streamedTotals(name, view) {
+    if (view === undefined)
+        return null;
+    if (name === 'write') {
+        return view.has('content') ? { added: streamedLineCount(view, 'content'), removed: 0 } : null;
+    }
+    if (name !== 'edit')
+        return null;
+    if (!view.has('old_string') || !view.has('new_string'))
+        return null;
+    return { added: streamedLineCount(view, 'new_string'), removed: streamedLineCount(view, 'old_string') };
 }
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
@@ -3585,6 +3693,8 @@ function diffBlockLabels(t) {
 
     __registry["chat/file-mutation/file-mutation-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
 /**
  * 文件变更行自己的样式表。
  *
@@ -3595,8 +3705,7 @@ function diffBlockLabels(t) {
  *
  * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
+const reel_styles_1 = require("../reel/reel-styles");
 /** 行根节点。 */
 exports.FILE_ROW_CLASS = 'dsh-chat-ux-file-root';
 /** DisclosureRow 的 row 元素：悬停提亮的挂点。 */
@@ -3712,6 +3821,19 @@ body {
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
   transform: translateY(0.5px);
+}
+
+/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
+
+   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
+   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
+      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
+      表达式。
+
+   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
+.${exports.FILE_SUFFIX_CLASS} .${exports.FILE_STAT_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 
 .${exports.FILE_ADD_CLASS} {
@@ -6706,6 +6828,7 @@ const ZH_COPY = {
         + '右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
     liveDiffLabel: '实时改动行数',
     liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
+        + '数字一变，变了的那一位会像读数那样在原地弹到新值。'
         + '这一段还在收，标着 beta，默认关着。',
     overridden: '已覆盖',
     reset: '重置',
@@ -6747,8 +6870,8 @@ const EN_COPY = {
         + 'same material. Turning it off restores dsh\'s own composer and button.',
     liveDiffLabel: 'Live change counts',
     liveDiffHint: 'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
-        + 'is still streaming, instead of appearing only once it finishes. This stretch is still settling, so it is '
-        + 'marked beta and off by default.',
+        + 'is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value '
+        + 'the way the readouts do. This stretch is still settling, so it is marked beta and off by default.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',

@@ -28,6 +28,11 @@
  * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
  * 所以这一行与内置同序：只看路径与字段类型。
  *
+ * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
+ * 上下文占用同款。外部仍套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点
+ * 另渲染一棵惰性副本（平台契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，
+ * 代价只是动画期间那一位的透明度叠了一层。
+ *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
  * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
@@ -41,6 +46,7 @@ import {
     DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer, diffTotals,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {DiffBlockLabels, DiffHunk} from '@deepseek-ai/dsh-client-ui-primitives'
+import {DigitReel} from '../reel/digit-reel'
 import {
     FILE_ADD_CLASS, FILE_BODY_CLASS, FILE_CHEVRON_CLASS, FILE_DEL_CLASS, FILE_DIFF_CLASS, FILE_ERROR_CLASS,
     FILE_HIDDEN_CLASS, FILE_INSPECT_CLASS, FILE_IO_CLASS, FILE_IO_DIVIDER_CLASS, FILE_IO_LABEL_CLASS,
@@ -181,10 +187,22 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                     {totals !== null && (
                         <>
                             <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_ADD_CLASS} active={running}>
-                                {'+' + totals.added}
+                                <DigitReel
+                                    text={'+' + totals.added}
+                                    prefix="+"
+                                    suffix=""
+                                    rolling
+                                    spoken
+                                />
                             </TextShimmer>
                             <TextShimmer className={FILE_STAT_CLASS + ' ' + FILE_DEL_CLASS} active={running}>
-                                {'-' + totals.removed}
+                                <DigitReel
+                                    text={'-' + totals.removed}
+                                    prefix="-"
+                                    suffix=""
+                                    rolling
+                                    spoken
+                                />
                             </TextShimmer>
                         </>
                     )}
@@ -357,7 +375,9 @@ function diffHunks(block: ToolCallBlock, args: Record<string, unknown> | null): 
     if (!('kind' in block)) {
         // 关掉时这一支与接管之前逐字一样：准备态不画，派发后只看参数 JSON。
         if (!liveDiffEnabled()) return block.phase === 'preparing' ? null : intendedHunks(block.name, args)
-        if (block.phase === 'preparing') return streamedHunks(block.name, block.args)
+        // 开着时准备态不产出 hunks：那两个数由 streamedTotals 直接读参数视图给出（见 rowTotals），
+        // 而这一份半截内容摊成 diff 只会被读成改完了（准备态本来也不给展开）。
+        if (block.phase === 'preparing') return null
         return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args)
     }
     if (block.isError) return null
@@ -577,15 +597,27 @@ function contentKilobytes(view: ToolArgs | undefined): number | null {
     const completed = CONTENT_FIELDS.reduce((total, key) => key !== open && view.complete(key)
         ? total + (view.stringLength(key, {step: KILOBYTE}) ?? 0)
         : total, 0)
-    if (open === undefined) {
-        return CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
-    }
-    const chars = completed + (view.stringLength(open, {step: KILOBYTE, offset: completed}) ?? 0)
-    return Math.ceil(chars / KILOBYTE)
+    const remembered = countedKilobytes.get(view)
+    const next = open === undefined
+        ? CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
+        : Math.ceil((completed + (view.stringLength(open, {step: KILOBYTE, offset: completed}) ?? 0)) / KILOBYTE)
+    if (next === null) return remembered ?? null
+    // 解码一时读不出来时 `stringLength` 给 undefined，上面按 0 计——那会让这个数掉回来。参数只追加，
+    // 它本该只往上长，所以拿上一次的数兜底、取两者的较大值。
+    const value = remembered === undefined ? next : Math.max(remembered, next)
+    countedKilobytes.set(view, value)
+    return value
 }
 
-/** 每个参数视图一份数行记忆：视图是原地追加的，所以只数新来的那一截。这一行只数 write 的 content。 */
-const countedLines = new WeakMap<object, {length: number, lines: number}>()
+/**
+ * 每份参数视图、每个字段一份数行记忆：视图是原地追加的，所以只数新来的那一截。
+ *
+ * 键必须带上字段名——edit 那一对字段（`old_string` / `new_string`）各数各的，共用一个键会互相算错。
+ */
+const countedLines = new WeakMap<object, Map<string, {length: number, lines: number}>>()
+
+/** 每份参数视图一份 KB 记忆：用来兜住解码一时读不出来的那些帧，不让这个数回落。 */
+const countedKilobytes = new WeakMap<object, number>()
 
 /**
  * 内容字段已收到的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。
@@ -597,29 +629,66 @@ const countedLines = new WeakMap<object, {length: number, lines: number}>()
  * @returns 行数。
  */
 function streamedLineCount(view: ToolArgs | undefined, key: string): number {
-    const text = view?.text(key) ?? ''
+    let memory: Map<string, {length: number, lines: number}> | undefined
+    let remembered: {length: number, lines: number} | undefined
+    if (view !== undefined) {
+        memory = countedLines.get(view)
+        if (memory === undefined) {
+            memory = new Map()
+            countedLines.set(view, memory)
+        }
+        remembered = memory.get(key)
+    }
+    const text = view?.text(key)
+    // 转义序列还在路上时这一字段解码不出来（`text` 给 undefined）。那不能读成「这一段是空的」——
+    // 参数只追加，这个数本该只往上长，归零就是一次假的回落，所以保留上一次数过的结果。
+    if (text === undefined) return remembered?.lines ?? 0
     const body = text.endsWith('\n') ? text.slice(0, -1) : text
     if (body === '') return 0
-    const remembered = view === undefined ? undefined : countedLines.get(view)
     let lines = remembered?.lines ?? 1
     for (let at = remembered?.length ?? 0; at < body.length; at++) if (body[at] === '\n') lines++
-    if (view !== undefined) countedLines.set(view, {length: body.length, lines})
+    memory?.set(key, {length: body.length, lines})
     return lines
 }
 
 /**
  * 行尾那两个数。
  *
- * 准备态的 write 不走 `diffTotals`：它那一侧没有旧文本，diff 的结果恒等于「内容行数 / 0」，而在
- * 每一批上跑一次 `structuredPatch` 只是白付一次整段文本的分配与匹配。其余情形与内置同序。
+ * 准备态（开关开着时）走 `streamedTotals`，只看参数视图。其余情形与内置同序：结算后优先用结果
+ * 元数据里真实应用的 hunks，拿不到就用参数派生的那一份。
  * @param block - 运行中或已结算的调用块。
  * @param hunks - 已派生的改动。
  * @returns 增删两个数，或 null（这一行没有可画的改动）。
  */
 function rowTotals(block: ToolCallBlock, hunks: DiffHunk[] | null): {added: number, removed: number} | null {
+    if (!('kind' in block) && block.phase === 'preparing' && liveDiffEnabled()) {
+        return streamedTotals(block.name, block.args)
+    }
     if (hunks === null) return null
-    if ('kind' in block || block.phase !== 'preparing' || block.name !== 'write') return diffTotals(hunks)
-    return {added: streamedLineCount(block.args, 'content'), removed: 0}
+    return diffTotals(hunks)
+}
+
+/**
+ * 准备态那两个数：只看参数视图，不跑行级 diff。
+ *
+ * write 是「已收到的内容行数 / 0」；edit 是「已收到的新文本行数 / 已收到的旧文本行数」——两段各自数
+ * 原始行数，所以两个数都只往上长，不会因为另一半补齐而回头。派发或结算之后换成真实应用的 hunks，
+ * 于是落定那一下会按真实 diff 修正一次。
+ *
+ * 行级 diff 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），而这一处要的是一个
+ * 只会往上跳的数——与数字轮那边的口径一致。
+ * @param name - 线上工具名。
+ * @param view - 参数视图；旧版 dsh 没有它。
+ * @returns 增删两个数，或 null（参数还没到那一步）。
+ */
+function streamedTotals(name: string, view: ToolArgs | undefined): {added: number, removed: number} | null {
+    if (view === undefined) return null
+    if (name === 'write') {
+        return view.has('content') ? {added: streamedLineCount(view, 'content'), removed: 0} : null
+    }
+    if (name !== 'edit') return null
+    if (!view.has('old_string') || !view.has('new_string')) return null
+    return {added: streamedLineCount(view, 'new_string'), removed: streamedLineCount(view, 'old_string')}
 }
 
 /**

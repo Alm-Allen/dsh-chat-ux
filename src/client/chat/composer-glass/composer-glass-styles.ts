@@ -100,6 +100,12 @@ export const GLASS_PRIMARY_ATTRIBUTE = 'data-chat-ux-glass-primary'
 /** 左下角那枚加号（添加文件 / 调指令）身上的属性，同样由 `composer-glass.ts` 打。 */
 export const GLASS_ADD_ATTRIBUTE = 'data-chat-ux-glass-add'
 
+/**
+ * 挂在主按钮旁边那枚**独立停止圆**上：可继续的子智能体在跑时 dsh 会另给一枚（那时主按钮仍是发送 /
+ * 排队），它与主按钮同一个 class、紧排在它前面。两枚共用同一套材质，所以它也吃下面那份样式。
+ */
+export const GLASS_STOP_ATTRIBUTE = 'data-chat-ux-glass-stop'
+
 /** 输入框毛玻璃的全部 CSS。 */
 export const COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
 body[${GLASS_ATTRIBUTE}] {
@@ -258,10 +264,10 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
      34px 的小圆重调一遍——卡片那三笔是给 700×80 的大面写的，照搬上去会糊成一团。
      这里**不加 backdrop-filter**：按钮背后就是卡片那块已经模糊过的玻璃，再糊一次看不出来，白多一层
      重采样；按钮本身也没有任何后代，加不加都不牵连别人。 */
-  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}] {
+  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]) {
     background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #4176e6) 84%, transparent) !important;
     box-shadow:
       inset 0 1px 0 0 rgb(255 255 255 / 0.55),
@@ -272,18 +278,18 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   /* dsh 那条 hover 规则（.primary:hover:not(:disabled)）没有 !important，会被上面基础规则里的
      !important 一起压掉，所以 hover 得自己写一条。浓淡照 dsh 的 hover 令牌，也让出一成多——比静止
      那档更实一点，指上去才看得出是「亮了一点」而不是「换了个色」。 */
-  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled),
-  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}]:hover:not(:disabled) {
+  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled) {
     background: color-mix(in srgb, var(--dsw-alias-button-info-hover, #7aaaff) 92%, transparent) !important;
   }
 
   /* 深色下那三笔：亮边与微光收得更紧（深色里一点点白就很跳），底部内阴影加重。 */
-  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}],
-  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] [${GLASS_PRIMARY_ATTRIBUTE}] {
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]),
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]) {
     box-shadow:
       inset 0 1px 0 0 rgb(255 255 255 / 0.28),
       inset 0 0 0 1px rgb(255 255 255 / 0.1),

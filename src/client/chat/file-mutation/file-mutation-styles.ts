@@ -8,6 +8,7 @@
  *
  * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
  */
+import {REEL_TEXT_CLASS} from '../reel/reel-styles'
 
 /** 行根节点。 */
 export const FILE_ROW_CLASS = 'dsh-chat-ux-file-root'
@@ -125,6 +126,19 @@ body {
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
   transform: translateY(0.5px);
+}
+
+/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
+
+   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
+   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
+      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
+      表达式。
+
+   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
+.${FILE_SUFFIX_CLASS} .${FILE_STAT_CLASS} .${REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 
 .${FILE_ADD_CLASS} {

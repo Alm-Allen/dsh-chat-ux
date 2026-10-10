@@ -21,9 +21,13 @@
  * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
  * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
  *
- * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
- * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
- * + 百分号」。
+ * 三处都用它：命中率那枚胶囊（座位里由 React 渲染）、上下文占用那串百分比（挂在 dsh 自己的文本
+ * 节点旁边，见 reel-host），以及文件变更行行尾那两个 `+n` / `-m`（座位里由 React 渲染，见
+ * ../file-mutation/file-mutation-row）。
+ *
+ * 读数的形状由调用方那一侧决定，这里只认「一个可选的不变前缀 + 几位数字 + 可选的一位小数 + 一个
+ * 可选的不变后缀」：命中率与占用是 `97.3%` / `26%`（后缀 `%`），行尾统计是 `+96` / `-3`
+ * （前缀正负号、没有后缀），整数位比三位的占用多也照认——行数会过千。
  *
  * 颜色不在这里：这一截**不写 color**，从调用方挂在它外面那一层继承——命中率那一处挂的是「缓存命中 +
  * 读数」那一组（名字与读数同色），占用那一处挂的是 dsh 那颗按钮；段标记与段内位置也归调用方写。
@@ -37,13 +41,17 @@ import {
     REEL_TEXT_CLASS, REEL_WAS_CLASS,
 } from './reel-styles'
 
-/** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
-const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/
+/** 读数中间那一段的形状：一至六位整数，可带一位小数。首尾那两个不变的标记由调用方给。 */
+const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/
 
-/** 这一枚收到的：读数、翻动开着没有，以及要不要给读屏另留一份。 */
+/** 这一枚收到的：读数、它首尾那两个不变的标记、翻动开着没有，以及要不要给读屏另留一份。 */
 export interface DigitReelProps {
-    /** `97.3%` 或 `26%` 这样的读数。 */
+    /** `97.3%` 或 `+96` 这样的读数。 */
     text: string
+    /** 读数前面那个不变的标记（行尾统计是 `+` / `-`）；不给时没有前缀。 */
+    prefix?: string
+    /** 读数后面那个不变的标记；不给时是命中率与占用那个 `%`。 */
+    suffix?: string
     /** 翻动开着没有；关着时这一截就是一段静态读数。 */
     rolling: boolean
     /** 视觉块是否标 `aria-hidden` 并另给一份视觉隐藏的纯文本——页面上没有别的可读文本时才要。 */
@@ -51,12 +59,12 @@ export interface DigitReelProps {
 }
 
 /**
- * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
- * @param props - 读数、开关与读屏那一份。
+ * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
+ * @param props - 读数、首尾标记、开关与读屏那一份。
  * @returns 这一截。
  */
-export function DigitReel({text, rolling, spoken}: DigitReelProps): ReactElement {
-    const reading = splitReading(text)
+export function DigitReel({text, prefix = '', suffix = '%', rolling, spoken}: DigitReelProps): ReactElement {
+    const reading = splitReading(text, prefix, suffix)
     // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
     if (!rolling || reading === null) {
         return <span className={REEL_TEXT_CLASS}>{text}</span>
@@ -65,6 +73,8 @@ export function DigitReel({text, rolling, spoken}: DigitReelProps): ReactElement
     return (
         <>
             <span className={REEL_TEXT_CLASS} aria-hidden>
+                {/* 首尾两个标记不弹，与数字位并排；它们跟着调用方给的形状走。 */}
+                {prefix !== '' && <span className={REEL_STATIC_CLASS}>{prefix}</span>}
                 {digits.map((digit, index) => (
                     <Digit key={digits.length - 1 - index} digit={Number(digit)} place={index}/>
                 ))}
@@ -74,7 +84,7 @@ export function DigitReel({text, rolling, spoken}: DigitReelProps): ReactElement
                         <Digit digit={Number(reading.decimal)} place={digits.length}/>
                     </>
                 )}
-                <span className={REEL_STATIC_CLASS}>%</span>
+                {suffix !== '' && <span className={REEL_STATIC_CLASS}>{suffix}</span>}
             </span>
             {spoken && <span className={REEL_SPOKEN_CLASS}>{text}</span>}
         </>
@@ -124,19 +134,24 @@ function Digit({digit, place}: DigitProps): ReactElement {
 
 /** 读数拆出来的两截数字。 */
 interface ReadingParts {
-    /** 整数部分，一位到三位。 */
+    /** 整数部分，一位到六位。 */
     integer: string
-    /** 那一位小数；读数不带小数位时是 null（上下文占用就是整数）。 */
+    /** 那一位小数；读数不带小数位时是 null（上下文占用与行数统计都是整数）。 */
     decimal: string | null
 }
 
 /**
- * 把读数拆成整数部分与那一位小数。
- * @param text - `97.3%` 或 `26%` 这样的读数。
+ * 把读数拆成整数部分与那一位小数：先按调用方给的形状削掉首尾那两个不变的标记，再认中间那一段。
+ *
+ * 两个标记都是空串时（行尾统计没有后缀）就是「削掉零个字符」，所以「有没有标记」这一层不必单独判。
+ * @param text - `97.3%` 或 `+96` 这样的读数。
+ * @param prefix - 前缀标记；没有时是空串。
+ * @param suffix - 后缀标记；没有时是空串。
  * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
  */
-function splitReading(text: string): ReadingParts | null {
-    const matched = READING_PATTERN.exec(text)
+function splitReading(text: string, prefix: string, suffix: string): ReadingParts | null {
+    if (!text.startsWith(prefix) || !text.endsWith(suffix)) return null
+    const matched = READING_PATTERN.exec(text.slice(prefix.length, text.length - suffix.length))
     if (matched === null) return null
     const integer = matched[1]
     if (integer === undefined) return null

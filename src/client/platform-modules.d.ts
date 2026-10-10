@@ -97,9 +97,14 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
     export function DisclosureRow(props: DisclosureRowProps): ReactElement
 
-    /** 一段随活动状态扫光的文字。 */
+    /**
+     * 一段随活动状态扫光的文字。
+     *
+     * 子节点按平台的契约是任意节点，不是只有字符串：活动期间它会被另渲染一棵惰性副本，所以放进去的
+     * 东西必须**纯展示**——没有副作用、没有元素 id。文件变更行行尾那两个数就是这样放进去的。
+     */
     export interface TextShimmerProps {
-        children: string
+        children: ReactNode
         active: boolean
         className?: string | undefined
     }
