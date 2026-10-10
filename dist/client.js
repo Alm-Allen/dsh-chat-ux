@@ -970,8 +970,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
  * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
  * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
- * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
- * 小数口径。
+ * 段内位置多少」，再把这两个值写到「缓存命中 + 读数」那一组上——所以那个名字与读数同色；详细档里
+ * 的 token 总量与中间那个分隔点在那一组之外，留在胶囊自己的文字色上。简洁档只留这一组，详细档另加
+ * 总量与点开的明细，明细里的命中率走同一个小数口径。
  *
  * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
  * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
@@ -1099,16 +1100,19 @@ function CacheHitPill({ useProjection, t }) {
     const hit = hitReading(usage.cacheReadTokens, billedInput);
     const icon = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconDatabaseOutlineRegular, {});
     const hitLabel = t('message.turnUsage.cacheHit');
+    // 「缓存命中」这几个字与它后面那串读数是一组，色阶就挂在这一组上（见样式表），名字与读数因此同色。
+    // 数字轮那一截自己不带颜色，从这一组继承。
+    const reading = hit === null ? null : ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_READING_CLASS, [ramp_1.RAMP_SPAN_ATTRIBUTE]: hit.tone.span, style: { [ramp_1.RAMP_POSITION_VAR]: hit.tone.mix }, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, rolling: rolling, spoken: true })] }));
     if (mode === 'compact') {
-        if (hit === null)
+        if (reading === null)
             return null;
-        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, tone: hit.tone, rolling: rolling, spoken: true })] })] }) }));
+        return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: reading })] }) }));
     }
     const total = billedInput + usage.outputTokens;
     const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) });
     const title = t('stats.dialog.usageTitle');
     const summary = hit === null ? totalText : totalText + ' · ' + hitLabel + ' ' + hit.text;
-    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, tone: hit.tone, rolling: rolling, spoken: true })] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, reading !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), reading] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
 }
 /**
  * 命中率读数，恒一位小数。
@@ -1326,14 +1330,15 @@ exports.DEFAULT_LIVE_DIFF = false;
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
 /**
  * 缓存命中胶囊自己的样式表。
  *
  * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
  * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
- * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一截
- * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的。
+ * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一处
+ * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的；色阶涂在「缓存命中 +
+ * 读数」那一组上，所以那个名字与读数同色。
  *
  * 数字轮的类名与规则**不在这里**：那是两处共用的（上下文占用那串百分比也在用），在
  * `../reel/reel-styles`；色阶的段标记与位置也不在这里，在 `../ramp`。
@@ -1341,13 +1346,19 @@ exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE
  * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
  */
 const ramp_1 = require("../ramp");
-const reel_styles_1 = require("../reel/reel-styles");
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
 exports.CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor';
 /** 胶囊本体。静态读数是 `span`，能展开明细的是 `button`。 */
 exports.CACHE_HIT_PILL_CLASS = 'dsh-chat-ux-hit-pill';
 /** 胶囊里的文本容器。 */
 exports.CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label';
+/**
+ * 「缓存命中」这几个字与紧随其后的那串读数：命中率色阶就挂在这一组上，所以那个名字与读数同色。
+ *
+ * 详细档里 token 总量与中间那个分隔点**不在**这一组里，它们留在胶囊自己的文字色上；数字轮那一截
+ * 自己不带颜色，从这一组继承。
+ */
+exports.CACHE_HIT_READING_CLASS = 'dsh-chat-ux-hit-reading';
 /** token 总量与命中率之间的那个点。 */
 exports.CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep';
 /** 弹窗面板。 */
@@ -1425,58 +1436,59 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   margin: 0 6px;
 }
 
-/* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，色阶一路看得见。
+/* 色阶挂在「缓存命中 + 读数」这一组上：那几个字与读数同色。同一行里的 token 总量与那个分隔点不在
+   这一组里，仍留在胶囊自己的三级文字色上；这一组自带颜色，所以胶囊 hover 时它不跟着变，色阶一路
+   看得见。
 
-   颜色分两步走：下面这几条段规则把这一段的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
-   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），浏览器半区只写一个段内
-   位置。这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——这一侧没有任何 JS 去
-   getComputedStyle。 */
+   颜色分两步走：下面这几条段规则把这一组的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
+   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），这一侧只写一个段内位置。
+   这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——没有任何 JS 去 getComputedStyle。 */
 
 /* 低于 90%：两端都是红，所以插值恒等于红，不另开一档颜色。 */
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
 }
 
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='0'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='0'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-orange);
 }
 
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='1'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='1'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-orange);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-yellow);
 }
 
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='2'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='2'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-yellow);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-lime);
 }
 
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='3'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='3'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-lime);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green-light);
 }
 
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='4'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='4'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green-light);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green);
 }
 
 /* 99.0 及以后：不必等到 100.0，两端都是深绿。 */
-.${reel_styles_1.REEL_TEXT_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
+.${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green);
 }
 
 /* 撑不起 color-mix 的浏览器停在段起点色上：退成六档取色，读数、布局与翻动一个都不受影响。
    段标记也没写上时退回胶囊自己的文字色，而不是变成看不出的一团。 */
-.${reel_styles_1.REEL_TEXT_CLASS} {
+.${exports.CACHE_HIT_READING_CLASS} {
   color: var(--dsh-chat-ux-hit-from, currentColor);
 }
 
 /* 括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入「未知的
    函数形式」而恒为假，整块规则静默跳过——与 styles.ts 里那道流光同一个坑。 */
 @supports (color: color-mix(in oklch, red, blue 50%)) {
-  .${reel_styles_1.REEL_TEXT_CLASS} {
+  .${exports.CACHE_HIT_READING_CLASS} {
     color: color-mix(
       in oklch,
       var(--dsh-chat-ux-hit-from),
@@ -1636,6 +1648,91 @@ function rampPosition(value, stops) {
     const to = stops[segment + 1] ?? top;
     // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM。
     return { span: String(segment), mix: (Math.round((value - from) / (to - from) * 1000) / 10) + '%' };
+}
+    };
+
+    __registry["chat/reel/digit-reel.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DigitReel = DigitReel;
+const jsx_runtime_1 = require("react/jsx-runtime");
+/**
+ * 数字轮：变了的那一位原地弹一下。
+ *
+ * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入，上一个数字朝反方向淡出（500 ms，低位比
+ * 高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前会先越过去一点再弹回来；**终态是
+ * 零位移**：动画走完，数字就在它本来的位置上（进场那一帧的模糊试过又退掉了，见 reel-styles.ts）。
+ *
+ * 这一处不可能「停歪」：位移是固定的 6px，不参与排版，也不问元素任何尺寸。
+ *
+ * 2026-10 的前两版都栽在「算一格」上：
+ *
+ * - 第一版按 CSS 变量算整格滚动，位移与每格真实高度每格差 0.84px，误差按格数累积——滚到第 9 格
+ *   累计 7.55px，已经超过半格（6.90px），窗口里于是同时露着上下两个数字的各一半；
+ * - 第二版整条带滚动加记账，位移换成了百分比，但仍然依赖「条带的高度正好是三十格」。
+ *
+ * 第三版去掉条带，只留一格窗口与两条 100% 位移的关键帧：稳是稳了，但整格位移下带过冲的曲线会把
+ * 数字顶出窗口、切掉小半个字，所以那一版只能用一条不带过冲的缓动。
+ *
+ * 现在连窗口也不要了——位移收到 6px，过冲与模糊都接得住，也不再需要「一格有多高」这个数。
+ *
+ * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
+ * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
+ *
+ * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
+ * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
+ * + 百分号」。
+ *
+ * 颜色不在这里：这一截**不写 color**，从调用方挂在它外面那一层继承——命中率那一处挂的是「缓存命中 +
+ * 读数」那一组（名字与读数同色），占用那一处挂的是 dsh 那颗按钮；段标记与段内位置也归调用方写。
+ *
+ * @module dsh-chat-ux/chat/reel/digit-reel
+ */
+const react_1 = require("react");
+const reel_styles_1 = require("./reel-styles");
+/** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
+const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/;
+/**
+ * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
+ * @param props - 读数、开关与读屏那一份。
+ * @returns 这一截。
+ */
+function DigitReel({ text, rolling, spoken }) {
+    const reading = splitReading(text);
+    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
+    if (!rolling || reading === null) {
+        return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, children: text });
+    }
+    const digits = reading.integer.split('');
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "%" })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
+}
+/**
+ * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
+ * @param props - 数字与次序。
+ * @returns 这一位。
+ */
+function Digit({ digit, place }) {
+    // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以**没变的那一
+    // 位不会重新挂载**、也就不会播动画：读数一变就让每位都弹，看着像一直在抽。
+    const [pair, setPair] = (0, react_1.useState)({ shown: digit, previous: null });
+    if (pair.shown !== digit)
+        setPair({ shown: digit, previous: pair.shown });
+    const delay = { animationDelay: String(place * reel_styles_1.REEL_STAGGER_MS) + 'ms' };
+    return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_SLOT_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
+}
+/**
+ * 把读数拆成整数部分与那一位小数。
+ * @param text - `97.3%` 或 `26%` 这样的读数。
+ * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
+ */
+function splitReading(text) {
+    const matched = READING_PATTERN.exec(text);
+    if (matched === null)
+        return null;
+    const integer = matched[1];
+    if (integer === undefined)
+        return null;
+    return { integer, decimal: matched[2] ?? null };
 }
     };
 
@@ -1817,92 +1914,6 @@ exports.REEL_CSS = `
   white-space: nowrap;
 }
 `;
-    };
-
-    __registry["chat/reel/digit-reel.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DigitReel = DigitReel;
-const jsx_runtime_1 = require("react/jsx-runtime");
-/**
- * 数字轮：变了的那一位原地弹一下。
- *
- * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入，上一个数字朝反方向淡出（500 ms，低位比
- * 高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前会先越过去一点再弹回来；**终态是
- * 零位移**：动画走完，数字就在它本来的位置上（进场那一帧的模糊试过又退掉了，见 reel-styles.ts）。
- *
- * 这一处不可能「停歪」：位移是固定的 6px，不参与排版，也不问元素任何尺寸。
- *
- * 2026-10 的前两版都栽在「算一格」上：
- *
- * - 第一版按 CSS 变量算整格滚动，位移与每格真实高度每格差 0.84px，误差按格数累积——滚到第 9 格
- *   累计 7.55px，已经超过半格（6.90px），窗口里于是同时露着上下两个数字的各一半；
- * - 第二版整条带滚动加记账，位移换成了百分比，但仍然依赖「条带的高度正好是三十格」。
- *
- * 第三版去掉条带，只留一格窗口与两条 100% 位移的关键帧：稳是稳了，但整格位移下带过冲的曲线会把
- * 数字顶出窗口、切掉小半个字，所以那一版只能用一条不带过冲的缓动。
- *
- * 现在连窗口也不要了——位移收到 6px，过冲与模糊都接得住，也不再需要「一格有多高」这个数。
- *
- * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
- * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
- *
- * 两处都用它：命中率那枚胶囊（座位里由 React 渲染）与上下文占用那串百分比（挂在 dsh 自己的文本
- * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
- * + 百分号」。
- *
- * @module dsh-chat-ux/chat/reel/digit-reel
- */
-const react_1 = require("react");
-const ramp_1 = require("../ramp");
-const reel_styles_1 = require("./reel-styles");
-/** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
-const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/;
-/**
- * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
- * @param props - 读数、色阶位置、开关与读屏那一份。
- * @returns 这一截。
- */
-function DigitReel({ text, tone, rolling, spoken }) {
-    const reading = splitReading(text);
-    // 段标记与段内位置是这一枚交给样式表的全部：色标、插值与主题切换都在那一侧，这里不碰色值。
-    const toneAttribute = tone === undefined ? {} : { [ramp_1.RAMP_SPAN_ATTRIBUTE]: tone.span };
-    const toneStyle = tone === undefined ? undefined : { [ramp_1.RAMP_POSITION_VAR]: tone.mix };
-    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
-    if (!rolling || reading === null) {
-        return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, ...toneAttribute, style: toneStyle, children: text });
-    }
-    const digits = reading.integer.split('');
-    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, ...toneAttribute, style: toneStyle, "aria-hidden": true, children: [digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "%" })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
-}
-/**
- * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
- * @param props - 数字与次序。
- * @returns 这一位。
- */
-function Digit({ digit, place }) {
-    // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以**没变的那一
-    // 位不会重新挂载**、也就不会播动画：读数一变就让每位都弹，看着像一直在抽。
-    const [pair, setPair] = (0, react_1.useState)({ shown: digit, previous: null });
-    if (pair.shown !== digit)
-        setPair({ shown: digit, previous: pair.shown });
-    const delay = { animationDelay: String(place * reel_styles_1.REEL_STAGGER_MS) + 'ms' };
-    return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_SLOT_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
-}
-/**
- * 把读数拆成整数部分与那一位小数。
- * @param text - `97.3%` 或 `26%` 这样的读数。
- * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
- */
-function splitReading(text) {
-    const matched = READING_PATTERN.exec(text);
-    if (matched === null)
-        return null;
-    const integer = matched[1];
-    if (integer === undefined)
-        return null;
-    return { integer, decimal: matched[2] ?? null };
-}
     };
 
     __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {

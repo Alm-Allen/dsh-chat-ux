@@ -3,8 +3,9 @@
  *
  * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
  * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
- * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一截
- * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的。
+ * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一处
+ * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的；色阶涂在「缓存命中 +
+ * 读数」那一组上，所以那个名字与读数同色。
  *
  * 数字轮的类名与规则**不在这里**：那是两处共用的（上下文占用那串百分比也在用），在
  * `../reel/reel-styles`；色阶的段标记与位置也不在这里，在 `../ramp`。
@@ -12,7 +13,6 @@
  * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
  */
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, RAMP_SPAN_HIGH, RAMP_SPAN_LOW} from '../ramp'
-import {REEL_TEXT_CLASS} from '../reel/reel-styles'
 
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
 export const CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor'
@@ -22,6 +22,14 @@ export const CACHE_HIT_PILL_CLASS = 'dsh-chat-ux-hit-pill'
 
 /** 胶囊里的文本容器。 */
 export const CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label'
+
+/**
+ * 「缓存命中」这几个字与紧随其后的那串读数：命中率色阶就挂在这一组上，所以那个名字与读数同色。
+ *
+ * 详细档里 token 总量与中间那个分隔点**不在**这一组里，它们留在胶囊自己的文字色上；数字轮那一截
+ * 自己不带颜色，从这一组继承。
+ */
+export const CACHE_HIT_READING_CLASS = 'dsh-chat-ux-hit-reading'
 
 /** token 总量与命中率之间的那个点。 */
 export const CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep'
@@ -107,58 +115,59 @@ button.${CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   margin: 0 6px;
 }
 
-/* 命中率那一截自带颜色，所以 hover 时它不跟着胶囊变，色阶一路看得见。
+/* 色阶挂在「缓存命中 + 读数」这一组上：那几个字与读数同色。同一行里的 token 总量与那个分隔点不在
+   这一组里，仍留在胶囊自己的三级文字色上；这一组自带颜色，所以胶囊 hover 时它不跟着变，色阶一路
+   看得见。
 
-   颜色分两步走：下面这几条段规则把这一段的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
-   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），浏览器半区只写一个段内
-   位置。这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——这一侧没有任何 JS 去
-   getComputedStyle。 */
+   颜色分两步走：下面这几条段规则把这一组的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
+   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），这一侧只写一个段内位置。
+   这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——没有任何 JS 去 getComputedStyle。 */
 
 /* 低于 90%：两端都是红，所以插值恒等于红，不另开一档颜色。 */
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='${RAMP_SPAN_LOW}'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='${RAMP_SPAN_LOW}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
 }
 
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='0'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='0'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-orange);
 }
 
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='1'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='1'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-orange);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-yellow);
 }
 
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='2'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='2'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-yellow);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-lime);
 }
 
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='3'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='3'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-lime);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green-light);
 }
 
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='4'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='4'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green-light);
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green);
 }
 
 /* 99.0 及以后：不必等到 100.0，两端都是深绿。 */
-.${REEL_TEXT_CLASS}[${RAMP_SPAN_ATTRIBUTE}='${RAMP_SPAN_HIGH}'] {
+.${CACHE_HIT_READING_CLASS}[${RAMP_SPAN_ATTRIBUTE}='${RAMP_SPAN_HIGH}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green);
 }
 
 /* 撑不起 color-mix 的浏览器停在段起点色上：退成六档取色，读数、布局与翻动一个都不受影响。
    段标记也没写上时退回胶囊自己的文字色，而不是变成看不出的一团。 */
-.${REEL_TEXT_CLASS} {
+.${CACHE_HIT_READING_CLASS} {
   color: var(--dsh-chat-ux-hit-from, currentColor);
 }
 
 /* 括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入「未知的
    函数形式」而恒为假，整块规则静默跳过——与 styles.ts 里那道流光同一个坑。 */
 @supports (color: color-mix(in oklch, red, blue 50%)) {
-  .${REEL_TEXT_CLASS} {
+  .${CACHE_HIT_READING_CLASS} {
     color: color-mix(
       in oklch,
       var(--dsh-chat-ux-hit-from),

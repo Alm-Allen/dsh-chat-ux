@@ -6,8 +6,9 @@
  * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
  * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
  * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
- * 段内位置多少」。简洁档只留这一截读数，详细档另加 token 总量与点开的明细，明细里的命中率走同一个
- * 小数口径。
+ * 段内位置多少」，再把这两个值写到「缓存命中 + 读数」那一组上——所以那个名字与读数同色；详细档里
+ * 的 token 总量与中间那个分隔点在那一组之外，留在胶囊自己的文字色上。简洁档只留这一组，详细档另加
+ * 总量与点开的明细，明细里的命中率走同一个小数口径。
  *
  * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
  * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
@@ -30,10 +31,10 @@ import {DEFAULT_HIT_REEL} from '../../settings/settings-scope'
 import type {ChatUxSection, ConfigForm} from '../../settings/settings-scope'
 import {
     CACHE_HIT_ANCHOR_CLASS, CACHE_HIT_DETAILS_CLASS, CACHE_HIT_LABEL_CLASS, CACHE_HIT_PANEL_CLASS,
-    CACHE_HIT_PILL_CLASS, CACHE_HIT_RULE_CLASS, CACHE_HIT_SEP_CLASS, CACHE_HIT_TITLE_CLASS,
-    CACHE_HIT_TITLE_LABEL_CLASS, CACHE_HIT_TITLE_VALUE_CLASS,
+    CACHE_HIT_PILL_CLASS, CACHE_HIT_READING_CLASS, CACHE_HIT_RULE_CLASS, CACHE_HIT_SEP_CLASS,
+    CACHE_HIT_TITLE_CLASS, CACHE_HIT_TITLE_LABEL_CLASS, CACHE_HIT_TITLE_VALUE_CLASS,
 } from './cache-hit-styles'
-import {rampPosition} from '../ramp'
+import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, rampPosition} from '../ramp'
 import type {RampPosition} from '../ramp'
 import {DigitReel} from '../reel/digit-reel'
 
@@ -195,17 +196,26 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     const hit = hitReading(usage.cacheReadTokens, billedInput)
     const icon = <IconDatabaseOutlineRegular/>
     const hitLabel = t('message.turnUsage.cacheHit')
+    // 「缓存命中」这几个字与它后面那串读数是一组，色阶就挂在这一组上（见样式表），名字与读数因此同色。
+    // 数字轮那一截自己不带颜色，从这一组继承。
+    const reading = hit === null ? null : (
+        <span
+            className={CACHE_HIT_READING_CLASS}
+            {...{[RAMP_SPAN_ATTRIBUTE]: hit.tone.span}}
+            style={{[RAMP_POSITION_VAR]: hit.tone.mix} as CSSProperties}
+        >
+            {hitLabel}{' '}
+            <DigitReel text={hit.text} rolling={rolling} spoken/>
+        </span>
+    )
 
     if (mode === 'compact') {
-        if (hit === null) return null
+        if (reading === null) return null
         return (
             <span className={CACHE_HIT_ANCHOR_CLASS} data-composer-stat={USAGE_STAT_ID}>
                 <span className={CACHE_HIT_PILL_CLASS}>
                     {icon}
-                    <span className={CACHE_HIT_LABEL_CLASS}>
-                        {hitLabel}{' '}
-                        <DigitReel text={hit.text} tone={hit.tone} rolling={rolling} spoken/>
-                    </span>
+                    <span className={CACHE_HIT_LABEL_CLASS}>{reading}</span>
                 </span>
             </span>
         )
@@ -228,11 +238,10 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                 {icon}
                 <span className={CACHE_HIT_LABEL_CLASS}>
                     {totalText}
-                    {hit !== null && (
+                    {reading !== null && (
                         <>
                             <span className={CACHE_HIT_SEP_CLASS} aria-hidden>·</span>
-                            {hitLabel}{' '}
-                            <DigitReel text={hit.text} tone={hit.tone} rolling={rolling} spoken/>
+                            {reading}
                         </>
                     )}
                 </span>

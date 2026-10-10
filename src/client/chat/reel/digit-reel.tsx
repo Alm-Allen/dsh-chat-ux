@@ -25,12 +25,13 @@
  * 节点旁边，见 reel-host）。读数的形状由调用方那一侧决定，这里只认「几位数字 + 可选的一位小数
  * + 百分号」。
  *
+ * 颜色不在这里：这一截**不写 color**，从调用方挂在它外面那一层继承——命中率那一处挂的是「缓存命中 +
+ * 读数」那一组（名字与读数同色），占用那一处挂的是 dsh 那颗按钮；段标记与段内位置也归调用方写。
+ *
  * @module dsh-chat-ux/chat/reel/digit-reel
  */
 import {useState} from 'react'
 import type {CSSProperties, ReactElement} from 'react'
-import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
-import type {RampPosition} from '../ramp'
 import {
     REEL_CELL_CLASS, REEL_SLOT_CLASS, REEL_SPOKEN_CLASS, REEL_STAGGER_MS, REEL_STATIC_CLASS,
     REEL_TEXT_CLASS, REEL_WAS_CLASS,
@@ -39,12 +40,10 @@ import {
 /** 读数的形状：一至三位整数、可选的一位小数、尾随的百分号。命中率的读数恒带小数，占用的是整数。 */
 const READING_PATTERN = /^(\d{1,3})(?:\.(\d))?(%)$/
 
-/** 这一枚收到的：读数、色阶位置、翻动开着没有，以及要不要给读屏另留一份。 */
+/** 这一枚收到的：读数、翻动开着没有，以及要不要给读屏另留一份。 */
 export interface DigitReelProps {
     /** `97.3%` 或 `26%` 这样的读数。 */
     text: string
-    /** 段标记与段内位置；给了就把色阶挂在这一截上，不给时颜色从外层继承（占用那一处就是这样）。 */
-    tone?: RampPosition | undefined
     /** 翻动开着没有；关着时这一截就是一段静态读数。 */
     rolling: boolean
     /** 视觉块是否标 `aria-hidden` 并另给一份视觉隐藏的纯文本——页面上没有别的可读文本时才要。 */
@@ -53,22 +52,19 @@ export interface DigitReelProps {
 
 /**
  * 这一截读数：开着时是几位数字加小数点与百分号，关着时是一段纯文本。
- * @param props - 读数、色阶位置、开关与读屏那一份。
+ * @param props - 读数、开关与读屏那一份。
  * @returns 这一截。
  */
-export function DigitReel({text, tone, rolling, spoken}: DigitReelProps): ReactElement {
+export function DigitReel({text, rolling, spoken}: DigitReelProps): ReactElement {
     const reading = splitReading(text)
-    // 段标记与段内位置是这一枚交给样式表的全部：色标、插值与主题切换都在那一侧，这里不碰色值。
-    const toneAttribute = tone === undefined ? {} : {[RAMP_SPAN_ATTRIBUTE]: tone.span}
-    const toneStyle = tone === undefined ? undefined : {[RAMP_POSITION_VAR]: tone.mix} as CSSProperties
     // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
     if (!rolling || reading === null) {
-        return <span className={REEL_TEXT_CLASS} {...toneAttribute} style={toneStyle}>{text}</span>
+        return <span className={REEL_TEXT_CLASS}>{text}</span>
     }
     const digits = reading.integer.split('')
     return (
         <>
-            <span className={REEL_TEXT_CLASS} {...toneAttribute} style={toneStyle} aria-hidden>
+            <span className={REEL_TEXT_CLASS} aria-hidden>
                 {digits.map((digit, index) => (
                     <Digit key={digits.length - 1 - index} digit={Number(digit)} place={index}/>
                 ))}
