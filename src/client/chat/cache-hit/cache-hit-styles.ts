@@ -53,6 +53,14 @@ export const CACHE_HIT_RULE_CLASS = 'dsh-chat-ux-hit-rule'
 export const CACHE_HIT_DETAILS_CLASS = 'dsh-chat-ux-hit-details'
 
 /**
+ * 老版坞（dsh 0.2.0-rc.2 及更早）里 dsh 自己那一枚用量胶囊上的收起标记。
+ *
+ * 那一版只有一个 `stats` 座位条目，按 id 遮蔽不了座位，插件这一枚只会与内置那一枚并列。所以由
+ * `legacy-usage-pill` 在 DOM 上把内置那一枚收起来——收起只是 `display: none`，属性一撤它就回来。
+ */
+export const CACHE_HIT_SHADOWED_ATTRIBUTE = 'data-chat-ux-shadowed-stat'
+
+/**
  * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
  *
  * 色阶的六个色标：90.0 红、92.0 橙黄、94.0 黄、96.0 黄绿、98.0 浅绿、99.0 深绿。低于 90.0 一律红；
@@ -246,5 +254,12 @@ button.${CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   color: var(--dsw-alias-label-secondary);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* 老版坞里 dsh 自己那一枚用量胶囊：插件这一枚在场时把它收起来，两版看到的都是「速度 + 这一枚」。
+   收起只是不画：内置那一枚仍在 DOM 里、仍按 dsh 自己的口径算，插件卸下时属性一撤就回来
+   （见 legacy-usage-pill）。 */
+[${CACHE_HIT_SHADOWED_ATTRIBUTE}] {
+  display: none !important;
 }
 `

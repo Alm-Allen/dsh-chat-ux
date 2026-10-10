@@ -991,8 +991,8 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 总量与点开的明细，明细里的命中率走同一个小数口径。
  *
  * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
- * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
- * 这一枚只在认得出新版坞那一层时才画（见 CacheHitPill 里那道闸门）。
+ * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。那一版
+ * 里改由 DOM 把内置那一枚收起来（见 legacy-usage-pill），两版因此都只有一枚读数、同一套口径。
  *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
@@ -1007,6 +1007,7 @@ const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
 const ramp_1 = require("../ramp");
 const digit_reel_1 = require("../reel/digit-reel");
+const legacy_usage_pill_1 = require("./legacy-usage-pill");
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8;
 /** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
@@ -1101,16 +1102,21 @@ function CacheHitPill({ useProjection, t }) {
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
     // 坞的形态先按上一次读到的值起手，重挂载时不必再从「还没量过」起一帧。effect 跑在这一帧的
     // DOM 提交之后，那时坞已经在页面里。
-    const [shadowing, setShadowing] = (0, react_1.useState)(composerDockIsModern === true);
-    (0, react_1.useEffect)(() => { setShadowing(dshHasComposerDock()); }, []);
-    // 认不出新版坞那一层就什么都不画：读者看到的是 dsh 自己那一枚（整数口径、没有档位色），
-    // 而不是两枚并列的命中率。
-    if (!shadowing)
-        return null;
+    const [modernDock, setModernDock] = (0, react_1.useState)(composerDockIsModern === true);
+    (0, react_1.useEffect)(() => { setModernDock(dshHasComposerDock()); }, []);
+    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
+    const shows = usage !== undefined && (billedInputTokens(usage) !== 0 || usage.outputTokens !== 0);
+    // 老版坞里 dsh 那一枚与自己这一枚会同时在场——那一版只有一个 stats 条目，按 id 遮蔽不了座位，
+    // 收尾只能在 DOM 上做。这一枚画出来的帧里把内置那枚收起来；这一枚不画（这一场还没计过账）的帧
+    // 立刻放它回来，否则整行会只剩速度、或者干脆空掉。
+    (0, react_1.useEffect)(() => {
+        if (modernDock || !shows)
+            return;
+        return (0, legacy_usage_pill_1.hideLegacyUsagePill)();
+    }, [modernDock, shows]);
     if (usage === undefined)
         return null;
     const billedInput = billedInputTokens(usage);
-    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
     if (billedInput === 0 && usage.outputTokens === 0)
         return null;
     const hit = hitReading(usage.cacheReadTokens, billedInput);
@@ -1346,7 +1352,7 @@ exports.DEFAULT_LIVE_DIFF = false;
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_SHADOWED_ATTRIBUTE = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
 /**
  * 缓存命中胶囊自己的样式表。
  *
@@ -1389,6 +1395,13 @@ exports.CACHE_HIT_TITLE_VALUE_CLASS = 'dsh-chat-ux-hit-title-value';
 exports.CACHE_HIT_RULE_CLASS = 'dsh-chat-ux-hit-rule';
 /** 明细的 dt/dd 栅格。 */
 exports.CACHE_HIT_DETAILS_CLASS = 'dsh-chat-ux-hit-details';
+/**
+ * 老版坞（dsh 0.2.0-rc.2 及更早）里 dsh 自己那一枚用量胶囊上的收起标记。
+ *
+ * 那一版只有一个 `stats` 座位条目，按 id 遮蔽不了座位，插件这一枚只会与内置那一枚并列。所以由
+ * `legacy-usage-pill` 在 DOM 上把内置那一枚收起来——收起只是 `display: none`，属性一撤它就回来。
+ */
+exports.CACHE_HIT_SHADOWED_ATTRIBUTE = 'data-chat-ux-shadowed-stat';
 /**
  * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
  *
@@ -1583,6 +1596,13 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   color: var(--dsw-alias-label-secondary);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* 老版坞里 dsh 自己那一枚用量胶囊：插件这一枚在场时把它收起来，两版看到的都是「速度 + 这一枚」。
+   收起只是不画：内置那一枚仍在 DOM 里、仍按 dsh 自己的口径算，插件卸下时属性一撤就回来
+   （见 legacy-usage-pill）。 */
+[${exports.CACHE_HIT_SHADOWED_ATTRIBUTE}] {
+  display: none !important;
 }
 `;
     };
@@ -1940,6 +1960,72 @@ exports.REEL_CSS = `
   white-space: nowrap;
 }
 `;
+    };
+
+    __registry["chat/cache-hit/legacy-usage-pill.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.hideLegacyUsagePill = hideLegacyUsagePill;
+/**
+ * 老版坞（dsh 0.2.0-rc.2 及更早）里 dsh 自己画的那一枚用量胶囊：让位给插件这一枚。
+ *
+ * 新版从 `0.2.1-alpha.1` 起把坞拆成两个座位条目（`activity` order 0、`usage` order 1），插件按
+ * `usage` 注册、靠 priority 更低遮蔽内置那一枚，所以内置的那个**根本不会渲染**。老版只有一个条目
+ * `stats`，整行都是 dsh 的：按 id 遮蔽不了，插件这一枚只会**多出来一枚**（命中率并列两个读数）。
+ * 这一处就在 DOM 上把内置那一枚收起来，让老版上看到的也是「速度 + 插件这一枚」。
+ *
+ * 判据是「统计数据行里的直接子元素中、读数带百分号的那个」：简洁档里那一行是两个 `span.pill`（速度、
+ * 命中率），详细档里是两个 `span.anchor`（时间、用量），两种形态里只有用量那一枚带百分号。
+ *
+ * 收起来只是 `display: none`——内置那一枚仍在 DOM 里、仍按 dsh 自己的口径算，插件卸下时属性一撤就
+ * 回来。这一枚不在场时**必须**不收起它（否则整行会空掉，见 `cache-hit-pill` 里那道闸门）。
+ *
+ * @module dsh-chat-ux/client/chat/cache-hit/legacy-usage-pill
+ */
+const dom_contract_1 = require("../../dom-contract");
+const cache_hit_styles_1 = require("./cache-hit-styles");
+/** 用量那一枚的读数形状：命中率总带百分号，速度那枚不带。 */
+const USAGE_READING_PATTERN = /\d+(?:\.\d+)?%/;
+/**
+ * 把内置那一枚用量胶囊收起来。
+ * @returns 卸下观察者，并把写过的属性撤干净。
+ */
+function hideLegacyUsagePill() {
+    let frame = 0;
+    /** 对账：统计行里带百分号的那一枚挂上收起标记。 */
+    const sync = () => {
+        for (const row of document.querySelectorAll(dom_contract_1.COMPOSER_STATS_ROW_SELECTOR)) {
+            for (const candidate of row.children) {
+                if (!(candidate instanceof HTMLElement))
+                    continue;
+                if (!USAGE_READING_PATTERN.test(candidate.textContent ?? ''))
+                    continue;
+                if (candidate.hasAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE))
+                    continue;
+                candidate.setAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE, '');
+            }
+        }
+    };
+    sync();
+    const observer = new MutationObserver(() => {
+        // 流式期间每一段字符变化都会叫到这里，所以只登记一帧：一帧最多认一次。
+        if (frame !== 0)
+            return;
+        frame = requestAnimationFrame(() => {
+            frame = 0;
+            sync();
+        });
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    return () => {
+        observer.disconnect();
+        if (frame !== 0)
+            cancelAnimationFrame(frame);
+        for (const shaded of document.querySelectorAll('[' + cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE + ']')) {
+            shaded.removeAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE);
+        }
+    };
+}
     };
 
     __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {

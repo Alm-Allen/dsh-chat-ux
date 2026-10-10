@@ -11,8 +11,8 @@
  * 总量与点开的明细，明细里的命中率走同一个小数口径。
  *
  * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
- * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。所以
- * 这一枚只在认得出新版坞那一层时才画（见 CacheHitPill 里那道闸门）。
+ * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。那一版
+ * 里改由 DOM 把内置那一枚收起来（见 legacy-usage-pill），两版因此都只有一枚读数、同一套口径。
  *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
@@ -37,6 +37,7 @@ import {
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, rampPosition} from '../ramp'
 import type {RampPosition} from '../ramp'
 import {DigitReel} from '../reel/digit-reel'
+import {hideLegacyUsagePill} from './legacy-usage-pill'
 
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8
@@ -182,15 +183,20 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef)
     // 坞的形态先按上一次读到的值起手，重挂载时不必再从「还没量过」起一帧。effect 跑在这一帧的
     // DOM 提交之后，那时坞已经在页面里。
-    const [shadowing, setShadowing] = useState(composerDockIsModern === true)
-    useEffect(() => { setShadowing(dshHasComposerDock()) }, [])
+    const [modernDock, setModernDock] = useState(composerDockIsModern === true)
+    useEffect(() => { setModernDock(dshHasComposerDock()) }, [])
+    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
+    const shows = usage !== undefined && (billedInputTokens(usage) !== 0 || usage.outputTokens !== 0)
+    // 老版坞里 dsh 那一枚与自己这一枚会同时在场——那一版只有一个 stats 条目，按 id 遮蔽不了座位，
+    // 收尾只能在 DOM 上做。这一枚画出来的帧里把内置那枚收起来；这一枚不画（这一场还没计过账）的帧
+    // 立刻放它回来，否则整行会只剩速度、或者干脆空掉。
+    useEffect(() => {
+        if (modernDock || !shows) return
+        return hideLegacyUsagePill()
+    }, [modernDock, shows])
 
-    // 认不出新版坞那一层就什么都不画：读者看到的是 dsh 自己那一枚（整数口径、没有档位色），
-    // 而不是两枚并列的命中率。
-    if (!shadowing) return null
     if (usage === undefined) return null
     const billedInput = billedInputTokens(usage)
-    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
     if (billedInput === 0 && usage.outputTokens === 0) return null
 
     const hit = hitReading(usage.cacheReadTokens, billedInput)
