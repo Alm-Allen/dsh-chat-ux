@@ -1,5 +1,6 @@
 /**
- * 输入框那块玻璃的几何，外加卡片里那枚主操作按钮的认定。
+ * 输入框那块玻璃的几何，外加卡片里那两枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）与
+ * 左下角那枚加号（添加文件 / 调指令）。
  *
  * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
  * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
@@ -12,11 +13,22 @@
  *
  * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
  */
-import {GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_TOP_VARIABLE} from './composer-glass-styles'
+import {
+    GLASS_ADD_ATTRIBUTE, GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_TOP_VARIABLE,
+} from './composer-glass-styles'
 
 /** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
 const SEAT_SELECTOR = '[data-composer-seat]'
 const CARD_SELECTOR = '[data-composer-card]'
+
+/**
+ * 左下角那枚加号的判据：**dsh 只在这一枚按钮上声明 `aria-haspopup="listbox"`**。
+ *
+ * 卡片里另外几枚各自开的是别的口子——模型选择、权限预设与加号旁边那些都是 `menu`，统计胶囊是
+ * `dialog`；核对过运行版产物（2026-10，桌面 App 那份 app.asar）。它同时带 `aria-expanded`，
+ * 但那个属性别人也有，所以不拿它当判据。
+ */
+const ADD_SELECTOR = 'button[aria-haspopup="listbox"]'
 
 /**
  * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
@@ -37,6 +49,7 @@ export function installComposerGlass(): () => void {
             return
         }
         markPrimary(card)
+        markAdd(card)
         const seatBox = seat.getBoundingClientRect()
         const cardBox = card.getBoundingClientRect()
         // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
@@ -100,8 +113,8 @@ export function installComposerGlass(): () => void {
             seat.style.removeProperty(GLASS_BOTTOM_VARIABLE)
         }
         bound.clear()
-        for (const marked of document.querySelectorAll(`[${GLASS_PRIMARY_ATTRIBUTE}]`)) {
-            marked.removeAttribute(GLASS_PRIMARY_ATTRIBUTE)
+        for (const attribute of [GLASS_PRIMARY_ATTRIBUTE, GLASS_ADD_ATTRIBUTE]) {
+            for (const marked of document.querySelectorAll(`[${attribute}]`)) marked.removeAttribute(attribute)
         }
     }
 }
@@ -129,6 +142,22 @@ function markPrimary(card: HTMLElement): void {
             button.removeAttribute(GLASS_PRIMARY_ATTRIBUTE)
         }
     }
+}
+
+/**
+ * 认一次卡片里那枚加号，把属性打在它身上。
+ *
+ * 与主按钮同一个分寸：认不出就什么都不做（那枚按钮回到 dsh 原来的样子），不报错、也不牵连玻璃与
+ * 主按钮——dsh 哪天把它换成别的口子（不再用 listbox），表现就只有这一处。
+ * @param card - 输入卡片。
+ */
+function markAdd(card: HTMLElement): void {
+    const target = card.querySelector<HTMLElement>(ADD_SELECTOR)
+    for (const marked of card.querySelectorAll<HTMLElement>(`[${GLASS_ADD_ATTRIBUTE}]`)) {
+        if (marked !== target) marked.removeAttribute(GLASS_ADD_ATTRIBUTE)
+    }
+    if (target === null || target.hasAttribute(GLASS_ADD_ATTRIBUTE)) return
+    target.setAttribute(GLASS_ADD_ATTRIBUTE, '')
 }
 
 /**

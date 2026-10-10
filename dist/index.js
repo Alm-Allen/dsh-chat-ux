@@ -41,12 +41,13 @@ export const DEFAULT_TOKEN_FADE = true;
  */
 export const DEFAULT_HIT_REEL = true;
 /**
- * 上下文占用那枚饼的默认画法：折线切开之后，那一块**推出去**。
+ * 上下文占用那枚饼默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
+ * 改一处就要改另一处。
  *
- * 前端有一份同样的常量（`client/settings/settings-scope.ts`），改一处就要改另一处。默认推出去——
- * 「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ * 默认开着：dsh 画的那圈环换成一枚按占用取色的实心饼，已占用那一角沿折线切开、推开一点。关掉时这一处
+ * 整块不装——页面上一次都不动手，看到的就是 dsh 原来的环。
  */
-export const DEFAULT_PIE_PUSH = true;
+export const DEFAULT_CONTEXT_PIE = true;
 /**
  * 输入框那块玻璃默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
  * 改一处就要改另一处。
@@ -74,7 +75,7 @@ export const Config = Schema.object({
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
-    piePush: Schema.boolean().default(DEFAULT_PIE_PUSH).volatile(),
+    contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
     composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
     liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
 });

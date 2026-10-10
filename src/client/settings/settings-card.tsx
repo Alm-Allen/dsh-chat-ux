@@ -26,8 +26,8 @@ import type {SegmentedControlOption} from '@deepseek-ai/dsh-client-ui-primitives
 import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_ENHANCED_FOLLOW, DEFAULT_HIT_REEL,
-    DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
+    DEFAULT_ENHANCED_FOLLOW, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -38,7 +38,7 @@ const TOKEN_FADE_FIELD = 'tokenFade'
 const CARET_FIELD = 'caretMotion'
 const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
-const PIE_PUSH_FIELD = 'piePush'
+const CONTEXT_PIE_FIELD = 'contextPie'
 const COMPOSER_GLASS_FIELD = 'composerGlass'
 const LIVE_DIFF_FIELD = 'liveDiff'
 
@@ -60,8 +60,8 @@ interface Copy {
     sendHint: string
     reelLabel: string
     reelHint: string
-    piePushLabel: string
-    piePushHint: string
+    pieLabel: string
+    pieHint: string
     glassLabel: string
     glassHint: string
     liveDiffLabel: string
@@ -101,14 +101,14 @@ const ZH_COPY: Copy = {
     reelHint:
         '输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——'
         + '新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。',
-    piePushLabel: '切块推开',
-    piePushHint:
-        '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
-        + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
+    pieLabel: '上下文占用饼',
+    pieHint:
+        '输入框下方那圈上下文占用环换成一枚实心饼，按占用多少取色；已占用那一角沿折线切开、推开一点，'
+        + '像从盘子里切下来的一块。关掉就回到 dsh 原来的环。',
     glassLabel: '输入框毛玻璃',
     glassHint:
         '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
-        + '右下角那枚发送（跑起来时是停止）按钮跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
+        + '右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
     liveDiffLabel: '实时改动行数',
     liveDiffHint:
         '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
@@ -151,11 +151,11 @@ const EN_COPY: Copy = {
         'When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new '
         + 'values — each one drops back in from just below while the old digit fades out the other way. Off swaps '
         + 'the number instantly.',
-    piePushLabel: 'Slice pulled out',
-    piePushHint:
-        'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
-        + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '
-        + 'closing the cut gives you the whole circle back.',
+    pieLabel: 'Context pie',
+    pieHint:
+        'The context ring under the composer becomes a solid pie that takes its colour from how full the context '
+        + 'is; the occupied slice is cut along a fold line and slides out a little, like a piece cut from a plate. '
+        + 'Turning it off restores dsh\'s own ring.',
     glassLabel: 'Composer glass',
     glassHint:
         'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
@@ -217,7 +217,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const tokenFadeOn = storedTokenFade(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
-    const piePushOn = storedPiePush(snapshot.value)
+    const pieOn = storedContextPie(snapshot.value)
     const glassOn = storedGlass(snapshot.value)
     const liveDiffOn = storedLiveDiff(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
@@ -336,12 +336,12 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     onChange={(next: boolean) => void writeField(HIT_REEL_FIELD, next, storedHitReel)}
                 />
             ))}
-            {rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, (
+            {rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, (
                 <Switch
-                    checked={piePushOn}
+                    checked={pieOn}
                     disabled={controlsDisabled}
-                    label={copy.piePushLabel}
-                    onChange={(next: boolean) => void writeField(PIE_PUSH_FIELD, next, storedPiePush)}
+                    label={copy.pieLabel}
+                    onChange={(next: boolean) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie)}
                 />
             ))}
             {rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, (
@@ -414,9 +414,9 @@ function storedLiveDiff(value: ChatUxSection | undefined): boolean {
     return value?.liveDiff ?? DEFAULT_LIVE_DIFF
 }
 
-/** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
-function storedPiePush(value: ChatUxSection | undefined): boolean {
-    return value?.piePush ?? DEFAULT_PIE_PUSH
+/** 从 host 的值里读上下文占用那枚饼的开关。 */
+function storedContextPie(value: ChatUxSection | undefined): boolean {
+    return value?.contextPie ?? DEFAULT_CONTEXT_PIE
 }
 
 /** 从 host 的值里读输入框那块玻璃的开关。 */

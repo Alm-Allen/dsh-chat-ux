@@ -61,6 +61,12 @@
  * （见 `composer-glass.ts` 的 `markPrimary`），因为 dsh 那枚按钮既不带语义属性、class 名又
  * 带构建期 hash。
  *
+ * **左下角那枚加号也归这里管。** dsh 给它的是一枚 28px 的实心灰圆（`--dsw-specific-selector`，比卡片
+ * 底深一档），摆在这块玻璃上同样是另一套材质。这里把它改画成**同一块玻璃上的一片灰**：底还是那个
+ * 令牌，但让出两成、卡片那条横向渐变从小圆底下透上来，三笔质感按 28px 收一遍（主按钮那三笔是给
+ * 34px 写的）。**不借主按钮那支蓝**——它是次要操作，整枚染蓝会把「哪一枚是发送」这件事弄糊。
+ * 属性同样由 JS 打（见 `composer-glass.ts` 的 `markAdd`）。
+ *
  * **为什么要 `!important`。** 同页的 dsh-claude-style 也管输入区外观（它把卡片改成透明、改由座位
  * 铺 `bg-base` 实底），而且它那几条选择器的特异度高得多。本插件只认语义属性、不去认别的插件挂在
  * body 上的属性，所以压过它的手段只剩 `!important`：那几条声明都没有 `!important`，
@@ -90,6 +96,9 @@ export const GLASS_BOTTOM_VARIABLE = '--dsh-chat-ux-glass-bottom'
 
 /** 右下角那枚主操作按钮（发送 / 停止）身上的属性，由 `composer-glass.ts` 打。 */
 export const GLASS_PRIMARY_ATTRIBUTE = 'data-chat-ux-glass-primary'
+
+/** 左下角那枚加号（添加文件 / 调指令）身上的属性，同样由 `composer-glass.ts` 打。 */
+export const GLASS_ADD_ATTRIBUTE = 'data-chat-ux-glass-add'
 
 /** 输入框毛玻璃的全部 CSS。 */
 export const COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
@@ -279,6 +288,43 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
       inset 0 1px 0 0 rgb(255 255 255 / 0.28),
       inset 0 0 0 1px rgb(255 255 255 / 0.1),
       inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
+  }
+
+  /* ── 五、左下角那枚加号（添加文件 / 调指令）：同一块玻璃上的一片灰 ── */
+  /* 与主按钮同一套做法、同一个理由：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），
+     让出两成之后卡片那条横向渐变从小圆底下透上来，两处就接上了。三笔质感按 28px 的小圆收一遍——
+     主按钮那三笔是给 34px 写的。过渡与主按钮同值，指上去是「亮了一点」而不是「换了个色」。
+     兜底色的作用与主按钮那边一样：令牌改名时不至于整条声明作废，圆片还在、只是回到中性灰。 */
+  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}] {
+    background: color-mix(in srgb, var(--dsw-specific-selector, rgb(127 132 142)) 80%, transparent) !important;
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.45),
+      inset 0 0 0 1px rgb(255 255 255 / 0.3),
+      inset 0 -10px 14px -12px rgb(15 17 21 / 0.12) !important;
+    transition: background-color 100ms ease !important;
+  }
+
+  /* dsh 那条 hover 规则（.add:hover:not(:disabled)）没有 !important，会被上面基础规则里的
+     !important 压掉，所以 hover 得自己写一条——浓淡与主按钮同一档：比静止更实一点。 */
+  body[${GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-solid, rgb(147 152 162)) 90%, transparent) !important;
+  }
+
+  /* 深色下那三笔：与主按钮同一档收法（深色里一点点白就很跳），底部内阴影同样加重。 */
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}],
+  body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] [${GLASS_ADD_ATTRIBUTE}] {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.22),
+      inset 0 0 0 1px rgb(255 255 255 / 0.08),
+      inset 0 -10px 14px -12px rgb(0 0 0 / 0.4) !important;
   }
 }
 `

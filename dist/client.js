@@ -97,7 +97,7 @@ function apply(ctx) {
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
         tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
-        piePush: settings_scope_1.DEFAULT_PIE_PUSH,
+        pie: settings_scope_1.DEFAULT_CONTEXT_PIE,
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
     };
@@ -106,9 +106,19 @@ function apply(ctx) {
     const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
     const tokenMotion = (0, token_motion_1.installTokenMotion)(() => settings.tokenFade);
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
-    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关决定折线切开
-    // 之后那一块推不推出去，所以它也由 syncSettings 重落一次。
-    const pie = (0, context_meter_pie_1.installContextMeterPie)(() => settings.piePush);
+    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
+    // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
+    let pieDispose = null;
+    const syncPie = () => {
+        if (!settings.pie) {
+            pieDispose?.();
+            pieDispose = null;
+            return;
+        }
+        if (pieDispose !== null)
+            return;
+        pieDispose = (0, context_meter_pie_1.installContextMeterPie)();
+    };
     // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
     // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
     let autoFoldDispose = null;
@@ -149,13 +159,13 @@ function apply(ctx) {
         settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
-        settings.piePush = value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
+        settings.pie = value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         syncGlass();
         caret.resync();
         tokenMotion.resync();
-        pie.resync();
+        syncPie();
         syncAutoFold();
     };
     syncSettings();
@@ -211,7 +221,13 @@ function apply(ctx) {
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
     (0, cache_hit_pill_1.installCacheHitPill)(services.slots, services.configForms);
-    ctx.effect(() => pie.dispose, 'dsh-chat-ux: context meter pie');
+    ctx.effect(() => {
+        syncPie();
+        return () => {
+            pieDispose?.();
+            pieDispose = null;
+        };
+    }, 'dsh-chat-ux: context meter pie');
     // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
     // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
     // 执行时的原因。
@@ -1268,7 +1284,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_PIE_PUSH = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
+exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_ENHANCED_FOLLOW = void 0;
 /**
  * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1306,12 +1322,12 @@ exports.DEFAULT_TOKEN_FADE = true;
  */
 exports.DEFAULT_HIT_REEL = true;
 /**
- * 上下文占用那枚饼默认是否把切开的那一块推出去。host 侧 `src/index.ts` 里有一份同样的常量，改一处
- * 就要改另一处。
+ * 上下文占用那枚饼默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
- * 默认推出去：「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ * 默认开着：把 dsh 那圈环换成一枚按占用取色的实心饼（已占用那一角切开、推出去）。关掉时这一处整块
+ * 不装，页面上一次都不动手。
  */
-exports.DEFAULT_PIE_PUSH = true;
+exports.DEFAULT_CONTEXT_PIE = true;
 /**
  * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1921,7 +1937,8 @@ exports.REEL_CSS = `
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installComposerGlass = installComposerGlass;
 /**
- * 输入框那块玻璃的几何，外加卡片里那枚主操作按钮的认定。
+ * 输入框那块玻璃的几何，外加卡片里那两枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）与
+ * 左下角那枚加号（添加文件 / 调指令）。
  *
  * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
  * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
@@ -1938,6 +1955,14 @@ const composer_glass_styles_1 = require("./composer-glass-styles");
 /** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
 const SEAT_SELECTOR = '[data-composer-seat]';
 const CARD_SELECTOR = '[data-composer-card]';
+/**
+ * 左下角那枚加号的判据：**dsh 只在这一枚按钮上声明 `aria-haspopup="listbox"`**。
+ *
+ * 卡片里另外几枚各自开的是别的口子——模型选择、权限预设与加号旁边那些都是 `menu`，统计胶囊是
+ * `dialog`；核对过运行版产物（2026-10，桌面 App 那份 app.asar）。它同时带 `aria-expanded`，
+ * 但那个属性别人也有，所以不拿它当判据。
+ */
+const ADD_SELECTOR = 'button[aria-haspopup="listbox"]';
 /**
  * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
  *
@@ -1956,6 +1981,7 @@ function installComposerGlass() {
             return;
         }
         markPrimary(card);
+        markAdd(card);
         const seatBox = seat.getBoundingClientRect();
         const cardBox = card.getBoundingClientRect();
         // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
@@ -2022,8 +2048,9 @@ function installComposerGlass() {
             seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
         }
         bound.clear();
-        for (const marked of document.querySelectorAll(`[${composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE}]`)) {
-            marked.removeAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE);
+        for (const attribute of [composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, composer_glass_styles_1.GLASS_ADD_ATTRIBUTE]) {
+            for (const marked of document.querySelectorAll(`[${attribute}]`))
+                marked.removeAttribute(attribute);
         }
     };
 }
@@ -2052,6 +2079,23 @@ function markPrimary(card) {
             button.removeAttribute(composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE);
         }
     }
+}
+/**
+ * 认一次卡片里那枚加号，把属性打在它身上。
+ *
+ * 与主按钮同一个分寸：认不出就什么都不做（那枚按钮回到 dsh 原来的样子），不报错、也不牵连玻璃与
+ * 主按钮——dsh 哪天把它换成别的口子（不再用 listbox），表现就只有这一处。
+ * @param card - 输入卡片。
+ */
+function markAdd(card) {
+    const target = card.querySelector(ADD_SELECTOR);
+    for (const marked of card.querySelectorAll(`[${composer_glass_styles_1.GLASS_ADD_ATTRIBUTE}]`)) {
+        if (marked !== target)
+            marked.removeAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE);
+    }
+    if (target === null || target.hasAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE))
+        return;
+    target.setAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE, '');
 }
 /**
  * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
@@ -2132,6 +2176,12 @@ function touchesGlass(node) {
  * （见 `composer-glass.ts` 的 `markPrimary`），因为 dsh 那枚按钮既不带语义属性、class 名又
  * 带构建期 hash。
  *
+ * **左下角那枚加号也归这里管。** dsh 给它的是一枚 28px 的实心灰圆（`--dsw-specific-selector`，比卡片
+ * 底深一档），摆在这块玻璃上同样是另一套材质。这里把它改画成**同一块玻璃上的一片灰**：底还是那个
+ * 令牌，但让出两成、卡片那条横向渐变从小圆底下透上来，三笔质感按 28px 收一遍（主按钮那三笔是给
+ * 34px 写的）。**不借主按钮那支蓝**——它是次要操作，整枚染蓝会把「哪一枚是发送」这件事弄糊。
+ * 属性同样由 JS 打（见 `composer-glass.ts` 的 `markAdd`）。
+ *
  * **为什么要 `!important`。** 同页的 dsh-claude-style 也管输入区外观（它把卡片改成透明、改由座位
  * 铺 `bg-base` 实底），而且它那几条选择器的特异度高得多。本插件只认语义属性、不去认别的插件挂在
  * body 上的属性，所以压过它的手段只剩 `!important`：那几条声明都没有 `!important`，
@@ -2144,7 +2194,7 @@ function touchesGlass(node) {
  * @module dsh-chat-ux/client/chat/composer-glass/composer-glass-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.COMPOSER_GLASS_CSS = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
+exports.COMPOSER_GLASS_CSS = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
 /**
  * 玻璃生效的属性。它由 `index.tsx` 按开关写上或摘掉；表里每一组规则都拿它当前缀，所以
  * 「用不用这块玻璃」不必重新生成样式表。
@@ -2159,6 +2209,8 @@ exports.GLASS_TOP_VARIABLE = '--dsh-chat-ux-glass-top';
 exports.GLASS_BOTTOM_VARIABLE = '--dsh-chat-ux-glass-bottom';
 /** 右下角那枚主操作按钮（发送 / 停止）身上的属性，由 `composer-glass.ts` 打。 */
 exports.GLASS_PRIMARY_ATTRIBUTE = 'data-chat-ux-glass-primary';
+/** 左下角那枚加号（添加文件 / 调指令）身上的属性，同样由 `composer-glass.ts` 打。 */
+exports.GLASS_ADD_ATTRIBUTE = 'data-chat-ux-glass-add';
 /** 输入框毛玻璃的全部 CSS。 */
 exports.COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
 body[${exports.GLASS_ATTRIBUTE}] {
@@ -2348,6 +2400,43 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
       inset 0 0 0 1px rgb(255 255 255 / 0.1),
       inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
   }
+
+  /* ── 五、左下角那枚加号（添加文件 / 调指令）：同一块玻璃上的一片灰 ── */
+  /* 与主按钮同一套做法、同一个理由：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），
+     让出两成之后卡片那条横向渐变从小圆底下透上来，两处就接上了。三笔质感按 28px 的小圆收一遍——
+     主按钮那三笔是给 34px 写的。过渡与主按钮同值，指上去是「亮了一点」而不是「换了个色」。
+     兜底色的作用与主按钮那边一样：令牌改名时不至于整条声明作废，圆片还在、只是回到中性灰。 */
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}] {
+    background: color-mix(in srgb, var(--dsw-specific-selector, rgb(127 132 142)) 80%, transparent) !important;
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.45),
+      inset 0 0 0 1px rgb(255 255 255 / 0.3),
+      inset 0 -10px 14px -12px rgb(15 17 21 / 0.12) !important;
+    transition: background-color 100ms ease !important;
+  }
+
+  /* dsh 那条 hover 规则（.add:hover:not(:disabled)）没有 !important，会被上面基础规则里的
+     !important 压掉，所以 hover 得自己写一条——浓淡与主按钮同一档：比静止更实一点。 */
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
+  body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-solid, rgb(147 152 162)) 90%, transparent) !important;
+  }
+
+  /* 深色下那三笔：与主按钮同一档收法（深色里一点点白就很跳），底部内阴影同样加重。 */
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
+  body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}] {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.22),
+      inset 0 0 0 1px rgb(255 255 255 / 0.08),
+      inset 0 -10px 14px -12px rgb(0 0 0 / 0.4) !important;
+  }
 }
 `;
     };
@@ -2360,8 +2449,12 @@ exports.installContextMeterPie = installContextMeterPie;
 exports.pieImage = pieImage;
 /**
  * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并沿一条**折点在圆心**的
- * 折线切一刀——两段各是一条半径，把圆分成两块。切开之后那一块有两种去处：留在原位（沿线开出等宽的
- * 一道切口，补上切口仍是一整个圆），或者沿角平分线推出去一段（缺口就是它原来的位置）。
+ * 折线切一刀——两段各是一条半径，把圆分成两块，已占用那一块沿角平分线**推出去**一段（缺口就是它原来
+ * 的位置）。
+ *
+ * **只有这一种画法**：折线切开之后那一块一定推出去。曾经还有一支「只留切口、两块都留在原位」的画法，
+ * 读者得在插件页上二选一——那个选择删掉了：多一种画法并不能让这枚饼说得更清楚。插件页上现在只剩一个
+ * 开关，语义是「要不要这枚饼」；关掉时这一处整块不装（装与卸都在客户端入口的 `syncPie` 里）。
  *
  * 推出去时**缝宽恒定**，而且不由「推开多远」挣出来：洞口按那一块再向外一圈缝来挖（见 `pushImage`），
  * 于是缝环绕那一块的整条边界、处处一样宽，推开多远只决定那一块离开原位多少、盘面让出多少直径。
@@ -2425,43 +2518,20 @@ exports.PIE_SIZE = 16;
 /** 原图标那一格：dsh 那枚 svg 写的就是 14×14。饼比它大，靠这个数摆正。 */
 const ICON_SIZE = 14;
 /**
- * 那道切口的宽度，像素——**唯一的旋钮**。
+ * 那道缝的宽度，像素——**唯一的旋钮**。
  *
- * 切口就是那条折线本身：折点在圆心，两段各是一条半径，沿线开出等宽的一道缝（缝宽不随半径变），把
- * 圆分成两块。两块**都不动位置**，所以把缝补上还是一整个圆——读者看到的是「这个圆被切了一刀」，
- * 而不是「一块被端了出去」。
- *
- * 这一格图标上 1px 出头已经看得很清楚；再宽，两块就要散开了。
- */
-const CUT_GAP = 1.2;
-/** 缝宽随占用长大：占用到这个数以后用满 `CUT_GAP`。 */
-const CUT_GAP_FULL_AT = 25;
-/** 占用很小时缝宽也留个底（`CUT_GAP` 的几成），不然「切了一刀」这件事就看不出来了。 */
-const CUT_GAP_MIN_RATIO = 0.5;
-/**
- * 推出去那一套的缝宽，像素——**只在开关打开时用**。
- *
- * 缝由「洞口比那一块大一圈」给出（见 `pushImage` 的那条遮罩），宽恒为这个值，与推开多远无关；与「只切
- * 一刀」那把刀口同宽。1px 出头已经看得很清楚。
+ * 缝由「洞口比那一块大一圈」给出（见 `pushImage` 的那条遮罩），宽恒为这个值，与推开多远无关。这一格
+ * 图标上 1px 出头已经看得很清楚；再宽，那一块就要与盘面散开了。
  */
 const SLICE_GAP = 1.2;
 /**
- * 推出去那一套里，那一块沿角平分线推开多远，像素。
+ * 那一块沿角平分线推开多远，像素。
  *
  * 缝不靠它挣（见上），它只影响两件事：那一块离开原位多远，以及盘面还剩多少直径
  * （`PIE_SIZE - 位移`，位移越大盘面越小）。2.6px 是权衡后的取值——端出去的观感明显，盘面还剩 13.4px
  * （与原来那圈环的外轮廓同量级；实心饼比同直径的环看得清，所以还立得住。饼再往下缩，这一格要跟着收）。
  */
 const SLICE_LIFT = 2.6;
-/**
- * 圆心那个小孔的半径，像素。
- *
- * 两条缝各自只让到自己那一侧的半径线为止，圆心恰好落在四条半缝的交点上——谁也挖不到它，会留下一
- * 点扇形色的残渣（读者看到的是「这一刀没切透」）。所以另给一个以圆心为心的小圆，两块都把它挖掉。
- */
-const PIVOT_HOLE = 0.7;
-/** 圆心那个小洞的遮罩 id：每次画的都是一份独立的图片文档，同一个 id 不会跟别处撞。 */
-const PIVOT_MASK_ID = 'dsh-chat-ux-pivot';
 /** 那一圈缝的遮罩 id：同上，只在「推出去」那一套里用。 */
 const SLICE_MASK_ID = 'dsh-chat-ux-slice';
 /** 盘面的半径：占满这一格。切口开在圆里，圆外不必留白。 */
@@ -2480,10 +2550,9 @@ const GROW_MS = 220;
 const paintedPies = new WeakMap();
 /**
  * 装上这一处。
- * @param shouldPush - 折线切开之后那一块推不推出去（插件管理页上那个开关）。
- * @returns 卸下这一处，以及开关变化后重新落一次。
+ * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
  */
-function installContextMeterPie(shouldPush) {
+function installContextMeterPie() {
     let dock = null;
     let frame = 0;
     /**
@@ -2512,7 +2581,7 @@ function installContextMeterPie(shouldPush) {
                 continue;
             if (candidate.hasAttribute(STAT_ATTRIBUTE))
                 continue;
-            paint(candidate, shouldPush() ? 'push' : 'cut');
+            paint(candidate);
         }
     };
     sync();
@@ -2526,72 +2595,35 @@ function installContextMeterPie(shouldPush) {
         });
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    return {
-        dispose: () => {
-            observer.disconnect();
-            if (frame !== 0)
-                cancelAnimationFrame(frame);
-            release();
-        },
-        resync: sync,
+    return () => {
+        observer.disconnect();
+        if (frame !== 0)
+            cancelAnimationFrame(frame);
+        release();
     };
 }
 /**
- * 一枚饼的样子：一整枚圆，被一条折点在圆心的折线切开。
+ * 一枚饼的样子：一整枚圆，被一条折点在圆心的折线切开，已占用那一块沿角平分线推出去一段。
  *
- * 切开之后那一块有两种去处，由 `style` 决定：`cut` 只切一刀——两块都留在原位，中间一道等宽的切口，
- * 把切口补上还是一整个圆；`push` 是那一块沿角平分线推开一段——缺口就是它原来的位置，盘上因此留下
- * 同形状的一块空位，两块的间距（缝宽）恒定。两套的折线是同一条，差别只在推不推。
+ * 缺口就是那一块原来的位置，盘上因此留下同形状的一块空位；两块的间距（缝宽）恒定——那道缝由
+ * 「洞口比那一块大一圈」给出，见 `pushImage`。
  *
  * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
  * @param percent - 已占用的百分比。
  * @param tone - 已占用那一块的颜色。
  * @param rest - 剩下那一块的颜色。
- * @param shape - 画法；不带时按「只切一刀」画。
+ * @param shape - 缝宽与位移；不带时用默认的那一套。
  * @returns 可以直接当 background-image 用的 url()。
  */
 function pieImage(percent, tone, rest, shape) {
-    const style = shape?.style ?? 'cut';
-    // 两头都单独走：满值时两条切口会重合成一条、而且「切了一刀还占满」本就说不通；空值时该画的就是
-    // 一枚完整的灰盘（什么都没有，也不该有切口）。两档都画整圆，不切。
+    // 两头都单独走：满值时那道缝会与盘面的边界重合、而且「切了一刀还占满」本就说不通；空值时该画的
+    // 是一枚完整的灰盘（什么都没有，也不该有缝）。两档都画整圆，不切。
     if (percent >= 100)
         return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + tone + '"/>');
     if (percent <= 0)
         return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + rest + '"/>');
     const occupied = percent / 100 * 360;
-    if (style === 'push') {
-        return pushImage(occupied, tone, rest, shape?.gap ?? SLICE_GAP, shape?.lift ?? SLICE_LIFT);
-    }
-    return cutImage(occupied, tone, rest, shape?.gap ?? CUT_GAP);
-}
-/**
- * 只切一刀：两块都在原位，各自把同一道切口挖掉一半，所以缝的两侧都干净。
- * @param occupied - 已占用的角度，度。
- * @param tone - 已占用那一块的颜色。
- * @param rest - 剩下那一块的颜色。
- * @param gap - 切口宽度，像素。
- * @returns url()。
- */
-function cutImage(occupied, tone, rest, gap) {
-    // 折线：0 度那一段与 occupied 那一段，各是一条半径。**两块各让出自己那一侧的半个缝宽**——缝因此
-    // 完全落在各块自己的地界里，evenodd 挖得干净（跨在两块边界上的话，缝的外半条会在对方那一侧被当成
-    // 「多出来的一块」而填上色）。缝是**透明**的，露出的是按钮底下的页面底色，深浅两套主题都自动对得上。
-    //
-    // 缝宽随占用长大：扇形在圆心那一头本来就窄（10% 只有 36 度，半径 1px 处的弧宽还不到 0.7px），一条
-    // 等宽的缝会把根部整段吃掉——读者看到的是「扇形被剩下那个圆侵蚀了」。所以小占用时把缝收窄，
-    // CUT_GAP_FULL_AT 以后才用满。
-    const scale = Math.min(1, Math.max(CUT_GAP_MIN_RATIO, occupied / 3.6 / CUT_GAP_FULL_AT));
-    const half = gap * scale / 2;
-    const mask = ' mask="url(#' + PIVOT_MASK_ID + ')"';
-    const plate = '<path d="' + discPath(CENTER, CENTER, RADIUS)
-        + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, -1)
-        + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, 1)
-        + '" fill="' + rest + '" fill-rule="evenodd"' + mask + '/>';
-    const slice = '<path d="' + sectorPath(CENTER, CENTER, RADIUS, 0, occupied)
-        + ' ' + slotPath(CENTER, CENTER, RADIUS, 0, half, 1)
-        + ' ' + slotPath(CENTER, CENTER, RADIUS, occupied, half, -1)
-        + '" fill="' + tone + '" fill-rule="evenodd"' + mask + '/>';
-    return inlineSvg(pivotMask(CENTER, CENTER) + plate + slice);
+    return pushImage(occupied, tone, rest, shape?.gap ?? SLICE_GAP, shape?.lift ?? SLICE_LIFT);
 }
 /**
  * 推出去：两块是**全等**的扇形，一块留在原位（那就是盘上的缺口），另一块沿角平分线挪开 lift。
@@ -2660,27 +2692,10 @@ function discPath(cx, cy, radius) {
         + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + top + ' Z';
 }
 /**
- * 圆心那一小圈的遮罩：整幅图铺白，再把圆心那一圈涂黑——涂黑的地方就是透明的。
- *
- * 为什么用遮罩，而不是在 path 的 d 里塞一个小圆（那条路试过，两种弧的写法都试过）：那个小圆的半径
- * 不到 1px，即使 d 算得完全正确（dump 出来那个圆明明在），Chromium 也会当成「小到不必画」而放过，圆心
- * 那一点照样留着扇形色。遮罩是一次涂黑，跟路径的尺寸无关。
- * @param cx - 圆心的横坐标。
- * @param cy - 圆心的纵坐标。
- * @returns mask 元素的文本。
- */
-function pivotMask(cx, cy) {
-    return '<mask id="' + PIVOT_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
-        + ' width="' + exports.PIE_SIZE + '" height="' + exports.PIE_SIZE + '">'
-        + '<rect x="0" y="0" width="' + exports.PIE_SIZE + '" height="' + exports.PIE_SIZE + '" fill="#ffffff"/>'
-        + '<circle cx="' + round2(cx) + '" cy="' + round2(cy) + '" r="' + PIVOT_HOLE + '" fill="#000000"/>'
-        + '</mask>';
-}
-/**
  * 一角扇形：从顶点出发，走到 from 度那一点，再沿弧顺时针走到 to 度。
  *
- * 两套画法都用它、都用同一组角度与半径，差别只有顶点落在哪：只切一刀时两块都从容器正中那颗圆心起，
- * 推出去时拿一块从那颗圆心起、另一块从挪开 lift 的那一点起。
+ * 盘面与那一块都用它、用同一组角度与半径，差别只有顶点落在哪：盘面从容器正中那颗圆心起，推出去的
+ * 那一块从挪开 lift 的那一点起。
  * @param cx - 顶点的横坐标。
  * @param cy - 顶点的纵坐标。
  * @param radius - 半径。
@@ -2699,32 +2714,6 @@ function sectorPath(cx, cy, radius, from, to) {
     const largeArc = to - from > 180 ? 1 : 0;
     return 'M ' + x + ' ' + y + ' L ' + x0 + ' ' + y0
         + ' A ' + radius + ' ' + radius + ' 0 ' + largeArc + ' 1 ' + x1 + ' ' + y1 + ' Z';
-}
-/**
- * 一段切口：从圆心沿 direction 那条半径走出去的一个窄长条，一条边就压在半径线上。
- *
- * 它只往**一侧**让出 half 宽——盘让盘那一侧、那一块让扇形那一侧，两边一起才是等宽的一道缝。缝的末端
- * 停在圆边上，所以整块都落在各自的地界里，evenodd 挖出来是干净的。
- * @param cx - 圆心横坐标。
- * @param cy - 圆心纵坐标。
- * @param radius - 半径；缝到圆边为止。
- * @param direction - 这一段开在哪条半径上，度；0 是 12 点。
- * @param half - 让出的宽度（也就是缝宽的一半），像素。
- * @param side - 往哪一侧让：`1` 是角度增大（顺时针）那一侧，`-1` 是另一侧。
- * @returns SVG path 的 d。
- */
-function slotPath(cx, cy, radius, direction, half, side) {
-    const sin = Math.sin(rad(direction));
-    const cos = Math.cos(rad(direction));
-    // 沿半径走出去的那个长度，以及法线方向上让出的那一点宽度。
-    const outX = sin * radius;
-    const outY = -cos * radius;
-    const nx = cos * half * side;
-    const ny = sin * half * side;
-    return 'M ' + round2(cx) + ' ' + round2(cy)
-        + ' L ' + round2(cx + outX) + ' ' + round2(cy + outY)
-        + ' L ' + round2(cx + outX + nx) + ' ' + round2(cy + outY + ny)
-        + ' L ' + round2(cx + nx) + ' ' + round2(cy + ny) + ' Z';
 }
 /** 度换弧度。0 度是 12 点，顺时针为正。 */
 function rad(degrees) {
@@ -2748,7 +2737,7 @@ function round2(value) {
  * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
  * @param root - 候选元素；认不出来就什么都不做。
  */
-function paint(root, style) {
+function paint(root) {
     const trigger = root.querySelector(TRIGGER_SELECTOR);
     if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null)
         return;
@@ -2781,7 +2770,7 @@ function paint(root, style) {
     // 「刚打开是灰的，聊一句才变色」）。
     root.setAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE, '');
     // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是「环被藏起来、饼又没有」的空格。
-    if (!paintPie(trigger, percent, reading, style))
+    if (!paintPie(trigger, percent, reading))
         root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
 }
 /**
@@ -2794,7 +2783,7 @@ function paint(root, style) {
  * @param reading - 读数那一截；它的 `color` 就是扇形色。
  * @returns 这一帧接上了没有；没接上时调用方不该让原环让位。
  */
-function paintPie(trigger, target, reading, style) {
+function paintPie(trigger, target, reading) {
     // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
     // 探针里那组 fill 写法对照（.probe/ramp.mjs）量过，图片文档认它，与 rgb 字面值画出同一个像素。
     const tone = getComputedStyle(reading).color;
@@ -2804,7 +2793,7 @@ function paintPie(trigger, target, reading, style) {
     const existing = paintedPies.get(trigger);
     // 读数与色都没变、也没有一帧在跑：不写第二遍。
     if (existing !== undefined && existing.handle === 0 && existing.percent === target
-        && existing.tone === tone && existing.rest === rest && existing.style === style)
+        && existing.tone === tone && existing.rest === rest)
         return true;
     // 上一次还在跑就被新读数打断了：从它当前显示的那一格接着往新目标走，不从起点重来。
     if (existing !== undefined && existing.handle !== 0)
@@ -2814,7 +2803,7 @@ function paintPie(trigger, target, reading, style) {
     if (existing === undefined) {
         trigger.style.backgroundRepeat = 'no-repeat';
         trigger.style.backgroundSize = exports.PIE_SIZE + 'px ' + exports.PIE_SIZE + 'px';
-        // 内容框的原点就是图标那一格的左边缘；饼比那一格宽 6px，起点往左借一半才与图标同心。
+        // 内容框的原点就是图标那一格的左边缘；饼比那一格宽 2px，起点往左借一半才与图标同心。
         trigger.style.backgroundOrigin = 'content-box';
         trigger.style.backgroundPosition = -(exports.PIE_SIZE - ICON_SIZE) / 2 + 'px center';
     }
@@ -2823,25 +2812,24 @@ function paintPie(trigger, target, reading, style) {
         handle: 0,
         tone,
         rest,
-        style,
         from,
         to: target,
         startedAt: performance.now(),
     };
     paintedPies.set(trigger, record);
-    paintImage(trigger, from, tone, rest, style);
+    paintImage(trigger, from, tone, rest);
     // 刚挂上就从 0 长出来（与数字轮那个先例一致），以及读数没变、系统要求减少动态效果：都不跑帧。
     if (from === target || reduceMotion()) {
         record.percent = target;
-        paintImage(trigger, target, tone, rest, style);
+        paintImage(trigger, target, tone, rest);
         return true;
     }
     record.handle = requestAnimationFrame((now) => { advance(trigger, now); });
     return true;
 }
 /** 把读数对应的那张图写进那颗按钮。 */
-function paintImage(trigger, percent, tone, rest, style) {
-    trigger.style.backgroundImage = pieImage(percent, tone, rest, { style });
+function paintImage(trigger, percent, tone, rest) {
+    trigger.style.backgroundImage = pieImage(percent, tone, rest);
 }
 /**
  * 推一帧：把这一枚饼从起点的读数推到终点的读数。
@@ -2859,12 +2847,12 @@ function advance(trigger, now) {
     if (progress >= 1) {
         record.percent = record.to;
         record.handle = 0;
-        paintImage(trigger, record.to, record.tone, record.rest, record.style);
+        paintImage(trigger, record.to, record.tone, record.rest);
         return;
     }
     const eased = 1 - (1 - progress) ** 3;
     record.percent = record.from + (record.to - record.from) * eased;
-    paintImage(trigger, record.percent, record.tone, record.rest, record.style);
+    paintImage(trigger, record.percent, record.tone, record.rest);
     record.handle = requestAnimationFrame((next) => { advance(trigger, next); });
 }
 /** 系统说「减少动态效果」：扩张那一下不跑，直接落定。 */
@@ -6685,7 +6673,7 @@ const TOKEN_FADE_FIELD = 'tokenFade';
 const CARET_FIELD = 'caretMotion';
 const SEND_FLIGHT_FIELD = 'sendFlight';
 const HIT_REEL_FIELD = 'hitReel';
-const PIE_PUSH_FIELD = 'piePush';
+const CONTEXT_PIE_FIELD = 'contextPie';
 const COMPOSER_GLASS_FIELD = 'composerGlass';
 const LIVE_DIFF_FIELD = 'liveDiff';
 const ZH_COPY = {
@@ -6710,12 +6698,12 @@ const ZH_COPY = {
     reelLabel: '命中率转轮',
     reelHint: '输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——'
         + '新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。',
-    piePushLabel: '切块推开',
-    piePushHint: '折线切开之后，那一块沿角平分线推开一点，看着像从盘子里切下来的一块；'
-        + '关掉就只留一道切口，两块都留在原位，把切口补上就是一整个圆。',
+    pieLabel: '上下文占用饼',
+    pieHint: '输入框下方那圈上下文占用环换成一枚实心饼，按占用多少取色；已占用那一角沿折线切开、推开一点，'
+        + '像从盘子里切下来的一块。关掉就回到 dsh 原来的环。',
     glassLabel: '输入框毛玻璃',
     glassHint: '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
-        + '右下角那枚发送（跑起来时是停止）按钮跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
+        + '右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
     liveDiffLabel: '实时改动行数',
     liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '这一段还在收，标着 beta，默认关着。',
@@ -6749,10 +6737,10 @@ const EN_COPY = {
     reelHint: 'When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new '
         + 'values — each one drops back in from just below while the old digit fades out the other way. Off swaps '
         + 'the number instantly.',
-    piePushLabel: 'Slice pulled out',
-    piePushHint: 'After the fold line cuts the circle, the occupied slice slides out a little along the bisector, so it '
-        + 'reads as a piece cut from a plate. Turning it off leaves just the cut: both pieces stay in place, and '
-        + 'closing the cut gives you the whole circle back.',
+    pieLabel: 'Context pie',
+    pieHint: 'The context ring under the composer becomes a solid pie that takes its colour from how full the context '
+        + 'is; the occupied slice is cut along a fold line and slides out a little, like a piece cut from a plate. '
+        + 'Turning it off restores dsh\'s own ring.',
     glassLabel: 'Composer glass',
     glassHint: 'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
         + 'highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the '
@@ -6793,7 +6781,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const tokenFadeOn = storedTokenFade(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
-    const piePushOn = storedPiePush(snapshot.value);
+    const pieOn = storedContextPie(snapshot.value);
     const glassOn = storedGlass(snapshot.value);
     const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
@@ -6833,7 +6821,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(PIE_PUSH_FIELD, copy.piePushLabel, copy.piePushHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: piePushOn, disabled: controlsDisabled, label: copy.piePushLabel, onChange: (next) => void writeField(PIE_PUSH_FIELD, next, storedPiePush) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
@@ -6869,9 +6857,9 @@ function storedHitReel(value) {
 function storedLiveDiff(value) {
     return value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
 }
-/** 从 host 的值里读上下文占用那枚饼的「推出去」开关。 */
-function storedPiePush(value) {
-    return value?.piePush ?? settings_scope_1.DEFAULT_PIE_PUSH;
+/** 从 host 的值里读上下文占用那枚饼的开关。 */
+function storedContextPie(value) {
+    return value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
 }
 /** 从 host 的值里读输入框那块玻璃的开关。 */
 function storedGlass(value) {

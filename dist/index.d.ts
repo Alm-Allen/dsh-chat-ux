@@ -60,12 +60,13 @@ export declare const DEFAULT_TOKEN_FADE = true;
  */
 export declare const DEFAULT_HIT_REEL = true;
 /**
- * 上下文占用那枚饼的默认画法：折线切开之后，那一块**推出去**。
+ * 上下文占用那枚饼默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
+ * 改一处就要改另一处。
  *
- * 前端有一份同样的常量（`client/settings/settings-scope.ts`），改一处就要改另一处。默认推出去——
- * 「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ * 默认开着：dsh 画的那圈环换成一枚按占用取色的实心饼，已占用那一角沿折线切开、推开一点。关掉时这一处
+ * 整块不装——页面上一次都不动手，看到的就是 dsh 原来的环。
  */
-export declare const DEFAULT_PIE_PUSH = true;
+export declare const DEFAULT_CONTEXT_PIE = true;
 /**
  * 输入框那块玻璃默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
  * 改一处就要改另一处。
@@ -89,7 +90,7 @@ export interface Config {
     sendFlight: Volatile<boolean>;
     tokenFade: Volatile<boolean>;
     hitReel: Volatile<boolean>;
-    piePush: Volatile<boolean>;
+    contextPie: Volatile<boolean>;
     composerGlass: Volatile<boolean>;
     liveDiff: Volatile<boolean>;
 }
@@ -104,7 +105,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
-    piePush: Schema<boolean, boolean, "volatile-defined">;
+    contextPie: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
@@ -114,7 +115,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
     tokenFade: Schema<boolean, boolean, "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
-    piePush: Schema<boolean, boolean, "volatile-defined">;
+    contextPie: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;

@@ -29,8 +29,8 @@ import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_ENHANCED_FOLLOW,
-    DEFAULT_LIVE_DIFF, DEFAULT_PIE_PUSH, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
+    DEFAULT_ENHANCED_FOLLOW, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -75,7 +75,7 @@ export function apply(ctx: ClientContext): void {
         caret: DEFAULT_CARET_MOTION,
         sendOn: DEFAULT_SEND_FLIGHT,
         tokenFade: DEFAULT_TOKEN_FADE,
-        piePush: DEFAULT_PIE_PUSH,
+        pie: DEFAULT_CONTEXT_PIE,
         glass: DEFAULT_COMPOSER_GLASS,
         liveDiff: DEFAULT_LIVE_DIFF,
     }
@@ -85,9 +85,18 @@ export function apply(ctx: ClientContext): void {
     const caret = installCaretMotion(() => settings.caret)
     const tokenMotion = installTokenMotion(() => settings.tokenFade)
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
-    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关决定折线切开
-    // 之后那一块推不推出去，所以它也由 syncSettings 重落一次。
-    const pie = installContextMeterPie(() => settings.piePush)
+    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
+    // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
+    let pieDispose: (() => void) | null = null
+    const syncPie = (): void => {
+        if (!settings.pie) {
+            pieDispose?.()
+            pieDispose = null
+            return
+        }
+        if (pieDispose !== null) return
+        pieDispose = installContextMeterPie()
+    }
     // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
     // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
     let autoFoldDispose: (() => void) | null = null
@@ -126,13 +135,13 @@ export function apply(ctx: ClientContext): void {
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
-        settings.piePush = value?.piePush ?? DEFAULT_PIE_PUSH
+        settings.pie = value?.contextPie ?? DEFAULT_CONTEXT_PIE
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         syncGlass()
         caret.resync()
         tokenMotion.resync()
-        pie.resync()
+        syncPie()
         syncAutoFold()
     }
     syncSettings()
@@ -204,7 +213,16 @@ export function apply(ctx: ClientContext): void {
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
     installCacheHitPill(services.slots, services.configForms)
 
-    ctx.effect(() => pie.dispose, 'dsh-chat-ux: context meter pie')
+    ctx.effect(
+        () => {
+            syncPie()
+            return () => {
+                pieDispose?.()
+                pieDispose = null
+            }
+        },
+        'dsh-chat-ux: context meter pie',
+    )
 
     // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
     // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
@@ -247,8 +265,8 @@ interface ChatUxSettings {
     sendOn: boolean
     /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
     tokenFade: boolean
-    /** 上下文占用那枚饼：折线切开之后那一块推不推出去；改一次就得重画一次。 */
-    piePush: boolean
+    /** 上下文占用那圈环是否换成一枚实心饼；改一次就得重落一次（装或卸）。 */
+    pie: boolean
     /** 输入框那块玻璃开着没有；它是 body 上的一层常驻状态，改一次就得重落一次。 */
     glass: boolean
     /** 文件变更行的 `+n -m` 是否在准备态就长出来；那一行在渲染期现读它。 */

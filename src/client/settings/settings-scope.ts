@@ -52,12 +52,12 @@ export const DEFAULT_TOKEN_FADE = true
 export const DEFAULT_HIT_REEL = true
 
 /**
- * 上下文占用那枚饼默认是否把切开的那一块推出去。host 侧 `src/index.ts` 里有一份同样的常量，改一处
- * 就要改另一处。
+ * 上下文占用那枚饼默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
- * 默认推出去：「从盘子里切下来一块」比一道切口更能说明已占用多少。
+ * 默认开着：把 dsh 那圈环换成一枚按占用取色的实心饼（已占用那一角切开、推出去）。关掉时这一处整块
+ * 不装，页面上一次都不动手。
  */
-export const DEFAULT_PIE_PUSH = true
+export const DEFAULT_CONTEXT_PIE = true
 
 /**
  * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
@@ -88,8 +88,8 @@ export interface ChatUxSection {
     tokenFade?: boolean
     /** 命中率读数变化时，变了的那一位是否原地弹到新值；默认开着。 */
     hitReel?: boolean
-    /** 上下文占用那枚饼是否把切开的那一块推出去；默认开着。关掉就只留一道切口。 */
-    piePush?: boolean
+    /** 上下文占用那圈环是否换成一枚实心饼；默认开着。关掉时这一处整块不装。 */
+    contextPie?: boolean
     /** 输入框那块玻璃是否生效；默认开着。关掉时那整张规则表一条都不命中。 */
     composerGlass?: boolean
     /** 文件变更行的 `+n -m` 是否在准备态就显示并跟着流式内容增长；默认关着，卡片上标 beta。 */
