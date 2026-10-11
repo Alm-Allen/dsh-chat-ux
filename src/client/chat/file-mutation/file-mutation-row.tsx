@@ -155,19 +155,27 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
     const running = model.state === 'running' || model.state === 'preparing'
     const rawTotals = useMemo(() => rowTotals(block, hunks), [block, hunks])
-    // 老虎机常开，只是流式那两态换一档更短的弹动，并且**读数按那一档的节拍离散更新**：高速流式下
-    // 读数跳得比动画快得多，若逐批换数，一位上会同时挂着两三个残影、读数糊在一起。所以宁让读数
-    // 滞后一拍，也要让每一轮动画走完整——见 `usePacedTotals`。
+    // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' as const : undefined
-    const totals = usePacedTotals(rawTotals, running)
+    // 节拍只给 edit：`write` 的内容是一整段连续文本，行数跟着换行走、本来就一档一档地长，再压一拍只会
+    // 让台阶更大（2026-10-11 读者反馈的正是「写入的行数几乎到终态才出现」，其中一半原因就在这里）；而
+    // `edit` 是两个字段各自到各字数，落定前会有大跳，那一处才需要节拍把动画护住。
+    const totals = usePacedTotals(rawTotals, running && model.variant === 'edit')
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null)
     const open = expanded && expandable
     const summaryText = model.errorSummary ?? model.summary
-    // 输入大小跨阶段保留，与内置的 `summarySuffix` 同一条规则：有路径才显示，所以准备态还没
-    // 读到路径时它不单独占位。
-    const size = model.kilobytes === null || model.summary === ''
+    // 输入大小只要读得到就显示——**不再要求路径已经有了**。
+    //
+    // 内置的 `summarySuffix` 是「有路径才显示」，照抄它会踩到一个很具体的坑：模型给 `write` 生成的参数
+    // 顺序是 `content` 在前、`file_path` 在**最后一个字符**（2026-10-11 量了 30 次真实 write：content 在
+    // 第 1 批，file_path 在第 1041 批、即整段参数流的 100%），而 `edit` 反过来是 `file_path` 在最前
+    // （0%）。于是同样的规则下：写入的整段内容流式期间那两个数都被挡掉、只在末尾一起冒出来（读者看到的
+    // 就是这个），编辑却从头就在长。
+    //
+    // 没有路径时它直接跟在描述后面（那个分隔点只在有描述时渲染，所以不会留下一个孤立的点）。
+    const size = model.kilobytes === null
         ? null
         : t('tool.preparing.content', {kilobytes: model.kilobytes})
     const status = stateLabel(model.state, t)
@@ -185,17 +193,24 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
         if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
     }, [])
 
-    const collapsedContent = summaryText === '' ? null : (
+    // 那一截紧凑内容由三块拼成：路径（或摘要）、输入大小、增删两个数。**路径缺席时另两块照旧显示**——
+    // 原因见上面 `size` 那一段注释（`write` 的 `file_path` 在参数最末）。
+    const collapsedContent = summaryText === '' && size === null && totals === null ? null : (
         <>
-            <span className={FILE_SEP_CLASS} aria-hidden/>
-            {linkAvailable ? (
-                <button type="button" className={FILE_LINK_CLASS} onClick={openFileClick} onKeyDown={linkKeyDown}>
-                    <TextShimmer active={running}>{summaryText}</TextShimmer>
-                </button>
-            ) : (
-                <span className={summaryClassName(model.state)}>
+            {/* 那个分隔点是「标题 · 路径」之间的一颗点：没有路径时它不该单独出现。 */}
+            {summaryText !== '' && (
+                <>
+                    <span className={FILE_SEP_CLASS} aria-hidden/>
+                    {linkAvailable ? (
+                        <button type="button" className={FILE_LINK_CLASS} onClick={openFileClick} onKeyDown={linkKeyDown}>
+                            <TextShimmer active={running}>{summaryText}</TextShimmer>
+                        </button>
+                    ) : (
+                        <span className={summaryClassName(model.state)}>
           <TextShimmer active={running}>{summaryText}</TextShimmer>
         </span>
+                    )}
+                </>
             )}
             {(size !== null || totals !== null) && (
                 <span className={FILE_SUFFIX_CLASS}>

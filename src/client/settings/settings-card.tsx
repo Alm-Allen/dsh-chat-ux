@@ -106,6 +106,7 @@ const ZH_COPY: Copy = {
     liveDiffHint:
         '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '数字一变，变了的那一位会像读数那样在原地弹到新值。'
+        + '打开之后，`run_code` 那一行在程序还在生成时也会带一个已写大小（那个功能要 0.2.1-alpha.1 及以后的 dsh 才有）。'
         + '这一段还在收，标着 beta，默认关着。',
     overridden: '已覆盖',
     reset: '重置',
@@ -155,7 +156,9 @@ const EN_COPY: Copy = {
     liveDiffHint:
         'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
         + 'is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value '
-        + 'the way the readouts do. This stretch is still settling, so it is marked beta and off by default.',
+        + 'the way the readouts do. With this on, a `run_code` row also shows how much of its program has been written '
+        + 'while the program is still being generated (that part needs dsh 0.2.1-alpha.1 or later). This stretch is '
+        + 'still settling, so it is marked beta and off by default.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',

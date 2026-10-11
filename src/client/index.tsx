@@ -16,6 +16,7 @@ import type {Context as ClientContext} from '@deepseek-ai/cordis'
 import {installCaretMotion} from './chat/caret/caret-motion'
 import type {CaretMotionMode} from './chat/caret/caret-motion'
 import {installCacheHitPill} from './chat/cache-hit/cache-hit-pill'
+import {installRunCodeRow} from './chat/code-progress/run-code-row'
 import {installComposerGlass} from './chat/composer-glass/composer-glass'
 import {GLASS_ATTRIBUTE} from './chat/composer-glass/composer-glass-styles'
 import {installContextMeterPie} from './chat/context-meter/context-meter-pie'
@@ -233,6 +234,12 @@ export function apply(ctx: ClientContext): void {
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认关，卡片上标 beta）。
     installFileMutationRow(services.slots, () => settings.liveDiff)
+
+    // run_code 那一行在生成期间什么都不显示（折叠态只有 title 与 description），读者看不到「代码写到
+    // 哪了」。进度读数要读 `block.args`，而拿参数视图的唯一入口就是接管座位——所以这一处也遮蔽那一行
+    // （同样 priority -1）。代价写在 `run-code-row` 的模块注释里：展开体的代码块从 CodeBlock 换成
+    // DiffBlock。读数跟着同一项开关（准备态那个数），关着时这一行不显示它。
+    installRunCodeRow(services.slots, () => settings.liveDiff)
 
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的

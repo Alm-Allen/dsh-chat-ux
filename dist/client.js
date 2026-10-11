@@ -47,6 +47,7 @@ exports.inject = void 0;
 exports.apply = apply;
 const caret_motion_1 = require("./chat/caret/caret-motion");
 const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
+const run_code_row_1 = require("./chat/code-progress/run-code-row");
 const composer_glass_1 = require("./chat/composer-glass/composer-glass");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
@@ -242,6 +243,11 @@ function apply(ctx) {
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认关，卡片上标 beta）。
     (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiff);
+    // run_code 那一行在生成期间什么都不显示（折叠态只有 title 与 description），读者看不到「代码写到
+    // 哪了」。进度读数要读 `block.args`，而拿参数视图的唯一入口就是接管座位——所以这一处也遮蔽那一行
+    // （同样 priority -1）。代价写在 `run-code-row` 的模块注释里：展开体的代码块从 CodeBlock 换成
+    // DiffBlock。读数跟着同一项开关（准备态那个数），关着时这一行不显示它。
+    (0, run_code_row_1.installRunCodeRow)(services.slots, () => settings.liveDiff);
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
@@ -2072,6 +2078,592 @@ function hideLegacyUsagePill() {
 }
     };
 
+    __registry["chat/code-progress/run-code-row.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installRunCodeRow = installRunCodeRow;
+exports.RunCodeRow = RunCodeRow;
+const jsx_runtime_1 = require("react/jsx-runtime");
+/**
+ * `run_code` 的进度读数：接管这一行，在折叠态尾部显示「代码已写多少」。
+ *
+ * ## 为什么这一处必须重画整行
+ *
+ * 进度数据在 `block.args` 里，而拿到它的唯一入口是 `tool.call.toolview` 座位——座位的语义是**替换**
+ * 而不是追加（`renderSlot(name, owner, {entryKey, fallback})`），dsh 没有「只读参数、不动这一行」的
+ * 注入点（`DisclosureRow` 的 `headerAccessory` 是 `ToolRow` 的内部 prop，座位之外拿不到）。所以这一
+ * 处与 `file-mutation-row` 同样的做法：用更低的 priority 遮蔽内置那一行，照着它的样子重画。
+ *
+ * 与文件变更行唯一的取舍在**展开体的代码块**：内置用 `CodeBlock`（shiki 高亮 + 语言标签 + 复制/折行），
+ * 而 `CodeBlock` 虽然从 `@deepseek-ai/dsh-client-ui-primitives` 导出，却**不在 dsh 开放给插件的基座
+ * 模块表里**（`platform-modules.d.ts` 只给到 `DiffBlock`），所以这里用 `DiffBlock` 顶——同一个 shiki
+ * 高亮、同一个工具栏，代价是行首多一个 `+`、新增行带一条绿底。想不降级就得改 dsh 自己，那时这一行可
+ * 以整个撤掉。
+ *
+ * ## 读数本身
+ *
+ * `code` 字段的已解码长度，按 1 KB 一档（与文件变更行的输入大小同一个口径），只在准备态显示——派发
+ * 之后「代码正在写」这件事就结束了。读的是 `stringLength` 而不是 `text()`：后者会让 dsh 按「每一批」
+ * 重新发布这一行，几十 KB 的代码参数不值得为一个小读数付这个钱。
+ *
+ * 那一段默认关着（插件管理页上的「实时改动行数」）；关掉时这一行不显示读数，其余照常。
+ *
+ * @module dsh-chat-ux/chat/code-progress/run-code-row
+ */
+const react_1 = require("react");
+const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const file_mutation_styles_1 = require("../file-mutation/file-mutation-styles");
+const code_progress_styles_1 = require("./code-progress-styles");
+/** 一个 KB 的字符数。 */
+const KILOBYTE = 1024;
+/** 展开体里那份代码的行数上限；`run_code` 的程序比文件 diff 长得多，所以不沿用 9。 */
+const CODE_MAX_LINES = 200;
+/** 拿它给 `DiffBlock` 推语言：那一层只认路径后缀，不认别的提示。 */
+const CODE_LANGUAGE_PATH = 'run_code.ts';
+/**
+ * 这一行的图标。
+ *
+ * 内置的 code 变体用的是编码图标，但它不在基座模块表里（表里只有编辑、检视、数据库三枚），所以这里
+ * 用编辑铅笔——它与文件变更行同款，观感上也是「一次改动」那一族。
+ */
+const CODE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 14 });
+/**
+ * 准备态那个读数开着没有。由 `installRunCodeRow` 装进来，渲染期现读——插件管理页上一改就跟着变。
+ */
+let liveSizeEnabled = () => false;
+/**
+ * 在 `run_code` 座位上遮蔽内置那一行。
+ * @param slots - 客户端座位注册表。
+ * @param liveSize - 准备态那个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
+ */
+function installRunCodeRow(slots, liveSize) {
+    liveSizeEnabled = liveSize;
+    slots.inject('tool.call.toolview', () => slots.register({ name: 'tool.call.toolview', priority: -1, locale: 'conversation', key: 'run_code' }, RunCodeRow));
+}
+/**
+ * 渲染一次 `run_code` 调用：折叠态是标题、描述与已写大小，展开态是那份程序与输出。
+ * @param props - owner 载荷与文案座位。
+ * @returns 这一行。
+ */
+function RunCodeRow(props) {
+    const { t, block, inspect, useDisclosure } = props;
+    const { expanded, toggle } = useDisclosure();
+    const state = rowState(block);
+    // 准备态也算在跑，与内置 ToolRow 的判据一致：否则这一段的标题与描述都不扫光。
+    const running = state === 'running' || state === 'preparing';
+    const size = (0, react_1.useMemo)(() => codeSizeText(block, t), [block, t]);
+    const description = (0, react_1.useMemo)(() => callDescription(block), [block]);
+    const code = (0, react_1.useMemo)(() => callCode(block), [block]);
+    const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
+    const output = (0, react_1.useMemo)(() => resultText(block), [block]);
+    const labels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
+    const expandable = hunks !== null || output !== null;
+    const open = expanded && expandable;
+    const status = stateLabel(state, t);
+    const collapsedContent = description === '' && size === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), size !== null && (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: size })] }));
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
+    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
+}
+/**
+ * 行状态。
+ * @param block - 调用块。
+ * @returns 状态。
+ */
+function rowState(block) {
+    if (!('kind' in block))
+        return block.phase === 'preparing' ? 'preparing' : 'running';
+    if (block.error?.code === 'interrupted')
+        return 'stopped';
+    return block.isError ? 'error' : 'ok';
+}
+/**
+ * 此刻的读数：代码字段已收到的长度，向上取整成 KB。
+ * @param block - 调用块。
+ * @param t - 文案座位。
+ * @returns 读数文本，或 null（关着、或代码字段还没出现）。
+ */
+function codeSizeText(block, t) {
+    if (!liveSizeEnabled())
+        return null;
+    if ('kind' in block || block.phase !== 'preparing')
+        return null;
+    const view = block.args;
+    if (view === undefined || !view.has('code'))
+        return null;
+    const characters = view.stringLength('code', { step: KILOBYTE }) ?? 0;
+    return t('tool.preparing.content', { kilobytes: Math.ceil(characters / KILOBYTE) });
+}
+/**
+ * 折叠态那半截描述文本。
+ *
+ * 准备态读参数视图（流式期间就有），派发后退回原始参数——与内置 `code` 变体取的是同一个字段。
+ * @param block - 调用块。
+ * @returns 描述，或空串。
+ */
+function callDescription(block) {
+    if (!('kind' in block) && block.phase === 'preparing') {
+        const text = block.args?.text('description');
+        return text === undefined ? '' : firstLine(text);
+    }
+    const raw = 'kind' in block ? block.call?.argsRaw ?? '' : block.argsRaw;
+    const parsed = parseArgs(raw);
+    return parsed === null ? '' : firstLine(pickString(parsed, ['description']) ?? '');
+}
+/**
+ * 那份程序本体。
+ *
+ * 准备态只能读参数视图给出的那一段（流式期间就是半截），派发之后读完整参数——准备态因此也能展开看
+ * 到正在生成的代码。
+ * @param block - 调用块。
+ * @returns 代码，或 null。
+ */
+function callCode(block) {
+    if (!('kind' in block) && block.phase === 'preparing')
+        return block.args?.text('code') ?? null;
+    const raw = 'kind' in block ? block.call?.argsRaw ?? '' : block.argsRaw;
+    const parsed = parseArgs(raw);
+    return parsed === null ? null : pickString(parsed, ['code']) ?? null;
+}
+/**
+ * 把代码摊成一份「整份新增」的改动，交给 `DiffBlock` 画——这样 shiki 高亮与工具栏都还在。
+ * @param code - 代码文本。
+ * @returns 单个 hunk，或 null（还没有代码）。
+ */
+function codeHunks(code) {
+    if (code === null || code === '')
+        return null;
+    return [{ path: CODE_LANGUAGE_PATH, oldText: null, newText: code }];
+}
+/**
+ * 展开体里那份输出。
+ * @param block - 调用块。
+ * @returns 摊平后的文本，或 null。
+ */
+function resultText(block) {
+    if (!('kind' in block))
+        return null;
+    const parts = [];
+    for (const item of block.content) {
+        if (item.type === 'text' && typeof item.text === 'string') {
+            parts.push(item.text);
+            continue;
+        }
+        parts.push(JSON.stringify(item, null, 2));
+    }
+    if (parts.length === 0 && block.error !== undefined)
+        parts.push(block.error.name + ': ' + block.error.code);
+    return parts.length === 0 ? null : parts.join('\n');
+}
+/**
+ * 解析原始参数 JSON。
+ * @param argsRaw - 参数原文。
+ * @returns 参数对象，或 null（流式中途截断、或不是对象）。
+ */
+function parseArgs(argsRaw) {
+    let value;
+    try {
+        value = JSON.parse(argsRaw);
+    }
+    catch {
+        return null;
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+        return null;
+    return value;
+}
+/**
+ * 按顺序取第一个非空字符串字段。
+ * @param args - 解析后的参数。
+ * @param keys - 候选字段名。
+ * @returns 命中的值，或 undefined。
+ */
+function pickString(args, keys) {
+    for (const key of keys) {
+        const value = args[key];
+        if (typeof value === 'string' && value !== '')
+            return value;
+    }
+    return undefined;
+}
+/**
+ * 取一段文本的第一行。
+ * @param text - 任意文本。
+ * @returns 第一行。
+ */
+function firstLine(text) {
+    const lineBreakAt = text.indexOf('\n');
+    return lineBreakAt === -1 ? text : text.slice(0, lineBreakAt);
+}
+/**
+ * 给读屏的状态文本：图标与扫光都不表达状态，这句话替它们说。
+ * @param state - 行状态。
+ * @param t - 文案座位。
+ * @returns 状态文本，或 null（无需播报）。
+ */
+function stateLabel(state, t) {
+    if (state === 'running')
+        return t('row.running');
+    if (state === 'error')
+        return t('row.failed');
+    if (state === 'stopped')
+        return t('row.stopped');
+    return null;
+}
+/**
+ * 组装 diff 卡片自己的 chrome 文案。
+ * @param t - 文案座位。
+ * @returns diff 卡片的 labels。
+ */
+function diffBlockLabels(t) {
+    return {
+        codeLabel: t('codeBlock.title'),
+        wrapLabel: t('codeBlock.wrap'),
+        unwrapLabel: t('codeBlock.unwrap'),
+        copy: t('copy'),
+        copied: t('copied'),
+        collapseAria: t('diff.collapseAria'),
+        expandAria: hidden => t('diff.expandAria', { count: hidden }),
+        collapse: t('collapse'),
+        expand: hidden => t('diff.expandRest', { count: hidden }),
+    };
+}
+    };
+
+    __registry["chat/file-mutation/file-mutation-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
+/**
+ * 文件变更行自己的样式表。
+ *
+ * 这一行归 dsh-chat-ux：它在 `tool.call.toolview` 的 edit / write 座位上遮蔽了内置的文件变更行，
+ * 所以内置 ToolRow.module.css 里那些规则要在这里重写一份——那套类名带构建期 hash，既拿不到、
+ * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
+ * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
+ *
+ * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
+ */
+const reel_styles_1 = require("../reel/reel-styles");
+/** 行根节点。 */
+exports.FILE_ROW_CLASS = 'dsh-chat-ux-file-root';
+/** DisclosureRow 的 row 元素：悬停提亮的挂点。 */
+exports.FILE_ROW_LINE_CLASS = 'dsh-chat-ux-file-row';
+/** 图标槽。 */
+exports.FILE_LEADING_CLASS = 'dsh-chat-ux-file-leading';
+/** 开合 chevron。 */
+exports.FILE_CHEVRON_CLASS = 'dsh-chat-ux-file-chevron';
+/** 标题（`编辑` / `写入`）。 */
+exports.FILE_TITLE_CLASS = 'dsh-chat-ux-file-title';
+/** 标题与摘要之间的那个点。 */
+exports.FILE_SEP_CLASS = 'dsh-chat-ux-file-sep';
+/** 摘要文本。 */
+exports.FILE_SUMMARY_CLASS = 'dsh-chat-ux-file-summary';
+/** 摘要上的失败色。 */
+exports.FILE_ERROR_CLASS = 'dsh-chat-ux-file-error';
+/** 摘要上的中断色。 */
+exports.FILE_STOPPED_CLASS = 'dsh-chat-ux-file-stopped';
+/** 可点的文件路径。 */
+exports.FILE_LINK_CLASS = 'dsh-chat-ux-file-link';
+/** 行尾那一小截统计的容器。 */
+exports.FILE_SUFFIX_CLASS = 'dsh-chat-ux-file-suffix';
+/** 统计数字共用的字级。 */
+exports.FILE_STAT_CLASS = 'dsh-chat-ux-file-stat';
+/** 新增数（绿色）。 */
+exports.FILE_ADD_CLASS = 'dsh-chat-ux-file-add';
+/** 删除数（红色）。 */
+exports.FILE_DEL_CLASS = 'dsh-chat-ux-file-del';
+/** 展开体容器。 */
+exports.FILE_BODY_CLASS = 'dsh-chat-ux-file-body';
+/** 展开体里的 diff 卡片。 */
+exports.FILE_DIFF_CLASS = 'dsh-chat-ux-file-diff';
+/** 展开体里的 IN/OUT 卡片。 */
+exports.FILE_IO_CLASS = 'dsh-chat-ux-file-io';
+/** IN/OUT 卡片的一节。 */
+exports.FILE_IO_SECTION_CLASS = 'dsh-chat-ux-file-io-section';
+/** IN/OUT 之间的发丝线。 */
+exports.FILE_IO_DIVIDER_CLASS = 'dsh-chat-ux-file-io-divider';
+/** IN / OUT 两个侧标。 */
+exports.FILE_IO_LABEL_CLASS = 'dsh-chat-ux-file-io-label';
+/** IN / OUT 的正文。 */
+exports.FILE_IO_TEXT_CLASS = 'dsh-chat-ux-file-io-text';
+/** 轨迹入口那颗小胶囊。 */
+exports.FILE_INSPECT_CLASS = 'dsh-chat-ux-file-inspect';
+/** 只给读屏看的运行态标签。 */
+exports.FILE_HIDDEN_CLASS = 'dsh-chat-ux-file-hidden';
+/** 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。 */
+exports.FILE_MUTATION_CSS = `
+/* 增删色：引用 dsh 自己为"文件改动标记"准备的那一对令牌，而不是 diff 卡片正文用的
+   state-success/error-primary。理由是这两处要的东西不同：正文那对里绿色只有一种取值
+   （深浅两套都是 rgb(34,197,94)），在浅色画布上做 11px 的小字偏亮；marker 这一对天生
+   分了两套——浅色 rgb(1,162,65) / rgb(186,39,35)，深色 rgb(65,201,119) / rgb(250,66,62)，
+   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份即可。 */
+body {
+  --dsh-chat-ux-diff-added: var(--dsw-alias-file-diff-added-marker);
+  --dsh-chat-ux-diff-deleted: var(--dsw-alias-file-diff-deleted-marker);
+}
+
+.${exports.FILE_ROW_CLASS} {
+  display: flex;
+  flex-direction: column;
+}
+
+.${exports.FILE_LEADING_CLASS} {
+  flex-shrink: 0;
+}
+
+.${exports.FILE_CHEVRON_CLASS} {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${exports.FILE_TITLE_CLASS} {
+  font-weight: 400;
+  transition: color 100ms ease;
+}
+
+/* 2x2 的点：标题与摘要之间那道轻分隔。 */
+.${exports.FILE_SEP_CLASS} {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  margin: 0 8px;
+  background: var(--dsw-alias-label-caption);
+}
+
+.${exports.FILE_SUMMARY_CLASS} {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-tertiary);
+  transition: color 100ms ease;
+}
+
+/* 行尾那一小截：挤在摘要的省略号之外，所以自己带一份同款字级。两个数字之间留一道
+   固定的缝——比空格宽，免得 "+12" 和 "-3" 挨成一个数。 */
+.${exports.FILE_SUFFIX_CLASS} {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: 10px;
+  white-space: nowrap;
+}
+
+/* 数字本身：等宽字体、比路径小两号，再用半像素把基线推回行框正中。 */
+.${exports.FILE_STAT_CLASS} {
+  font-family: var(--ds-font-family-code);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  transform: translateY(0.5px);
+}
+
+/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
+
+   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
+   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
+      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
+      表达式。
+
+   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
+.${exports.FILE_SUFFIX_CLASS} .${exports.FILE_STAT_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+}
+
+.${exports.FILE_ADD_CLASS} {
+  color: var(--dsh-chat-ux-diff-added);
+}
+
+.${exports.FILE_DEL_CLASS} {
+  color: var(--dsh-chat-ux-diff-deleted);
+}
+
+/* 悬停整行提亮，但行尾那两个数字不跟——它们是这一行的结论，颜色本身就是信息，
+   跟着变成正文色就等于把结论擦掉。 */
+.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_TITLE_CLASS},
+.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_SUMMARY_CLASS}:not(.${exports.FILE_ERROR_CLASS}):not(.${exports.FILE_STOPPED_CLASS}) {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 文件路径：同字级，点状下划线说明它可点。收缩到文字宽度，行内剩下的空白仍然属于开合目标。 */
+.${exports.FILE_LINK_CLASS} {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-secondary);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--dsw-alias-label-tertiary);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color 100ms ease;
+}
+
+.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_LINK_CLASS},
+.${exports.FILE_LINK_CLASS}:hover {
+  color: var(--dsw-alias-label-primary);
+  text-decoration-color: currentColor;
+}
+
+.${exports.FILE_ERROR_CLASS} {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.${exports.FILE_STOPPED_CLASS} {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.${exports.FILE_BODY_CLASS} {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进，行与行之间也共用同一份节奏。 */
+.${exports.FILE_DIFF_CLASS},
+.${exports.FILE_IO_CLASS} {
+  margin: 4px 0 4px 4px;
+}
+
+/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线。 */
+.${exports.FILE_IO_CLASS} {
+  display: flex;
+  flex-direction: column;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-markdown-code-block);
+  font: var(--dsw-font-markdown-code-block-small);
+}
+
+.${exports.FILE_IO_SECTION_CLASS} {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  align-items: baseline;
+  padding: 12px 16px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.${exports.FILE_IO_DIVIDER_CLASS} {
+  flex: none;
+  height: 0.5px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.${exports.FILE_IO_LABEL_CLASS} {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  color: var(--dsw-alias-label-caption);
+}
+
+.${exports.FILE_IO_TEXT_CLASS} {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${exports.FILE_IO_TEXT_CLASS}[data-error] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉。 */
+.${exports.FILE_INSPECT_CLASS} {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px 4px;
+  padding: 2px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.${exports.FILE_ROW_CLASS}:hover .${exports.FILE_INSPECT_CLASS},
+.${exports.FILE_INSPECT_CLASS}:focus-visible {
+  opacity: 1;
+}
+
+.${exports.FILE_INSPECT_CLASS}:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 运行态只靠图标与扫光表达，所以状态本身要有一条给读屏的文本。 */
+.${exports.FILE_HIDDEN_CLASS} {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+`;
+    };
+
+    __registry["chat/code-progress/code-progress-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * `run_code` 行进度读数自己的样式。
+ *
+ * 字号与行高按这一行的口径写：dsh 的 `.summary/.summarySuffix` 用的是「次级文字 + 24px + delta」的
+ * 行盒，读数挨着它们站，字号小一号（与文件变更行行尾那截同款），行高跟着同一个表达式，所以它与旁边
+ * 的文案严格同一条基线、也不会把这一行顶高。
+ *
+ * 颜色取 dsh 的三级文字令牌——与文件变更行行尾那一截同一个口径（那里也是 `--dsw-alias-label-caption`）。
+ *
+ * @module dsh-chat-ux/chat/code-progress/code-progress-styles
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CODE_PROGRESS_CSS = exports.CODE_PROGRESS_CLASS = void 0;
+/** 挂进行里的读数元素。 */
+exports.CODE_PROGRESS_CLASS = 'dsh-chat-ux-code-progress';
+/**
+ * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
+ *
+ * `flex: none` 不能省：dsh 那一行是 flex，读数若不设它会被压缩、跟随摘要被挤掉。`white-space: nowrap`
+ * 也不能省——`flex: none` 只挡得住盒子收缩，挡不住文字折行。
+ *
+ * 字号与行高按这一行的口径写：内置的 `.summary` 用的是「次级文字 + 24px + delta」的行盒，读数挨着它
+ * 站，字号小两号（与文件变更行行尾那一截同一个口径），行高跟着同一个表达式，所以它与旁边的描述严格
+ * 同一条基线、也不会把这一行顶高。
+ */
+exports.CODE_PROGRESS_CSS = `
+.${exports.CODE_PROGRESS_CLASS} {
+  flex: none;
+  margin-left: 6px;
+  white-space: nowrap;
+  font-family: var(--dsw-font-markdown-code-block-small, ui-monospace, monospace);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-caption);
+}
+`;
+    };
+
     __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -3396,19 +3988,27 @@ function FileMutationRow(props) {
     // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
     const running = model.state === 'running' || model.state === 'preparing';
     const rawTotals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
-    // 老虎机常开，只是流式那两态换一档更短的弹动，并且**读数按那一档的节拍离散更新**：高速流式下
-    // 读数跳得比动画快得多，若逐批换数，一位上会同时挂着两三个残影、读数糊在一起。所以宁让读数
-    // 滞后一拍，也要让每一轮动画走完整——见 `usePacedTotals`。
+    // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' : undefined;
-    const totals = usePacedTotals(rawTotals, running);
+    // 节拍只给 edit：`write` 的内容是一整段连续文本，行数跟着换行走、本来就一档一档地长，再压一拍只会
+    // 让台阶更大（2026-10-11 读者反馈的正是「写入的行数几乎到终态才出现」，其中一半原因就在这里）；而
+    // `edit` 是两个字段各自到各字数，落定前会有大跳，那一处才需要节拍把动画护住。
+    const totals = usePacedTotals(rawTotals, running && model.variant === 'edit');
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null);
     const open = expanded && expandable;
     const summaryText = model.errorSummary ?? model.summary;
-    // 输入大小跨阶段保留，与内置的 `summarySuffix` 同一条规则：有路径才显示，所以准备态还没
-    // 读到路径时它不单独占位。
-    const size = model.kilobytes === null || model.summary === ''
+    // 输入大小只要读得到就显示——**不再要求路径已经有了**。
+    //
+    // 内置的 `summarySuffix` 是「有路径才显示」，照抄它会踩到一个很具体的坑：模型给 `write` 生成的参数
+    // 顺序是 `content` 在前、`file_path` 在**最后一个字符**（2026-10-11 量了 30 次真实 write：content 在
+    // 第 1 批，file_path 在第 1041 批、即整段参数流的 100%），而 `edit` 反过来是 `file_path` 在最前
+    // （0%）。于是同样的规则下：写入的整段内容流式期间那两个数都被挡掉、只在末尾一起冒出来（读者看到的
+    // 就是这个），编辑却从头就在长。
+    //
+    // 没有路径时它直接跟在描述后面（那个分隔点只在有描述时渲染，所以不会留下一个孤立的点）。
+    const size = model.kilobytes === null
         ? null
         : t('tool.preparing.content', { kilobytes: model.kilobytes });
     const status = stateLabel(model.state, t);
@@ -3426,7 +4026,9 @@ function FileMutationRow(props) {
         if (event.key === 'Enter' || event.key === ' ')
             event.stopPropagation();
     }, []);
-    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
+    // 那一截紧凑内容由三块拼成：路径（或摘要）、输入大小、增删两个数。**路径缺席时另两块照旧显示**——
+    // 原因见上面 `size` 那一段注释（`write` 的 `file_path` 在参数最末）。
+    const collapsedContent = summaryText === '' && size === null && totals === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [summaryText !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) }))] })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -3919,301 +4521,6 @@ function usePacedTotals(target, paced) {
     }, [paced, target]);
     return shown;
 }
-    };
-
-    __registry["chat/file-mutation/file-mutation-styles.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
-/**
- * 文件变更行自己的样式表。
- *
- * 这一行归 dsh-chat-ux：它在 `tool.call.toolview` 的 edit / write 座位上遮蔽了内置的文件变更行，
- * 所以内置 ToolRow.module.css 里那些规则要在这里重写一份——那套类名带构建期 hash，既拿不到、
- * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
- * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
- *
- * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
- */
-const reel_styles_1 = require("../reel/reel-styles");
-/** 行根节点。 */
-exports.FILE_ROW_CLASS = 'dsh-chat-ux-file-root';
-/** DisclosureRow 的 row 元素：悬停提亮的挂点。 */
-exports.FILE_ROW_LINE_CLASS = 'dsh-chat-ux-file-row';
-/** 图标槽。 */
-exports.FILE_LEADING_CLASS = 'dsh-chat-ux-file-leading';
-/** 开合 chevron。 */
-exports.FILE_CHEVRON_CLASS = 'dsh-chat-ux-file-chevron';
-/** 标题（`编辑` / `写入`）。 */
-exports.FILE_TITLE_CLASS = 'dsh-chat-ux-file-title';
-/** 标题与摘要之间的那个点。 */
-exports.FILE_SEP_CLASS = 'dsh-chat-ux-file-sep';
-/** 摘要文本。 */
-exports.FILE_SUMMARY_CLASS = 'dsh-chat-ux-file-summary';
-/** 摘要上的失败色。 */
-exports.FILE_ERROR_CLASS = 'dsh-chat-ux-file-error';
-/** 摘要上的中断色。 */
-exports.FILE_STOPPED_CLASS = 'dsh-chat-ux-file-stopped';
-/** 可点的文件路径。 */
-exports.FILE_LINK_CLASS = 'dsh-chat-ux-file-link';
-/** 行尾那一小截统计的容器。 */
-exports.FILE_SUFFIX_CLASS = 'dsh-chat-ux-file-suffix';
-/** 统计数字共用的字级。 */
-exports.FILE_STAT_CLASS = 'dsh-chat-ux-file-stat';
-/** 新增数（绿色）。 */
-exports.FILE_ADD_CLASS = 'dsh-chat-ux-file-add';
-/** 删除数（红色）。 */
-exports.FILE_DEL_CLASS = 'dsh-chat-ux-file-del';
-/** 展开体容器。 */
-exports.FILE_BODY_CLASS = 'dsh-chat-ux-file-body';
-/** 展开体里的 diff 卡片。 */
-exports.FILE_DIFF_CLASS = 'dsh-chat-ux-file-diff';
-/** 展开体里的 IN/OUT 卡片。 */
-exports.FILE_IO_CLASS = 'dsh-chat-ux-file-io';
-/** IN/OUT 卡片的一节。 */
-exports.FILE_IO_SECTION_CLASS = 'dsh-chat-ux-file-io-section';
-/** IN/OUT 之间的发丝线。 */
-exports.FILE_IO_DIVIDER_CLASS = 'dsh-chat-ux-file-io-divider';
-/** IN / OUT 两个侧标。 */
-exports.FILE_IO_LABEL_CLASS = 'dsh-chat-ux-file-io-label';
-/** IN / OUT 的正文。 */
-exports.FILE_IO_TEXT_CLASS = 'dsh-chat-ux-file-io-text';
-/** 轨迹入口那颗小胶囊。 */
-exports.FILE_INSPECT_CLASS = 'dsh-chat-ux-file-inspect';
-/** 只给读屏看的运行态标签。 */
-exports.FILE_HIDDEN_CLASS = 'dsh-chat-ux-file-hidden';
-/** 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。 */
-exports.FILE_MUTATION_CSS = `
-/* 增删色：引用 dsh 自己为"文件改动标记"准备的那一对令牌，而不是 diff 卡片正文用的
-   state-success/error-primary。理由是这两处要的东西不同：正文那对里绿色只有一种取值
-   （深浅两套都是 rgb(34,197,94)），在浅色画布上做 11px 的小字偏亮；marker 这一对天生
-   分了两套——浅色 rgb(1,162,65) / rgb(186,39,35)，深色 rgb(65,201,119) / rgb(250,66,62)，
-   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份即可。 */
-body {
-  --dsh-chat-ux-diff-added: var(--dsw-alias-file-diff-added-marker);
-  --dsh-chat-ux-diff-deleted: var(--dsw-alias-file-diff-deleted-marker);
-}
-
-.${exports.FILE_ROW_CLASS} {
-  display: flex;
-  flex-direction: column;
-}
-
-.${exports.FILE_LEADING_CLASS} {
-  flex-shrink: 0;
-}
-
-.${exports.FILE_CHEVRON_CLASS} {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.${exports.FILE_TITLE_CLASS} {
-  font-weight: 400;
-  transition: color 100ms ease;
-}
-
-/* 2x2 的点：标题与摘要之间那道轻分隔。 */
-.${exports.FILE_SEP_CLASS} {
-  flex: none;
-  width: 2px;
-  height: 2px;
-  border-radius: 1px;
-  margin: 0 8px;
-  background: var(--dsw-alias-label-caption);
-}
-
-.${exports.FILE_SUMMARY_CLASS} {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  color: var(--dsw-alias-label-tertiary);
-  transition: color 100ms ease;
-}
-
-/* 行尾那一小截：挤在摘要的省略号之外，所以自己带一份同款字级。两个数字之间留一道
-   固定的缝——比空格宽，免得 "+12" 和 "-3" 挨成一个数。 */
-.${exports.FILE_SUFFIX_CLASS} {
-  flex: none;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  margin-left: 10px;
-  white-space: nowrap;
-}
-
-/* 数字本身：等宽字体、比路径小两号，再用半像素把基线推回行框正中。 */
-.${exports.FILE_STAT_CLASS} {
-  font-family: var(--ds-font-family-code);
-  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  transform: translateY(0.5px);
-}
-
-/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
-
-   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
-   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
-      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
-      表达式。
-
-   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
-.${exports.FILE_SUFFIX_CLASS} .${exports.FILE_STAT_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
-  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
-  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
-}
-
-.${exports.FILE_ADD_CLASS} {
-  color: var(--dsh-chat-ux-diff-added);
-}
-
-.${exports.FILE_DEL_CLASS} {
-  color: var(--dsh-chat-ux-diff-deleted);
-}
-
-/* 悬停整行提亮，但行尾那两个数字不跟——它们是这一行的结论，颜色本身就是信息，
-   跟着变成正文色就等于把结论擦掉。 */
-.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_TITLE_CLASS},
-.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_SUMMARY_CLASS}:not(.${exports.FILE_ERROR_CLASS}):not(.${exports.FILE_STOPPED_CLASS}) {
-  color: var(--dsw-alias-label-primary);
-}
-
-/* 文件路径：同字级，点状下划线说明它可点。收缩到文字宽度，行内剩下的空白仍然属于开合目标。 */
-.${exports.FILE_LINK_CLASS} {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  text-align: left;
-  font-size: var(--dsh-content-font-size-secondary, 13px);
-  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  color: var(--dsw-alias-label-secondary);
-  text-decoration: underline dotted;
-  text-decoration-color: var(--dsw-alias-label-tertiary);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-  cursor: pointer;
-  transition: color 100ms ease;
-}
-
-.${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_LINK_CLASS},
-.${exports.FILE_LINK_CLASS}:hover {
-  color: var(--dsw-alias-label-primary);
-  text-decoration-color: currentColor;
-}
-
-.${exports.FILE_ERROR_CLASS} {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.${exports.FILE_STOPPED_CLASS} {
-  color: var(--dsw-alias-state-warn-label);
-}
-
-.${exports.FILE_BODY_CLASS} {
-  display: flex;
-  flex-direction: column;
-}
-
-/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进，行与行之间也共用同一份节奏。 */
-.${exports.FILE_DIFF_CLASS},
-.${exports.FILE_IO_CLASS} {
-  margin: 4px 0 4px 4px;
-}
-
-/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线。 */
-.${exports.FILE_IO_CLASS} {
-  display: flex;
-  flex-direction: column;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
-  background: var(--dsw-alias-markdown-code-block);
-  font: var(--dsw-font-markdown-code-block-small);
-}
-
-.${exports.FILE_IO_SECTION_CLASS} {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 14px;
-  align-items: baseline;
-  padding: 12px 16px;
-  max-height: 150px;
-  overflow-y: auto;
-}
-
-.${exports.FILE_IO_DIVIDER_CLASS} {
-  flex: none;
-  height: 0.5px;
-  background: var(--dsw-alias-border-l2);
-}
-
-.${exports.FILE_IO_LABEL_CLASS} {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  color: var(--dsw-alias-label-caption);
-}
-
-.${exports.FILE_IO_TEXT_CLASS} {
-  min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.${exports.FILE_IO_TEXT_CLASS}[data-error] {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉。 */
-.${exports.FILE_INSPECT_CLASS} {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 4px;
-  margin: 4px 0 2px 4px;
-  padding: 2px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 999px;
-  corner-shape: round;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 100ms ease;
-}
-
-.${exports.FILE_ROW_CLASS}:hover .${exports.FILE_INSPECT_CLASS},
-.${exports.FILE_INSPECT_CLASS}:focus-visible {
-  opacity: 1;
-}
-
-.${exports.FILE_INSPECT_CLASS}:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* 运行态只靠图标与扫光表达，所以状态本身要有一条给读屏的文本。 */
-.${exports.FILE_HIDDEN_CLASS} {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-`;
     };
 
     __registry["chat/fold/fold-glide.js"] = function (module, exports, require) {
@@ -7060,6 +7367,7 @@ const ZH_COPY = {
     liveDiffLabel: '实时改动行数',
     liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '数字一变，变了的那一位会像读数那样在原地弹到新值。'
+        + '打开之后，`run_code` 那一行在程序还在生成时也会带一个已写大小（那个功能要 0.2.1-alpha.1 及以后的 dsh 才有）。'
         + '这一段还在收，标着 beta，默认关着。',
     overridden: '已覆盖',
     reset: '重置',
@@ -7100,7 +7408,9 @@ const EN_COPY = {
     liveDiffLabel: 'Live change counts',
     liveDiffHint: 'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
         + 'is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value '
-        + 'the way the readouts do. This stretch is still settling, so it is marked beta and off by default.',
+        + 'the way the readouts do. With this on, a `run_code` row also shows how much of its program has been written '
+        + 'while the program is still being generated (that part needs dsh 0.2.1-alpha.1 or later). This stretch is '
+        + 'still settling, so it is marked beta and off by default.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
@@ -7446,6 +7756,7 @@ const ramp_1 = require("./chat/ramp");
 const reel_styles_1 = require("./chat/reel/reel-styles");
 const config_card_styles_1 = require("./settings/config-card-styles");
 const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
+const code_progress_styles_1 = require("./chat/code-progress/code-progress-styles");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
@@ -7552,7 +7863,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
  * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, code_progress_styles_1.CODE_PROGRESS_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
