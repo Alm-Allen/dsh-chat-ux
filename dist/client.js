@@ -2164,11 +2164,15 @@ const ZH_PREVIEW = {
     tag: '预览',
     note: '还没执行，写什么由程序自己决定',
     unknownPath: '目标未知',
+    draftLead: '可能写入 ',
+    draftUnit: ' 行',
 };
 const EN_PREVIEW = {
     tag: 'Preview',
     note: 'Not run yet — the program decides what it writes',
     unknownPath: 'unknown target',
+    draftLead: 'maybe writing ',
+    draftUnit: ' lines',
 };
 /**
  * 准备态那两个读数（已写多少、以及预览清单）开着没有。由 `installRunCodeRow` 装进来，渲染期现读——
@@ -2226,6 +2230,11 @@ function RunCodeRow(props) {
         return next;
     }, [block, previewOn]);
     const previews = (0, paced_value_1.usePacedValue)(rawPreviews, previewOn);
+    // 只有长内容、还没有锚点时的那一版读数：`tools.write` 那一段文本往往排在程序很后面（真实中位 67%、
+    // 读者那次 96%），而它要写的那段内容必然在它前面（语言语义），所以那一段才是能提前的信号。
+    // 判据与成色见 `./preview-scan` 的 `DraftHint`；这里同样按节拍换数。
+    const draft = (0, react_1.useMemo)(() => (previewOn ? (0, preview_scan_1.scanDraft)(block.args?.text('code') ?? '') : null), [block, previewOn]);
+    const pacedDraft = (0, paced_value_1.usePacedValue)(draft, previewOn);
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = (0, react_1.useMemo)(() => (open ? callCode(block) : null), [block, open]);
     const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
@@ -2241,7 +2250,13 @@ function RunCodeRow(props) {
     // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT);
     const trailingPreviews = previews.length - shownPreviews.length;
-    const collapsedContent = description === '' && kilobytes === null && previews.length === 0 ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), previews.length > 0 && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
+    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去报
+    // 那段正在攒的内容——它至少告诉了读者在写什么，而「目标未知 +53」比它信息更少。
+    const showTargets = previews.length > 0
+        && (previews.some(target => target.path !== null) || pacedDraft === null);
+    const showDraft = !showTargets && pacedDraft !== null;
+    const collapsedContent = description === '' && kilobytes === null && previews.length === 0
+        && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + copy.draftLead, pacedDraft.heading !== '' && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: pacedDraft.heading })), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: String(pacedDraft.lines), prefix: "", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) }), copy.draftUnit] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at)))] })), hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -3031,6 +3046,12 @@ exports.CODE_PROGRESS_CSS = `
   color: var(--dsw-alias-label-secondary);
 }
 
+/* 只认出长内容、还没有锚点的那一版（带 data-draft 属性），要说清它是「可能」：压一档不透明度，比确凿
+   的那一版淡一点。它约七成会成真，剩下三成那段内容去了别处。 */
+.${exports.PREVIEW_SUMMARY_CLASS}[data-draft] {
+  opacity: 0.8;
+}
+
 .${exports.PREVIEW_SUMMARY_CLASS} > .${exports.PREVIEW_ADD_CLASS},
 .${exports.PREVIEW_SUMMARY_CLASS} > .${exports.PREVIEW_DEL_CLASS} {
   font-family: var(--ds-font-family-code);
@@ -3077,6 +3098,7 @@ exports.CODE_PROGRESS_CSS = `
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scanPreviewTargets = scanPreviewTargets;
+exports.scanDraft = scanDraft;
 /** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
 const PREVIEW_TOOLS = new Set(['write', 'edit']);
 /** 调用锚点：`tools.write(` 与 `tools["write"](` 两种写法。 */
@@ -3085,6 +3107,12 @@ const CALL_PATTERN = /tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'])([^"']+)\2\s
 const BINDING_PATTERN = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'`])/g;
 /** 路径字段，按先后顺序认。 */
 const PATH_KEYS = ['file_path', 'path'];
+/** 认长内容至少要跨几行。定在 8：真实程序里「短模板」满地都是（日志、命令行），它们不是这一路要找的。 */
+const DRAFT_MIN_LINES = 8;
+/** 每批最多看几段字符串就放弃。程序里短模板可能很多，没必要一路扫到底。 */
+const DRAFT_SCAN_LIMIT = 8;
+/** 标题最多留几个字；折叠态行尾那点位置放不下更长的。 */
+const DRAFT_HEADING_MAX = 18;
 /** 三种开括号各自的闭符号。 */
 const CLOSERS = { ')': '(', '}': '{', ']': '[' };
 /** 正则开头前面允许出现的字符：这些位置上的 `/` 不可能是除号。 */
@@ -3131,6 +3159,65 @@ function scanPreviewTargets(code, previous) {
         targets.push({ name, at, path, added, removed });
     }
     return targets;
+}
+/**
+ * 认一段正在攒的长内容。
+ *
+ * 从头往后看字符串字面量，交出**第一段**够长的：模型写长内容时总把它放在最前面（读者那次就在程序的
+ * 第 0 个字符），所以不必扫到底。游标只往前走，所以一整趟的代价是 O(程序长度)，与找锚点同量级。
+ * @param code - `run_code` 的 `code` 字段，可以只是已收到的那半截。
+ * @returns 那一段的标题与已收到的行数，或 null（还没有够长的内容）。
+ */
+function scanDraft(code) {
+    let cursor = 0;
+    while (cursor < code.length) {
+        const at = nextQuoteAt(code, cursor);
+        if (at < 0)
+            return null;
+        const read = readString(code, at);
+        const lines = countLines(read.value);
+        if (lines >= DRAFT_MIN_LINES)
+            return { heading: headingOf(read.value), lines };
+        cursor = read.end;
+    }
+    return null;
+}
+/**
+ * 下一个字符串字面量的起始位置。
+ *
+ * 三种引号都算：反引号与三引号是长文本的常见容器，而普通单双引号也可能是——认错了无非是白读一段。
+ * @param code - 程序文本。
+ * @param from - 从这里开始找。
+ * @returns 位置，找不到为 -1。
+ */
+function nextQuoteAt(code, from) {
+    let best = -1;
+    for (const quote of ['`', "'", '"']) {
+        const at = code.indexOf(quote, from);
+        if (at >= 0 && (best < 0 || at < best))
+            best = at;
+    }
+    return best;
+}
+/**
+ * 一段内容的第一行标题：去掉 markdown 的井号、引用号与项目符号，太长就截断。
+ * @param text - 那段内容的正文。
+ * @returns 标题，全是空白时是空串。
+ */
+function headingOf(text) {
+    let start = 0;
+    while (start < text.length) {
+        const lineBreakAt = text.indexOf('\n', start);
+        const line = text.slice(start, lineBreakAt < 0 ? text.length : lineBreakAt);
+        const trimmed = line.replace(/^[#>\-*\s]+/, '').trim();
+        if (trimmed !== '') {
+            return trimmed.length > DRAFT_HEADING_MAX ? trimmed.slice(0, DRAFT_HEADING_MAX) + '…' : trimmed;
+        }
+        if (lineBreakAt < 0)
+            break;
+        start = lineBreakAt + 1;
+    }
+    return '';
 }
 /**
  * 全文里的「变量名 = 字符串字面量」。

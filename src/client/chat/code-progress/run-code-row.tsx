@@ -55,8 +55,8 @@ import {
     PREVIEW_ICON_CLASS, PREVIEW_NOTE_CLASS, PREVIEW_PATH_CLASS, PREVIEW_ROW_CLASS, PREVIEW_STAT_CLASS,
     PREVIEW_SUMMARY_CLASS, PREVIEW_SUMMARY_PATH_CLASS, PREVIEW_TAG_CLASS,
 } from './code-progress-styles'
-import {scanPreviewTargets} from './preview-scan'
-import type {PreviewTarget} from './preview-scan'
+import {scanDraft, scanPreviewTargets} from './preview-scan'
+import type {DraftHint, PreviewTarget} from './preview-scan'
 
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024
@@ -96,18 +96,26 @@ interface PreviewCopy {
     note: string
     /** 路径读不出时的占位。 */
     unknownPath: string
+    /** 只认出长内容、还没有锚点时那句「可能」的开头。 */
+    draftLead: string
+    /** 数字后面那个单位。 */
+    draftUnit: string
 }
 
 const ZH_PREVIEW: PreviewCopy = {
     tag: '预览',
     note: '还没执行，写什么由程序自己决定',
     unknownPath: '目标未知',
+    draftLead: '可能写入 ',
+    draftUnit: ' 行',
 }
 
 const EN_PREVIEW: PreviewCopy = {
     tag: 'Preview',
     note: 'Not run yet — the program decides what it writes',
     unknownPath: 'unknown target',
+    draftLead: 'maybe writing ',
+    draftUnit: ' lines',
 }
 
 /**
@@ -257,6 +265,15 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     }, [block, previewOn])
     const previews = usePacedValue(rawPreviews, previewOn)
 
+    // 只有长内容、还没有锚点时的那一版读数：`tools.write` 那一段文本往往排在程序很后面（真实中位 67%、
+    // 读者那次 96%），而它要写的那段内容必然在它前面（语言语义），所以那一段才是能提前的信号。
+    // 判据与成色见 `./preview-scan` 的 `DraftHint`；这里同样按节拍换数。
+    const draft = useMemo(
+        () => (previewOn ? scanDraft(block.args?.text('code') ?? '') : null),
+        [block, previewOn],
+    )
+    const pacedDraft = usePacedValue<DraftHint | null>(draft, previewOn)
+
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = useMemo(() => (open ? callCode(block) : null), [block, open])
     const hunks = useMemo(() => codeHunks(code), [code])
@@ -273,8 +290,14 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT)
     const trailingPreviews = previews.length - shownPreviews.length
+    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去报
+    // 那段正在攒的内容——它至少告诉了读者在写什么，而「目标未知 +53」比它信息更少。
+    const showTargets = previews.length > 0
+        && (previews.some(target => target.path !== null) || pacedDraft === null)
+    const showDraft = !showTargets && pacedDraft !== null
 
-    const collapsedContent = description === '' && kilobytes === null && previews.length === 0 ? null : (
+    const collapsedContent = description === '' && kilobytes === null && previews.length === 0
+        && pacedDraft === null ? null : (
         <>
             {/* 那个分隔点是「标题 · 描述」的一部分：没有描述时它不该单独出现。 */}
             {description !== '' && (
@@ -297,7 +320,26 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                     />
                 </span>
             )}
-            {previews.length > 0 && (
+            {showDraft && (
+                <span className={PREVIEW_SUMMARY_CLASS} data-draft="run_code">
+                    {'→ ' + copy.draftLead}
+                    {pacedDraft.heading !== '' && (
+                        <span className={PREVIEW_SUMMARY_PATH_CLASS}>{pacedDraft.heading}</span>
+                    )}
+                    <span className={PREVIEW_ADD_CLASS}>
+                        <DigitReel
+                            text={String(pacedDraft.lines)}
+                            prefix=""
+                            suffix=""
+                            rolling
+                            cadence={running ? 'fast' : undefined}
+                            spoken
+                        />
+                    </span>
+                    {copy.draftUnit}
+                </span>
+            )}
+            {showTargets && (
                 <span className={PREVIEW_SUMMARY_CLASS}>
                     {'→ '}
                     {shownPreviews.map((target, index) => (

@@ -174,6 +174,12 @@ export const CODE_PROGRESS_CSS = `
   color: var(--dsw-alias-label-secondary);
 }
 
+/* 只认出长内容、还没有锚点的那一版（带 data-draft 属性），要说清它是「可能」：压一档不透明度，比确凿
+   的那一版淡一点。它约七成会成真，剩下三成那段内容去了别处。 */
+.${PREVIEW_SUMMARY_CLASS}[data-draft] {
+  opacity: 0.8;
+}
+
 .${PREVIEW_SUMMARY_CLASS} > .${PREVIEW_ADD_CLASS},
 .${PREVIEW_SUMMARY_CLASS} > .${PREVIEW_DEL_CLASS} {
   font-family: var(--ds-font-family-code);

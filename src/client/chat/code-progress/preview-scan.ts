@@ -44,6 +44,24 @@ export interface PreviewTarget {
 /** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
 const PREVIEW_TOOLS = new Set(['write', 'edit'])
 
+/**
+ * 一段**正在攒**的长内容——它多半就是要写出去的那一份，但还不能确定。
+ *
+ * 为什么要认它：`tools.write({file_path, content: text})` 里 `text` 必须先定义（否则运行时就是
+ * ReferenceError），所以「内容」**必然**排在「调用」前面，写得越长锚点越靠后。867 份真实程序体里锚点的
+ * 中位位置是 67%（读者那一次是 96%），而这段长内容的中位位置是 **3%**——想提前，只能从它下手。
+ *
+ * 代价说在明面上：看到长内容时**约七成**最后真的写了文件（176 个含 write/edit 的调用里长内容命中 55%，
+ * 691 个不含的里命中 5%）。剩下三成是 prompt、是喂给别的工具的参数、是打印出来的东西——所以它在界面上
+ * 只能是「可能」，等锚点到了才换成确凿的那一版。
+ */
+export interface DraftHint {
+    /** 那段内容的第一行（去掉 markdown 标记与空白），给读者认出来在写什么；拿不到时是空串。 */
+    heading: string
+    /** 已收到的行数。 */
+    lines: number
+}
+
 /** 调用锚点：`tools.write(` 与 `tools["write"](` 两种写法。 */
 const CALL_PATTERN = /tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'])([^"']+)\2\s*\])\s*\(/g
 
@@ -52,6 +70,15 @@ const BINDING_PATTERN = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'`])/
 
 /** 路径字段，按先后顺序认。 */
 const PATH_KEYS = ['file_path', 'path']
+
+/** 认长内容至少要跨几行。定在 8：真实程序里「短模板」满地都是（日志、命令行），它们不是这一路要找的。 */
+const DRAFT_MIN_LINES = 8
+
+/** 每批最多看几段字符串就放弃。程序里短模板可能很多，没必要一路扫到底。 */
+const DRAFT_SCAN_LIMIT = 8
+
+/** 标题最多留几个字；折叠态行尾那点位置放不下更长的。 */
+const DRAFT_HEADING_MAX = 18
 
 /** 三种开括号各自的闭符号。 */
 const CLOSERS: Record<string, string> = {')': '(', '}': '{', ']': '['}
@@ -98,6 +125,64 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
         targets.push({name, at, path, added, removed})
     }
     return targets
+}
+
+/**
+ * 认一段正在攒的长内容。
+ *
+ * 从头往后看字符串字面量，交出**第一段**够长的：模型写长内容时总把它放在最前面（读者那次就在程序的
+ * 第 0 个字符），所以不必扫到底。游标只往前走，所以一整趟的代价是 O(程序长度)，与找锚点同量级。
+ * @param code - `run_code` 的 `code` 字段，可以只是已收到的那半截。
+ * @returns 那一段的标题与已收到的行数，或 null（还没有够长的内容）。
+ */
+export function scanDraft(code: string): DraftHint | null {
+    let cursor = 0
+    while (cursor < code.length) {
+        const at = nextQuoteAt(code, cursor)
+        if (at < 0) return null
+        const read = readString(code, at)
+        const lines = countLines(read.value)
+        if (lines >= DRAFT_MIN_LINES) return {heading: headingOf(read.value), lines}
+        cursor = read.end
+    }
+    return null
+}
+
+/**
+ * 下一个字符串字面量的起始位置。
+ *
+ * 三种引号都算：反引号与三引号是长文本的常见容器，而普通单双引号也可能是——认错了无非是白读一段。
+ * @param code - 程序文本。
+ * @param from - 从这里开始找。
+ * @returns 位置，找不到为 -1。
+ */
+function nextQuoteAt(code: string, from: number): number {
+    let best = -1
+    for (const quote of ['`', "'", '"']) {
+        const at = code.indexOf(quote, from)
+        if (at >= 0 && (best < 0 || at < best)) best = at
+    }
+    return best
+}
+
+/**
+ * 一段内容的第一行标题：去掉 markdown 的井号、引用号与项目符号，太长就截断。
+ * @param text - 那段内容的正文。
+ * @returns 标题，全是空白时是空串。
+ */
+function headingOf(text: string): string {
+    let start = 0
+    while (start < text.length) {
+        const lineBreakAt = text.indexOf('\n', start)
+        const line = text.slice(start, lineBreakAt < 0 ? text.length : lineBreakAt)
+        const trimmed = line.replace(/^[#>\-*\s]+/, '').trim()
+        if (trimmed !== '') {
+            return trimmed.length > DRAFT_HEADING_MAX ? trimmed.slice(0, DRAFT_HEADING_MAX) + '…' : trimmed
+        }
+        if (lineBreakAt < 0) break
+        start = lineBreakAt + 1
+    }
+    return ''
 }
 
 /**
