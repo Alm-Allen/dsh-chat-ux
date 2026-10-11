@@ -247,7 +247,13 @@ function apply(ctx) {
     // 哪了」。进度读数要读 `block.args`，而拿参数视图的唯一入口就是接管座位——所以这一处也遮蔽那一行
     // （同样 priority -1）。代价写在 `run-code-row` 的模块注释里：展开体的代码块从 CodeBlock 换成
     // DiffBlock。读数跟着同一项开关（准备态那个数），关着时这一行不显示它。
-    (0, run_code_row_1.installRunCodeRow)(services.slots, () => settings.liveDiff);
+    //
+    // locale 是给展开体里那块预览清单用的：那几句话是插件自己的，不在 dsh 词典里，所以这一处要自己按
+    // 界面语言选一份（与设置卡片同一个判据）。拿不到就退化成按浏览器语言。
+    (0, run_code_row_1.installRunCodeRow)(services.slots, () => settings.liveDiff, () => {
+        const locale = services.reflect.get('locale');
+        return locale == null ? undefined : locale;
+    });
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
@@ -2085,7 +2091,7 @@ exports.installRunCodeRow = installRunCodeRow;
 exports.RunCodeRow = RunCodeRow;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * `run_code` 的进度读数：接管这一行，在折叠态尾部显示「代码已写多少」。
+ * `run_code` 那一行的两样东西：折叠态的进度读数，与展开体的**预览清单**。
  *
  * ## 为什么这一处必须重画整行
  *
@@ -2106,20 +2112,38 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 之后「代码正在写」这件事就结束了。读的是 `stringLength` 而不是 `text()`：后者会让 dsh 按「每一批」
  * 重新发布这一行，几十 KB 的代码参数不值得为一个小读数付这个钱。
  *
- * 那一段默认关着（插件管理页上的「实时改动行数」）；关掉时这一行不显示读数，其余照常。
+ * ## 预览清单
+ *
+ * 子调用行要等程序跑起来才出现，所以准备态里这一段自己扫程序文本，把「接下来要动哪几份文件、各多少
+ * 行」先摆出来（扫法与它能读出什么，见 `./preview-scan`）。三处刻意的选择：
+ *
+ * 1. **只在认得出东西时展开，而且只替读者展开一次**。认不出就什么都不说、也不动读者的开合状态；
+ *    读者自己收过之后这一行不再抢回来。
+ * 2. **虚线 + 一句「还没执行」**，与正式工具行（实线卡片、状态色）一眼分得开。它是一次预告，不是一次
+ *    已经发生的改动，视觉上不能长得像后者。
+ * 3. **数字走节拍、并且不撤回**。同一套 `usePacedValue` 与数字轮，`preview-scan` 那一边保证读到的数
+ *    只往上长。
+ *
+ * 那一段默认关着（插件管理页上的「实时改动行数」）；关掉时这一行不显示读数与预览，其余照常。
  *
  * @module dsh-chat-ux/chat/code-progress/run-code-row
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const file_mutation_styles_1 = require("../file-mutation/file-mutation-styles");
+const digit_reel_1 = require("../reel/digit-reel");
+const paced_value_1 = require("../paced-value");
+const language_1 = require("../../settings/language");
 const code_progress_styles_1 = require("./code-progress-styles");
+const preview_scan_1 = require("./preview-scan");
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024;
 /** 展开体里那份代码的行数上限；`run_code` 的程序比文件 diff 长得多，所以不沿用 9。 */
 const CODE_MAX_LINES = 200;
 /** 拿它给 `DiffBlock` 推语言：那一层只认路径后缀，不认别的提示。 */
 const CODE_LANGUAGE_PATH = 'run_code.ts';
+/** 没有预览时用的空清单：引用要稳定，否则节拍器每一批都会重排一次定时器。 */
+const NO_PREVIEWS = [];
 /**
  * 这一行的图标。
  *
@@ -2127,21 +2151,40 @@ const CODE_LANGUAGE_PATH = 'run_code.ts';
  * 用编辑铅笔——它与文件变更行同款，观感上也是「一次改动」那一族。
  */
 const CODE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 14 });
+/** 预览行那枚更小的图标。 */
+const PREVIEW_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 12 });
+const ZH_PREVIEW = {
+    tag: '预览',
+    note: '还没执行，写什么由程序自己决定',
+    unknownPath: '目标未知',
+};
+const EN_PREVIEW = {
+    tag: 'Preview',
+    note: 'Not run yet — the program decides what it writes',
+    unknownPath: 'unknown target',
+};
 /**
- * 准备态那个读数开着没有。由 `installRunCodeRow` 装进来，渲染期现读——插件管理页上一改就跟着变。
+ * 准备态那两个读数（已写多少、以及预览清单）开着没有。由 `installRunCodeRow` 装进来，渲染期现读——
+ * 插件管理页上一改就跟着变。
  */
-let liveSizeEnabled = () => false;
+let liveReadingsEnabled = () => false;
+/**
+ * 拿 locale 服务，用于选预览区的文案。同样渲染期现读，缺席时退化成按浏览器语言。
+ */
+let readLocale = () => undefined;
 /**
  * 在 `run_code` 座位上遮蔽内置那一行。
  * @param slots - 客户端座位注册表。
- * @param liveSize - 准备态那个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
+ * @param liveReadings - 那两个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
+ * @param locale - 取 locale 服务；缺席的部署退化成按浏览器语言选文案。
  */
-function installRunCodeRow(slots, liveSize) {
-    liveSizeEnabled = liveSize;
+function installRunCodeRow(slots, liveReadings, locale) {
+    liveReadingsEnabled = liveReadings;
+    readLocale = locale;
     slots.inject('tool.call.toolview', () => slots.register({ name: 'tool.call.toolview', priority: -1, locale: 'conversation', key: 'run_code' }, RunCodeRow));
 }
 /**
- * 渲染一次 `run_code` 调用：折叠态是标题、描述与已写大小，展开态是那份程序与输出。
+ * 渲染一次 `run_code` 调用：折叠态是标题、描述与已写大小，展开态是预览清单、那份程序与输出。
  * @param props - owner 载荷与文案座位。
  * @returns 这一行。
  */
@@ -2151,18 +2194,56 @@ function RunCodeRow(props) {
     const state = rowState(block);
     // 准备态也算在跑，与内置 ToolRow 的判据一致：否则这一段的标题与描述都不扫光。
     const running = state === 'running' || state === 'preparing';
+    const preparing = !('kind' in block) && block.phase === 'preparing';
+    const previewOn = preparing && liveReadingsEnabled();
+    const copy = (0, language_1.useInterfaceLanguage)(readLocale()) === 'en' ? EN_PREVIEW : ZH_PREVIEW;
     const size = (0, react_1.useMemo)(() => codeSizeText(block, t), [block, t]);
     const description = (0, react_1.useMemo)(() => callDescription(block), [block]);
-    const code = (0, react_1.useMemo)(() => callCode(block), [block]);
-    const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
     const output = (0, react_1.useMemo)(() => resultText(block), [block]);
     const labels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
-    const expandable = hunks !== null || output !== null;
+    // 可展开性只看「code 字段来了没有」，不去读全文：读过全文，dsh 就会**每一批**都重发这一行。
+    const expandable = (0, react_1.useMemo)(() => codeFieldPresent(block), [block]) || output !== null;
     const open = expanded && expandable;
+    // 预览清单：每一批重扫一遍（实测一份程序体约 0.03 ms），但把上一批的结果带过去，读出来的数不撤回。
+    const previousPreviews = (0, react_1.useRef)(NO_PREVIEWS);
+    const rawPreviews = (0, react_1.useMemo)(() => {
+        if (!previewOn) {
+            previousPreviews.current = NO_PREVIEWS;
+            return NO_PREVIEWS;
+        }
+        const text = block.args?.text('code');
+        if (text === undefined)
+            return NO_PREVIEWS;
+        const next = (0, preview_scan_1.scanPreviewTargets)(text, previousPreviews.current);
+        previousPreviews.current = next;
+        return next;
+    }, [block, previewOn]);
+    const previews = (0, paced_value_1.usePacedValue)(rawPreviews, previewOn);
+    // 认出要动文件就替读者展开一次。只做一次，而且读者自己动过之后不再抢回来——「自动开合」那一族在
+    // 别处也守同一条规矩：替读者打开的，读者收得回去。
+    const autoExpanded = (0, react_1.useRef)(false);
+    const userToggled = (0, react_1.useRef)(false);
+    (0, react_1.useEffect)(() => {
+        if (userToggled.current || autoExpanded.current)
+            return;
+        if (!previewOn || !expandable || rawPreviews.length === 0)
+            return;
+        autoExpanded.current = true;
+        if (!expanded)
+            toggle();
+    }, [expandable, expanded, previewOn, rawPreviews.length, toggle]);
+    // 那份程序：只有真的要画它（展开着）才读全文。
+    const code = (0, react_1.useMemo)(() => (open ? callCode(block) : null), [block, open]);
+    const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
     const status = stateLabel(state, t);
+    // 读者自己点过这一行的开合，就把自动展开让给他（含自动展开之后他自己收起）。
+    const handleToggle = () => {
+        userToggled.current = true;
+        toggle();
+    };
     const collapsedContent = description === '' && size === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), size !== null && (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: size })] }));
-    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
-    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at)))] })), hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
+    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: handleToggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
 /**
  * 行状态。
@@ -2183,7 +2264,7 @@ function rowState(block) {
  * @returns 读数文本，或 null（关着、或代码字段还没出现）。
  */
 function codeSizeText(block, t) {
-    if (!liveSizeEnabled())
+    if (!liveReadingsEnabled())
         return null;
     if ('kind' in block || block.phase !== 'preparing')
         return null;
@@ -2192,6 +2273,21 @@ function codeSizeText(block, t) {
         return null;
     const characters = view.stringLength('code', { step: KILOBYTE }) ?? 0;
     return t('tool.preparing.content', { kilobytes: Math.ceil(characters / KILOBYTE) });
+}
+/**
+ * `code` 字段来了没有——**不读它的正文**。
+ *
+ * 判据只用 `has`：它给的是布尔，只在字段第一次出现时变一次，所以这一行不会因为「读全文」而每一批重发
+ * （`text('code')` 会让 dsh 按批重新发布这一行，而几十 KB 的程序参数不值得为「能不能展开」付这个钱）。
+ * @param block - 调用块。
+ * @returns 能不能展开。
+ */
+function codeFieldPresent(block) {
+    if (!('kind' in block) && block.phase === 'preparing')
+        return block.args?.has('code') === true;
+    const raw = 'kind' in block ? block.call?.argsRaw ?? '' : block.argsRaw;
+    const parsed = parseArgs(raw);
+    return parsed !== null && typeof parsed.code === 'string';
 }
 /**
  * 折叠态那半截描述文本。
@@ -2624,32 +2720,177 @@ body {
 `;
     };
 
+    __registry["chat/paced-value.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PACE_STEP_MS = void 0;
+exports.usePacedValue = usePacedValue;
+/**
+ * 按节拍交出读数：流式期间最多每 `PACE_STEP_MS` 换一次，其余情形实时跟随。
+ *
+ * 节拍只压「换数的频率」，不压真值——交给下游的仍是最新读数（只是晚到下一拍），所以一轮数字轮的动画
+ * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
+ * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
+ *
+ * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
+ * 不会一跳一跳地补播中间值。
+ *
+ * @module dsh-chat-ux/chat/paced-value
+ */
+const react_1 = require("react");
+/**
+ * 流式期间两拍之间的间隔（毫秒）。
+ *
+ * 它要盖过快档那一轮的**完整周期**——新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms）——
+ * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。
+ */
+exports.PACE_STEP_MS = 300;
+/**
+ * @param target - 最新读数。
+ * @param paced - 要不要按节拍走（流式期间）。
+ * @returns 现在该显示的读数。
+ */
+function usePacedValue(target, paced) {
+    const [shown, setShown] = (0, react_1.useState)(target);
+    const targetRef = (0, react_1.useRef)(target);
+    const nextAtRef = (0, react_1.useRef)(null);
+    const pendingRef = (0, react_1.useRef)(false);
+    targetRef.current = target;
+    (0, react_1.useEffect)(() => {
+        // 不在流式（或这一处没有读数）：实时跟随，并让节拍归零——上一次流式的相位不该影响下一次。
+        if (!paced) {
+            nextAtRef.current = null;
+            pendingRef.current = false;
+            setShown(target);
+            return;
+        }
+        const now = Date.now();
+        // 第一次换数：读数刚出现，直接给（这一拍就是它的起点）。若这里也走「等一拍」，节拍会因为
+        // `nextAtRef` 一直是 null 而永远起不来。
+        if (nextAtRef.current === null) {
+            nextAtRef.current = now + exports.PACE_STEP_MS;
+            setShown(target);
+            return;
+        }
+        const wait = nextAtRef.current - now;
+        if (wait <= 0) {
+            nextAtRef.current = now + exports.PACE_STEP_MS;
+            setShown(target);
+            return;
+        }
+        // 这一段里读数还会继续长；到点取那一刻的最新值，所以只需一个定时器，不必每批都重排。
+        if (pendingRef.current)
+            return;
+        pendingRef.current = true;
+        const timer = setTimeout(() => {
+            pendingRef.current = false;
+            nextAtRef.current = Date.now() + exports.PACE_STEP_MS;
+            setShown(targetRef.current);
+        }, wait);
+        return () => {
+            pendingRef.current = false;
+            clearTimeout(timer);
+        };
+    }, [paced, target]);
+    return shown;
+}
+    };
+
+    __registry["settings/language.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.useInterfaceLanguage = useInterfaceLanguage;
+/**
+ * 插件自己的那几段文案按哪门语言写。
+ *
+ * 只给**插件自己的句子**用——dsh 词典里已有的键照旧走 `t` 座位。设置卡片与 `run_code` 那一行的预览
+ * 区都要选这一份，所以判据只写在这里一处。
+ *
+ * @module dsh-chat-ux/settings/language
+ */
+const react_1 = require("react");
+/**
+ * 读者的界面语言。
+ *
+ * dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席（没有 locale
+ * 服务的部署）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是兜底，而不是「非英文
+ * 即中文」的巧合。dsh 自己把认不出的语言落回英文，这一处不跟它：中文是这套文案的主要读者。
+ * @param locale - locale 服务；部署里没有就传 undefined。
+ * @returns `zh` 或 `en`。
+ */
+function useInterfaceLanguage(locale) {
+    const active = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
+    }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
+    const language = nonEmpty(active) ?? nonEmpty(browserLanguage()) ?? 'zh';
+    return language.toLowerCase().split('-')[0] === 'en' ? 'en' : 'zh';
+}
+/**
+ * 浏览器报的语言。
+ * @returns 语言标签，没有 `navigator` 时为 null。
+ */
+function browserLanguage() {
+    return typeof navigator === 'undefined' ? null : navigator.language;
+}
+/**
+ * 空串算没内容。
+ * @param value - 语言标签。
+ * @returns 有内容时原样返回，否则 undefined。
+ */
+function nonEmpty(value) {
+    if (value === null || value === undefined || value === '')
+        return undefined;
+    return value;
+}
+    };
+
     __registry["chat/code-progress/code-progress-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CODE_PROGRESS_CSS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLASS = exports.PREVIEW_STAT_CLASS = exports.PREVIEW_PATH_CLASS = exports.PREVIEW_ICON_CLASS = exports.PREVIEW_ROW_CLASS = exports.PREVIEW_NOTE_CLASS = exports.PREVIEW_TAG_CLASS = exports.PREVIEW_HEAD_CLASS = exports.PREVIEW_BOX_CLASS = exports.CODE_PROGRESS_CLASS = void 0;
 /**
- * `run_code` 行进度读数自己的样式。
+ * `run_code` 行进度读数与预览清单自己的样式。
  *
- * 字号与行高按这一行的口径写：dsh 的 `.summary/.summarySuffix` 用的是「次级文字 + 24px + delta」的
- * 行盒，读数挨着它们站，字号小一号（与文件变更行行尾那截同款），行高跟着同一个表达式，所以它与旁边
- * 的文案严格同一条基线、也不会把这一行顶高。
+ * 读数：字号与行高按这一行的口径写。dsh 的 `.summary/.summarySuffix` 用的是「次级文字 + 24px + delta」的
+ * 行盒，读数挨着它们站，字号小一号（与文件变更行行尾那截同款），行高跟着同一个表达式，所以它与旁边的
+ * 文案严格同一条基线、也不会把这一行顶高。
  *
- * 颜色取 dsh 的三级文字令牌——与文件变更行行尾那一截同一个口径（那里也是 `--dsw-alias-label-caption`）。
+ * 预览清单：展开体最上面那一块，说明「下面这些调用还没执行」。它与正式的工具行**必须一眼分得开**——那
+ * 一族是实线卡片加状态色，这一块只是预告，所以走虚线边框、小一号的字、没有状态色，也不要自己的背景：
+ * 读者不该把一处预览当成一次已经发生的改动。
  *
  * @module dsh-chat-ux/chat/code-progress/code-progress-styles
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.CODE_PROGRESS_CSS = exports.CODE_PROGRESS_CLASS = void 0;
+const reel_styles_1 = require("../reel/reel-styles");
 /** 挂进行里的读数元素。 */
 exports.CODE_PROGRESS_CLASS = 'dsh-chat-ux-code-progress';
+/** 预览清单的容器。 */
+exports.PREVIEW_BOX_CLASS = 'dsh-chat-ux-preview';
+/** 预览清单的头一行（标签 + 那句说明）。 */
+exports.PREVIEW_HEAD_CLASS = 'dsh-chat-ux-preview-head';
+/** 「预览」这枚小标签。 */
+exports.PREVIEW_TAG_CLASS = 'dsh-chat-ux-preview-tag';
+/** 那句「还没执行」。 */
+exports.PREVIEW_NOTE_CLASS = 'dsh-chat-ux-preview-note';
+/** 一处目标。 */
+exports.PREVIEW_ROW_CLASS = 'dsh-chat-ux-preview-row';
+/** 目标那一行的图标槽。 */
+exports.PREVIEW_ICON_CLASS = 'dsh-chat-ux-preview-icon';
+/** 目标路径。 */
+exports.PREVIEW_PATH_CLASS = 'dsh-chat-ux-preview-path';
+/** 行尾那个数的容器。 */
+exports.PREVIEW_STAT_CLASS = 'dsh-chat-ux-preview-stat';
+/** 新增数（绿色）。 */
+exports.PREVIEW_ADD_CLASS = 'dsh-chat-ux-preview-add';
+/** 删除数（红色）。 */
+exports.PREVIEW_DEL_CLASS = 'dsh-chat-ux-preview-del';
 /**
  * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
  *
  * `flex: none` 不能省：dsh 那一行是 flex，读数若不设它会被压缩、跟随摘要被挤掉。`white-space: nowrap`
  * 也不能省——`flex: none` 只挡得住盒子收缩，挡不住文字折行。
  *
- * 字号与行高按这一行的口径写：内置的 `.summary` 用的是「次级文字 + 24px + delta」的行盒，读数挨着它
- * 站，字号小两号（与文件变更行行尾那一截同一个口径），行高跟着同一个表达式，所以它与旁边的描述严格
- * 同一条基线、也不会把这一行顶高。
+ * 增删色借用 `--dsh-chat-ux-diff-added/deleted`（定义在文件变更行的样式里，挂在 `body` 上），与行尾那
+ * 两个数同一个取值——同一件事不该有两套绿。
  */
 exports.CODE_PROGRESS_CSS = `
 .${exports.CODE_PROGRESS_CLASS} {
@@ -2661,7 +2902,498 @@ exports.CODE_PROGRESS_CSS = `
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
   color: var(--dsw-alias-label-caption);
 }
+
+/* 虚线是这一块与正式工具行唯一的分界，不能换成实线：实线卡片在这一族里的意思是「这是一次改动」。 */
+.${exports.PREVIEW_BOX_CLASS} {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0 4px 4px;
+  padding: 6px 10px 8px;
+  border: 0.5px dashed var(--dsw-alias-border-l2);
+  border-radius: 10px;
+}
+
+.${exports.PREVIEW_HEAD_CLASS} {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.${exports.PREVIEW_TAG_CLASS} {
+  flex: none;
+  padding: 0 5px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.${exports.PREVIEW_NOTE_CLASS} {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.${exports.PREVIEW_ROW_CLASS} {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--dsw-font-markdown-code-block-small, ui-monospace, monospace);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: 18px;
+}
+
+.${exports.PREVIEW_ICON_CLASS} {
+  flex: none;
+  display: inline-flex;
+  align-self: center;
+  color: var(--dsw-alias-label-caption);
+}
+
+.${exports.PREVIEW_PATH_CLASS} {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${exports.PREVIEW_STAT_CLASS} {
+  flex: none;
+  font-family: var(--ds-font-family-code);
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: 18px;
+}
+
+/* 数字轮自己那个 20px 的槽高要按这一处的 18px 行盒重写，否则它的基线按别的行盒算、数字会浮起来
+   （与文件变更行行尾那一截遇到的是同一件事）。 */
+.${exports.PREVIEW_STAT_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: 18px;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+}
+
+.${exports.PREVIEW_ADD_CLASS} {
+  color: var(--dsh-chat-ux-diff-added);
+}
+
+.${exports.PREVIEW_DEL_CLASS} {
+  color: var(--dsh-chat-ux-diff-deleted);
+}
 `;
+    };
+
+    __registry["chat/code-progress/preview-scan.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 从半截的 `run_code` 程序文本里，认出它将要执行的 `tools.write` / `tools.edit`。
+ *
+ * ## 为什么要在客户端自己扫
+ *
+ * dsh 的子调用行要等程序**真的跑起来**才出现：`tool/ptc-dispatch-start` 是执行到那一句时才 append 的
+ * （`packages/core/tools/src/ptc.ts`），而参数是**运行时求值**的对象——dsh 自己也没有「代码文本 → 子调用
+ * 列表」这种可复用的纯函数，它的语言判据在工具 schema 的 `code` 描述里（`ui-trajectory/code-program.ts`），
+ * 而插件拿不到 schema。想在子调用行出现之前给读者一句「接下来要动哪些文件」，只能自己扫这段半成品的
+ * 程序文本。
+ *
+ * ## 它天生是「尽力而为」
+ *
+ * 真实会话（887 份程序体、264 次 write/edit 调用）的分布：路径读得出约一半，文本读得出约四成，其余落在
+ * 「先赋给变量」「拼接」「循环」上。所以这一段的**契约是「读不出就不说」**，绝不猜：宁可清单里少一行，也
+ * 不能让读者以为要写某个文件而实际没有。
+ *
+ * ## 半截文本
+ *
+ * 参数是一批批流进来的，程序文本会停在任何位置——包括一个字符串字面量的中间。所以配对做不到「失败就
+ * 放弃整处调用」：字符串还没闭合时要把它当成**已读到的前缀**收下（`readString` 的 `end` 落在文本末尾），
+ * 否则最该显示内容的那一刻（正文正在流）恰好什么都看不到。
+ *
+ * 文本一律按 `charAt` 读：项目开了 `noUncheckedIndexedAccess`，下标访问都给 `string | undefined`，而
+ * 「越界」在这一层的意思就是「这一段到头了」，空串正好是它要的兜底。
+ *
+ * @module dsh-chat-ux/chat/code-progress/preview-scan
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.scanPreviewTargets = scanPreviewTargets;
+/** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
+const PREVIEW_TOOLS = new Set(['write', 'edit']);
+/** 调用锚点：`tools.write(` 与 `tools["write"](` 两种写法。 */
+const CALL_PATTERN = /tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'])([^"']+)\2\s*\])\s*\(/g;
+/** 变量绑定锚点：`const name = ` 后面紧跟一个字符串字面量。 */
+const BINDING_PATTERN = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'`])/g;
+/** 路径字段，按先后顺序认。 */
+const PATH_KEYS = ['file_path', 'path'];
+/** 三种开括号各自的闭符号。 */
+const CLOSERS = { ')': '(', '}': '{', ']': '[' };
+/** 正则开头前面允许出现的字符：这些位置上的 `/` 不可能是除号。 */
+const REGEX_LEADS = '=(,:[!&|?{};+-*%<>^~';
+/**
+ * 扫一遍程序文本，交出认得出的那几处写入或编辑。
+ *
+ * 读不出任何东西的那一处不列——路径与两个数字全空的行只会占地方。
+ *
+ * `previous` 是上一批的返回值：**读出过的东西不再撤回**。流式期会短暂看到一个完整的字面量（字符串刚
+ * 闭合，后面那个 `+ something` 还没到），到下一批才知道它是拼接、按规矩该判成读不出——可那个数已经摆在
+ * 读者眼前了，撤回就是一次回落。真实会话里这种情形占 149 份里 1 份，频率很低，但方向与数字轮那一套
+ * 一致：宁可留一个稍后会被纠正的读数，也不让它往回跳。同一处按锚点位置相认，不按下标——读不出的那一处
+ * 不列出来，下标会错位。
+ * @param code - `run_code` 的 `code` 字段，可以只是已收到的那半截。
+ * @param previous - 上一批的返回值；没有就传 undefined。
+ * @returns 认出的一处一处，按在文本里出现的先后。
+ */
+function scanPreviewTargets(code, previous) {
+    const bindings = readBindings(code);
+    const carried = new Map();
+    for (const target of previous ?? [])
+        carried.set(target.at, target);
+    const targets = [];
+    CALL_PATTERN.lastIndex = 0;
+    for (let match = CALL_PATTERN.exec(code); match !== null; match = CALL_PATTERN.exec(code)) {
+        const name = match[1] ?? match[3];
+        if (name === undefined || !PREVIEW_TOOLS.has(name))
+            continue;
+        const at = match.index;
+        const fields = argumentFields(code, at + match[0].length - 1);
+        const content = name === 'write' ? fieldValue(fields, ['content'], bindings) : null;
+        const newText = name === 'edit' ? fieldValue(fields, ['new_string'], bindings) : null;
+        const oldText = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null;
+        // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
+        const seen = carried.get(at);
+        const path = fieldValue(fields, PATH_KEYS, bindings) ?? seen?.path ?? null;
+        const added = (name === 'write' ? content : newText) === null
+            ? seen?.added ?? null
+            : countLines((name === 'write' ? content : newText) ?? '');
+        const removed = oldText === null ? seen?.removed ?? null : countLines(oldText);
+        if (path === null && added === null && removed === null)
+            continue;
+        targets.push({ name, at, path, added, removed });
+    }
+    return targets;
+}
+/**
+ * 全文里的「变量名 = 字符串字面量」。
+ *
+ * 只认一层：真实程序里长文本几乎都是 `` const content = `…` `` 再传进去，这一层把那一半捞回来；再往下
+ * 追（拼接、函数返回值、循环里拼出来的字符串）读出来也是错的，不如不读。
+ * @param code - 程序文本。
+ * @returns 变量名到字面量正文。
+ */
+function readBindings(code) {
+    const bindings = new Map();
+    BINDING_PATTERN.lastIndex = 0;
+    for (let match = BINDING_PATTERN.exec(code); match !== null; match = BINDING_PATTERN.exec(code)) {
+        const name = match[1];
+        if (name === undefined)
+            continue;
+        const read = readString(code, BINDING_PATTERN.lastIndex);
+        if (read.interpolated)
+            continue;
+        bindings.set(name, read.value);
+    }
+    return bindings;
+}
+/**
+ * 一个调用的实参键值对。
+ *
+ * `tools.write({file_path: '…', content})` 两种写法都收：带冒号的、以及把变量简写进对象的（简写那一份
+ * 的值就是同名变量，交给值解析去查绑定表）。
+ * @param code - 程序文本。
+ * @param openAt - 实参那个 `(` 的位置。
+ * @returns 键值对，按出现先后。
+ */
+function argumentFields(code, openAt) {
+    const closeAt = matchBracket(code, openAt);
+    const body = argumentsBody(code, openAt, closeAt);
+    const fields = [];
+    for (const part of splitTopLevel(body)) {
+        const paired = /^\s*([A-Za-z_$][\w$]*)\s*[:=]\s*([\s\S]*)$/.exec(part);
+        if (paired !== null) {
+            const key = paired[1];
+            if (key === undefined)
+                continue;
+            fields.push({ key, value: paired[2] ?? '' });
+            continue;
+        }
+        const shorthand = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(part);
+        const key = shorthand?.[1];
+        if (key !== undefined)
+            fields.push({ key, value: key });
+    }
+    return fields;
+}
+/**
+ * 实参正文：对象写法取花括号里面，关键字写法（Python 那一套）就是实参本身。
+ * @param code - 程序文本。
+ * @param openAt - 实参那个 `(` 的位置。
+ * @param closeAt - 它的配对位置，未闭合为 -1。
+ * @returns 正文。
+ */
+function argumentsBody(code, openAt, closeAt) {
+    const body = code.slice(openAt + 1, closeAt < 0 ? code.length : closeAt);
+    const braceAt = body.indexOf('{');
+    if (braceAt < 0 || body.slice(0, braceAt).trim() !== '')
+        return body;
+    const braceEnd = matchBracket(code, openAt + 1 + braceAt);
+    return code.slice(openAt + 2 + braceAt, braceEnd < 0 ? code.length : braceEnd);
+}
+/**
+ * 按顺序取第一个读得出的字段值。
+ * @param fields - 实参键值对。
+ * @param keys - 候选字段名。
+ * @param bindings - 一层变量绑定。
+ * @returns 文本，或 null（都没读出来）。
+ */
+function fieldValue(fields, keys, bindings) {
+    for (const key of keys) {
+        for (const field of fields) {
+            if (field.key !== key)
+                continue;
+            const text = valueText(field.value, bindings);
+            if (text !== null)
+                return text;
+        }
+    }
+    return null;
+}
+/**
+ * 一个字段值读出来的文本。
+ *
+ * 字面量收，一层变量收，其余（拼接、调用、成员访问）一律 null——那几种的真值要跑起来才知道。
+ * @param value - 值的原文。
+ * @param bindings - 一层变量绑定。
+ * @returns 文本，或 null。
+ */
+function valueText(value, bindings) {
+    const text = value.trim();
+    const quote = text.charAt(0);
+    if (quote === '"' || quote === "'" || quote === '`') {
+        const read = readString(text, 0);
+        // 字面量后面还接着东西（`'a' + b`）就是拼接，不读。
+        if (read.end !== text.length)
+            return null;
+        return read.interpolated ? null : read.value;
+    }
+    if (/^[A-Za-z_$][\w$]*$/.test(text))
+        return bindings.get(text) ?? null;
+    return null;
+}
+/**
+ * 从 `at`（引号）读一段字符串字面量。
+ *
+ * 未闭合不是错误：流式期它就停在这里，正文按已收到的算。
+ * @param text - 含引号的文本。
+ * @param at - 起始引号的位置。
+ * @returns 读出来的正文、结束位置与插值标记。
+ */
+function readString(text, at) {
+    const quote = text.charAt(at);
+    const triple = text.slice(at, at + 3) === quote.repeat(3);
+    const closer = triple ? quote.repeat(3) : quote;
+    let value = '';
+    let interpolated = false;
+    let cursor = at + closer.length;
+    while (cursor < text.length) {
+        const char = text.charAt(cursor);
+        if (char === '\\') {
+            value += decodeEscape(text, cursor);
+            cursor += escapeWidth(text, cursor);
+            continue;
+        }
+        if (text.slice(cursor, cursor + closer.length) === closer) {
+            return { value, end: cursor + closer.length, interpolated };
+        }
+        // JSON 那一层的转义（`\n`）到这里已经解开了，这一层只管程序文本自己的转义。
+        if (closer === '`' && char === '$' && text.charAt(cursor + 1) === '{')
+            interpolated = true;
+        value += char;
+        cursor += 1;
+    }
+    return { value, end: text.length, interpolated };
+}
+/**
+ * 转义序列的宽度。
+ * @param text - 含转义的文本。
+ * @param at - 反斜杠的位置。
+ * @returns 占几个字符。
+ */
+function escapeWidth(text, at) {
+    const next = text.charAt(at + 1);
+    if (next === 'u' && text.charAt(at + 2) === '{') {
+        const close = text.indexOf('}', at + 3);
+        return close < 0 ? text.length - at : close - at + 1;
+    }
+    if (next === 'u')
+        return 6;
+    if (next === 'x')
+        return 4;
+    return 2;
+}
+/**
+ * 解一个转义序列。
+ *
+ * 解不开的（半截的 `\u`）就原样留着：这一处要的是「读者能认出这是哪份文件、有多少行」，不是逐字符还原，
+ * 猜错比留着原文更糟。
+ * @param text - 含转义的文本。
+ * @param at - 反斜杠的位置。
+ * @returns 解出来的字符。
+ */
+function decodeEscape(text, at) {
+    const width = escapeWidth(text, at);
+    const body = text.slice(at + 1, at + width);
+    if (width === 2) {
+        const simple = { 'n': '\n', 't': '\t', 'r': '\r', 'b': '\b', 'f': '\f', 'v': '\v', '0': '\0' };
+        return simple[body] ?? body;
+    }
+    const digits = body.charAt(0) === 'u' && body.charAt(1) === '{' ? body.slice(2, -1) : body.slice(1);
+    const code = Number.parseInt(digits, 16);
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10FFFF)
+        return '\\' + body;
+    return String.fromCodePoint(code);
+}
+/**
+ * 从 `openAt`（`(`）找到配对位置。
+ *
+ * 字符串、注释与正则都要跳过去：真实程序里 `s.match(/[\u4e00-\u9fff]/g)` 这种一行就能把括号计数带偏
+ * （`[` 进了栈却没有对应的 `]` 来平账）。
+ * @param text - 程序文本。
+ * @param openAt - 开括号的位置。
+ * @returns 配对位置，未闭合为 -1。
+ */
+function matchBracket(text, openAt) {
+    const stack = [];
+    let cursor = openAt;
+    while (cursor < text.length) {
+        const char = text.charAt(cursor);
+        if (char === '"' || char === "'" || char === '`') {
+            cursor = readString(text, cursor).end;
+            continue;
+        }
+        if (char === '/' && text.charAt(cursor + 1) === '/') {
+            const lineBreakAt = text.indexOf('\n', cursor);
+            cursor = lineBreakAt < 0 ? text.length : lineBreakAt;
+            continue;
+        }
+        if (char === '/' && text.charAt(cursor + 1) === '*') {
+            const close = text.indexOf('*/', cursor);
+            cursor = close < 0 ? text.length : close + 2;
+            continue;
+        }
+        if (char === '/' && regexAllowed(text, cursor)) {
+            cursor = skipRegex(text, cursor);
+            continue;
+        }
+        if (char === '(' || char === '{' || char === '[') {
+            stack.push(char);
+            cursor += 1;
+            continue;
+        }
+        if (char === ')' || char === '}' || char === ']') {
+            const opened = stack.pop();
+            if (opened !== undefined && opened !== CLOSERS[char])
+                return -1;
+            if (stack.length === 0)
+                return cursor;
+            cursor += 1;
+            continue;
+        }
+        cursor += 1;
+    }
+    return -1;
+}
+/**
+ * 这个 `/` 是正则的开头还是除号。
+ *
+ * 判据只看前一个有意义字符能不能收住一个表达式——够用了，真正要挡的是正则字符组里的 `(` 与 `)`。
+ * @param text - 程序文本。
+ * @param at - 斜杠的位置。
+ * @returns 是不是正则的开头。
+ */
+function regexAllowed(text, at) {
+    let cursor = at - 1;
+    while (cursor >= 0 && /\s/.test(text.charAt(cursor)))
+        cursor -= 1;
+    if (cursor < 0)
+        return true;
+    return REGEX_LEADS.includes(text.charAt(cursor));
+}
+/**
+ * 跳过一个正则字面量。
+ * @param text - 程序文本。
+ * @param at - 斜杠的位置。
+ * @returns 结束位置。
+ */
+function skipRegex(text, at) {
+    let inClass = false;
+    let cursor = at + 1;
+    while (cursor < text.length) {
+        const char = text.charAt(cursor);
+        if (char === '\\') {
+            cursor += 2;
+            continue;
+        }
+        // 一行里没闭合就不是正则，退回保守位置，交给后面的字符逐个走。
+        if (char === '\n')
+            return at + 1;
+        if (char === '[')
+            inClass = true;
+        else if (char === ']')
+            inClass = false;
+        else if (char === '/' && !inClass)
+            return cursor + 1;
+        cursor += 1;
+    }
+    return text.length;
+}
+/**
+ * 按顶层逗号切一段文本。
+ * @param text - 实参正文。
+ * @returns 一段一段。
+ */
+function splitTopLevel(text) {
+    const parts = [];
+    let start = 0;
+    let cursor = 0;
+    while (cursor < text.length) {
+        const char = text.charAt(cursor);
+        if (char === '"' || char === "'" || char === '`') {
+            cursor = readString(text, cursor).end;
+            continue;
+        }
+        if (char === '(' || char === '{' || char === '[') {
+            const close = matchBracket(text, cursor);
+            cursor = close < 0 ? text.length : close + 1;
+            continue;
+        }
+        if (char === ',') {
+            parts.push(text.slice(start, cursor));
+            start = cursor + 1;
+        }
+        cursor += 1;
+    }
+    parts.push(text.slice(start));
+    return parts;
+}
+/**
+ * 一段文本的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。
+ * @param text - 文本。
+ * @returns 行数。
+ */
+function countLines(text) {
+    const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+    if (body === '')
+        return 0;
+    let lines = 1;
+    for (let at = 0; at < body.length; at++)
+        if (body.charAt(at) === '\n')
+            lines += 1;
+    return lines;
+}
     };
 
     __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {
@@ -3930,19 +4662,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const digit_reel_1 = require("../reel/digit-reel");
+const paced_value_1 = require("../paced-value");
 const file_mutation_styles_1 = require("./file-mutation-styles");
 /** 聊天行里 diff 卡片折叠中段前展示的行数；与内置的 `CHAT_DIFF_MAX_LINES` 取同一个值。 */
 const CHAT_DIFF_MAX_LINES = 9;
 /** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
 const CONTENT_FIELDS = ['content', 'old_string', 'new_string'];
-/**
- * 流式期间行尾那两个数的更新节拍（毫秒）：一条读数两次更新之间至少隔这么久。
- *
- * 它要盖过快档那一轮的**完整周期**——新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms）——
- * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。代价是读数最多滞后一拍
- * （高速流式下就是一次台阶），换读者看清每一次跳动。
- */
-const STREAM_TOTALS_STEP_MS = 300;
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024;
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
@@ -3993,7 +4718,7 @@ function FileMutationRow(props) {
     // 节拍只给 edit：`write` 的内容是一整段连续文本，行数跟着换行走、本来就一档一档地长，再压一拍只会
     // 让台阶更大（2026-10-11 读者反馈的正是「写入的行数几乎到终态才出现」，其中一半原因就在这里）；而
     // `edit` 是两个字段各自到各字数，落定前会有大跳，那一处才需要节拍把动画护住。
-    const totals = usePacedTotals(rawTotals, running && model.variant === 'edit');
+    const totals = (0, paced_value_1.usePacedValue)(rawTotals, running && model.variant === 'edit');
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null);
@@ -4462,64 +5187,6 @@ function diffBlockLabels(t) {
         collapse: t('collapse'),
         expand: hidden => t('diff.expandRest', { count: hidden }),
     };
-}
-/**
- * 按节拍交出读数：流式那两态最多每 `STREAM_TOTALS_STEP_MS` 换一次，其余情形实时跟随。
- *
- * 节拍只压「换数的频率」，不压真值——交给 `DigitReel` 的仍是最新读数（只是晚到下一拍），所以一轮动画
- * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
- * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
- *
- * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
- * 不会一跳一跳地补播中间值。
- * @param target - 最新读数；这一行没有可画的改动时为 null。
- * @param paced - 要不要按节拍走（流式那两态）。
- * @returns 现在该显示的读数。
- */
-function usePacedTotals(target, paced) {
-    const [shown, setShown] = (0, react_1.useState)(target);
-    const targetRef = (0, react_1.useRef)(target);
-    const nextAtRef = (0, react_1.useRef)(null);
-    const pendingRef = (0, react_1.useRef)(false);
-    targetRef.current = target;
-    (0, react_1.useEffect)(() => {
-        // 不在流式那两态（或这一行没有可画的改动）：实时跟随，并让节拍归零——上一次流式的相位不该
-        // 影响下一次。
-        if (!paced) {
-            nextAtRef.current = null;
-            pendingRef.current = false;
-            setShown(target);
-            return;
-        }
-        const now = Date.now();
-        // 第一次换数：读数刚出现，直接给（这一拍就是它的起点）。若这里也走「等一拍」，节拍会因为
-        // `nextAtRef` 一直是 null 而永远起不来。
-        if (nextAtRef.current === null) {
-            nextAtRef.current = now + STREAM_TOTALS_STEP_MS;
-            setShown(target);
-            return;
-        }
-        const wait = nextAtRef.current - now;
-        if (wait <= 0) {
-            nextAtRef.current = now + STREAM_TOTALS_STEP_MS;
-            setShown(target);
-            return;
-        }
-        // 这一段里读数还会继续长；到点取那一刻的最新值，所以只需一个定时器，不必每批都重排。
-        if (pendingRef.current)
-            return;
-        pendingRef.current = true;
-        const timer = setTimeout(() => {
-            pendingRef.current = false;
-            nextAtRef.current = Date.now() + STREAM_TOTALS_STEP_MS;
-            setShown(targetRef.current);
-        }, wait);
-        return () => {
-            pendingRef.current = false;
-            clearTimeout(timer);
-        };
-    }, [paced, target]);
-    return shown;
 }
     };
 
@@ -7328,6 +7995,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
+const language_1 = require("./language");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const AUTO_FOLD_FIELD = 'autoFold';
@@ -7425,16 +8093,9 @@ const EN_COPY = {
  */
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
-    // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文。
-    const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
-    }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
-    const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language;
-    // dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
-    // （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
-    // 兜底，而不是「非英文即中文」的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
-    // 中文是这套文案的主要读者。
-    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh';
-    const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY;
+    // 插件自己的文案跟着读者的界面语言走；判据在 `language.ts` 一处（`run_code` 那一行的预览区
+    // 也用同一份）。
+    const copy = (0, language_1.useInterfaceLanguage)(locale) === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [failed, setFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
@@ -7525,16 +8186,6 @@ function storedGlass(value) {
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value) {
     return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
-}
-/**
- * 只放行非空字符串。
- * @param value - 可能是 null、undefined 或空串的候选。
- * @returns 能用的那串字，或 undefined。
- */
-function nonEmpty(value) {
-    if (typeof value !== 'string' || value === '')
-        return undefined;
-    return value;
 }
 /**
  * 原始用户层里有没有这个字段。标记「已覆盖」看的是「在不在」，而不是值比不比得上默认值：

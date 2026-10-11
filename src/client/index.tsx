@@ -239,7 +239,17 @@ export function apply(ctx: ClientContext): void {
     // 哪了」。进度读数要读 `block.args`，而拿参数视图的唯一入口就是接管座位——所以这一处也遮蔽那一行
     // （同样 priority -1）。代价写在 `run-code-row` 的模块注释里：展开体的代码块从 CodeBlock 换成
     // DiffBlock。读数跟着同一项开关（准备态那个数），关着时这一行不显示它。
-    installRunCodeRow(services.slots, () => settings.liveDiff)
+    //
+    // locale 是给展开体里那块预览清单用的：那几句话是插件自己的，不在 dsh 词典里，所以这一处要自己按
+    // 界面语言选一份（与设置卡片同一个判据）。拿不到就退化成按浏览器语言。
+    installRunCodeRow(
+        services.slots,
+        () => settings.liveDiff,
+        () => {
+            const locale = services.reflect.get('locale')
+            return locale == null ? undefined : locale as LocaleLike
+        },
+    )
 
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的

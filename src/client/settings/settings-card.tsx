@@ -25,6 +25,7 @@ import {SegmentedControl, Switch, Tag} from '@deepseek-ai/dsh-client-ui-primitiv
 import type {SegmentedControlOption} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
+import {useInterfaceLanguage} from './language'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
     DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
@@ -188,19 +189,9 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
         useCallback((listener: () => void) => scope.subscribe(listener), [scope]),
         () => scope.getSnapshot(),
     )
-    // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文。
-    const activeLanguage = useSyncExternalStore(
-        useCallback((listener: () => void) => (locale ? locale.subscribe(listener) : () => {
-        }), [locale]),
-        useCallback(() => (locale ? locale.getSnapshot().active : null), [locale]),
-    )
-    const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language
-    // dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
-    // （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
-    // 兜底，而不是「非英文即中文」的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
-    // 中文是这套文案的主要读者。
-    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh'
-    const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY
+    // 插件自己的文案跟着读者的界面语言走；判据在 `language.ts` 一处（`run_code` 那一行的预览区
+    // 也用同一份）。
+    const copy = useInterfaceLanguage(locale) === 'en' ? EN_COPY : ZH_COPY
     const [saving, setSaving] = useState(false)
     const [failed, setFailed] = useState(false)
     const fieldId = useId()
@@ -406,16 +397,6 @@ function storedGlass(value: ChatUxSection | undefined): boolean {
 /** 从 host 的值里读光标动效档位。 */
 function storedCaret(value: ChatUxSection | undefined): CaretMotionMode {
     return value?.caretMotion ?? DEFAULT_CARET_MOTION
-}
-
-/**
- * 只放行非空字符串。
- * @param value - 可能是 null、undefined 或空串的候选。
- * @returns 能用的那串字，或 undefined。
- */
-function nonEmpty(value: string | null | undefined): string | undefined {
-    if (typeof value !== 'string' || value === '') return undefined
-    return value
 }
 
 /**

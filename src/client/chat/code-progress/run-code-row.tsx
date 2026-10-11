@@ -1,5 +1,5 @@
 /**
- * `run_code` 的进度读数：接管这一行，在折叠态尾部显示「代码已写多少」。
+ * `run_code` 那一行的两样东西：折叠态的进度读数，与展开体的**预览清单**。
  *
  * ## 为什么这一处必须重画整行
  *
@@ -20,11 +20,23 @@
  * 之后「代码正在写」这件事就结束了。读的是 `stringLength` 而不是 `text()`：后者会让 dsh 按「每一批」
  * 重新发布这一行，几十 KB 的代码参数不值得为一个小读数付这个钱。
  *
- * 那一段默认关着（插件管理页上的「实时改动行数」）；关掉时这一行不显示读数，其余照常。
+ * ## 预览清单
+ *
+ * 子调用行要等程序跑起来才出现，所以准备态里这一段自己扫程序文本，把「接下来要动哪几份文件、各多少
+ * 行」先摆出来（扫法与它能读出什么，见 `./preview-scan`）。三处刻意的选择：
+ *
+ * 1. **只在认得出东西时展开，而且只替读者展开一次**。认不出就什么都不说、也不动读者的开合状态；
+ *    读者自己收过之后这一行不再抢回来。
+ * 2. **虚线 + 一句「还没执行」**，与正式工具行（实线卡片、状态色）一眼分得开。它是一次预告，不是一次
+ *    已经发生的改动，视觉上不能长得像后者。
+ * 3. **数字走节拍、并且不撤回**。同一套 `usePacedValue` 与数字轮，`preview-scan` 那一边保证读到的数
+ *    只往上长。
+ *
+ * 那一段默认关着（插件管理页上的「实时改动行数」）；关掉时这一行不显示读数与预览，其余照常。
  *
  * @module dsh-chat-ux/chat/code-progress/run-code-row
  */
-import {useMemo} from 'react'
+import {useEffect, useMemo, useRef} from 'react'
 import type {ReactElement} from 'react'
 import {
     DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer,
@@ -34,7 +46,17 @@ import {
     FILE_BODY_CLASS, FILE_IO_CLASS, FILE_IO_LABEL_CLASS, FILE_IO_SECTION_CLASS, FILE_IO_TEXT_CLASS,
     FILE_ROW_CLASS, FILE_ROW_LINE_CLASS,
 } from '../file-mutation/file-mutation-styles'
-import {CODE_PROGRESS_CLASS} from './code-progress-styles'
+import {DigitReel} from '../reel/digit-reel'
+import {usePacedValue} from '../paced-value'
+import {useInterfaceLanguage} from '../../settings/language'
+import type {LocaleLike} from '../../settings/settings-scope'
+import {
+    CODE_PROGRESS_CLASS, PREVIEW_ADD_CLASS, PREVIEW_BOX_CLASS, PREVIEW_DEL_CLASS, PREVIEW_HEAD_CLASS,
+    PREVIEW_ICON_CLASS, PREVIEW_NOTE_CLASS, PREVIEW_PATH_CLASS, PREVIEW_ROW_CLASS, PREVIEW_STAT_CLASS,
+    PREVIEW_TAG_CLASS,
+} from './code-progress-styles'
+import {scanPreviewTargets} from './preview-scan'
+import type {PreviewTarget} from './preview-scan'
 
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024
@@ -45,6 +67,9 @@ const CODE_MAX_LINES = 200
 /** 拿它给 `DiffBlock` 推语言：那一层只认路径后缀，不认别的提示。 */
 const CODE_LANGUAGE_PATH = 'run_code.ts'
 
+/** 没有预览时用的空清单：引用要稳定，否则节拍器每一批都会重排一次定时器。 */
+const NO_PREVIEWS: readonly PreviewTarget[] = []
+
 /**
  * 这一行的图标。
  *
@@ -53,10 +78,41 @@ const CODE_LANGUAGE_PATH = 'run_code.ts'
  */
 const CODE_ICON = <IconEditOutlineRegular size={14}/>
 
+/** 预览行那枚更小的图标。 */
+const PREVIEW_ICON = <IconEditOutlineRegular size={12}/>
+
+/** 预览区那几句话。插件自己的句子不进 dsh 词典，所以按界面语言选一份。 */
+interface PreviewCopy {
+    /** 那枚小标签。 */
+    tag: string
+    /** 紧跟着的一句说明。 */
+    note: string
+    /** 路径读不出时的占位。 */
+    unknownPath: string
+}
+
+const ZH_PREVIEW: PreviewCopy = {
+    tag: '预览',
+    note: '还没执行，写什么由程序自己决定',
+    unknownPath: '目标未知',
+}
+
+const EN_PREVIEW: PreviewCopy = {
+    tag: 'Preview',
+    note: 'Not run yet — the program decides what it writes',
+    unknownPath: 'unknown target',
+}
+
 /**
- * 准备态那个读数开着没有。由 `installRunCodeRow` 装进来，渲染期现读——插件管理页上一改就跟着变。
+ * 准备态那两个读数（已写多少、以及预览清单）开着没有。由 `installRunCodeRow` 装进来，渲染期现读——
+ * 插件管理页上一改就跟着变。
  */
-let liveSizeEnabled: () => boolean = () => false
+let liveReadingsEnabled: () => boolean = () => false
+
+/**
+ * 拿 locale 服务，用于选预览区的文案。同样渲染期现读，缺席时退化成按浏览器语言。
+ */
+let readLocale: () => LocaleLike | undefined = () => undefined
 
 /** 文案座位：conversation 命名空间下的 `t`。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
@@ -102,10 +158,10 @@ interface ToolResultNode {
     callId: string
     name: string
     /** 窗口丢掉了调用头时为 null。 */
-    call: {name: string; argsRaw: string} | null
+    call: {name: string, argsRaw: string} | null
     content: readonly ContentBlock[]
     isError: boolean
-    error?: {name: string; code: string} | undefined
+    error?: {name: string, code: string} | undefined
 }
 
 /** 一次调用的三种形态，按 `kind` 判别是否已结算。 */
@@ -117,7 +173,7 @@ type RowState = 'preparing' | 'running' | 'ok' | 'error' | 'stopped'
 /** 平台交给每个原子工具视图的载荷，只取这一行用到的字段。 */
 interface ToolCallOwnerProps {
     /** 每个调用自己的展开状态，由聊天层注入。 */
-    useDisclosure: () => {expanded: boolean; toggle: () => void}
+    useDisclosure: () => {expanded: boolean, toggle: () => void}
     callId: string
     /** 线上工具名，也是 keyed 座位的分发键。 */
     toolName: string
@@ -141,10 +197,16 @@ export interface SlotsService {
 /**
  * 在 `run_code` 座位上遮蔽内置那一行。
  * @param slots - 客户端座位注册表。
- * @param liveSize - 准备态那个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
+ * @param liveReadings - 那两个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
+ * @param locale - 取 locale 服务；缺席的部署退化成按浏览器语言选文案。
  */
-export function installRunCodeRow(slots: SlotsService, liveSize: () => boolean): void {
-    liveSizeEnabled = liveSize
+export function installRunCodeRow(
+    slots: SlotsService,
+    liveReadings: () => boolean,
+    locale: () => LocaleLike | undefined,
+): void {
+    liveReadingsEnabled = liveReadings
+    readLocale = locale
     slots.inject('tool.call.toolview', () => slots.register(
         {name: 'tool.call.toolview', priority: -1, locale: 'conversation', key: 'run_code'},
         RunCodeRow,
@@ -152,7 +214,7 @@ export function installRunCodeRow(slots: SlotsService, liveSize: () => boolean):
 }
 
 /**
- * 渲染一次 `run_code` 调用：折叠态是标题、描述与已写大小，展开态是那份程序与输出。
+ * 渲染一次 `run_code` 调用：折叠态是标题、描述与已写大小，展开态是预览清单、那份程序与输出。
  * @param props - owner 载荷与文案座位。
  * @returns 这一行。
  */
@@ -162,15 +224,53 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     const state = rowState(block)
     // 准备态也算在跑，与内置 ToolRow 的判据一致：否则这一段的标题与描述都不扫光。
     const running = state === 'running' || state === 'preparing'
+    const preparing = !('kind' in block) && block.phase === 'preparing'
+    const previewOn = preparing && liveReadingsEnabled()
+    const copy = useInterfaceLanguage(readLocale()) === 'en' ? EN_PREVIEW : ZH_PREVIEW
     const size = useMemo(() => codeSizeText(block, t), [block, t])
     const description = useMemo(() => callDescription(block), [block])
-    const code = useMemo(() => callCode(block), [block])
-    const hunks = useMemo(() => codeHunks(code), [code])
     const output = useMemo(() => resultText(block), [block])
     const labels = useMemo(() => diffBlockLabels(t), [t])
-    const expandable = hunks !== null || output !== null
+    // 可展开性只看「code 字段来了没有」，不去读全文：读过全文，dsh 就会**每一批**都重发这一行。
+    const expandable = useMemo(() => codeFieldPresent(block), [block]) || output !== null
     const open = expanded && expandable
+
+    // 预览清单：每一批重扫一遍（实测一份程序体约 0.03 ms），但把上一批的结果带过去，读出来的数不撤回。
+    const previousPreviews = useRef<readonly PreviewTarget[]>(NO_PREVIEWS)
+    const rawPreviews = useMemo(() => {
+        if (!previewOn) {
+            previousPreviews.current = NO_PREVIEWS
+            return NO_PREVIEWS
+        }
+        const text = block.args?.text('code')
+        if (text === undefined) return NO_PREVIEWS
+        const next = scanPreviewTargets(text, previousPreviews.current)
+        previousPreviews.current = next
+        return next
+    }, [block, previewOn])
+    const previews = usePacedValue(rawPreviews, previewOn)
+
+    // 认出要动文件就替读者展开一次。只做一次，而且读者自己动过之后不再抢回来——「自动开合」那一族在
+    // 别处也守同一条规矩：替读者打开的，读者收得回去。
+    const autoExpanded = useRef(false)
+    const userToggled = useRef(false)
+    useEffect(() => {
+        if (userToggled.current || autoExpanded.current) return
+        if (!previewOn || !expandable || rawPreviews.length === 0) return
+        autoExpanded.current = true
+        if (!expanded) toggle()
+    }, [expandable, expanded, previewOn, rawPreviews.length, toggle])
+
+    // 那份程序：只有真的要画它（展开着）才读全文。
+    const code = useMemo(() => (open ? callCode(block) : null), [block, open])
+    const hunks = useMemo(() => codeHunks(code), [code])
     const status = stateLabel(state, t)
+
+    // 读者自己点过这一行的开合，就把自动展开让给他（含自动展开之后他自己收起）。
+    const handleToggle = (): void => {
+        userToggled.current = true
+        toggle()
+    }
 
     const collapsedContent = description === '' && size === null ? null : (
         <>
@@ -189,6 +289,44 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
 
     const expandedContent = open ? (
         <div className={FILE_BODY_CLASS}>
+            {previews.length > 0 && (
+                <div className={PREVIEW_BOX_CLASS} data-preview="run_code">
+                    <div className={PREVIEW_HEAD_CLASS}>
+                        <span className={PREVIEW_TAG_CLASS}>{copy.tag}</span>
+                        <span className={PREVIEW_NOTE_CLASS}>{copy.note}</span>
+                    </div>
+                    {previews.map(target => (
+                        <div key={target.at} className={PREVIEW_ROW_CLASS}>
+                            <span className={PREVIEW_ICON_CLASS}>{PREVIEW_ICON}</span>
+                            <span className={PREVIEW_PATH_CLASS}>{target.path ?? copy.unknownPath}</span>
+                            {target.added !== null && (
+                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
+                                    <DigitReel
+                                        text={'+' + target.added}
+                                        prefix="+"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
+                            )}
+                            {target.removed !== null && (
+                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
+                                    <DigitReel
+                                        text={'-' + target.removed}
+                                        prefix="-"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
             {hunks !== null ? (
                 <DiffBlock diffs={hunks} labels={labels} maxLines={CODE_MAX_LINES}/>
             ) : (
@@ -227,7 +365,7 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                 expandable={expandable}
                 expandOnRowClick
                 keepContentWhenOpen
-                onToggle={toggle}
+                onToggle={handleToggle}
                 collapsedContent={collapsedContent}
             >
                 {expandedContent}
@@ -254,12 +392,27 @@ function rowState(block: ToolCallBlock): RowState {
  * @returns 读数文本，或 null（关着、或代码字段还没出现）。
  */
 function codeSizeText(block: ToolCallBlock, t: Translate): string | null {
-    if (!liveSizeEnabled()) return null
+    if (!liveReadingsEnabled()) return null
     if ('kind' in block || block.phase !== 'preparing') return null
     const view = block.args
     if (view === undefined || !view.has('code')) return null
     const characters = view.stringLength('code', {step: KILOBYTE}) ?? 0
     return t('tool.preparing.content', {kilobytes: Math.ceil(characters / KILOBYTE)})
+}
+
+/**
+ * `code` 字段来了没有——**不读它的正文**。
+ *
+ * 判据只用 `has`：它给的是布尔，只在字段第一次出现时变一次，所以这一行不会因为「读全文」而每一批重发
+ * （`text('code')` 会让 dsh 按批重新发布这一行，而几十 KB 的程序参数不值得为「能不能展开」付这个钱）。
+ * @param block - 调用块。
+ * @returns 能不能展开。
+ */
+function codeFieldPresent(block: ToolCallBlock): boolean {
+    if (!('kind' in block) && block.phase === 'preparing') return block.args?.has('code') === true
+    const raw = 'kind' in block ? block.call?.argsRaw ?? '' : block.argsRaw
+    const parsed = parseArgs(raw)
+    return parsed !== null && typeof parsed.code === 'string'
 }
 
 /**
