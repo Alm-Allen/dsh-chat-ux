@@ -17,7 +17,7 @@
  *     让给玻璃的缺口；两个变量缺席时上段铺满整块，也就是 dsh 原来的样子（安全的一侧）。
  *   - 卡片那块玻璃画在卡片的 `::before` 上（为什么要这样，见下一节）：一条**自带的蓝调渐变**，
  *     照 dsh 自己在 `AppFrame.module.css` 的 `.sidebarCol` 上那条「两端带着淡淡颜色、中间
- *     **完全透明**」的四停渐变来写（浅色 0.1/0.09、深色 0.08/0.07），底下垫一层掺了一点蓝的底色，
+ *     **完全透明**」的四停渐变来写（浅色 0.022/0.018、深色 0.035/0.03），底下垫一层掺了一点蓝的底色，
  *     只让出一成不到（70%），再叠一层 `blur(22px)`；顶边亮边、内侧微光、底部内阴影那三笔质感
  *     留在卡片自己身上。
  *     第一次做的时候底是从画布色派生的，当场翻了车：画布色的 92% 叠在画布上就是画布本身，输入区整块
@@ -117,11 +117,13 @@ body[${GLASS_ATTRIBUTE}] {
      --dsw-alias-bg-base 是**同一个令牌**（都是 neutral-bluish-00），dsh 原本靠发丝描边加柔光分界，
      玻璃把底让到七成之后，中间那一段（四停渐变里完全透明的那截）就只剩「画布色叠画布色」，
      读者报「中间太白、和背景融进去了」。压的是一层中性冷灰：既降亮度也降饱和，中间那段才交代得
-     出边界。要调浓淡就改最后那个百分比（现在是 15%）。 */
+     出边界。要调浓淡就改最后那个百分比与那枚灰——读者第二轮说浅色下整块「有一点点脏脏的」，灰从
+     15% 收到 10%、灰本身也提亮一档（rgb(150 158 176) → rgb(172 178 192)），合成之后仍比画布
+     暗七八级，中间那段照旧交代得出边界。 */
   --dsh-chat-ux-glass-base: color-mix(
     in srgb,
-    color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) 85%,
-    rgb(150 158 176)
+    color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) 90%,
+    rgb(172 178 192)
   );
 }
 
@@ -178,7 +180,7 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     box-shadow:
       inset 0 1px 0 0 rgb(255 255 255 / 0.9),
       inset 0 0 0 1px rgb(255 255 255 / 0.5),
-      inset 0 -16px 20px -18px rgb(15 17 21 / 0.07),
+      inset 0 -16px 20px -18px rgb(15 17 21 / 0.045),
       var(--dsw-elevation-soft, none) !important;
   }
 
@@ -190,6 +192,8 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
      过一轮，说两端也要「再浅一点」，先是 0.07 / 0.06。第三轮他说整条
      渐变「再低调点、隐约能看出有渐变色就行」，两档一起再砍一半多——深色 0.035 / 0.03、浅色
      0.03 / 0.025（深色下实测两端只比中间亮两三个灰阶、蓝通道最多六阶）。底压过灰之后，两端本来就不必出那么多力。
+     第四轮他说浅色下整块「有一点点脏脏的、整体再调得浅一点」，浅色那两片再收四分之一（0.022 / 0.018），
+     深色那两片不动。
      第一遍按 0.14 / 0.12 写，比 dsh 浓了一倍，那也是「看着有点脏脏的」的一半。
      伪元素没有后代，所以它的 backdrop-filter 只会给自己那层模糊，不会再给谁造出祖先 backdrop root
      （这正是卡片本体做不了这件事的原因，见模块头）。 */
@@ -209,10 +213,10 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     background-image:
       linear-gradient(
         to right,
-        rgb(122 155 240 / 0.03) 0%,
+        rgb(122 155 240 / 0.022) 0%,
         rgb(122 155 240 / 0) 38%,
         rgb(143 137 184 / 0) 64%,
-        rgb(143 137 184 / 0.025) 100%
+        rgb(143 137 184 / 0.018) 100%
       ),
       linear-gradient(
         color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
@@ -294,6 +298,17 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
       inset 0 1px 0 0 rgb(255 255 255 / 0.28),
       inset 0 0 0 1px rgb(255 255 255 / 0.1),
       inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
+  }
+
+  /* ── 四之三、把 rc.2 那条「不可用就整枚淡到四成」收回来 ── */
+  /* dsh 0.2.0-rc.2 给这枚按钮的 :disabled 样式是 opacity: .4（0.2.1-alpha.2 已经不用这条，
+     那台上空输入框时它照旧实心），于是同一块玻璃在「输入框为空」时会整枚淡掉——两版的观感就
+     此分叉（实测：rc.2 空输入时按钮面 #b8cbf2，打了字之后 #5d89e5；alpha.2 一直是 #5e8ae7）。
+     材质本来是同一条规则画的，所以这里只把那层淡化收回来，两版与两种状态都是同一块玻璃。
+     代价照实说：收回来之后「还不能发送」这件事就没有视觉提示了（按钮由 dsh 端拒收，点不动），
+     这与 alpha.2 的行为一致——那一版本来就不靠淡化交代。深色档一样收，理由同一条。 */
+  body[${GLASS_ATTRIBUTE}] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):disabled {
+    opacity: 1 !important;
   }
 
   /* ── 五、左下角那枚加号（添加文件 / 调指令）：同一块玻璃上的一片灰 ── */
