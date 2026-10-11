@@ -3313,8 +3313,11 @@ function installFileMutationRow(slots, liveDiff) {
  * @returns 这一行。
  */
 function FileMutationRow(props) {
-    const { t, toolName, block, cwd, home, openFile, inspect, useDisclosure } = props;
+    const { t, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
+    // 准备态的参数来源两版不同：新版在 block 上给 `args` 视图，旧版只给一个原始前缀订阅口。
+    // 这里把旧版那一份补成同形状的读法，下游（行模型、diff、行尾那两个数）一行都不用改。
+    const block = withPartialArguments(props.block, usePartialArguments(props));
     const args = (0, react_1.useMemo)(() => {
         const head = callHead(block);
         return head === null ? null : parseArgs(head.argsRaw);
@@ -3349,9 +3352,9 @@ function FileMutationRow(props) {
     // 就是这个），编辑却从头就在长。
     //
     // 没有路径时它直接跟在描述后面（那个分隔点只在有描述时渲染，所以不会留下一个孤立的点）。
-    const size = model.kilobytes === null
-        ? null
-        : t('tool.preparing.content', { kilobytes: model.kilobytes });
+    // 输入大小自己拼，不借 dsh 那句 `tool.preparing.content`（「正在准备内容 5KB」）——准备态那一行
+    // 本来就只有这一个读数，前面那句把行头撑长一倍，读者要看的就是这个数。
+    const size = model.kilobytes === null ? null : model.kilobytes + 'KB';
     const status = stateLabel(model.state, t);
     // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
     const linkAvailable = model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped';
@@ -3803,6 +3806,166 @@ function diffBlockLabels(t) {
         collapse: t('collapse'),
         expand: hidden => t('diff.expandRest', { count: hidden }),
     };
+}
+/**
+ * 旧版 dsh 的准备态参数前缀。
+ *
+ * 0.2.1-alpha.1 之前，准备态的 block 里没有任何参数（`PreparingToolCall` 只有 callId / name /
+ * turn / step / time 与 subCalls），那一段的材料只能从这个座位绑定下来的订阅口拿；那一版 dsh 自己的
+ * 文件变更行就是拿它算行尾那个 `nKB` 的。新版把参数做成了每个阶段都在的 `args` 视图，这个 prop
+ * 随之消失，于是这里按「有就用、没有就退回 `block.args`」双认。
+ *
+ * 「有才调用」不违反 hook 的调用顺序：这个 prop 的有无由座位声明决定，一个页面生命周期里恒定。
+ * @param props - 这一行的完整输入。
+ * @returns 原始参数前缀；新版 dsh、或这一段还没有参数时为 null。
+ */
+function usePartialArguments(props) {
+    const subscribe = props.useToolCallArgumentsPartial;
+    if (subscribe === undefined)
+        return null;
+    const raw = subscribe();
+    return raw === '' ? null : raw;
+}
+/**
+ * 把旧版的前缀补成参数视图。
+ *
+ * 只补准备态：派发与结算的 block 自带 `argsRaw`，新版另有 `args` 视图，两处都不动。
+ * @param block - 这一行的调用块。
+ * @param partial - 原始参数前缀；没有时为 null。
+ * @returns 带参数视图的调用块。
+ */
+function withPartialArguments(block, partial) {
+    if (partial === null)
+        return block;
+    if (block.args !== undefined)
+        return block;
+    if ('kind' in block || block.phase !== 'preparing')
+        return block;
+    return { ...block, args: rawArgsView(partial) };
+}
+/** 上一份前缀的读法。前缀没变时复用它，好让那些按视图对象记忆的旁挂缓存在原地追加时认得同一份。 */
+let lastRawView = null;
+/**
+ * 把原始参数前缀包成与 `ToolArgs` 同形状的读法。
+ *
+ * 只认顶层的字符串字段——这一行要的四个（`content` / `old_string` / `new_string` /
+ * `file_path`）都是。`has` 与 `complete` 的语义与新版视图对齐：出现了、以及收尾引号到了。
+ * 解码不抛错：半截转义按已经收到的部分给出，于是这些帧里的读数既不归零、也不倒回去。
+ * @param raw - 原始参数 JSON 的前缀，可能截在任何位置。
+ * @returns 同形状的参数读法。
+ */
+function rawArgsView(raw) {
+    if (lastRawView !== null && lastRawView.raw === raw)
+        return lastRawView.view;
+    const fields = scanTopLevelStrings(raw);
+    const view = {
+        has: key => fields.has(key),
+        complete: key => fields.get(key)?.closed === true,
+        text: key => fields.get(key)?.text,
+        stringLength: key => fields.get(key)?.text.length,
+    };
+    lastRawView = { raw, view };
+    return view;
+}
+/** JSON 字符串里的单字符转义。 */
+const STRING_ESCAPES = {
+    '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
+};
+/**
+ * 扫出顶层对象里的字符串字段。
+ *
+ * 半截的输入要能读：字符串没有收尾引号就标成没收尾，同时把已解码的那一段给出去。深处的（别的对象、
+ * 数组里的字符串）不参与；一旦截在深处就停——后面的顶层字段还没到，读不到就是读不到。
+ * @param raw - 原始参数 JSON 的前缀。
+ * @returns 字段名到已解码文本的映射，按出现顺序。
+ */
+function scanTopLevelStrings(raw) {
+    const fields = new Map();
+    let depth = 0;
+    let key = null;
+    let at = 0;
+    while (at < raw.length) {
+        const ch = raw[at];
+        if (ch === '"') {
+            const read = readJsonString(raw, at);
+            at = read.end;
+            if (depth !== 1) {
+                if (!read.closed)
+                    break;
+                continue;
+            }
+            // 顶层的一个字符串：后面跟着冒号就是字段名，否则就是字段值。
+            const colon = skipWhitespace(raw, at);
+            if (raw[colon] === ':') {
+                key = read.text;
+                at = colon + 1;
+                continue;
+            }
+            if (key !== null)
+                fields.set(key, { text: read.text, closed: read.closed });
+            key = null;
+            if (!read.closed)
+                break;
+            continue;
+        }
+        if (ch === '{' || ch === '[')
+            depth++;
+        else if (ch === '}' || ch === ']')
+            depth--;
+        else if (ch === ',' && depth === 1)
+            key = null;
+        at++;
+    }
+    return fields;
+}
+/**
+ * 读一个 JSON 字符串，从开引号读起。
+ *
+ * 半截的转义不算错：反斜杠后面还不到字符、或 `\u` 后面不足四位十六进制时，按已经解出来的那一段
+ * 给出并标成没收尾——参数只追加，这些帧里让上面那两处读数保留上一次的结果即可。
+ * @param raw - 原文。
+ * @param start - 开引号的下标。
+ * @returns 已解码的文本、收尾引号到没到，以及读完之后的位置。
+ */
+function readJsonString(raw, start) {
+    let text = '';
+    let at = start + 1;
+    while (at < raw.length) {
+        const ch = raw[at];
+        if (ch === '"')
+            return { text, closed: true, end: at + 1 };
+        if (ch !== '\\') {
+            text += ch;
+            at++;
+            continue;
+        }
+        const escape = raw[at + 1];
+        if (escape === undefined)
+            return { text, closed: false, end: raw.length };
+        if (escape === 'u') {
+            const hex = raw.slice(at + 2, at + 6);
+            if (!/^[0-9a-fA-F]{4}$/.test(hex))
+                return { text, closed: false, end: raw.length };
+            text += String.fromCharCode(parseInt(hex, 16));
+            at += 6;
+            continue;
+        }
+        text += STRING_ESCAPES[escape] ?? escape;
+        at += 2;
+    }
+    return { text, closed: false, end: raw.length };
+}
+/**
+ * 跳过空白。
+ * @param raw - 原文。
+ * @param at - 起点。
+ * @returns 第一个非空白字符的下标。
+ */
+function skipWhitespace(raw, at) {
+    let cursor = at;
+    while (cursor < raw.length && (raw[cursor] === ' ' || raw[cursor] === '\n' || raw[cursor] === '\r' || raw[cursor] === '\t'))
+        cursor++;
+    return cursor;
 }
     };
 
