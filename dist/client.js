@@ -2172,7 +2172,7 @@ const CODE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutl
 const PREVIEW_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 12 });
 const ZH_PREVIEW = {
     tag: '预览',
-    note: '还没执行，写什么由程序自己决定',
+    note: '还没执行，做什么由程序自己决定',
     unknownPath: '目标未知',
     draftWrite: '可能写入文件 ',
     draftEdit: '可能修改文件 ',
@@ -2181,10 +2181,17 @@ const ZH_PREVIEW = {
     overwrite: '可能覆盖 ',
     write: '可能写入 ',
     edit: '可能修改 ',
+    terminal: '可能执行命令 ',
+    read: '可能读取 ',
+    search: '可能搜索 ',
+    glob: '可能查找文件 ',
+    webSearch: '可能联网搜索 ',
+    webFetch: '可能抓取网页 ',
+    callTool: '可能调用工具 ',
 };
 const EN_PREVIEW = {
     tag: 'Preview',
-    note: 'Not run yet — the program decides what it writes',
+    note: 'Not run yet — the program decides what it does',
     unknownPath: 'unknown target',
     draftWrite: 'maybe writing a file ',
     draftEdit: 'maybe editing a file ',
@@ -2193,6 +2200,13 @@ const EN_PREVIEW = {
     overwrite: 'maybe overwriting ',
     write: 'maybe writing ',
     edit: 'maybe editing ',
+    terminal: 'maybe running ',
+    read: 'maybe reading ',
+    search: 'maybe searching ',
+    glob: 'maybe listing ',
+    webSearch: 'maybe searching the web ',
+    webFetch: 'maybe fetching ',
+    callTool: 'maybe calling ',
 };
 /**
  * 准备态那两个读数（已写多少、以及预览清单）开着没有。由 `installRunCodeRow` 装进来，渲染期现读——
@@ -2286,12 +2300,12 @@ function RunCodeRow(props) {
     // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去说
     // 那段正在攒的内容——它至少告诉读者「正在攒一段 n 行的东西、归哪个工具」，比「目标未知」信息更多。
     const showTargets = previews.length > 0
-        && (previews.some(target => target.path !== null) || pacedDraft === null);
+        && (previews.some(target => target.path !== null || target.summary !== null) || pacedDraft === null);
     const showDraft = !showTargets && pacedDraft !== null;
     const collapsedContent = description === '' && kilobytes === null && previews.length === 0
-        && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + draftLeadOf(pacedDraft.tool, copy), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + pacedDraft.lines, prefix: "+", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: "-0", prefix: "-", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: hintOf(target, existence, copy)
-                                    + (target.path === null ? copy.unknownPath : fileNameOf(target.path)) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
-    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: hintOf(target, existence, copy) + (target.path ?? copy.unknownPath) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }), target.settled && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
+        && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + draftLeadOf(pacedDraft.tool, copy), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + pacedDraft.lines, prefix: "+", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: "-0", prefix: "-", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: hintOf(target, existence, copy) + targetText(target, copy) }), fileToolOf(target) && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: hintOf(target, existence, copy)
+                                            + (fileToolOf(target) ? target.path ?? copy.unknownPath : targetText(target, copy)) }), fileToolOf(target) && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }))] }), target.settled && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
                                         path: target.path ?? CODE_LANGUAGE_PATH,
                                         oldText: target.oldText,
                                         newText: target.newText,
@@ -2500,11 +2514,11 @@ function draftLeadOf(tool, copy) {
     return copy.draftChange;
 }
 /**
- * 一处目标前面那半句：写一份新文件、覆盖已有的，还是改一处已有的。
+ * 一处目标前面那半句：说清接下来要干什么。
  *
- * 「新文件」与「覆盖」问的是 host（见 `./file-existence`）：答案还没回来、或这份部署问不到，都退回
- * 「可能写入」——不猜。编辑不看这一条，它改的必然是一份已经在那儿的文件。
- * @param target - 认出的一处写入或编辑。
+ * 写文件那两个还多一层「新文件 / 覆盖」——那是问 host 的（见 `./file-existence`）：答案还没回来、或这份
+ * 部署问不到，都退回「可能写入」，不猜。别的工具按名字直接给动作词，认不出的给一句中性的「可能调用工具」。
+ * @param target - 认出的一处子调用。
  * @param existence - 路径到此刻答案的表。
  * @param copy - 这一份语言下的文案。
  * @returns 那半句。
@@ -2512,12 +2526,52 @@ function draftLeadOf(tool, copy) {
 function hintOf(target, existence, copy) {
     if (target.name === 'edit')
         return copy.edit;
-    const known = target.path === null ? undefined : existence.get(target.path);
-    if (known === 'missing')
-        return copy.newFile;
-    if (known === 'exists')
-        return copy.overwrite;
-    return copy.write;
+    if (target.name === 'write') {
+        const known = target.path === null ? undefined : existence.get(target.path);
+        if (known === 'missing')
+            return copy.newFile;
+        if (known === 'exists')
+            return copy.overwrite;
+        return copy.write;
+    }
+    if (target.name === 'pwsh' || target.name === 'bash')
+        return copy.terminal;
+    if (target.name === 'read')
+        return copy.read;
+    if (target.name === 'grep')
+        return copy.search;
+    if (target.name === 'glob')
+        return copy.glob;
+    if (target.name === 'web_search')
+        return copy.webSearch;
+    if (target.name === 'web_fetch')
+        return copy.webFetch;
+    return copy.callTool;
+}
+/**
+ * 这一处属不属于写文件那两个。
+ *
+ * 只有它们有「增删几行」这回事，也只有它们会去问 host「这份文件在不在」。
+ * @param target - 认出的一处子调用。
+ * @returns 是不是 write / edit。
+ */
+function fileToolOf(target) {
+    return target.name === 'write' || target.name === 'edit';
+}
+/**
+ * 一处目标要显示的那截文字。
+ *
+ * 写文件那两个报文件名（折叠态那点位置放不下整条路径，目录在展开体里能看到）；别的工具用扫描器交回的
+ * 那一截——终端是它的目的或命令首行、读取是路径、搜索是模式（见 `./preview-scan` 的 TARGET_FIELDS）。
+ * 什么都读不出时给「目标未知」，与从前一样。
+ * @param target - 认出的一处子调用。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那截文字。
+ */
+function targetText(target, copy) {
+    if (!fileToolOf(target))
+        return target.summary ?? copy.unknownPath;
+    return target.path === null ? copy.unknownPath : fileNameOf(target.path);
 }
 /**
  * 组装 diff 卡片自己的 chrome 文案。
@@ -3366,8 +3420,35 @@ function isMissing(error) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scanPreviewTargets = scanPreviewTargets;
 exports.scanDraft = scanDraft;
-/** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
-const PREVIEW_TOOLS = new Set(['write', 'edit']);
+/**
+ * 预览认的这几类调用。
+ *
+ * 清单是按真实频率定的（80 个会话、2948 次子调用）：`pwsh` 1255、`read` 491、`edit` 362、`grep` 358、
+ * `write` 117、`glob` 65——这六类占 **96%**。余下 4% 里那些（`job_output` 那一家的后台任务、桌面自动化
+ * 一大家子、`ask_user_question`、`todo_write`、`load_workspace_dependencies`、会话与技能查询……）要么冷门，
+ * 要么参数里根本没有能提前认出来给读者看的东西（一个 `pid` + `window_id` 说了等于没说），所以不认。
+ * 联网那两样虽然少（`web_fetch` 8、`web_search` 6），但读者点名要，且「接下来要搜什么」这件事本身有用。
+ *
+ * `bash` 与 `pwsh` 都认：同一族工具在别的平台上叫前者。
+ */
+const PREVIEW_TOOLS = new Set(['write', 'edit', 'pwsh', 'bash', 'read', 'grep', 'glob', 'web_search', 'web_fetch']);
+/**
+ * 除了写文件那两个之外，每个工具从参数里取哪个字段当那一截文字。
+ *
+ * `description` 排在前面且有位置——那是模型自己写的目的（`List files in current directory` 这种），
+ * 比命令原文好读，所以它优先；读不出才退回关键参数（命令原文、路径、模式）。
+ */
+const TARGET_FIELDS = {
+    pwsh: ['description', 'command'],
+    bash: ['description', 'command'],
+    read: ['file_path', 'path'],
+    grep: ['pattern'],
+    glob: ['pattern'],
+    web_search: ['query', 'queries'],
+    web_fetch: ['url'],
+};
+/** 那一截最多留几个字；折叠态行尾那点位置放不下更长的。 */
+const TARGET_TEXT_MAX = 40;
 /** 调用锚点：`tools.write(` 与 `tools["write"](` 两种写法。 */
 const CALL_PATTERN = /tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'])([^"']+)\2\s*\])\s*\(/g;
 /** 路径字段，按先后顺序认。 */
@@ -3413,20 +3494,26 @@ function scanPreviewTargets(code, previous) {
             continue;
         const at = match.index;
         const fields = argumentFields(code, at + match[0].length - 1);
+        const fileTool = name === 'write' || name === 'edit';
         const newRead = name === 'write'
             ? fieldValue(fields, ['content'], bindings, code)
-            : fieldValue(fields, ['new_string'], bindings, code);
+            : name === 'edit' ? fieldValue(fields, ['new_string'], bindings, code) : null;
         const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings, code) : null;
         // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
         const seen = carried.get(at);
-        const pathRead = fieldValue(fields, PATH_KEYS, bindings, code);
+        // 路径只有写文件那两个才认：别的工具也有名 path 的字段（read 就是你），那不是「目标文件」。
+        const pathRead = fileTool ? fieldValue(fields, PATH_KEYS, bindings, code) : null;
         const path = pathRead === null ? seen?.path ?? null : pathRead.text;
         const added = newRead === null ? seen?.added ?? null : countLines(newRead.text);
         const removed = oldRead === null ? seen?.removed ?? null : countLines(oldRead.text);
+        const summaryRead = fileTool ? null : fieldValue(fields, TARGET_FIELDS[name] ?? [], bindings, code);
+        const slim = summaryRead === null ? null : firstLine(summaryRead.text).trim();
+        const summary = slim === null || slim === '' ? seen?.summary ?? null : slim.slice(0, TARGET_TEXT_MAX);
         // 两段原文都收尾了才认「定稿」——展开体里那次 diff 要等它：半截的正文每 300 ms 变一次高度，
         // 会把这一块（连同下面那份程序）一直撑，而输入区是 `sticky` 贴底的，它跟着一起动。
         const settled = seen?.settled === true || (newRead?.closed === true && oldRead?.closed === true);
-        if (path === null && added === null && removed === null)
+        // 一个字段都读不出的那一处不列：只剩一行动作词的行只会占地方（写文件那边也是这个规矩）。
+        if (path === null && added === null && removed === null && summary === null)
             continue;
         // 原文一并交出去：展开体里那时候要拿它画一次真正的 diff（`edit` 的两段都在才行）。
         targets.push({
@@ -3438,6 +3525,7 @@ function scanPreviewTargets(code, previous) {
             newText: newRead?.text ?? null,
             oldText: oldRead?.text ?? null,
             settled,
+            summary,
         });
     }
     return targets;
@@ -3458,9 +3546,15 @@ function scanDraft(code) {
             return null;
         const read = readString(code, at);
         const lines = countLines(read.value);
-        if (lines >= DRAFT_MIN_LINES)
-            return { tool: toolAfter(code, read.end), lines };
-        cursor = read.end;
+        if (lines < DRAFT_MIN_LINES) {
+            cursor = read.end;
+            continue;
+        }
+        const tool = toolAfter(code, read.end);
+        // 第一个锚点是别的工具，就说明这段内容不是要写出去的正文（一段长命令、一段喂给搜索的正文……）。
+        // 加上别的工具类型之后，这一条把「明明要跑命令、界面上却说可能改动文件」那种误报挡在外面——
+        // 这一版的契约本来就是「读不出就不说」。
+        return tool === 'other' ? null : { tool, lines };
     }
     return null;
 }
@@ -3476,8 +3570,9 @@ function toolAfter(code, from) {
     CALL_PATTERN.lastIndex = from;
     for (let match = CALL_PATTERN.exec(code); match !== null; match = CALL_PATTERN.exec(code)) {
         const name = match[1] ?? match[3];
-        if (name === 'write' || name === 'edit')
-            return name;
+        if (name === undefined)
+            continue;
+        return name === 'write' || name === 'edit' ? name : 'other';
     }
     return null;
 }
@@ -4053,6 +4148,15 @@ function splitTopLevel(text) {
     }
     parts.push(text.slice(start));
     return parts;
+}
+/**
+ * 一段文本的第一行。
+ * @param text - 任意文本。
+ * @returns 第一行；没有换行时就是它自己。
+ */
+function firstLine(text) {
+    const at = text.indexOf('\n');
+    return at < 0 ? text : text.slice(0, at);
 }
 /**
  * 一段文本的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。

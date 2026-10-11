@@ -27,9 +27,9 @@
  * @module dsh-chat-ux/chat/code-progress/preview-scan
  */
 
-/** 从程序文本里认出的一处写入或编辑。 */
+/** 从程序文本里认出的一处子调用：接下来要动哪份文件、跑什么命令、搜什么。 */
 export interface PreviewTarget {
-    /** 线上工具名：`write` 或 `edit`。 */
+    /** 线上工具名，例如 `write` / `edit` / `pwsh` / `read` / `grep`。 */
     name: string
     /** 锚点在程序文本里的位置。同一处的身份：文本只追加，这个位置不会变。 */
     at: number
@@ -50,10 +50,46 @@ export interface PreviewTarget {
      * 而 dsh 的输入区座位是 `sticky` 贴底的，会跟着一起动——读者看到的就是输入框在乱蹦。
      */
     settled: boolean
+    /**
+     * 这一处要显示的那截文字：终端是它的目的（`description`）或命令首行、读取是路径、搜索是模式……
+     *
+     * 写文件那两个不用它（它们显示文件名与行数），所以只有别的工具才有值；读不出为 null，那时界面上
+     * 只剩一句动作词（「可能执行命令」）。
+     */
+    summary: string | null
 }
 
-/** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
-const PREVIEW_TOOLS = new Set(['write', 'edit'])
+/**
+ * 预览认的这几类调用。
+ *
+ * 清单是按真实频率定的（80 个会话、2948 次子调用）：`pwsh` 1255、`read` 491、`edit` 362、`grep` 358、
+ * `write` 117、`glob` 65——这六类占 **96%**。余下 4% 里那些（`job_output` 那一家的后台任务、桌面自动化
+ * 一大家子、`ask_user_question`、`todo_write`、`load_workspace_dependencies`、会话与技能查询……）要么冷门，
+ * 要么参数里根本没有能提前认出来给读者看的东西（一个 `pid` + `window_id` 说了等于没说），所以不认。
+ * 联网那两样虽然少（`web_fetch` 8、`web_search` 6），但读者点名要，且「接下来要搜什么」这件事本身有用。
+ *
+ * `bash` 与 `pwsh` 都认：同一族工具在别的平台上叫前者。
+ */
+const PREVIEW_TOOLS = new Set(['write', 'edit', 'pwsh', 'bash', 'read', 'grep', 'glob', 'web_search', 'web_fetch'])
+
+/**
+ * 除了写文件那两个之外，每个工具从参数里取哪个字段当那一截文字。
+ *
+ * `description` 排在前面且有位置——那是模型自己写的目的（`List files in current directory` 这种），
+ * 比命令原文好读，所以它优先；读不出才退回关键参数（命令原文、路径、模式）。
+ */
+const TARGET_FIELDS: Record<string, readonly string[]> = {
+    pwsh: ['description', 'command'],
+    bash: ['description', 'command'],
+    read: ['file_path', 'path'],
+    grep: ['pattern'],
+    glob: ['pattern'],
+    web_search: ['query', 'queries'],
+    web_fetch: ['url'],
+}
+
+/** 那一截最多留几个字；折叠态行尾那点位置放不下更长的。 */
+const TARGET_TEXT_MAX = 40
 
 /**
  * 一段**正在攒**的长内容——它多半就是要写出去的那一份，但还不能确定。
@@ -130,20 +166,26 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
         if (name === undefined || !PREVIEW_TOOLS.has(name)) continue
         const at = match.index
         const fields = argumentFields(code, at + match[0].length - 1)
+        const fileTool = name === 'write' || name === 'edit'
         const newRead = name === 'write'
             ? fieldValue(fields, ['content'], bindings, code)
-            : fieldValue(fields, ['new_string'], bindings, code)
+            : name === 'edit' ? fieldValue(fields, ['new_string'], bindings, code) : null
         const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings, code) : null
         // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
         const seen = carried.get(at)
-        const pathRead = fieldValue(fields, PATH_KEYS, bindings, code)
+        // 路径只有写文件那两个才认：别的工具也有名 path 的字段（read 就是你），那不是「目标文件」。
+        const pathRead = fileTool ? fieldValue(fields, PATH_KEYS, bindings, code) : null
         const path = pathRead === null ? seen?.path ?? null : pathRead.text
         const added = newRead === null ? seen?.added ?? null : countLines(newRead.text)
         const removed = oldRead === null ? seen?.removed ?? null : countLines(oldRead.text)
+        const summaryRead = fileTool ? null : fieldValue(fields, TARGET_FIELDS[name] ?? [], bindings, code)
+        const slim = summaryRead === null ? null : firstLine(summaryRead.text).trim()
+        const summary = slim === null || slim === '' ? seen?.summary ?? null : slim.slice(0, TARGET_TEXT_MAX)
         // 两段原文都收尾了才认「定稿」——展开体里那次 diff 要等它：半截的正文每 300 ms 变一次高度，
         // 会把这一块（连同下面那份程序）一直撑，而输入区是 `sticky` 贴底的，它跟着一起动。
         const settled = seen?.settled === true || (newRead?.closed === true && oldRead?.closed === true)
-        if (path === null && added === null && removed === null) continue
+        // 一个字段都读不出的那一处不列：只剩一行动作词的行只会占地方（写文件那边也是这个规矩）。
+        if (path === null && added === null && removed === null && summary === null) continue
         // 原文一并交出去：展开体里那时候要拿它画一次真正的 diff（`edit` 的两段都在才行）。
         targets.push({
             name,
@@ -154,6 +196,7 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
             newText: newRead?.text ?? null,
             oldText: oldRead?.text ?? null,
             settled,
+            summary,
         })
     }
     return targets
@@ -174,8 +217,15 @@ export function scanDraft(code: string): DraftHint | null {
         if (at < 0) return null
         const read = readString(code, at)
         const lines = countLines(read.value)
-        if (lines >= DRAFT_MIN_LINES) return {tool: toolAfter(code, read.end), lines}
-        cursor = read.end
+        if (lines < DRAFT_MIN_LINES) {
+            cursor = read.end
+            continue
+        }
+        const tool = toolAfter(code, read.end)
+        // 第一个锚点是别的工具，就说明这段内容不是要写出去的正文（一段长命令、一段喂给搜索的正文……）。
+        // 加上别的工具类型之后，这一条把「明明要跑命令、界面上却说可能改动文件」那种误报挡在外面——
+        // 这一版的契约本来就是「读不出就不说」。
+        return tool === 'other' ? null : {tool, lines}
     }
     return null
 }
@@ -188,11 +238,12 @@ export function scanDraft(code: string): DraftHint | null {
  * @param from - 从长内容的结束位置往后看。
  * @returns 锚点名，后面没有写/编辑锚点为 null。
  */
-function toolAfter(code: string, from: number): 'write' | 'edit' | null {
+function toolAfter(code: string, from: number): 'write' | 'edit' | 'other' | null {
     CALL_PATTERN.lastIndex = from
     for (let match = CALL_PATTERN.exec(code); match !== null; match = CALL_PATTERN.exec(code)) {
         const name = match[1] ?? match[3]
-        if (name === 'write' || name === 'edit') return name
+        if (name === undefined) continue
+        return name === 'write' || name === 'edit' ? name : 'other'
     }
     return null
 }
@@ -800,6 +851,16 @@ function splitTopLevel(text: string): string[] {
     }
     parts.push(text.slice(start))
     return parts
+}
+
+/**
+ * 一段文本的第一行。
+ * @param text - 任意文本。
+ * @returns 第一行；没有换行时就是它自己。
+ */
+function firstLine(text: string): string {
+    const at = text.indexOf('\n')
+    return at < 0 ? text : text.slice(0, at)
 }
 
 /**

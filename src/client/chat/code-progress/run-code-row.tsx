@@ -120,11 +120,25 @@ interface PreviewCopy {
     write: string
     /** 编辑一处已有的文件。 */
     edit: string
+    /** 跑一条命令。 */
+    terminal: string
+    /** 读一份文件。 */
+    read: string
+    /** 在文件里搜内容。 */
+    search: string
+    /** 按名字找文件。 */
+    glob: string
+    /** 联网搜索。 */
+    webSearch: string
+    /** 抓一个网页。 */
+    webFetch: string
+    /** 认得出是一次调用、但不在上面这些里。 */
+    callTool: string
 }
 
 const ZH_PREVIEW: PreviewCopy = {
     tag: '预览',
-    note: '还没执行，写什么由程序自己决定',
+    note: '还没执行，做什么由程序自己决定',
     unknownPath: '目标未知',
     draftWrite: '可能写入文件 ',
     draftEdit: '可能修改文件 ',
@@ -133,11 +147,18 @@ const ZH_PREVIEW: PreviewCopy = {
     overwrite: '可能覆盖 ',
     write: '可能写入 ',
     edit: '可能修改 ',
+    terminal: '可能执行命令 ',
+    read: '可能读取 ',
+    search: '可能搜索 ',
+    glob: '可能查找文件 ',
+    webSearch: '可能联网搜索 ',
+    webFetch: '可能抓取网页 ',
+    callTool: '可能调用工具 ',
 }
 
 const EN_PREVIEW: PreviewCopy = {
     tag: 'Preview',
-    note: 'Not run yet — the program decides what it writes',
+    note: 'Not run yet — the program decides what it does',
     unknownPath: 'unknown target',
     draftWrite: 'maybe writing a file ',
     draftEdit: 'maybe editing a file ',
@@ -146,6 +167,13 @@ const EN_PREVIEW: PreviewCopy = {
     overwrite: 'maybe overwriting ',
     write: 'maybe writing ',
     edit: 'maybe editing ',
+    terminal: 'maybe running ',
+    read: 'maybe reading ',
+    search: 'maybe searching ',
+    glob: 'maybe listing ',
+    webSearch: 'maybe searching the web ',
+    webFetch: 'maybe fetching ',
+    callTool: 'maybe calling ',
 }
 
 /**
@@ -337,7 +365,7 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去说
     // 那段正在攒的内容——它至少告诉读者「正在攒一段 n 行的东西、归哪个工具」，比「目标未知」信息更多。
     const showTargets = previews.length > 0
-        && (previews.some(target => target.path !== null) || pacedDraft === null)
+        && (previews.some(target => target.path !== null || target.summary !== null) || pacedDraft === null)
     const showDraft = !showTargets && pacedDraft !== null
 
     const collapsedContent = description === '' && kilobytes === null && previews.length === 0
@@ -399,29 +427,33 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                         <Fragment key={target.at}>
                             {index > 0 && ' · '}
                             <span className={PREVIEW_SUMMARY_PATH_CLASS}>
-                                {hintOf(target, existence, copy)
-                                    + (target.path === null ? copy.unknownPath : fileNameOf(target.path))}
+                                {hintOf(target, existence, copy) + targetText(target, copy)}
                             </span>
-                            <span className={PREVIEW_ADD_CLASS}>
-                                <DigitReel
-                                    text={'+' + (target.added ?? 0)}
-                                    prefix="+"
-                                    suffix=""
-                                    rolling
-                                    cadence="fast"
-                                    spoken
-                                />
-                            </span>
-                            <span className={PREVIEW_DEL_CLASS}>
-                                <DigitReel
-                                    text={'-' + (target.removed ?? 0)}
-                                    prefix="-"
-                                    suffix=""
-                                    rolling
-                                    cadence="fast"
-                                    spoken
-                                />
-                            </span>
+                            {/* 增删两个数只有写文件那两个有：跑一条命令没有「几行」可言。 */}
+                            {fileToolOf(target) && (
+                                <>
+                                    <span className={PREVIEW_ADD_CLASS}>
+                                        <DigitReel
+                                            text={'+' + (target.added ?? 0)}
+                                            prefix="+"
+                                            suffix=""
+                                            rolling
+                                            cadence="fast"
+                                            spoken
+                                        />
+                                    </span>
+                                    <span className={PREVIEW_DEL_CLASS}>
+                                        <DigitReel
+                                            text={'-' + (target.removed ?? 0)}
+                                            prefix="-"
+                                            suffix=""
+                                            rolling
+                                            cadence="fast"
+                                            spoken
+                                        />
+                                    </span>
+                                </>
+                            )}
                         </Fragment>
                     ))}
                     {trailingPreviews > 0 && ' …'}
@@ -443,28 +475,33 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                             <div className={PREVIEW_ROW_CLASS}>
                                 <span className={PREVIEW_ICON_CLASS}>{PREVIEW_ICON}</span>
                                 <span className={PREVIEW_PATH_CLASS}>
-                                    {hintOf(target, existence, copy) + (target.path ?? copy.unknownPath)}
+                                    {hintOf(target, existence, copy)
+                                        + (fileToolOf(target) ? target.path ?? copy.unknownPath : targetText(target, copy))}
                                 </span>
-                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
-                                    <DigitReel
-                                        text={'+' + (target.added ?? 0)}
-                                        prefix="+"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
-                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
-                                    <DigitReel
-                                        text={'-' + (target.removed ?? 0)}
-                                        prefix="-"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
+                                {fileToolOf(target) && (
+                                    <>
+                                        <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
+                                            <DigitReel
+                                                text={'+' + (target.added ?? 0)}
+                                                prefix="+"
+                                                suffix=""
+                                                rolling
+                                                cadence="fast"
+                                                spoken
+                                            />
+                                        </span>
+                                        <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
+                                            <DigitReel
+                                                text={'-' + (target.removed ?? 0)}
+                                                prefix="-"
+                                                suffix=""
+                                                rolling
+                                                cadence="fast"
+                                                spoken
+                                            />
+                                        </span>
+                                    </>
+                                )}
                             </div>
                             {/* 改动的那两段都**收尾**了才画（`settled`）：半截正文每 300 ms 变一次高度，会
                                 把这一块连同下面那份程序一直撑，而输入区是 sticky 贴底的、会跟着动。这是
@@ -744,11 +781,11 @@ function draftLeadOf(tool: 'write' | 'edit' | null, copy: PreviewCopy): string {
 }
 
 /**
- * 一处目标前面那半句：写一份新文件、覆盖已有的，还是改一处已有的。
+ * 一处目标前面那半句：说清接下来要干什么。
  *
- * 「新文件」与「覆盖」问的是 host（见 `./file-existence`）：答案还没回来、或这份部署问不到，都退回
- * 「可能写入」——不猜。编辑不看这一条，它改的必然是一份已经在那儿的文件。
- * @param target - 认出的一处写入或编辑。
+ * 写文件那两个还多一层「新文件 / 覆盖」——那是问 host 的（见 `./file-existence`）：答案还没回来、或这份
+ * 部署问不到，都退回「可能写入」，不猜。别的工具按名字直接给动作词，认不出的给一句中性的「可能调用工具」。
+ * @param target - 认出的一处子调用。
  * @param existence - 路径到此刻答案的表。
  * @param copy - 这一份语言下的文案。
  * @returns 那半句。
@@ -759,10 +796,45 @@ function hintOf(
     copy: PreviewCopy,
 ): string {
     if (target.name === 'edit') return copy.edit
-    const known = target.path === null ? undefined : existence.get(target.path)
-    if (known === 'missing') return copy.newFile
-    if (known === 'exists') return copy.overwrite
-    return copy.write
+    if (target.name === 'write') {
+        const known = target.path === null ? undefined : existence.get(target.path)
+        if (known === 'missing') return copy.newFile
+        if (known === 'exists') return copy.overwrite
+        return copy.write
+    }
+    if (target.name === 'pwsh' || target.name === 'bash') return copy.terminal
+    if (target.name === 'read') return copy.read
+    if (target.name === 'grep') return copy.search
+    if (target.name === 'glob') return copy.glob
+    if (target.name === 'web_search') return copy.webSearch
+    if (target.name === 'web_fetch') return copy.webFetch
+    return copy.callTool
+}
+
+/**
+ * 这一处属不属于写文件那两个。
+ *
+ * 只有它们有「增删几行」这回事，也只有它们会去问 host「这份文件在不在」。
+ * @param target - 认出的一处子调用。
+ * @returns 是不是 write / edit。
+ */
+function fileToolOf(target: PreviewTarget): boolean {
+    return target.name === 'write' || target.name === 'edit'
+}
+
+/**
+ * 一处目标要显示的那截文字。
+ *
+ * 写文件那两个报文件名（折叠态那点位置放不下整条路径，目录在展开体里能看到）；别的工具用扫描器交回的
+ * 那一截——终端是它的目的或命令首行、读取是路径、搜索是模式（见 `./preview-scan` 的 TARGET_FIELDS）。
+ * 什么都读不出时给「目标未知」，与从前一样。
+ * @param target - 认出的一处子调用。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那截文字。
+ */
+function targetText(target: PreviewTarget, copy: PreviewCopy): string {
+    if (!fileToolOf(target)) return target.summary ?? copy.unknownPath
+    return target.path === null ? copy.unknownPath : fileNameOf(target.path)
 }
 
 /**
