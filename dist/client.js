@@ -1750,9 +1750,10 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
  * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
  *
- * 三处都用它：命中率那枚胶囊（座位里由 React 渲染）、上下文占用那串百分比（挂在 dsh 自己的文本
- * 节点旁边，见 reel-host），以及文件变更行行尾那两个 `+n` / `-m`（座位里由 React 渲染，见
- * ../file-mutation/file-mutation-row）。
+ * 五处都用它：命中率那枚胶囊（座位里由 React 渲染）、上下文占用那串百分比（挂在 dsh 自己的文本
+ * 节点旁边，见 reel-host）、文件变更行行尾那两个 `+n` / `-m`、`run_code` 那一行的 `nKB` 读数，以及
+ * 它折叠态那一截预告里的 `+n`（后三处都在座位里由 React 渲染，见 ../file-mutation/file-mutation-row
+ * 与 ../code-progress/run-code-row）。
  *
  * 读数的形状由调用方那一侧决定，这里只认「一个可选的不变前缀 + 几位数字 + 可选的一位小数 + 一个
  * 可选的不变后缀」：命中率与占用是 `97.3%` / `26%`（后缀 `%`），行尾统计是 `+96` / `-3`
@@ -1996,7 +1997,7 @@ exports.REEL_CSS = `
   }
 }
 
-/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
+/* 小数点与百分号也进同一个行盒：五处行高相同，数字与它们必然齐平。
    flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
    「小数点不见了」。 */
 .${exports.REEL_STATIC_CLASS} {
@@ -2203,7 +2204,7 @@ function RunCodeRow(props) {
     const preparing = !('kind' in block) && block.phase === 'preparing';
     const previewOn = preparing && liveReadingsEnabled();
     const copy = (0, language_1.useInterfaceLanguage)(readLocale()) === 'en' ? EN_PREVIEW : ZH_PREVIEW;
-    const size = (0, react_1.useMemo)(() => codeSizeText(block, t), [block, t]);
+    const kilobytes = (0, react_1.useMemo)(() => codeKilobytes(block), [block]);
     const description = (0, react_1.useMemo)(() => callDescription(block), [block]);
     const output = (0, react_1.useMemo)(() => resultText(block), [block]);
     const labels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
@@ -2240,7 +2241,7 @@ function RunCodeRow(props) {
     // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT);
     const trailingPreviews = previews.length - shownPreviews.length;
-    const collapsedContent = description === '' && size === null && previews.length === 0 ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), size !== null && (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: size }), previews.length > 0 && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
+    const collapsedContent = description === '' && kilobytes === null && previews.length === 0 ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), previews.length > 0 && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at)))] })), hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -2258,11 +2259,13 @@ function rowState(block) {
 }
 /**
  * 此刻的读数：代码字段已收到的长度，向上取整成 KB。
+ *
+ * 给的是**数**不是句子：这一截也要走数字轮（`2` 弹到 `3`，`KB` 原地不动），而数字轮要的是可拆的数与
+ * 单位两半。dsh 词典里那个 `tool.preparing.content` 是一整句 `2KB`，用不了。
  * @param block - 调用块。
- * @param t - 文案座位。
- * @returns 读数文本，或 null（关着、或代码字段还没出现）。
+ * @returns 千字节数，或 null（关着、或代码字段还没出现）。
  */
-function codeSizeText(block, t) {
+function codeKilobytes(block) {
     if (!liveReadingsEnabled())
         return null;
     if ('kind' in block || block.phase !== 'preparing')
@@ -2271,7 +2274,7 @@ function codeSizeText(block, t) {
     if (view === undefined || !view.has('code'))
         return null;
     const characters = view.stringLength('code', { step: KILOBYTE }) ?? 0;
-    return t('tool.preparing.content', { kilobytes: Math.ceil(characters / KILOBYTE) });
+    return Math.ceil(characters / KILOBYTE);
 }
 /**
  * `code` 字段来了没有——**不读它的正文**。
@@ -2920,6 +2923,12 @@ exports.CODE_PROGRESS_CSS = `
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
   color: var(--dsw-alias-label-caption);
+}
+
+/* 读数里的数也走数字轮，槽高按这一行的 24px 行盒重写——与文件变更行行尾那一截同一个坑。 */
+.${exports.CODE_PROGRESS_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 
 /* 虚线是这一块与正式工具行唯一的分界，不能换成实线：实线卡片在这一族里的意思是「这是一次改动」。 */
@@ -4762,10 +4771,13 @@ function FileMutationRow(props) {
     const rawTotals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
     // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' : undefined;
-    // 节拍只给 edit：`write` 的内容是一整段连续文本，行数跟着换行走、本来就一档一档地长，再压一拍只会
-    // 让台阶更大（2026-10-11 读者反馈的正是「写入的行数几乎到终态才出现」，其中一半原因就在这里）；而
-    // `edit` 是两个字段各自到各字数，落定前会有大跳，那一处才需要节拍把动画护住。
-    const totals = (0, paced_value_1.usePacedValue)(rawTotals, running && model.variant === 'edit');
+    // 两个工具都走节拍（2026-10-11 晚些改回来）：读者要的是**每一轮动画走完整**，宁可读数滞后一拍。
+    //
+    // 早先只给 `edit` 上节拍、`write` 逐批跟随——那是为了让写入的数字尽早长（当时它确实几乎到终态才
+    // 出现）。可那个毛病的主因是**路径后置**（`write` 把 `file_path` 排在最后一个字符，见下面 `size` 那
+    // 一段），那一处已经修掉了；现在内容一到就显示数字，逐批跟随只会让 220 ms 的动画每 48 ms 被下一批
+    // 参数打断，读数看着像**硬切**——同一个行尾，编辑在跳、写入在闪，那曾是几处读数里唯一不一致的一处。
+    const totals = (0, paced_value_1.usePacedValue)(rawTotals, running);
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null);

@@ -234,7 +234,7 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     const preparing = !('kind' in block) && block.phase === 'preparing'
     const previewOn = preparing && liveReadingsEnabled()
     const copy = useInterfaceLanguage(readLocale()) === 'en' ? EN_PREVIEW : ZH_PREVIEW
-    const size = useMemo(() => codeSizeText(block, t), [block, t])
+    const kilobytes = useMemo(() => codeKilobytes(block), [block])
     const description = useMemo(() => callDescription(block), [block])
     const output = useMemo(() => resultText(block), [block])
     const labels = useMemo(() => diffBlockLabels(t), [t])
@@ -274,7 +274,7 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT)
     const trailingPreviews = previews.length - shownPreviews.length
 
-    const collapsedContent = description === '' && size === null && previews.length === 0 ? null : (
+    const collapsedContent = description === '' && kilobytes === null && previews.length === 0 ? null : (
         <>
             {/* 那个分隔点是「标题 · 描述」的一部分：没有描述时它不该单独出现。 */}
             {description !== '' && (
@@ -285,7 +285,18 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                     </span>
                 </>
             )}
-            {size !== null && <span className={CODE_PROGRESS_CLASS}>{size}</span>}
+            {kilobytes !== null && (
+                <span className={CODE_PROGRESS_CLASS}>
+                    <DigitReel
+                        text={kilobytes + 'KB'}
+                        prefix=""
+                        suffix="KB"
+                        rolling
+                        cadence={running ? 'fast' : undefined}
+                        spoken
+                    />
+                </span>
+            )}
             {previews.length > 0 && (
                 <span className={PREVIEW_SUMMARY_CLASS}>
                     {'→ '}
@@ -427,17 +438,19 @@ function rowState(block: ToolCallBlock): RowState {
 
 /**
  * 此刻的读数：代码字段已收到的长度，向上取整成 KB。
+ *
+ * 给的是**数**不是句子：这一截也要走数字轮（`2` 弹到 `3`，`KB` 原地不动），而数字轮要的是可拆的数与
+ * 单位两半。dsh 词典里那个 `tool.preparing.content` 是一整句 `2KB`，用不了。
  * @param block - 调用块。
- * @param t - 文案座位。
- * @returns 读数文本，或 null（关着、或代码字段还没出现）。
+ * @returns 千字节数，或 null（关着、或代码字段还没出现）。
  */
-function codeSizeText(block: ToolCallBlock, t: Translate): string | null {
+function codeKilobytes(block: ToolCallBlock): number | null {
     if (!liveReadingsEnabled()) return null
     if ('kind' in block || block.phase !== 'preparing') return null
     const view = block.args
     if (view === undefined || !view.has('code')) return null
     const characters = view.stringLength('code', {step: KILOBYTE}) ?? 0
-    return t('tool.preparing.content', {kilobytes: Math.ceil(characters / KILOBYTE)})
+    return Math.ceil(characters / KILOBYTE)
 }
 
 /**

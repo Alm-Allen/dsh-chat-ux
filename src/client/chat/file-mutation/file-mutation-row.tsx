@@ -149,10 +149,13 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const rawTotals = useMemo(() => rowTotals(block, hunks), [block, hunks])
     // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' as const : undefined
-    // 节拍只给 edit：`write` 的内容是一整段连续文本，行数跟着换行走、本来就一档一档地长，再压一拍只会
-    // 让台阶更大（2026-10-11 读者反馈的正是「写入的行数几乎到终态才出现」，其中一半原因就在这里）；而
-    // `edit` 是两个字段各自到各字数，落定前会有大跳，那一处才需要节拍把动画护住。
-    const totals = usePacedValue(rawTotals, running && model.variant === 'edit')
+    // 两个工具都走节拍（2026-10-11 晚些改回来）：读者要的是**每一轮动画走完整**，宁可读数滞后一拍。
+    //
+    // 早先只给 `edit` 上节拍、`write` 逐批跟随——那是为了让写入的数字尽早长（当时它确实几乎到终态才
+    // 出现）。可那个毛病的主因是**路径后置**（`write` 把 `file_path` 排在最后一个字符，见下面 `size` 那
+    // 一段），那一处已经修掉了；现在内容一到就显示数字，逐批跟随只会让 220 ms 的动画每 48 ms 被下一批
+    // 参数打断，读数看着像**硬切**——同一个行尾，编辑在跳、写入在闪，那曾是几处读数里唯一不一致的一处。
+    const totals = usePacedValue(rawTotals, running)
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null)

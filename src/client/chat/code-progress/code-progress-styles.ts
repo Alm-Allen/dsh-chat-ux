@@ -68,6 +68,12 @@ export const CODE_PROGRESS_CSS = `
   color: var(--dsw-alias-label-caption);
 }
 
+/* 读数里的数也走数字轮，槽高按这一行的 24px 行盒重写——与文件变更行行尾那一截同一个坑。 */
+.${CODE_PROGRESS_CLASS} .${REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+}
+
 /* 虚线是这一块与正式工具行唯一的分界，不能换成实线：实线卡片在这一族里的意思是「这是一次改动」。 */
 .${PREVIEW_BOX_CLASS} {
   display: flex;
