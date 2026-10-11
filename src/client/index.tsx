@@ -16,6 +16,7 @@ import type {Context as ClientContext} from '@deepseek-ai/cordis'
 import {installCaretMotion} from './chat/caret/caret-motion'
 import type {CaretMotionMode} from './chat/caret/caret-motion'
 import {installCacheHitPill} from './chat/cache-hit/cache-hit-pill'
+import type {FileRemote} from './chat/code-progress/file-existence'
 import {installRunCodeRow} from './chat/code-progress/run-code-row'
 import {installComposerGlass} from './chat/composer-glass/composer-glass'
 import {GLASS_ATTRIBUTE} from './chat/composer-glass/composer-glass-styles'
@@ -248,6 +249,10 @@ export function apply(ctx: ClientContext): void {
         () => {
             const locale = services.reflect.get('locale')
             return locale == null ? undefined : locale as LocaleLike
+        },
+        () => {
+            const remote = services.reflect.get('remote')
+            return remote == null ? undefined : remote as FileRemote
         },
     )
 

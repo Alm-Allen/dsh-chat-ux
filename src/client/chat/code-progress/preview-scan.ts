@@ -67,8 +67,15 @@ const PREVIEW_TOOLS = new Set(['write', 'edit'])
  * 只能是「可能」，等锚点到了才换成确凿的那一版。
  */
 export interface DraftHint {
-    /** 那段内容的第一行（去掉 markdown 标记与空白），给读者认出来在写什么；拿不到时是空串。 */
-    heading: string
+    /**
+     * 这段内容之后第一个写/编辑锚点的名字；锚点还没出现时为 null。
+     *
+     * 早先这一版拿那段内容的**第一行**当标题，落到代码文件上就是 `/**` 这种谁也不认识的碎屑
+     * （2026-10-11 读者指出的：「看着有点不明所以」）。现在改成说清动作，而动作只有锚点能定——模型写
+     * 这类调用时内容必然排在调用之前（`tools.write({file_path, content: text})` 里 `text` 必须先定义），
+     * 所以「锚点出现在这段内容之后」才是它归这次调用用的那一版；锚点还没出现就只说「可能改动」。
+     */
+    tool: 'write' | 'edit' | null
     /** 已收到的行数。 */
     lines: number
 }
@@ -84,9 +91,6 @@ const DRAFT_MIN_LINES = 8
 
 /** 每批最多看几段字符串就放弃。程序里短模板可能很多，没必要一路扫到底。 */
 const DRAFT_SCAN_LIMIT = 8
-
-/** 标题最多留几个字；折叠态行尾那点位置放不下更长的。 */
-const DRAFT_HEADING_MAX = 18
 
 /**
  * 追变量最多追几层。
@@ -161,7 +165,7 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
  * 从头往后看字符串字面量，交出**第一段**够长的：模型写长内容时总把它放在最前面（读者那次就在程序的
  * 第 0 个字符），所以不必扫到底。游标只往前走，所以一整趟的代价是 O(程序长度)，与找锚点同量级。
  * @param code - `run_code` 的 `code` 字段，可以只是已收到的那半截。
- * @returns 那一段的标题与已收到的行数，或 null（还没有够长的内容）。
+ * @returns 那一段的行数与它归哪个工具（锚点还没出现时为 null），或 null（还没有够长的内容）。
  */
 export function scanDraft(code: string): DraftHint | null {
     let cursor = 0
@@ -170,8 +174,25 @@ export function scanDraft(code: string): DraftHint | null {
         if (at < 0) return null
         const read = readString(code, at)
         const lines = countLines(read.value)
-        if (lines >= DRAFT_MIN_LINES) return {heading: headingOf(read.value), lines}
+        if (lines >= DRAFT_MIN_LINES) return {tool: toolAfter(code, read.end), lines}
         cursor = read.end
+    }
+    return null
+}
+
+/**
+ * 这段内容之后第一个写/编辑锚点叫什么。
+ *
+ * 只看长内容**之后**的锚点：内容排在调用之前是这类写法的语法要求，落在它前面的锚点用的是别的材料。
+ * @param code - 程序文本。
+ * @param from - 从长内容的结束位置往后看。
+ * @returns 锚点名，后面没有写/编辑锚点为 null。
+ */
+function toolAfter(code: string, from: number): 'write' | 'edit' | null {
+    CALL_PATTERN.lastIndex = from
+    for (let match = CALL_PATTERN.exec(code); match !== null; match = CALL_PATTERN.exec(code)) {
+        const name = match[1] ?? match[3]
+        if (name === 'write' || name === 'edit') return name
     }
     return null
 }
@@ -191,26 +212,6 @@ function nextQuoteAt(code: string, from: number): number {
         if (at >= 0 && (best < 0 || at < best)) best = at
     }
     return best
-}
-
-/**
- * 一段内容的第一行标题：去掉 markdown 的井号、引用号与项目符号，太长就截断。
- * @param text - 那段内容的正文。
- * @returns 标题，全是空白时是空串。
- */
-function headingOf(text: string): string {
-    let start = 0
-    while (start < text.length) {
-        const lineBreakAt = text.indexOf('\n', start)
-        const line = text.slice(start, lineBreakAt < 0 ? text.length : lineBreakAt)
-        const trimmed = line.replace(/^[#>\-*\s]+/, '').trim()
-        if (trimmed !== '') {
-            return trimmed.length > DRAFT_HEADING_MAX ? trimmed.slice(0, DRAFT_HEADING_MAX) + '…' : trimmed
-        }
-        if (lineBreakAt < 0) break
-        start = lineBreakAt + 1
-    }
-    return ''
 }
 
 /**

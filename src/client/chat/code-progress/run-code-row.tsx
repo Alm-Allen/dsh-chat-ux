@@ -8,11 +8,15 @@
  * 注入点（`DisclosureRow` 的 `headerAccessory` 是 `ToolRow` 的内部 prop，座位之外拿不到）。所以这一
  * 处与 `file-mutation-row` 同样的做法：用更低的 priority 遮蔽内置那一行，照着它的样子重画。
  *
- * 与文件变更行唯一的取舍在**展开体的代码块**：内置用 `CodeBlock`（shiki 高亮 + 语言标签 + 复制/折行），
- * 而 `CodeBlock` 虽然从 `@deepseek-ai/dsh-client-ui-primitives` 导出，却**不在 dsh 开放给插件的基座
- * 模块表里**（`platform-modules.d.ts` 只给到 `DiffBlock`），所以这里用 `DiffBlock` 顶——同一个 shiki
- * 高亮、同一个工具栏，代价是行首多一个 `+`、新增行带一条绿底。想不降级就得改 dsh 自己，那时这一行可
- * 以整个撤掉。
+ * 展开体里那份程序用的就是 `CodeBlock`——dsh 内置 `code` 变体用的同一枚。
+ *
+ * 这一处一度拿 `DiffBlock` 顶，理由是「`CodeBlock` 不在 dsh 开放给插件的基座模块表里」。**那个理由是
+ * 错的**（2026-10-11 核过）：那张表（`client/web/src/platform.ts` 的 `PLATFORM_MODULES`）里的键是
+ * **模块名**，`DiffBlock` 与 `CodeBlock` 是同一个模块的两个导出，同一个 `require` 都拿得到——当初把它
+ * 读成了「只放行部分导出」。那一版多出来的行首 `+` 与一条绿底，读者一眼就指出不对。
+ *
+ * 退路留着：`.d.ts` 里把 `CodeBlock` 标成可空，拿不到就退回 `DiffBlock`——展开体宁可多一个 `+`，
+ * 也不能整块炸掉。
  *
  * ## 读数本身
  *
@@ -39,7 +43,7 @@
 import {Fragment, useMemo, useRef} from 'react'
 import type {ReactElement} from 'react'
 import {
-    DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer,
+    CodeBlock, DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {DiffBlockLabels, DiffHunk} from '@deepseek-ai/dsh-client-ui-primitives'
 import {
@@ -51,10 +55,13 @@ import {usePacedValue} from '../paced-value'
 import {useInterfaceLanguage} from '../../settings/language'
 import type {LocaleLike} from '../../settings/settings-scope'
 import {
-    CODE_PROGRESS_CLASS, PREVIEW_ADD_CLASS, PREVIEW_BOX_CLASS, PREVIEW_DEL_CLASS, PREVIEW_HEAD_CLASS,
+    CODE_BODY_SCROLL_CLASS, CODE_PROGRESS_CLASS, PREVIEW_ADD_CLASS, PREVIEW_BOX_CLASS, PREVIEW_DEL_CLASS,
+    PREVIEW_HEAD_CLASS,
     PREVIEW_ICON_CLASS, PREVIEW_NOTE_CLASS, PREVIEW_PATH_CLASS, PREVIEW_ROW_CLASS, PREVIEW_STAT_CLASS,
     PREVIEW_SUMMARY_CLASS, PREVIEW_SUMMARY_PATH_CLASS, PREVIEW_TAG_CLASS,
 } from './code-progress-styles'
+import {installFileExistence, useFileExistence} from './file-existence'
+import type {FileExistence, FileRemote} from './file-existence'
 import {scanDraft, scanPreviewTargets} from './preview-scan'
 import type {DraftHint, PreviewTarget} from './preview-scan'
 
@@ -99,22 +106,46 @@ interface PreviewCopy {
     note: string
     /** 路径读不出时的占位。 */
     unknownPath: string
-    /** 只认出长内容、还没有锚点时那句「可能」的开头。 */
-    draftLead: string
+    /** 只认出长内容、看得出是写入时的开头。 */
+    draftWrite: string
+    /** 只认出长内容、看得出是编辑时的开头。 */
+    draftEdit: string
+    /** 只认出长内容、还看不出是哪一个时的开头。 */
+    draftChange: string
+    /** 写文件，问过 host 之后知道那份文件不在。 */
+    newFile: string
+    /** 写文件，问过 host 之后知道那份文件已经在。 */
+    overwrite: string
+    /** 写文件，新旧还不知道。 */
+    write: string
+    /** 编辑一处已有的文件。 */
+    edit: string
 }
 
 const ZH_PREVIEW: PreviewCopy = {
     tag: '预览',
     note: '还没执行，写什么由程序自己决定',
     unknownPath: '目标未知',
-    draftLead: '可能写入 ',
+    draftWrite: '可能写入文件 ',
+    draftEdit: '可能修改文件 ',
+    draftChange: '可能改动文件 ',
+    newFile: '可能写入新文件 ',
+    overwrite: '可能覆盖 ',
+    write: '可能写入 ',
+    edit: '可能修改 ',
 }
 
 const EN_PREVIEW: PreviewCopy = {
     tag: 'Preview',
     note: 'Not run yet — the program decides what it writes',
     unknownPath: 'unknown target',
-    draftLead: 'maybe writing ',
+    draftWrite: 'maybe writing a file ',
+    draftEdit: 'maybe editing a file ',
+    draftChange: 'maybe changing a file ',
+    newFile: 'maybe a new file ',
+    overwrite: 'maybe overwriting ',
+    write: 'maybe writing ',
+    edit: 'maybe editing ',
 }
 
 /**
@@ -218,9 +249,11 @@ export function installRunCodeRow(
     slots: SlotsService,
     liveReadings: () => boolean,
     locale: () => LocaleLike | undefined,
+    remote: () => FileRemote | undefined,
 ): void {
     liveReadingsEnabled = liveReadings
     readLocale = locale
+    installFileExistence(remote)
     slots.inject('tool.call.toolview', () => slots.register(
         {name: 'tool.call.toolview', priority: -1, locale: 'conversation', key: 'run_code'},
         RunCodeRow,
@@ -233,7 +266,7 @@ export function installRunCodeRow(
  * @returns 这一行。
  */
 export function RunCodeRow(props: RunCodeRowProps): ReactElement {
-    const {t, block, inspect, useDisclosure} = props
+    const {t, block, callId, inspect, useDisclosure} = props
     const {expanded, toggle} = useDisclosure()
     const state = rowState(block)
     // 准备态也算在跑，与内置 ToolRow 的判据一致：否则这一段的标题与描述都不扫光。
@@ -273,6 +306,18 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     )
     const pacedDraft = usePacedValue<DraftHint | null>(draft, previewOn)
 
+    // 这次要写的那几处还得问一句「这份文件此刻在不在」——问到了才敢说「可能写入新文件」还是「可能覆盖」。
+    // 查询是异步的、问不出来就一直按「可能写入」显示，那一行不等它（理由见 `./file-existence`）。
+    const writePaths = useMemo(() => {
+        const paths: string[] = []
+        for (const target of previews) {
+            if (target.name !== 'write' || target.path === null) continue
+            paths.push(target.path)
+        }
+        return paths
+    }, [previews])
+    const existence = useFileExistence(sessionIdOf(callId), writePaths)
+
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = useMemo(() => (open ? callCode(block) : null), [block, open])
     const hunks = useMemo(() => codeHunks(code), [code])
@@ -289,8 +334,8 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT)
     const trailingPreviews = previews.length - shownPreviews.length
-    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去报
-    // 那段正在攒的内容——它至少告诉了读者在写什么，而「目标未知 +53」比它信息更少。
+    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去说
+    // 那段正在攒的内容——它至少告诉读者「正在攒一段 n 行的东西、归哪个工具」，比「目标未知」信息更多。
     const showTargets = previews.length > 0
         && (previews.some(target => target.path !== null) || pacedDraft === null)
     const showDraft = !showTargets && pacedDraft !== null
@@ -319,17 +364,26 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                     />
                 </span>
             )}
+            {/* 只认出那段正在攒的内容时的那一版：锚点还没到就说「改动」，锚点到了就按它说「写入」或「修改」。
+                那两个数照读者定的口径一起摆出来（减那一位还没有就报「-0」）——两边都是两个数，形状才不会与
+                写入那一版混起来。 */}
             {showDraft && (
                 <span className={PREVIEW_SUMMARY_CLASS} data-draft="run_code">
-                    {'→ ' + copy.draftLead}
-                    {pacedDraft.heading !== '' && (
-                        <span className={PREVIEW_SUMMARY_PATH_CLASS}>{pacedDraft.heading}</span>
-                    )}
-                    {' '}
+                    {'→ ' + draftLeadOf(pacedDraft.tool, copy)}
                     <span className={PREVIEW_ADD_CLASS}>
                         <DigitReel
                             text={'+' + pacedDraft.lines}
                             prefix="+"
+                            suffix=""
+                            rolling
+                            cadence={running ? 'fast' as const : undefined}
+                            spoken
+                        />
+                    </span>
+                    <span className={PREVIEW_DEL_CLASS}>
+                        <DigitReel
+                            text="-0"
+                            prefix="-"
                             suffix=""
                             rolling
                             cadence={running ? 'fast' as const : undefined}
@@ -345,32 +399,29 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                         <Fragment key={target.at}>
                             {index > 0 && ' · '}
                             <span className={PREVIEW_SUMMARY_PATH_CLASS}>
-                                {target.path === null ? copy.unknownPath : fileNameOf(target.path)}
+                                {hintOf(target, existence, copy)
+                                    + (target.path === null ? copy.unknownPath : fileNameOf(target.path))}
                             </span>
-                            {target.added !== null && (
-                                <span className={PREVIEW_ADD_CLASS}>
-                                    <DigitReel
-                                        text={'+' + target.added}
-                                        prefix="+"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
-                            )}
-                            {target.removed !== null && (
-                                <span className={PREVIEW_DEL_CLASS}>
-                                    <DigitReel
-                                        text={'-' + target.removed}
-                                        prefix="-"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
-                            )}
+                            <span className={PREVIEW_ADD_CLASS}>
+                                <DigitReel
+                                    text={'+' + (target.added ?? 0)}
+                                    prefix="+"
+                                    suffix=""
+                                    rolling
+                                    cadence="fast"
+                                    spoken
+                                />
+                            </span>
+                            <span className={PREVIEW_DEL_CLASS}>
+                                <DigitReel
+                                    text={'-' + (target.removed ?? 0)}
+                                    prefix="-"
+                                    suffix=""
+                                    rolling
+                                    cadence="fast"
+                                    spoken
+                                />
+                            </span>
                         </Fragment>
                     ))}
                     {trailingPreviews > 0 && ' …'}
@@ -391,31 +442,29 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                         <Fragment key={target.at}>
                             <div className={PREVIEW_ROW_CLASS}>
                                 <span className={PREVIEW_ICON_CLASS}>{PREVIEW_ICON}</span>
-                                <span className={PREVIEW_PATH_CLASS}>{target.path ?? copy.unknownPath}</span>
-                                {target.added !== null && (
-                                    <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
-                                        <DigitReel
-                                            text={'+' + target.added}
-                                            prefix="+"
-                                            suffix=""
-                                            rolling
-                                            cadence="fast"
-                                            spoken
-                                        />
-                                    </span>
-                                )}
-                                {target.removed !== null && (
-                                    <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
-                                        <DigitReel
-                                            text={'-' + target.removed}
-                                            prefix="-"
-                                            suffix=""
-                                            rolling
-                                            cadence="fast"
-                                            spoken
-                                        />
-                                    </span>
-                                )}
+                                <span className={PREVIEW_PATH_CLASS}>
+                                    {hintOf(target, existence, copy) + (target.path ?? copy.unknownPath)}
+                                </span>
+                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
+                                    <DigitReel
+                                        text={'+' + (target.added ?? 0)}
+                                        prefix="+"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
+                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
+                                    <DigitReel
+                                        text={'-' + (target.removed ?? 0)}
+                                        prefix="-"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
                             </div>
                             {/* 改动的那两段都**收尾**了才画（`settled`）：半截正文每 300 ms 变一次高度，会
                                 把这一块连同下面那份程序一直撑，而输入区是 sticky 贴底的、会跟着动。这是
@@ -438,9 +487,22 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                     ))}
                 </div>
             )}
-            {hunks !== null ? (
-                <DiffBlock diffs={hunks} labels={labels} maxLines={CODE_MAX_LINES}/>
+            {/* 展开体就是那份程序：走 `CodeBlock`（shiki 高亮 + 语言标签 + 复制/折行，与内置 `code` 变体
+                同一枚）。拿不到它就退回 `DiffBlock`——那一版行首会多一个 `+`、新增行带一条绿底。 */}
+            {code !== null && (CodeBlock === undefined ? (
+                <DiffBlock diffs={hunks ?? []} labels={labels} maxLines={CODE_MAX_LINES}/>
             ) : (
+                <div className={CODE_BODY_SCROLL_CLASS}>
+                    <CodeBlock
+                        code={code}
+                        lang="typescript"
+                        copyLabel={t('copy')}
+                        copiedLabel={t('copied')}
+                        toolbarLabels={labels}
+                    />
+                </div>
+            ))}
+            {code === null && (
                 <div className={FILE_IO_CLASS}>
                     {output !== null && (
                         <div className={FILE_IO_SECTION_CLASS}>
@@ -652,6 +714,55 @@ function stateLabel(state: RowState, t: Translate): string | null {
     if (state === 'error') return t('row.failed')
     if (state === 'stopped') return t('row.stopped')
     return null
+}
+
+/**
+ * 这次调用属于哪个会话。
+ *
+ * dsh 的 callId 是 `call_00_xxx|<sessionId>` 这个形状（子调用再接 `:ptc:n`），问「这份文件在不在」要用
+ * 竖线后面那一截。取不出来时一律按「新旧不知道」显示——这一句措辞不值得为它猜。
+ * @param callId - 这次调用的标识。
+ * @returns 会话 id，取不出为 undefined。
+ */
+function sessionIdOf(callId: string): string | undefined {
+    const at = callId.indexOf('|')
+    if (at < 0) return undefined
+    const id = callId.slice(at + 1).split(':')[0] ?? ''
+    return id === '' ? undefined : id
+}
+
+/**
+ * 草稿那一版的开头：锚点出现了就按它说，还没出现就只说「改动」。
+ * @param tool - 这段内容归哪个工具；还不知道时为 null。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那半句。
+ */
+function draftLeadOf(tool: 'write' | 'edit' | null, copy: PreviewCopy): string {
+    if (tool === 'write') return copy.draftWrite
+    if (tool === 'edit') return copy.draftEdit
+    return copy.draftChange
+}
+
+/**
+ * 一处目标前面那半句：写一份新文件、覆盖已有的，还是改一处已有的。
+ *
+ * 「新文件」与「覆盖」问的是 host（见 `./file-existence`）：答案还没回来、或这份部署问不到，都退回
+ * 「可能写入」——不猜。编辑不看这一条，它改的必然是一份已经在那儿的文件。
+ * @param target - 认出的一处写入或编辑。
+ * @param existence - 路径到此刻答案的表。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那半句。
+ */
+function hintOf(
+    target: PreviewTarget,
+    existence: ReadonlyMap<string, FileExistence>,
+    copy: PreviewCopy,
+): string {
+    if (target.name === 'edit') return copy.edit
+    const known = target.path === null ? undefined : existence.get(target.path)
+    if (known === 'missing') return copy.newFile
+    if (known === 'exists') return copy.overwrite
+    return copy.write
 }
 
 /**

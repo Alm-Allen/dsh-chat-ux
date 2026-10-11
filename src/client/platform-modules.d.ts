@@ -146,6 +146,29 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     export function DiffBlock(props: DiffBlockProps): ReactElement
 
     /**
+     * 一段高亮的代码：shiki 语法着色 + 语言与复制/折行的标题栏——dsh 自己的代码卡片就是它（内置的
+     * `code` 变体渲染 `run_code` 的程序用的正是这一枚）。
+     *
+     * 它和 `DiffBlock` 同属这一个模块，所以同一个 require 拿得到。**但导出本身可能缺席**（更旧的
+     * primitives 版本里没有它），所以类型写成可空，用它的地方都留了退路。
+     */
+    export interface CodeBlockProps {
+        /** 源码原文，按原样渲染。 */
+        code: string
+        /** 语法提示；不认识就当纯文本。 */
+        lang?: string | undefined
+        /** 复制按钮平时那两个字，由调用方给（这个包不读 locale）。 */
+        copyLabel: string
+        /** 复制成功后那两个字。 */
+        copiedLabel: string
+        /** 给了它就启用共享的代码卡片标题栏与间距。 */
+        toolbarLabels?: CodeToolbarLabels | undefined
+        className?: string | undefined
+    }
+
+    export const CodeBlock: ((props: CodeBlockProps) => ReactElement) | undefined
+
+    /**
      * 数一遍要展示的增删行数——行尾那个 `+n -m` 就是它。
      * @param diffs - 要统计的 hunks。
      * @returns 增删行数。

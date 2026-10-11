@@ -49,6 +49,14 @@ export const PREVIEW_ADD_CLASS = 'dsh-chat-ux-preview-add'
 export const PREVIEW_DEL_CLASS = 'dsh-chat-ux-preview-del'
 
 /**
+ * 展开体里那份程序的滚动容器。
+ *
+ * 份量与内置 `code` 变体同一个口径（260px 封顶、自身滚动）：那份程序动辄几十 KB、几百行，整段铺开
+ * 会把一行撑到看不见别的。限高必须落在包着代码块的这一层——`CodeBlock` 自己不封顶。
+ */
+export const CODE_BODY_SCROLL_CLASS = 'dsh-chat-ux-code-scroll'
+
+/**
  * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
  *
  * `flex: none` 不能省：dsh 那一行是 flex，读数若不设它会被压缩、跟随摘要被挤掉。`white-space: nowrap`
@@ -72,6 +80,13 @@ export const CODE_PROGRESS_CSS = `
 .${CODE_PROGRESS_CLASS} .${REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+}
+
+/* 展开体里那份程序。左缩进与上下节奏跟展开体里另外两张卡片一致。 */
+.${CODE_BODY_SCROLL_CLASS} {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 4px 0 4px 4px;
 }
 
 /* 虚线是这一块与正式工具行唯一的分界，不能换成实线：实线卡片在这一族里的意思是「这是一次改动」。 */

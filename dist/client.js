@@ -253,6 +253,9 @@ function apply(ctx) {
     (0, run_code_row_1.installRunCodeRow)(services.slots, () => settings.liveDiff, () => {
         const locale = services.reflect.get('locale');
         return locale == null ? undefined : locale;
+    }, () => {
+        const remote = services.reflect.get('remote');
+        return remote == null ? undefined : remote;
     });
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
@@ -2101,11 +2104,15 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 注入点（`DisclosureRow` 的 `headerAccessory` 是 `ToolRow` 的内部 prop，座位之外拿不到）。所以这一
  * 处与 `file-mutation-row` 同样的做法：用更低的 priority 遮蔽内置那一行，照着它的样子重画。
  *
- * 与文件变更行唯一的取舍在**展开体的代码块**：内置用 `CodeBlock`（shiki 高亮 + 语言标签 + 复制/折行），
- * 而 `CodeBlock` 虽然从 `@deepseek-ai/dsh-client-ui-primitives` 导出，却**不在 dsh 开放给插件的基座
- * 模块表里**（`platform-modules.d.ts` 只给到 `DiffBlock`），所以这里用 `DiffBlock` 顶——同一个 shiki
- * 高亮、同一个工具栏，代价是行首多一个 `+`、新增行带一条绿底。想不降级就得改 dsh 自己，那时这一行可
- * 以整个撤掉。
+ * 展开体里那份程序用的就是 `CodeBlock`——dsh 内置 `code` 变体用的同一枚。
+ *
+ * 这一处一度拿 `DiffBlock` 顶，理由是「`CodeBlock` 不在 dsh 开放给插件的基座模块表里」。**那个理由是
+ * 错的**（2026-10-11 核过）：那张表（`client/web/src/platform.ts` 的 `PLATFORM_MODULES`）里的键是
+ * **模块名**，`DiffBlock` 与 `CodeBlock` 是同一个模块的两个导出，同一个 `require` 都拿得到——当初把它
+ * 读成了「只放行部分导出」。那一版多出来的行首 `+` 与一条绿底，读者一眼就指出不对。
+ *
+ * 退路留着：`.d.ts` 里把 `CodeBlock` 标成可空，拿不到就退回 `DiffBlock`——展开体宁可多一个 `+`，
+ * 也不能整块炸掉。
  *
  * ## 读数本身
  *
@@ -2136,6 +2143,7 @@ const digit_reel_1 = require("../reel/digit-reel");
 const paced_value_1 = require("../paced-value");
 const language_1 = require("../../settings/language");
 const code_progress_styles_1 = require("./code-progress-styles");
+const file_existence_1 = require("./file-existence");
 const preview_scan_1 = require("./preview-scan");
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024;
@@ -2166,13 +2174,25 @@ const ZH_PREVIEW = {
     tag: '预览',
     note: '还没执行，写什么由程序自己决定',
     unknownPath: '目标未知',
-    draftLead: '可能写入 ',
+    draftWrite: '可能写入文件 ',
+    draftEdit: '可能修改文件 ',
+    draftChange: '可能改动文件 ',
+    newFile: '可能写入新文件 ',
+    overwrite: '可能覆盖 ',
+    write: '可能写入 ',
+    edit: '可能修改 ',
 };
 const EN_PREVIEW = {
     tag: 'Preview',
     note: 'Not run yet — the program decides what it writes',
     unknownPath: 'unknown target',
-    draftLead: 'maybe writing ',
+    draftWrite: 'maybe writing a file ',
+    draftEdit: 'maybe editing a file ',
+    draftChange: 'maybe changing a file ',
+    newFile: 'maybe a new file ',
+    overwrite: 'maybe overwriting ',
+    write: 'maybe writing ',
+    edit: 'maybe editing ',
 };
 /**
  * 准备态那两个读数（已写多少、以及预览清单）开着没有。由 `installRunCodeRow` 装进来，渲染期现读——
@@ -2189,9 +2209,10 @@ let readLocale = () => undefined;
  * @param liveReadings - 那两个读数开着没有；渲染期现读，所以卡片上一改就跟着变。
  * @param locale - 取 locale 服务；缺席的部署退化成按浏览器语言选文案。
  */
-function installRunCodeRow(slots, liveReadings, locale) {
+function installRunCodeRow(slots, liveReadings, locale, remote) {
     liveReadingsEnabled = liveReadings;
     readLocale = locale;
+    (0, file_existence_1.installFileExistence)(remote);
     slots.inject('tool.call.toolview', () => slots.register({ name: 'tool.call.toolview', priority: -1, locale: 'conversation', key: 'run_code' }, RunCodeRow));
 }
 /**
@@ -2200,7 +2221,7 @@ function installRunCodeRow(slots, liveReadings, locale) {
  * @returns 这一行。
  */
 function RunCodeRow(props) {
-    const { t, block, inspect, useDisclosure } = props;
+    const { t, block, callId, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
     const state = rowState(block);
     // 准备态也算在跑，与内置 ToolRow 的判据一致：否则这一段的标题与描述都不扫光。
@@ -2235,6 +2256,18 @@ function RunCodeRow(props) {
     // 判据与成色见 `./preview-scan` 的 `DraftHint`；这里同样按节拍换数。
     const draft = (0, react_1.useMemo)(() => (previewOn ? (0, preview_scan_1.scanDraft)(block.args?.text('code') ?? '') : null), [block, previewOn]);
     const pacedDraft = (0, paced_value_1.usePacedValue)(draft, previewOn);
+    // 这次要写的那几处还得问一句「这份文件此刻在不在」——问到了才敢说「可能写入新文件」还是「可能覆盖」。
+    // 查询是异步的、问不出来就一直按「可能写入」显示，那一行不等它（理由见 `./file-existence`）。
+    const writePaths = (0, react_1.useMemo)(() => {
+        const paths = [];
+        for (const target of previews) {
+            if (target.name !== 'write' || target.path === null)
+                continue;
+            paths.push(target.path);
+        }
+        return paths;
+    }, [previews]);
+    const existence = (0, file_existence_1.useFileExistence)(sessionIdOf(callId), writePaths);
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = (0, react_1.useMemo)(() => (open ? callCode(block) : null), [block, open]);
     const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
@@ -2250,18 +2283,19 @@ function RunCodeRow(props) {
     // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
     const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT);
     const trailingPreviews = previews.length - shownPreviews.length;
-    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去报
-    // 那段正在攒的内容——它至少告诉了读者在写什么，而「目标未知 +53」比它信息更少。
+    // 有确凿路径就报路径；路径读不出（比如 `file_path: dir + "\\渡口.txt"` 这种拼接出来的）就退回去说
+    // 那段正在攒的内容——它至少告诉读者「正在攒一段 n 行的东西、归哪个工具」，比「目标未知」信息更多。
     const showTargets = previews.length > 0
         && (previews.some(target => target.path !== null) || pacedDraft === null);
     const showDraft = !showTargets && pacedDraft !== null;
     const collapsedContent = description === '' && kilobytes === null && previews.length === 0
-        && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + copy.draftLead, pacedDraft.heading !== '' && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: pacedDraft.heading })), ' ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + pacedDraft.lines, prefix: "+", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
-    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }), target.settled && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
+        && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + draftLeadOf(pacedDraft.tool, copy), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + pacedDraft.lines, prefix: "+", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: "-0", prefix: "-", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: hintOf(target, existence, copy)
+                                    + (target.path === null ? copy.unknownPath : fileNameOf(target.path)) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: hintOf(target, existence, copy) + (target.path ?? copy.unknownPath) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + (target.added ?? 0), prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + (target.removed ?? 0), prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) })] }), target.settled && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
                                         path: target.path ?? CODE_LANGUAGE_PATH,
                                         oldText: target.oldText,
                                         newText: target.newText,
-                                    }], labels: labels, maxLines: PREVIEW_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS }))] }, target.at)))] })), hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
+                                    }], labels: labels, maxLines: PREVIEW_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS }))] }, target.at)))] })), code !== null && (dsh_client_ui_primitives_1.CodeBlock === undefined ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks ?? [], labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: code_progress_styles_1.CODE_BODY_SCROLL_CLASS, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.CodeBlock, { code: code, lang: "typescript", copyLabel: t('copy'), copiedLabel: t('copied'), toolbarLabels: labels }) }))), code === null && ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
 /**
@@ -2436,6 +2470,54 @@ function stateLabel(state, t) {
     if (state === 'stopped')
         return t('row.stopped');
     return null;
+}
+/**
+ * 这次调用属于哪个会话。
+ *
+ * dsh 的 callId 是 `call_00_xxx|<sessionId>` 这个形状（子调用再接 `:ptc:n`），问「这份文件在不在」要用
+ * 竖线后面那一截。取不出来时一律按「新旧不知道」显示——这一句措辞不值得为它猜。
+ * @param callId - 这次调用的标识。
+ * @returns 会话 id，取不出为 undefined。
+ */
+function sessionIdOf(callId) {
+    const at = callId.indexOf('|');
+    if (at < 0)
+        return undefined;
+    const id = callId.slice(at + 1).split(':')[0] ?? '';
+    return id === '' ? undefined : id;
+}
+/**
+ * 草稿那一版的开头：锚点出现了就按它说，还没出现就只说「改动」。
+ * @param tool - 这段内容归哪个工具；还不知道时为 null。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那半句。
+ */
+function draftLeadOf(tool, copy) {
+    if (tool === 'write')
+        return copy.draftWrite;
+    if (tool === 'edit')
+        return copy.draftEdit;
+    return copy.draftChange;
+}
+/**
+ * 一处目标前面那半句：写一份新文件、覆盖已有的，还是改一处已有的。
+ *
+ * 「新文件」与「覆盖」问的是 host（见 `./file-existence`）：答案还没回来、或这份部署问不到，都退回
+ * 「可能写入」——不猜。编辑不看这一条，它改的必然是一份已经在那儿的文件。
+ * @param target - 认出的一处写入或编辑。
+ * @param existence - 路径到此刻答案的表。
+ * @param copy - 这一份语言下的文案。
+ * @returns 那半句。
+ */
+function hintOf(target, existence, copy) {
+    if (target.name === 'edit')
+        return copy.edit;
+    const known = target.path === null ? undefined : existence.get(target.path);
+    if (known === 'missing')
+        return copy.newFile;
+    if (known === 'exists')
+        return copy.overwrite;
+    return copy.write;
 }
 /**
  * 组装 diff 卡片自己的 chrome 文案。
@@ -2878,7 +2960,7 @@ function nonEmpty(value) {
     __registry["chat/code-progress/code-progress-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CODE_PROGRESS_CSS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLASS = exports.PREVIEW_STAT_CLASS = exports.PREVIEW_PATH_CLASS = exports.PREVIEW_ICON_CLASS = exports.PREVIEW_ROW_CLASS = exports.PREVIEW_NOTE_CLASS = exports.PREVIEW_TAG_CLASS = exports.PREVIEW_HEAD_CLASS = exports.PREVIEW_BOX_CLASS = exports.PREVIEW_SUMMARY_PATH_CLASS = exports.PREVIEW_SUMMARY_CLASS = exports.CODE_PROGRESS_CLASS = void 0;
+exports.CODE_PROGRESS_CSS = exports.CODE_BODY_SCROLL_CLASS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLASS = exports.PREVIEW_STAT_CLASS = exports.PREVIEW_PATH_CLASS = exports.PREVIEW_ICON_CLASS = exports.PREVIEW_ROW_CLASS = exports.PREVIEW_NOTE_CLASS = exports.PREVIEW_TAG_CLASS = exports.PREVIEW_HEAD_CLASS = exports.PREVIEW_BOX_CLASS = exports.PREVIEW_SUMMARY_PATH_CLASS = exports.PREVIEW_SUMMARY_CLASS = exports.CODE_PROGRESS_CLASS = void 0;
 /**
  * `run_code` 行进度读数与预览清单自己的样式。
  *
@@ -2925,6 +3007,13 @@ exports.PREVIEW_ADD_CLASS = 'dsh-chat-ux-preview-add';
 /** 删除数（红色）。 */
 exports.PREVIEW_DEL_CLASS = 'dsh-chat-ux-preview-del';
 /**
+ * 展开体里那份程序的滚动容器。
+ *
+ * 份量与内置 `code` 变体同一个口径（260px 封顶、自身滚动）：那份程序动辄几十 KB、几百行，整段铺开
+ * 会把一行撑到看不见别的。限高必须落在包着代码块的这一层——`CodeBlock` 自己不封顶。
+ */
+exports.CODE_BODY_SCROLL_CLASS = 'dsh-chat-ux-code-scroll';
+/**
  * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
  *
  * `flex: none` 不能省：dsh 那一行是 flex，读数若不设它会被压缩、跟随摘要被挤掉。`white-space: nowrap`
@@ -2948,6 +3037,13 @@ exports.CODE_PROGRESS_CSS = `
 .${exports.CODE_PROGRESS_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+}
+
+/* 展开体里那份程序。左缩进与上下节奏跟展开体里另外两张卡片一致。 */
+.${exports.CODE_BODY_SCROLL_CLASS} {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 4px 0 4px 4px;
 }
 
 /* 虚线是这一块与正式工具行唯一的分界，不能换成实线：实线卡片在这一族里的意思是「这是一次改动」。 */
@@ -3070,6 +3166,173 @@ exports.CODE_PROGRESS_CSS = `
 `;
     };
 
+    __registry["chat/code-progress/file-existence.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installFileExistence = installFileExistence;
+exports.knownFileExistence = knownFileExistence;
+exports.requestFileExistence = requestFileExistence;
+exports.subscribeFileExistence = subscribeFileExistence;
+exports.fileExistenceSnapshot = fileExistenceSnapshot;
+exports.useFileExistence = useFileExistence;
+/**
+ * 「这份文件此刻在不在」——折叠态那一截拿它把「可能写入文件」说成「可能写入新文件」或「可能覆盖」。
+ *
+ * ## 为什么只能问 host
+ *
+ * 准备态手里只有程序文本：路径读得出，但文件在不在是文件系统的事实（`tools.glob`、`tools.read` 的
+ * 结果都要等程序跑起来才有）。dsh 自己有一条现成的只读通道：`remote.workspaceFiles.stat(sessionId,
+ * path)`——`workspace-files` 是 dsh 内置挂载的那一份，聊天区里预览文件用的就是它，它也只要一个会话
+ * 身份与一个路径，不改任何东西。
+ *
+ * ## 它绝不拖慢那一行
+ *
+ * 查询是**异步**的，渲染只读手上已有的答案（`knownFileExistence`）：没查出来就是 `unknown`，那一截
+ * 照旧先说「可能写入文件」；结果回来才换成「可能写入新文件」或「可能覆盖」。所以要等也只等一句措辞，
+ * 读者看到的那一行不会晚出来一帧。三道闸兜住意外：同一份路径只问一次（记住答案）、正在飞的查询不
+ * 重复发、1.5 秒没回来就当查不到。
+ *
+ * ## 任何一步出岔子都只是「不知道」
+ *
+ * 远程服务取不出来、那个命名空间没装配、参数被拒、host 答的是别的错——一律 `unknown`，那一截退回
+ * 「可能写入」。**这些岔子里一个同步异常都不许漏出去**：查询是挂在渲染路径上的，抛出来会把整行带走
+ * （2026-10-11 读到读者「看不到那段代码了」时补的这条）。所以发起查询的每一步都在 try 里，订阅与
+ * 取值都只走缓存。
+ *
+ * @module dsh-chat-ux/client/chat/code-progress/file-existence
+ */
+const react_1 = require("react");
+/** 一次查询最多等这么久；过了就当查不到——不重试，也不让那一行一直等它。 */
+const QUERY_TIMEOUT_MS = 1500;
+/** 空表：第一次拿到答案之前用它，引用稳定，免得每帧都换一个新的。 */
+const EMPTY_EXISTENCE = new Map();
+/** 问过就记住：同一份路径不再问第二遍。 */
+const answers = new Map();
+/** 正在飞的查询，用来去重。 */
+const inFlight = new Set();
+/** 答案回来时叫一声，让那一行重渲染。 */
+const listeners = new Set();
+/** 远程服务；宿主没给、或这个部署里没有那个命名空间时一律 unknown。 */
+let readRemote = () => undefined;
+/**
+ * 装上取远程服务的把手。渲染期现读，所以取不到服务也不影响别的功能。
+ * @param remote - 现读远程服务；拿不到时返回 undefined。
+ */
+function installFileExistence(remote) {
+    readRemote = remote;
+}
+/**
+ * 此刻知道的答案：**只读缓存，不发查询**——渲染期就调它。
+ * @param sessionId - 这次调用属于哪个会话；取不到时为 undefined。
+ * @param path - 路径。
+ * @returns 知道的答案；没问过的是 `unknown`。
+ */
+function knownFileExistence(sessionId, path) {
+    if (sessionId === undefined || sessionId === '' || path === undefined || path === '')
+        return 'unknown';
+    return answers.get(sessionId + '\n' + path) ?? 'unknown';
+}
+/**
+ * 问一次这份路径在不在。**在副作用里调，别在渲染期调**——渲染期发请求会被 React 的严格模式与并发
+ * 渲染重放，而这一处要的只是「答案到了就重渲染一次」。
+ *
+ * 任何一步出岔子都只落到 `unknown`：服务取不出来、命名空间不在、方法同步抛、promise 被拒、1.5 秒
+ * 没回来。查询挂在渲染路径上，抛出去就是整行消失——这一句措辞不值得那个代价。
+ * @param sessionId - 这次调用属于哪个会话；取不到时为 undefined。
+ * @param path - 路径。
+ */
+function requestFileExistence(sessionId, path) {
+    if (sessionId === undefined || sessionId === '' || path === undefined || path === '')
+        return;
+    const key = sessionId + '\n' + path;
+    if (answers.has(key) || inFlight.has(key))
+        return;
+    let files;
+    try {
+        files = readRemote()?.workspaceFiles;
+    }
+    catch {
+        return;
+    }
+    if (files === undefined)
+        return;
+    inFlight.add(key);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
+    const settle = (value) => {
+        inFlight.delete(key);
+        clearTimeout(timer);
+        answers.set(key, value);
+        for (const listener of listeners)
+            listener();
+    };
+    try {
+        files.stat(sessionId, path, controller.signal).then(result => settle(result.ok ? 'exists' : isMissing(result.error) ? 'missing' : 'unknown'), () => settle('unknown'));
+    }
+    catch {
+        settle('unknown');
+    }
+}
+/**
+ * 订阅答案的变化。
+ * @param listener - 有答案回来时叫一次。
+ * @returns 退订函数。
+ */
+function subscribeFileExistence(listener) {
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
+}
+/**
+ * 一批路径此刻的答案（只读）。
+ * @param sessionId - 这次调用属于哪个会话。
+ * @param paths - 要问的路径。
+ * @returns 路径到答案的表；没问过的记 `unknown`。
+ */
+function fileExistenceSnapshot(sessionId, paths) {
+    const snapshot = new Map();
+    for (const path of paths)
+        snapshot.set(path, knownFileExistence(sessionId, path));
+    return snapshot;
+}
+/**
+ * 一批路径此刻的答案，并且把「答案回来时重渲染」接上；查询在 effect 里发。
+ *
+ * 依赖数组用的是路径拼出来的签名、而不是那个数组本身：调用方每次渲染都新建一个同内容的数组，照引用比
+ * 会把订阅每批都拆了重装。
+ * @param sessionId - 这次调用属于哪个会话。
+ * @param paths - 要问的路径。
+ * @returns 路径到答案的表。
+ */
+function useFileExistence(sessionId, paths) {
+    const signature = paths.join('\n');
+    const [snapshot, setSnapshot] = (0, react_1.useState)(EMPTY_EXISTENCE);
+    (0, react_1.useEffect)(() => {
+        const update = () => setSnapshot(fileExistenceSnapshot(sessionId, paths));
+        update();
+        for (const path of paths)
+            requestFileExistence(sessionId, path);
+        return subscribeFileExistence(update);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- 见上面那段说明：比的是内容签名。
+    }, [sessionId, signature]);
+    return snapshot;
+}
+/**
+ * host 答的是不是「这份文件不在」。
+ *
+ * 只有 `workspace-file/not-found` 才能读成「不在」，那是新建；其余（不是普通文件、超了读的上限、会话
+ * 身份解析不了……）都算不知道——猜错方向比不说更糟。
+ * @param error - 远程调用交回的错误。
+ * @returns 是不是「不在」。
+ */
+function isMissing(error) {
+    if (typeof error !== 'object' || error === null)
+        return false;
+    return error.code === 'workspace-file/not-found';
+}
+    };
+
     __registry["chat/code-progress/preview-scan.js"] = function (module, exports, require) {
 "use strict";
 /**
@@ -3113,8 +3376,6 @@ const PATH_KEYS = ['file_path', 'path'];
 const DRAFT_MIN_LINES = 8;
 /** 每批最多看几段字符串就放弃。程序里短模板可能很多，没必要一路扫到底。 */
 const DRAFT_SCAN_LIMIT = 8;
-/** 标题最多留几个字；折叠态行尾那点位置放不下更长的。 */
-const DRAFT_HEADING_MAX = 18;
 /**
  * 追变量最多追几层。
  *
@@ -3187,7 +3448,7 @@ function scanPreviewTargets(code, previous) {
  * 从头往后看字符串字面量，交出**第一段**够长的：模型写长内容时总把它放在最前面（读者那次就在程序的
  * 第 0 个字符），所以不必扫到底。游标只往前走，所以一整趟的代价是 O(程序长度)，与找锚点同量级。
  * @param code - `run_code` 的 `code` 字段，可以只是已收到的那半截。
- * @returns 那一段的标题与已收到的行数，或 null（还没有够长的内容）。
+ * @returns 那一段的行数与它归哪个工具（锚点还没出现时为 null），或 null（还没有够长的内容）。
  */
 function scanDraft(code) {
     let cursor = 0;
@@ -3198,8 +3459,25 @@ function scanDraft(code) {
         const read = readString(code, at);
         const lines = countLines(read.value);
         if (lines >= DRAFT_MIN_LINES)
-            return { heading: headingOf(read.value), lines };
+            return { tool: toolAfter(code, read.end), lines };
         cursor = read.end;
+    }
+    return null;
+}
+/**
+ * 这段内容之后第一个写/编辑锚点叫什么。
+ *
+ * 只看长内容**之后**的锚点：内容排在调用之前是这类写法的语法要求，落在它前面的锚点用的是别的材料。
+ * @param code - 程序文本。
+ * @param from - 从长内容的结束位置往后看。
+ * @returns 锚点名，后面没有写/编辑锚点为 null。
+ */
+function toolAfter(code, from) {
+    CALL_PATTERN.lastIndex = from;
+    for (let match = CALL_PATTERN.exec(code); match !== null; match = CALL_PATTERN.exec(code)) {
+        const name = match[1] ?? match[3];
+        if (name === 'write' || name === 'edit')
+            return name;
     }
     return null;
 }
@@ -3219,26 +3497,6 @@ function nextQuoteAt(code, from) {
             best = at;
     }
     return best;
-}
-/**
- * 一段内容的第一行标题：去掉 markdown 的井号、引用号与项目符号，太长就截断。
- * @param text - 那段内容的正文。
- * @returns 标题，全是空白时是空串。
- */
-function headingOf(text) {
-    let start = 0;
-    while (start < text.length) {
-        const lineBreakAt = text.indexOf('\n', start);
-        const line = text.slice(start, lineBreakAt < 0 ? text.length : lineBreakAt);
-        const trimmed = line.replace(/^[#>\-*\s]+/, '').trim();
-        if (trimmed !== '') {
-            return trimmed.length > DRAFT_HEADING_MAX ? trimmed.slice(0, DRAFT_HEADING_MAX) + '…' : trimmed;
-        }
-        if (lineBreakAt < 0)
-            break;
-        start = lineBreakAt + 1;
-    }
-    return '';
 }
 /**
  * 全文里的「变量名 = 值」。
