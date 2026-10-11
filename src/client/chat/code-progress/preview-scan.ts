@@ -43,6 +43,13 @@ export interface PreviewTarget {
     newText: string | null
     /** `edit` 被替换掉的原文；`write` 与读不出时为 null。 */
     oldText: string | null
+    /**
+     * 那两段原文都收尾了没有。
+     *
+     * 展开体里那次真 diff 要等它：半截的正文每 300 ms 换一次高度，会把这一块连同下面那份程序一直撑，
+     * 而 dsh 的输入区座位是 `sticky` 贴底的，会跟着一起动——读者看到的就是输入框在乱蹦。
+     */
+    settled: boolean
 }
 
 /** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
@@ -115,19 +122,31 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
         if (name === undefined || !PREVIEW_TOOLS.has(name)) continue
         const at = match.index
         const fields = argumentFields(code, at + match[0].length - 1)
-        const content = name === 'write' ? fieldValue(fields, ['content'], bindings) : null
-        const newText = name === 'edit' ? fieldValue(fields, ['new_string'], bindings) : null
-        const oldText = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null
+        const newRead = name === 'write'
+            ? fieldValue(fields, ['content'], bindings)
+            : fieldValue(fields, ['new_string'], bindings)
+        const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null
         // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
         const seen = carried.get(at)
-        const path = fieldValue(fields, PATH_KEYS, bindings) ?? seen?.path ?? null
-        const added = (name === 'write' ? content : newText) === null
-            ? seen?.added ?? null
-            : countLines((name === 'write' ? content : newText) ?? '')
-        const removed = oldText === null ? seen?.removed ?? null : countLines(oldText)
+        const pathRead = fieldValue(fields, PATH_KEYS, bindings)
+        const path = pathRead === null ? seen?.path ?? null : pathRead.text
+        const added = newRead === null ? seen?.added ?? null : countLines(newRead.text)
+        const removed = oldRead === null ? seen?.removed ?? null : countLines(oldRead.text)
+        // 两段原文都收尾了才认「定稿」——展开体里那次 diff 要等它：半截的正文每 300 ms 变一次高度，
+        // 会把这一块（连同下面那份程序）一直撑，而输入区是 `sticky` 贴底的，它跟着一起动。
+        const settled = seen?.settled === true || (newRead?.closed === true && oldRead?.closed === true)
         if (path === null && added === null && removed === null) continue
         // 原文一并交出去：展开体里那时候要拿它画一次真正的 diff（`edit` 的两段都在才行）。
-        targets.push({name, at, path, added, removed, newText: content ?? newText, oldText})
+        targets.push({
+            name,
+            at,
+            path,
+            added,
+            removed,
+            newText: newRead?.text ?? null,
+            oldText: oldRead?.text ?? null,
+            settled,
+        })
     }
     return targets
 }
@@ -196,17 +215,17 @@ function headingOf(text: string): string {
  * 只认一层：真实程序里长文本几乎都是 `` const content = `…` `` 再传进去，这一层把那一半捞回来；再往下
  * 追（拼接、函数返回值、循环里拼出来的字符串）读出来也是错的，不如不读。
  * @param code - 程序文本。
- * @returns 变量名到字面量正文。
+ * @returns 变量名到那一段文字（带收尾标记）。
  */
-function readBindings(code: string): Map<string, string> {
-    const bindings = new Map<string, string>()
+function readBindings(code: string): Map<string, FieldText> {
+    const bindings = new Map<string, FieldText>()
     BINDING_PATTERN.lastIndex = 0
     for (let match = BINDING_PATTERN.exec(code); match !== null; match = BINDING_PATTERN.exec(code)) {
         const name = match[1]
         if (name === undefined) continue
         const read = readString(code, BINDING_PATTERN.lastIndex)
         if (read.interpolated) continue
-        bindings.set(name, read.value)
+        bindings.set(name, {text: read.value, closed: read.closed})
     }
     return bindings
 }
@@ -259,13 +278,13 @@ function argumentsBody(code: string, openAt: number, closeAt: number): string {
  * @param fields - 实参键值对。
  * @param keys - 候选字段名。
  * @param bindings - 一层变量绑定。
- * @returns 文本，或 null（都没读出来）。
+ * @returns 那一段文字与它收尾了没有，或 null（都没读出来）。
  */
 function fieldValue(
     fields: {key: string, value: string}[],
     keys: readonly string[],
-    bindings: Map<string, string>,
-): string | null {
+    bindings: Map<string, FieldText>,
+): FieldText | null {
     for (const key of keys) {
         for (const field of fields) {
             if (field.key !== key) continue
@@ -282,19 +301,27 @@ function fieldValue(
  * 字面量收，一层变量收，其余（拼接、调用、成员访问）一律 null——那几种的真值要跑起来才知道。
  * @param value - 值的原文。
  * @param bindings - 一层变量绑定。
- * @returns 文本，或 null。
+ * @returns 文本与收尾标记，或 null。
  */
-function valueText(value: string, bindings: Map<string, string>): string | null {
+function valueText(value: string, bindings: Map<string, FieldText>): FieldText | null {
     const text = value.trim()
     const quote = text.charAt(0)
     if (quote === '"' || quote === "'" || quote === '`') {
         const read = readString(text, 0)
         // 字面量后面还接着东西（`'a' + b`）就是拼接，不读。
         if (read.end !== text.length) return null
-        return read.interpolated ? null : read.value
+        return read.interpolated ? null : {text: read.value, closed: read.closed}
     }
     if (/^[A-Za-z_$][\w$]*$/.test(text)) return bindings.get(text) ?? null
     return null
+}
+
+/** 读出来的一段文字，以及它收尾了没有。 */
+interface FieldText {
+    /** 文字本身；没闭合时就是已收到的那一截。 */
+    text: string
+    /** 引号收尾了没有。 */
+    closed: boolean
 }
 
 /** 读一段字符串字面量读出来的东西。 */
@@ -305,6 +332,8 @@ interface StringRead {
     end: number
     /** 里面有没有 `${…}`——有的话正文要跑起来才成立。 */
     interpolated: boolean
+    /** 引号收尾了没有；流式期多半没收。 */
+    closed: boolean
 }
 
 /**
@@ -313,7 +342,7 @@ interface StringRead {
  * 未闭合不是错误：流式期它就停在这里，正文按已收到的算。
  * @param text - 含引号的文本。
  * @param at - 起始引号的位置。
- * @returns 读出来的正文、结束位置与插值标记。
+ * @returns 读出来的正文、结束位置、插值标记与收尾标记。
  */
 function readString(text: string, at: number): StringRead {
     const quote = text.charAt(at)
@@ -330,14 +359,14 @@ function readString(text: string, at: number): StringRead {
             continue
         }
         if (text.slice(cursor, cursor + closer.length) === closer) {
-            return {value, end: cursor + closer.length, interpolated}
+            return {value, end: cursor + closer.length, interpolated, closed: true}
         }
         // JSON 那一层的转义（`\n`）到这里已经解开了，这一层只管程序文本自己的转义。
         if (closer === '`' && char === '$' && text.charAt(cursor + 1) === '{') interpolated = true
         value += char
         cursor += 1
     }
-    return {value, end: text.length, interpolated}
+    return {value, end: text.length, interpolated, closed: false}
 }
 
 /**

@@ -417,10 +417,12 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                                     </span>
                                 )}
                             </div>
-                            {/* 改动的那两段都读出来了，就把真正的 diff 画一次——这是「实时」两个字落到实处的地方：
-                                它出现在程序还在生成的时候，而不是等子调用跑起来。`write` 不画：它的 diff 就是那份
-                                内容本身，而展开体下面已经有一份正在长的代码了，再画一遍只是把它誊一次。 */}
-                            {target.name === 'edit' && target.oldText !== null && target.newText !== null && (
+                            {/* 改动的那两段都**收尾**了才画（`settled`）：半截正文每 300 ms 变一次高度，会
+                                把这一块连同下面那份程序一直撑，而输入区是 sticky 贴底的、会跟着动。这是
+                                「实时」两个字落到实处的地方——它出现在程序还在生成的时候，而不是等子调用
+                                跑起来。`write` 不画：它的 diff 就是那份内容本身，而展开体下面已经有一份
+                                正在长的代码了，再画一遍只是把同一段文字誊一次。 */}
+                            {target.settled && target.oldText !== null && target.newText !== null && (
                                 <DiffBlock
                                     diffs={[{
                                         path: target.path ?? CODE_LANGUAGE_PATH,

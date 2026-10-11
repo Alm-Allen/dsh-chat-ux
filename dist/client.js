@@ -2257,7 +2257,7 @@ function RunCodeRow(props) {
     const showDraft = !showTargets && pacedDraft !== null;
     const collapsedContent = description === '' && kilobytes === null && previews.length === 0
         && pacedDraft === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), kilobytes !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: kilobytes + 'KB', prefix: "", suffix: "KB", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })), showDraft && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, "data-draft": "run_code", children: ['→ ' + copy.draftLead, pacedDraft.heading !== '' && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: pacedDraft.heading })), ' ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + pacedDraft.lines, prefix: "+", suffix: "", rolling: true, cadence: running ? 'fast' : undefined, spoken: true }) })] })), showTargets && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
-    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }), target.name === 'edit' && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }), target.settled && target.oldText !== null && target.newText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: [{
                                         path: target.path ?? CODE_LANGUAGE_PATH,
                                         oldText: target.oldText,
                                         newText: target.newText,
@@ -3148,20 +3148,32 @@ function scanPreviewTargets(code, previous) {
             continue;
         const at = match.index;
         const fields = argumentFields(code, at + match[0].length - 1);
-        const content = name === 'write' ? fieldValue(fields, ['content'], bindings) : null;
-        const newText = name === 'edit' ? fieldValue(fields, ['new_string'], bindings) : null;
-        const oldText = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null;
+        const newRead = name === 'write'
+            ? fieldValue(fields, ['content'], bindings)
+            : fieldValue(fields, ['new_string'], bindings);
+        const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null;
         // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
         const seen = carried.get(at);
-        const path = fieldValue(fields, PATH_KEYS, bindings) ?? seen?.path ?? null;
-        const added = (name === 'write' ? content : newText) === null
-            ? seen?.added ?? null
-            : countLines((name === 'write' ? content : newText) ?? '');
-        const removed = oldText === null ? seen?.removed ?? null : countLines(oldText);
+        const pathRead = fieldValue(fields, PATH_KEYS, bindings);
+        const path = pathRead === null ? seen?.path ?? null : pathRead.text;
+        const added = newRead === null ? seen?.added ?? null : countLines(newRead.text);
+        const removed = oldRead === null ? seen?.removed ?? null : countLines(oldRead.text);
+        // 两段原文都收尾了才认「定稿」——展开体里那次 diff 要等它：半截的正文每 300 ms 变一次高度，
+        // 会把这一块（连同下面那份程序）一直撑，而输入区是 `sticky` 贴底的，它跟着一起动。
+        const settled = seen?.settled === true || (newRead?.closed === true && oldRead?.closed === true);
         if (path === null && added === null && removed === null)
             continue;
         // 原文一并交出去：展开体里那时候要拿它画一次真正的 diff（`edit` 的两段都在才行）。
-        targets.push({ name, at, path, added, removed, newText: content ?? newText, oldText });
+        targets.push({
+            name,
+            at,
+            path,
+            added,
+            removed,
+            newText: newRead?.text ?? null,
+            oldText: oldRead?.text ?? null,
+            settled,
+        });
     }
     return targets;
 }
@@ -3230,7 +3242,7 @@ function headingOf(text) {
  * 只认一层：真实程序里长文本几乎都是 `` const content = `…` `` 再传进去，这一层把那一半捞回来；再往下
  * 追（拼接、函数返回值、循环里拼出来的字符串）读出来也是错的，不如不读。
  * @param code - 程序文本。
- * @returns 变量名到字面量正文。
+ * @returns 变量名到那一段文字（带收尾标记）。
  */
 function readBindings(code) {
     const bindings = new Map();
@@ -3242,7 +3254,7 @@ function readBindings(code) {
         const read = readString(code, BINDING_PATTERN.lastIndex);
         if (read.interpolated)
             continue;
-        bindings.set(name, read.value);
+        bindings.set(name, { text: read.value, closed: read.closed });
     }
     return bindings;
 }
@@ -3295,7 +3307,7 @@ function argumentsBody(code, openAt, closeAt) {
  * @param fields - 实参键值对。
  * @param keys - 候选字段名。
  * @param bindings - 一层变量绑定。
- * @returns 文本，或 null（都没读出来）。
+ * @returns 那一段文字与它收尾了没有，或 null（都没读出来）。
  */
 function fieldValue(fields, keys, bindings) {
     for (const key of keys) {
@@ -3315,7 +3327,7 @@ function fieldValue(fields, keys, bindings) {
  * 字面量收，一层变量收，其余（拼接、调用、成员访问）一律 null——那几种的真值要跑起来才知道。
  * @param value - 值的原文。
  * @param bindings - 一层变量绑定。
- * @returns 文本，或 null。
+ * @returns 文本与收尾标记，或 null。
  */
 function valueText(value, bindings) {
     const text = value.trim();
@@ -3325,7 +3337,7 @@ function valueText(value, bindings) {
         // 字面量后面还接着东西（`'a' + b`）就是拼接，不读。
         if (read.end !== text.length)
             return null;
-        return read.interpolated ? null : read.value;
+        return read.interpolated ? null : { text: read.value, closed: read.closed };
     }
     if (/^[A-Za-z_$][\w$]*$/.test(text))
         return bindings.get(text) ?? null;
@@ -3337,7 +3349,7 @@ function valueText(value, bindings) {
  * 未闭合不是错误：流式期它就停在这里，正文按已收到的算。
  * @param text - 含引号的文本。
  * @param at - 起始引号的位置。
- * @returns 读出来的正文、结束位置与插值标记。
+ * @returns 读出来的正文、结束位置、插值标记与收尾标记。
  */
 function readString(text, at) {
     const quote = text.charAt(at);
@@ -3354,7 +3366,7 @@ function readString(text, at) {
             continue;
         }
         if (text.slice(cursor, cursor + closer.length) === closer) {
-            return { value, end: cursor + closer.length, interpolated };
+            return { value, end: cursor + closer.length, interpolated, closed: true };
         }
         // JSON 那一层的转义（`\n`）到这里已经解开了，这一层只管程序文本自己的转义。
         if (closer === '`' && char === '$' && text.charAt(cursor + 1) === '{')
@@ -3362,7 +3374,7 @@ function readString(text, at) {
         value += char;
         cursor += 1;
     }
-    return { value, end: text.length, interpolated };
+    return { value, end: text.length, interpolated, closed: false };
 }
 /**
  * 转义序列的宽度。
