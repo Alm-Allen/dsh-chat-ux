@@ -7,12 +7,6 @@ export const name = 'dsh-chat-ux';
  */
 export const SETTINGS_NAMESPACE = 'dsh-chat-ux';
 /**
- * 增强跟随的默认值。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：它修的正是读者没碰过键鼠时的那一类丢失，而读者自己滚动离开底部时它一概不动手。
- */
-export const DEFAULT_ENHANCED_FOLLOW = true;
-/**
  * 自动开合默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
  * 默认开着：思考行与过程组自己开合是这个插件的主效果之一。关掉时两块都整块不装，读者自己点开收起
@@ -33,6 +27,10 @@ export const DEFAULT_SEND_FLIGHT = true;
  * 默认关着：它是这一批动效里唯一要随每一批新字符制造样式失效的一项——档位规则表、扫描观察者与
  * 绘制帧都得挂上（见 `client/chat/token-motion.ts`），而这三样只有关掉才能一起不存在。想看的读者
  * 在插件管理页上打开，装回来的就是同一套。
+ *
+ * 它还兼着跟随那一块（`client/chat/follow/`：增强跟随与组体跟随）。两块合成一个开关，是因为跟随
+ * 只在回复还在推进时才有意义——关掉这一项，跟随那两处也一起不装，页面上不留观察者与定时器。
+ * 卡片上不再有单独的跟随开关。
  */
 export const DEFAULT_TOKEN_FADE = false;
 /**
@@ -70,7 +68,6 @@ export const DEFAULT_LIVE_DIFF = false;
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
  */
 export const Config = Schema.object({
-    enhancedFollow: Schema.boolean().default(DEFAULT_ENHANCED_FOLLOW).volatile(),
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(['off', 'move', 'typing']).default(DEFAULT_CARET_MOTION).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),

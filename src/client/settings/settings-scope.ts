@@ -10,13 +10,6 @@
 import type {CaretMotionMode} from '../chat/caret/caret-motion'
 
 /**
- * 增强跟随的默认值。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：它修的是读者没碰过键鼠时的那一类丢失。
- */
-export const DEFAULT_ENHANCED_FOLLOW = true
-
-/**
  * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
@@ -42,6 +35,9 @@ export const DEFAULT_SEND_FLIGHT = true
  *
  * 默认关着。它是这一批动效里唯一要随每一批新字符制造样式失效的一项，所以关着时那个模块整块不装——
  * 档位规则表、扫描观察者、绘制帧，连那条兜底色一起，页面上什么都不留。
+ *
+ * 它还兼着跟随那一块（`chat/follow/` 的增强跟随与组体跟随）：关着时那两处也不装，页面上不留
+ * 观察者与定时器。卡片上没有单独的跟随开关。
  */
 export const DEFAULT_TOKEN_FADE = false
 
@@ -77,8 +73,6 @@ export const DEFAULT_LIVE_DIFF = false
 
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
-    /** 增强跟随：思考结束、出现工具调用这些时刻把聊天区拉回底部。 */
-    enhancedFollow?: boolean
     /** 思考行与过程组是否自己开合；关掉时两块都整块不装。 */
     autoFold?: boolean
     /** 插入符动效的档位。 */

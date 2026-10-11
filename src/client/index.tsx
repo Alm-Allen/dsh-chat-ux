@@ -30,7 +30,7 @@ import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_ENHANCED_FOLLOW, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -70,7 +70,6 @@ export function apply(ctx: ClientContext): void {
     // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
     const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
     const settings: ChatUxSettings = {
-        follow: DEFAULT_ENHANCED_FOLLOW,
         autoFold: DEFAULT_AUTO_FOLD,
         caret: DEFAULT_CARET_MOTION,
         sendOn: DEFAULT_SEND_FLIGHT,
@@ -128,9 +127,26 @@ export function apply(ctx: ClientContext): void {
         if (glassDispose !== null) return
         glassDispose = installComposerGlass()
     }
+    // 跟随那一块（增强跟随 + 组体跟随）不再有自己的开关：它跟着「token 淡入」那一个开关走。
+    // 关着时两处都不装——页面上不留 MutationObserver、ResizeObserver、那个每 500 ms 一次的全文档
+    // 查询，也不留那些 capture 监听；打开时装回来的就是原来那两处。
+    let followDispose: (() => void) | null = null
+    const syncFollow = (): void => {
+        if (!settings.tokenFade) {
+            followDispose?.()
+            followDispose = null
+            return
+        }
+        if (followDispose !== null) return
+        const disposeGuard = installFollowGuard()
+        const disposeProcess = installProcessFollow()
+        followDispose = () => {
+            disposeGuard()
+            disposeProcess()
+        }
+    }
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
-        settings.follow = value?.enhancedFollow ?? DEFAULT_ENHANCED_FOLLOW
         settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
@@ -141,6 +157,7 @@ export function apply(ctx: ClientContext): void {
         syncGlass()
         caret.resync()
         tokenMotion.resync()
+        syncFollow()
         syncPie()
         syncAutoFold()
     }
@@ -189,13 +206,22 @@ export function apply(ctx: ClientContext): void {
         }
     }, 'dsh-chat-ux: auto fold')
 
-    // 跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入。这一处挑那些时刻
-    // 把滚动位置交还给 dsh 的跟随；开关关着时它一次都不动手。
-    ctx.effect(() => installFollowGuard(() => settings.follow), 'dsh-chat-ux: follow guard')
-
-    // 组体那一层的跟随是另一回事：标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而
-    // 平滑滚动追不上匀速增长的内容，位置就长期停在离底几十像素的地方。这一处在它旁边补一次钉底。
-    ctx.effect(() => installProcessFollow(() => settings.follow), 'dsh-chat-ux: process follow')
+    // 跟随那一块的两处安装都在 syncFollow 里，装与卸跟着「token 淡入」那一个开关走：
+    //
+    //   增强跟随  跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻（思考行收起、工具行插入），
+    //             这一处挑那些时刻把滚动位置交还给 dsh 的跟随。
+    //   组体跟随  标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而平滑滚动追不上匀速
+    //             增长的内容，位置就长期停在离底几十像素的地方；这一处在它旁边补一次钉底。
+    ctx.effect(
+        () => {
+            syncFollow()
+            return () => {
+                followDispose?.()
+                followDispose = null
+            }
+        },
+        'dsh-chat-ux: follow',
+    )
 
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
@@ -253,17 +279,15 @@ export function apply(ctx: ClientContext): void {
     })
 }
 
-/** 这一半读到的配置，镜像在一份可变对象里：跟随那几处每轮现读它，插入符与字体由 `syncSettings` 重落。 */
+/** 这一半读到的配置，镜像在一份可变对象里：发送动效与文件变更行由各自的模块现读，其余几项都由 `syncSettings` 重落。 */
 interface ChatUxSettings {
-    /** 增强跟随。 */
-    follow: boolean
     /** 思考行与过程组是否自己开合；改一次就得重落一次。 */
     autoFold: boolean
     /** 插入符动效的档位。 */
     caret: CaretMotionMode
     /** 聊天气泡动效开着没有，每一段起手前现读。 */
     sendOn: boolean
-    /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落。 */
+    /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落，跟随那一块也看它。 */
     tokenFade: boolean
     /** 上下文占用那圈环是否换成一枚实心饼；改一次就得重落一次（装或卸）。 */
     pie: boolean

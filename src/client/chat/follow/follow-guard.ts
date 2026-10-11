@@ -64,10 +64,14 @@ const FOLD_WAIT_ATTEMPTS = 4
 
 /**
  * 给整页安装跟随守护。
- * @param readEnabled - 读此刻生效的开关；关着时一次都不动手。
- * @returns disposer：断开 observer 并摘掉意图监听。
+ *
+ * 装与卸由调用方按开关决定（跟随那一块跟着「token 淡入」走），所以装上就是生效中：卸下时除了断开
+ * observer 与监听，还要把已经排出去的那几次等待一并作废，免得它们在卸下之后又写一次位置。
+ * @returns disposer：断开 observer、摘掉意图监听、作废在途的等待。
  */
-export function installFollowGuard(readEnabled: () => boolean): () => void {
+export function installFollowGuard(): () => void {
+    /** 已经卸下：在途的那几次等待作废。 */
+    let disposed = false
     /** 读者上一次接管滚动之后，有没有自己回到底部。 */
     let readerTookOver = false
     /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
@@ -107,7 +111,7 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
      * @param attempt - 已经因为折叠动画推迟过几次。
      */
     const ensure = (attempt = 0): void => {
-        if (!readEnabled()) return
+        if (disposed) return
         if (readerAway()) return
         const scroller = conversationScroller()
         if (scroller === null) return
@@ -212,6 +216,7 @@ export function installFollowGuard(readEnabled: () => boolean): () => void {
     })
 
     return () => {
+        disposed = true
         observer.disconnect()
         for (const type of INTENT_TYPES) document.removeEventListener(type, noteReaderIntent, true)
     }

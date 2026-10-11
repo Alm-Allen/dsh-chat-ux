@@ -49,10 +49,11 @@ const INTENT_TYPES = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydow
 
 /**
  * 给整页安装组体跟随。
- * @param readEnabled - 读此刻生效的开关；关着时一次都不动手。
+ *
+ * 装与卸由调用方按开关决定（跟随那一块跟着「token 淡入」走），所以装上就是生效中。
  * @returns disposer：断开 observer、摘掉监听与定时器。
  */
-export function installProcessFollow(readEnabled: () => boolean): () => void {
+export function installProcessFollow(): () => void {
     /** 读者在这个组体里真的滚过之后，直到他自己回到底为止，这一处不动手。 */
     const takenOver = new WeakSet<Element>()
     /** 已经交给 observer 的组体，以及它此刻的内容层。 */
@@ -73,7 +74,6 @@ export function installProcessFollow(readEnabled: () => boolean): () => void {
 
     /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
     const catchUp = (body: HTMLElement): void => {
-        if (!readEnabled()) return
         if (takenOver.has(body)) return
         if (!followable(body)) return
         if (gapOf(body) <= CATCH_UP_GAP_PX) return

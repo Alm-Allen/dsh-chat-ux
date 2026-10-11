@@ -8,11 +8,9 @@ With it installed, reasoning rows fold themselves away when thinking ends, proce
 
 ## What it does
 
-- **Token fade-in** (off by default): when on, every token fades in, for both reasoning and answer text. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded.
+- **Token fade-in** (off by default): when on, every token fades in, for both reasoning and answer text, and **follow goes with it** — the transcript keeps to the newest content on its own, holds on at the moments content jumps (thinking ends, a tool call appears), and keeps up inside height-capped process groups in standard / compact. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded; a reader who scrolled away is never pulled back.
 - **Self-folding reasoning rows**: a reasoning row expands while thinking and folds when it ends; once you touch it yourself, it stops moving.
-- **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page.
-- **Enhanced follow**: at the moments content jumps—thinking ends, a tool call appears—a reader parked at the bottom is handed back to dsh's own follow. If you scrolled away yourself, it stays out of your way.
-- **Group follow**: inside height-capped process groups (standard / compact), reasoning and tool output keep up, scrolling vertically only.
+- **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page. A height-capped process group in standard / compact scrolls vertically only — that rule is always on and is not behind any switch.
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, both counts growing as the content arrives, and a changed digit pops to its new value the way the readouts do (this stretch is marked beta and off by default; turn it on on the Plugins page).
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (on by default): the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
@@ -62,10 +60,8 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| Enhanced follow | on | When off, a bottom-parked reader is no longer handed back to dsh's follow at thinking-end / tool-call moments. |
-| Group follow | follows "Enhanced follow" | Not a row of its own: the card has one "Enhanced follow" switch, which also governs whether reasoning and tool output keep up inside height-capped process groups. |
 | Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
-| Token fade-in | off | When on, new text fades in as it arrives. If the page stutters noticeably alongside other plugins, leave it off. |
+| Token fade-in | off | When on, new text fades in as it arrives, and follow comes with it (bottom follow when it slips, plus reasoning and tool output inside height-capped process groups). If the page stutters noticeably alongside other plugins, leave it off. |
 | Caret motion | always | Three steps: off / on move / always. |
 | Chat bubble motion | on | When off, the send has no flight and the message simply appears. |
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |
