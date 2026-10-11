@@ -1318,9 +1318,10 @@ exports.DEFAULT_SEND_FLIGHT = true;
 /**
  * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
- * 默认开着。关掉之后新字符直接以本色出现，那套档位规则也整张不挂——它同时是性能对照的一根杆。
+ * 默认关着。它是这一批动效里唯一要随每一批新字符制造样式失效的一项，所以关着时那个模块整块不装——
+ * 档位规则表、扫描观察者、绘制帧，连那条兜底色一起，页面上什么都不留。
  */
-exports.DEFAULT_TOKEN_FADE = true;
+exports.DEFAULT_TOKEN_FADE = false;
 /**
  * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -6908,8 +6909,8 @@ const ZH_COPY = {
     autoFoldHint: '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
         + '你自己动手折叠过的，它不再打扰。',
     tokenLabel: 'token 淡入',
-    tokenHint: '回复逐字出现时，新出现的文字轻轻浮现，读起来更顺。关掉就直接显示。'
-        + '若与其它插件一起使用时明显卡顿，可以关掉这一项。',
+    tokenHint: '打开后，回复逐字出现时，新出现的文字会轻轻浮现，读起来更顺；关着就如同直接显示。'
+        + '与其它插件一起用时若明显卡顿，就让它保持关着。',
     caretLabel: '光标动效',
     caretHint: '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
         + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
@@ -6946,8 +6947,8 @@ const EN_COPY = {
     autoFoldHint: 'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
     tokenLabel: 'Token fade-in',
-    tokenHint: 'New text fades in as a reply streams, which is easier to read. Turning it off shows the text immediately. '
-        + 'If the page stutters noticeably alongside other plugins, turn this off.',
+    tokenHint: 'When on, new text fades in as a reply streams, which is easier to read; when off, it appears immediately. '
+        + 'If the page stutters noticeably alongside other plugins, leave it off.',
     caretLabel: 'Caret motion',
     caretHint: 'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
         + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
@@ -7314,8 +7315,9 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
  * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
  *
- * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
- * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
+ * token 淡入的档位规则与它那条页面级兜底色**都不在这里**：它们跟着 `token-motion.ts` 走一张单独的
+ * 样式表（见它里面的 `buildRevealCss`）——那批规则的条数是拿得出来单独看的一份代价，而那一项默认
+ * 关着，关着时页面上不该留着只有它用得上的一条声明。
  */
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const ramp_1 = require("./chat/ramp");
@@ -7327,21 +7329,10 @@ const context_meter_styles_1 = require("./chat/context-meter/context-meter-style
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
 const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
-const token_motion_1 = require("./chat/token-motion");
 /** 注入样式表的固定 id，用于卸载和排查。 */
 exports.STYLE_ID = 'dsh-chat-ux-style';
 /** 聊天区样式表。 */
 exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
-body {
-  /* 页面级兜底：正文自己的令牌，跟着主题走。区间真正渲染所在的元素会用自己算出来的
-     颜色覆盖它。 */
-  ${token_motion_1.RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #0f1115);
-}
-
-body[data-ds-dark-theme] {
-  /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */
-  ${token_motion_1.RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
-}
 
 /* 过程组的组体只该在纵向滚。dsh 的 .body 只声明了 overflow-y: auto，而按 CSS Overflow 规范，
    一个轴是 visible、另一个不是时，visible 会计算成 auto——于是它同时成了横向滚动容器，内容只要
@@ -7435,8 +7426,9 @@ body[data-ds-dark-theme] {
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
- * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的那张表
+ * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
+ * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
  */
 exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
@@ -7637,7 +7629,7 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  * 能在不碰 DOM 的前提下标出字符段：React 继续拥有结构，这个模块只拥有文字的透明度。
  *
  * `::highlight()` 不接受 transition，所以淡入是采样出来的、而不是动画出来的：活着的区间按
- * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `revealCss`
+ * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `buildRevealCss`
  * 从 `REVEAL_STEPS` 推出，alpha 线性移动，于是文字以恒定速率变实）。
  *
  * 淡入用的颜色是区间自己的颜色——从它文字渲染所在的元素上读出来，发布到 `RUN_COLOR_VAR` 下——
@@ -7656,6 +7648,8 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  *             别的插件每触发一次全量重算，都要替这些规则付一次钱；而为了躲这笔钱去翻 `disabled`，
  *             翻一次本身又是一次整页失效。收进作用域之后，浏览器用祖先过滤直接跳过流式容器以外的
  *             元素，同一张页面上实测多出来的是零；dsh 翻 `data-streaming` 那一下也只失效那一条消息。
+ *             这张表（连同里面那条页面级兜底色）只在淡入开着的时候存在：开关关着时它、扫描观察者
+ *             与绘制帧一个都不装，聊天区这一块是零。
  *   区间      **用 StaticRange，不用 Range**。活的 Range 在被回收之前，页面上每一次 DOM 变动都要
  *             逐个修正它们的边界——绘制帧每帧新建一批，一秒下来上千个等着回收，实测让两千次与它
  *             无关的 DOM 变动从一毫秒半涨到六十多毫秒，React 与别的插件都在替它付。StaticRange
@@ -7680,7 +7674,7 @@ const programmatic_toggle_1 = require("./fold/programmatic-toggle");
  * 下界由最可能跑这个渐变的最快显示器定：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，档数少于帧数
  * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
- * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `revealCss` 里的一条
+ * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `buildRevealCss` 里的一条
  * `::highlight()` 规则。不带作用域时规则条数直接乘在浏览器每一次全量样式重算上——在一个 5800
  * 节点的会话里，96 条把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms。现在的规则收在
  * `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，这笔账基本清零（见模块注释）；
@@ -7798,12 +7792,12 @@ function runTokenMotion() {
     let slowFrames = 0;
     /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
     let yieldUntil = 0;
-    // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
-    // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
-    // 一次整页的样式失效（见模块注释）。
+    // 档位规则与它们那条页面级兜底色单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻
+    // `disabled`：规则收在 `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻
+    // 没有代价；翻一下却是一次整页的样式失效（见模块注释）。
     const revealStyleElement = document.createElement('style');
     revealStyleElement.id = REVEAL_STYLE_ID;
-    revealStyleElement.textContent = revealCss;
+    revealStyleElement.textContent = buildRevealCss();
     document.head.append(revealStyleElement);
     /** 注销全部档位的 highlight。 */
     const clearHighlights = () => {
@@ -8349,11 +8343,22 @@ function runTokenMotion() {
 /**
  * 承载档位规则的那张样式表的 id，用于排查。
  *
- * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装 `REVEAL_STEPS` 条档位规则，跟着
- * `installTokenMotion` 一起挂上和撤下。
+ * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装淡入自己的东西——`REVEAL_STEPS` 条档位
+ * 规则，加上页面级那两条兜底色（见 `buildRevealCss`）——跟着 `installTokenMotion` 一起挂上和撤下。
+ * 这一项默认关着，所以关着时这张表根本不存在。
  */
 const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
 /**
+ * 那张表的全部文本：页面级那两条兜底色，加 `REVEAL_STEPS` 条档位规则。
+ *
+ * 文本现拼，不留在模块级：这一项默认关着，关着时连这几十行字符串都不该在页面启动那一路被拼出来；
+ * 而进来拼的每一次都是装上引擎的那一次。
+ *
+ * 兜底色说的是「从没自己发布过颜色的元素」用哪个颜色——`::highlight()` 会把自定义属性解析到承载
+ * 元素上，容器里的段落、列表项这些元素读的就是它。它是必需的而不是保险：下面规则里那个
+ * `var(..., currentColor)` 的 fallback 不生效（实测写出灰色），而正文自己的令牌跟着主题走，所以
+ * 深色画布单独再给一条。
+ *
  * 档位规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开 highlight
  * 注册表的那一刻到达它最终的颜色。
  *
@@ -8370,17 +8375,33 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
  *
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
+ * @returns 那张表的全部文本。
  */
-const revealCss = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
-    const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
-    const alpha = Number((ratio * 100).toFixed(2));
-    const name = exports.HIGHLIGHT_PREFIX + step;
-    return [
-        dom_contract_1.STREAMING_SELECTOR + '::highlight(' + name + '), ' + dom_contract_1.STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
-        '  color: color-mix(in srgb, var(' + exports.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+function buildRevealCss() {
+    const fallback = [
+        'body {',
+        '  /* 页面级兜底：正文自己的令牌，跟着主题走。区间真正渲染所在的元素会用自己算出来的',
+        '     颜色覆盖它。 */',
+        '  ' + exports.RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #0f1115);',
+        '}',
+        '',
+        'body[data-ds-dark-theme] {',
+        '  /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */',
+        '  ' + exports.RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #f9fafb);',
         '}',
     ].join('\n');
-}).join('\n\n');
+    const stepRules = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
+        const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
+        const alpha = Number((ratio * 100).toFixed(2));
+        const name = exports.HIGHLIGHT_PREFIX + step;
+        return [
+            dom_contract_1.STREAMING_SELECTOR + '::highlight(' + name + '), ' + dom_contract_1.STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
+            '  color: color-mix(in srgb, var(' + exports.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+            '}',
+        ].join('\n');
+    }).join('\n\n');
+    return fallback + '\n\n' + stepRules;
+}
 /**
  * 一次折叠之后，它重排过的容器要被排除在淡入之外多久。
  *

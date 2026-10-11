@@ -4,11 +4,11 @@ English | [中文](./README.md)
 
 A chat-area UX plugin for the [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) web GUI.
 
-With it installed, model output fades in token by token instead of appearing in blocks, reasoning rows fold themselves away when thinking ends, process groups open and close on their own—and none of it ever yanks a reader who scrolled away.
+With it installed, reasoning rows fold themselves away when thinking ends, process groups open and close on their own, and the composer and readouts take on this plugin's own look—and none of it ever yanks a reader who scrolled away. Token fade-in (every token easing in as it arrives) is off by default; turn it on on the Plugins page.
 
 ## What it does
 
-- **Token fade-in**: every token fades in, for both reasoning and answer text. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded.
+- **Token fade-in** (off by default): when on, every token fades in, for both reasoning and answer text. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded.
 - **Self-folding reasoning rows**: a reasoning row expands while thinking and folds when it ends; once you touch it yourself, it stops moving.
 - **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page.
 - **Enhanced follow**: at the moments content jumps—thinking ends, a tool call appears—a reader parked at the bottom is handed back to dsh's own follow. If you scrolled away yourself, it stays out of your way.
@@ -65,7 +65,7 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Enhanced follow | on | When off, a bottom-parked reader is no longer handed back to dsh's follow at thinking-end / tool-call moments. |
 | Group follow | follows "Enhanced follow" | Not a row of its own: the card has one "Enhanced follow" switch, which also governs whether reasoning and tool output keep up inside height-capped process groups. |
 | Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
-| Token fade-in | on | When off, new text appears immediately. If the page stutters noticeably alongside other plugins, turn this off. |
+| Token fade-in | off | When on, new text fades in as it arrives. If the page stutters noticeably alongside other plugins, leave it off. |
 | Caret motion | always | Three steps: off / on move / always. |
 | Chat bubble motion | on | When off, the send has no flight and the message simply appears. |
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |

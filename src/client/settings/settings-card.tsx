@@ -86,8 +86,8 @@ const ZH_COPY: Copy = {
         + '你自己动手折叠过的，它不再打扰。',
     tokenLabel: 'token 淡入',
     tokenHint:
-        '回复逐字出现时，新出现的文字轻轻浮现，读起来更顺。关掉就直接显示。'
-        + '若与其它插件一起使用时明显卡顿，可以关掉这一项。',
+        '打开后，回复逐字出现时，新出现的文字会轻轻浮现，读起来更顺；关着就如同直接显示。'
+        + '与其它插件一起用时若明显卡顿，就让它保持关着。',
     caretLabel: '光标动效',
     caretHint:
         '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
@@ -134,8 +134,8 @@ const EN_COPY: Copy = {
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
     tokenLabel: 'Token fade-in',
     tokenHint:
-        'New text fades in as a reply streams, which is easier to read. Turning it off shows the text immediately. '
-        + 'If the page stutters noticeably alongside other plugins, turn this off.',
+        'When on, new text fades in as a reply streams, which is easier to read; when off, it appears immediately. '
+        + 'If the page stutters noticeably alongside other plugins, leave it off.',
     caretLabel: 'Caret motion',
     caretHint:
         'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '

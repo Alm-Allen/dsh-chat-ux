@@ -5,8 +5,9 @@
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
  * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
  *
- * token 淡入的档位规则**不在这里**：那批规则跟着 `token-motion.ts` 走一张单独的样式表（见它里面的
- * `revealCss`），因为它们的条数是拿得出来单独看的一份代价。这里只留淡入用色在页面级的那份兜底。
+ * token 淡入的档位规则与它那条页面级兜底色**都不在这里**：它们跟着 `token-motion.ts` 走一张单独的
+ * 样式表（见它里面的 `buildRevealCss`）——那批规则的条数是拿得出来单独看的一份代价，而那一项默认
+ * 关着，关着时页面上不该留着只有它用得上的一条声明。
  */
 import {CARET_MOTION_CSS} from './chat/caret/caret-motion-styles'
 import {RAMP_TONE_CSS} from './chat/ramp'
@@ -18,23 +19,12 @@ import {CONTEXT_METER_CSS} from './chat/context-meter/context-meter-styles'
 import {FILE_MUTATION_CSS} from './chat/file-mutation/file-mutation-styles'
 import {FOLD_MOTION_CSS} from './chat/fold/fold-motion-styles'
 import {SEND_FLIGHT_CSS} from './chat/send-flight/send-flight-styles'
-import {RUN_COLOR_VAR} from './chat/token-motion'
 
 /** 注入样式表的固定 id，用于卸载和排查。 */
 export const STYLE_ID = 'dsh-chat-ux-style'
 
 /** 聊天区样式表。 */
 export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
-body {
-  /* 页面级兜底：正文自己的令牌，跟着主题走。区间真正渲染所在的元素会用自己算出来的
-     颜色覆盖它。 */
-  ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #0f1115);
-}
-
-body[data-ds-dark-theme] {
-  /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */
-  ${RUN_COLOR_VAR}: var(--dsw-alias-label-primary, #f9fafb);
-}
 
 /* 过程组的组体只该在纵向滚。dsh 的 .body 只声明了 overflow-y: auto，而按 CSS Overflow 规范，
    一个轴是 visible、另一个不是时，visible 会计算成 auto——于是它同时成了横向滚动容器，内容只要
@@ -129,7 +119,8 @@ body[data-ds-dark-theme] {
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的档位规则
- * 不进这里，它由 `token-motion.ts` 自己带着一张独立的表（见那个模块里的 `REVEAL_STYLE_ID`）。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的那张表
+ * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
+ * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
  */
 export const ALL_CSS = [CHAT_AREA_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, SEND_FLIGHT_CSS, COMPOSER_GLASS_CSS].join('\n')

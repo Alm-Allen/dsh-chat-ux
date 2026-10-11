@@ -58,10 +58,11 @@ export const DEFAULT_SEND_FLIGHT = true
 /**
  * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
- * 规则——所以它同时是排查性能问题时的一根对照杆。
+ * 默认关着：它是这一批动效里唯一要随每一批新字符制造样式失效的一项——档位规则表、扫描观察者与
+ * 绘制帧都得挂上（见 `client/chat/token-motion.ts`），而这三样只有关掉才能一起不存在。想看的读者
+ * 在插件管理页上打开，装回来的就是同一套。
  */
-export const DEFAULT_TOKEN_FADE = true
+export const DEFAULT_TOKEN_FADE = false
 
 /**
  * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
@@ -108,7 +109,7 @@ export interface Config {
     // 提交之后气泡是否从输入框起飞，默认开着。整段时长不是一个设置项，
     // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
     sendFlight: Volatile<boolean>
-    // 流式回答里新出现的字符是否先淡后实。关掉时页面上一次都不动手，档位规则整张不挂。
+    // 流式回答里新出现的字符是否先淡后实。默认关着；打开时档位规则表、扫描观察者与绘制帧才挂上。
     tokenFade: Volatile<boolean>
     // 命中率读数变化时，变了的那一位是否原地弹到新值。关掉时数字直接换掉。
     hitReel: Volatile<boolean>

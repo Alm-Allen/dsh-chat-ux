@@ -49,10 +49,11 @@ export declare const DEFAULT_SEND_FLIGHT = true;
 /**
  * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认开着：它就是这个插件的主效果。关掉之后新字符直接以本色出现，页面上也不再挂那二十几条档位
- * 规则——所以它同时是排查性能问题时的一根对照杆。
+ * 默认关着：它是这一批动效里唯一要随每一批新字符制造样式失效的一项——档位规则表、扫描观察者与
+ * 绘制帧都得挂上（见 `client/chat/token-motion.ts`），而这三样只有关掉才能一起不存在。想看的读者
+ * 在插件管理页上打开，装回来的就是同一套。
  */
-export declare const DEFAULT_TOKEN_FADE = true;
+export declare const DEFAULT_TOKEN_FADE = false;
 /**
  * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *

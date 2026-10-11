@@ -16,7 +16,7 @@
  * 能在不碰 DOM 的前提下标出字符段：React 继续拥有结构，这个模块只拥有文字的透明度。
  *
  * `::highlight()` 不接受 transition，所以淡入是采样出来的、而不是动画出来的：活着的区间按
- * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `revealCss`
+ * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `buildRevealCss`
  * 从 `REVEAL_STEPS` 推出，alpha 线性移动，于是文字以恒定速率变实）。
  *
  * 淡入用的颜色是区间自己的颜色——从它文字渲染所在的元素上读出来，发布到 `RUN_COLOR_VAR` 下——
@@ -35,6 +35,8 @@
  *             别的插件每触发一次全量重算，都要替这些规则付一次钱；而为了躲这笔钱去翻 `disabled`，
  *             翻一次本身又是一次整页失效。收进作用域之后，浏览器用祖先过滤直接跳过流式容器以外的
  *             元素，同一张页面上实测多出来的是零；dsh 翻 `data-streaming` 那一下也只失效那一条消息。
+ *             这张表（连同里面那条页面级兜底色）只在淡入开着的时候存在：开关关着时它、扫描观察者
+ *             与绘制帧一个都不装，聊天区这一块是零。
  *   区间      **用 StaticRange，不用 Range**。活的 Range 在被回收之前，页面上每一次 DOM 变动都要
  *             逐个修正它们的边界——绘制帧每帧新建一批，一秒下来上千个等着回收，实测让两千次与它
  *             无关的 DOM 变动从一毫秒半涨到六十多毫秒，React 与别的插件都在替它付。StaticRange
@@ -58,7 +60,7 @@ import {isProgrammaticToggle} from './fold/programmatic-toggle'
  * 下界由最可能跑这个渐变的最快显示器定：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，档数少于帧数
  * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
  *
- * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `revealCss` 里的一条
+ * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `buildRevealCss` 里的一条
  * `::highlight()` 规则。不带作用域时规则条数直接乘在浏览器每一次全量样式重算上——在一个 5800
  * 节点的会话里，96 条把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms。现在的规则收在
  * `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，这笔账基本清零（见模块注释）；
@@ -188,12 +190,12 @@ function runTokenMotion(): () => void {
     /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
     let yieldUntil = 0
 
-    // 档位规则单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻 `disabled`：规则收在
-    // `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻没有代价；翻一下却是
-    // 一次整页的样式失效（见模块注释）。
+    // 档位规则与它们那条页面级兜底色单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻
+    // `disabled`：规则收在 `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻
+    // 没有代价；翻一下却是一次整页的样式失效（见模块注释）。
     const revealStyleElement = document.createElement('style')
     revealStyleElement.id = REVEAL_STYLE_ID
-    revealStyleElement.textContent = revealCss
+    revealStyleElement.textContent = buildRevealCss()
     document.head.append(revealStyleElement)
 
     /** 注销全部档位的 highlight。 */
@@ -700,12 +702,23 @@ function runTokenMotion(): () => void {
 /**
  * 承载档位规则的那张样式表的 id，用于排查。
  *
- * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装 `REVEAL_STEPS` 条档位规则，跟着
- * `installTokenMotion` 一起挂上和撤下。
+ * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装淡入自己的东西——`REVEAL_STEPS` 条档位
+ * 规则，加上页面级那两条兜底色（见 `buildRevealCss`）——跟着 `installTokenMotion` 一起挂上和撤下。
+ * 这一项默认关着，所以关着时这张表根本不存在。
  */
 const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal'
 
 /**
+ * 那张表的全部文本：页面级那两条兜底色，加 `REVEAL_STEPS` 条档位规则。
+ *
+ * 文本现拼，不留在模块级：这一项默认关着，关着时连这几十行字符串都不该在页面启动那一路被拼出来；
+ * 而进来拼的每一次都是装上引擎的那一次。
+ *
+ * 兜底色说的是「从没自己发布过颜色的元素」用哪个颜色——`::highlight()` 会把自定义属性解析到承载
+ * 元素上，容器里的段落、列表项这些元素读的就是它。它是必需的而不是保险：下面规则里那个
+ * `var(..., currentColor)` 的 fallback 不生效（实测写出灰色），而正文自己的令牌跟着主题走，所以
+ * 深色画布单独再给一条。
+ *
  * 档位规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开 highlight
  * 注册表的那一刻到达它最终的颜色。
  *
@@ -722,17 +735,33 @@ const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal'
  *
  * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
  * 的值本来就在那儿，不必再舍一次。
+ * @returns 那张表的全部文本。
  */
-const revealCss = Array.from({length: REVEAL_STEPS}, (_, step) => {
-    const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
-    const alpha = Number((ratio * 100).toFixed(2))
-    const name = HIGHLIGHT_PREFIX + step
-    return [
-        STREAMING_SELECTOR + '::highlight(' + name + '), ' + STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
-        '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+function buildRevealCss(): string {
+    const fallback = [
+        'body {',
+        '  /* 页面级兜底：正文自己的令牌，跟着主题走。区间真正渲染所在的元素会用自己算出来的',
+        '     颜色覆盖它。 */',
+        '  ' + RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #0f1115);',
+        '}',
+        '',
+        'body[data-ds-dark-theme] {',
+        '  /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */',
+        '  ' + RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #f9fafb);',
         '}',
     ].join('\n')
-}).join('\n\n')
+    const stepRules = Array.from({length: REVEAL_STEPS}, (_, step) => {
+        const ratio = TOKEN_MIN_OPACITY + (1 - TOKEN_MIN_OPACITY) * (step / (REVEAL_STEPS - 1))
+        const alpha = Number((ratio * 100).toFixed(2))
+        const name = HIGHLIGHT_PREFIX + step
+        return [
+            STREAMING_SELECTOR + '::highlight(' + name + '), ' + STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
+            '  color: color-mix(in srgb, var(' + RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
+            '}',
+        ].join('\n')
+    }).join('\n\n')
+    return fallback + '\n\n' + stepRules
+}
 
 /**
  * 一次折叠之后，它重排过的容器要被排除在淡入之外多久。
