@@ -76,9 +76,6 @@ export interface DraftHint {
 /** 调用锚点：`tools.write(` 与 `tools["write"](` 两种写法。 */
 const CALL_PATTERN = /tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'])([^"']+)\2\s*\])\s*\(/g
 
-/** 变量绑定锚点：`const name = ` 后面紧跟一个字符串字面量。 */
-const BINDING_PATTERN = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'`])/g
-
 /** 路径字段，按先后顺序认。 */
 const PATH_KEYS = ['file_path', 'path']
 
@@ -90,6 +87,13 @@ const DRAFT_SCAN_LIMIT = 8
 
 /** 标题最多留几个字；折叠态行尾那点位置放不下更长的。 */
 const DRAFT_HEADING_MAX = 18
+
+/**
+ * 追变量最多追几层。
+ *
+ * 真实程序里 `content → para1` 两层就到头；给 6 是留余量，同时也是防环的第二道闸（第一道是 `seen`）。
+ */
+const MAX_EXPAND_DEPTH = 6
 
 /** 三种开括号各自的闭符号。 */
 const CLOSERS: Record<string, string> = {')': '(', '}': '{', ']': '['}
@@ -123,12 +127,12 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
         const at = match.index
         const fields = argumentFields(code, at + match[0].length - 1)
         const newRead = name === 'write'
-            ? fieldValue(fields, ['content'], bindings)
-            : fieldValue(fields, ['new_string'], bindings)
-        const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings) : null
+            ? fieldValue(fields, ['content'], bindings, code)
+            : fieldValue(fields, ['new_string'], bindings, code)
+        const oldRead = name === 'edit' ? fieldValue(fields, ['old_string'], bindings, code) : null
         // 上一次读到过的那几个值兜在这里：这一批读不出的字段保留上一批的结果，不往回退。
         const seen = carried.get(at)
-        const pathRead = fieldValue(fields, PATH_KEYS, bindings)
+        const pathRead = fieldValue(fields, PATH_KEYS, bindings, code)
         const path = pathRead === null ? seen?.path ?? null : pathRead.text
         const added = newRead === null ? seen?.added ?? null : countLines(newRead.text)
         const removed = oldRead === null ? seen?.removed ?? null : countLines(oldRead.text)
@@ -210,24 +214,201 @@ function headingOf(text: string): string {
 }
 
 /**
- * 全文里的「变量名 = 字符串字面量」。
+ * 全文里的「变量名 = 值」。
  *
- * 只认一层：真实程序里长文本几乎都是 `` const content = `…` `` 再传进去，这一层把那一半捞回来；再往下
- * 追（拼接、函数返回值、循环里拼出来的字符串）读出来也是错的，不如不读。
+ * 只记**位置**，不在这里解析：解不解得开，等真要它的那一处再定（见 `resolveAt`）。这条规矩让别名
+ * （`const content = story`）与插值（`` const content = `…${para1}…` ``）都能先收进来——它们占了真实
+ * 程序里正文类字段的一大半，改造前是一见就丢的。
+ *
+ * 扫的时候要**跳过字符串与注释**：程序里写着「`const x = 1` 这种写法」的注释遍地都是，拿正则硬扫会
+ * 把它们当成真绑定，而别名一追就是错的正文。
+ *
+ * 类型注解（`const x: string = …`）也认：冒号后面到赋值号之前那一段跳过。
  * @param code - 程序文本。
- * @returns 变量名到那一段文字（带收尾标记）。
+ * @returns 变量名到值的位置。
  */
-function readBindings(code: string): Map<string, FieldText> {
-    const bindings = new Map<string, FieldText>()
-    BINDING_PATTERN.lastIndex = 0
-    for (let match = BINDING_PATTERN.exec(code); match !== null; match = BINDING_PATTERN.exec(code)) {
-        const name = match[1]
-        if (name === undefined) continue
-        const read = readString(code, BINDING_PATTERN.lastIndex)
-        if (read.interpolated) continue
-        bindings.set(name, {text: read.value, closed: read.closed})
+function readBindings(code: string): Bindings {
+    const bindings: Bindings = new Map()
+    let cursor = 0
+    while (cursor < code.length) {
+        const char = code.charAt(cursor)
+        if (char === '"' || char === "'" || char === '`') {
+            cursor = readString(code, cursor).end
+            continue
+        }
+        if (char === '/' && code.charAt(cursor + 1) === '/') {
+            const lineBreakAt = code.indexOf('\n', cursor)
+            cursor = lineBreakAt < 0 ? code.length : lineBreakAt
+            continue
+        }
+        if (char === '/' && code.charAt(cursor + 1) === '*') {
+            const close = code.indexOf('*/', cursor)
+            cursor = close < 0 ? code.length : close + 2
+            continue
+        }
+        if (!isNameChar(char)) {
+            cursor += 1
+            continue
+        }
+        const word = readIdentifier(code, cursor)
+        cursor += word.length
+        if (word !== 'const' && word !== 'let' && word !== 'var') continue
+        const nameAt = skipSpaces(code, cursor)
+        const name = readIdentifier(code, nameAt)
+        if (name === '') continue
+        let equalsAt = skipSpaces(code, nameAt + name.length)
+        if (code.charAt(equalsAt) === ':') equalsAt = typeAnnotationEnd(code, equalsAt)
+        if (equalsAt < 0 || code.charAt(equalsAt) !== '=') continue
+        // `==` 与 `=>` 都不是赋值。
+        if (code.charAt(equalsAt + 1) === '=' || code.charAt(equalsAt + 1) === '>') continue
+        bindings.set(name, skipSpaces(code, equalsAt + 1))
+        cursor = equalsAt + 1
     }
     return bindings
+}
+
+/**
+ * 追一个变量名到它的正文。
+ *
+ * 三层闸：追过的名字不再追（环）、层数用完就停（深链）、位置没记过就放弃（参数、解构、循环变量）。
+ * @param name - 变量名。
+ * @param expand - 展开上下文。
+ * @returns 那个变量读出来的正文，或 null。
+ */
+function resolveName(name: string, expand: ExpandContext): FieldText | null {
+    if (expand.depth <= 0 || expand.seen.has(name)) return null
+    const at = expand.bindings.get(name)
+    if (at === undefined) return null
+    const seen = new Set(expand.seen)
+    seen.add(name)
+    return resolveAt(expand.code, at, {
+        code: expand.code,
+        bindings: expand.bindings,
+        depth: expand.depth - 1,
+        seen,
+    })
+}
+
+/**
+ * 从 `at` 解析一个值。
+ *
+ * 收两种：字符串字面量，以及**别名**（值就是另一个变量名）。其余（拼接、调用、成员访问、三元、模板里
+ * 解不开的插值）一律 null——那几种的真值要跑起来才知道，猜错比不说更糟。
+ *
+ * 两种都要看**后面**收没收住：`"a" + b` 与 `b + "\n"` 都不是「那一个值」，读出来会少一截。
+ * @param code - 程序全文。
+ * @param at - 值的起始位置。
+ * @param expand - 展开上下文。
+ * @returns 解析出来的正文，或 null。
+ */
+function resolveAt(code: string, at: number, expand: ExpandContext): FieldText | null {
+    const start = skipSpaces(code, at)
+    const char = code.charAt(start)
+    if (char === '"' || char === "'" || char === '`') {
+        const read = readString(code, start, expand)
+        if (read.interpolated) return null
+        if (!endsHere(code, read.end)) return null
+        return {text: read.value, closed: read.closed}
+    }
+    if (!/[A-Za-z_$]/.test(char)) return null
+    const name = readIdentifier(code, start)
+    if (!endsHere(code, start + name.length)) return null
+    return resolveName(name, expand)
+}
+
+/**
+ * 类型注解的收尾：那个赋值号在哪儿。
+ *
+ * 从冒号往后找同一行里的 `=`；找不到、或者它已经翻到下一行去了，就当这处绑定不认识（保守，与改造前
+ * 的覆盖面一致）。
+ * @param code - 程序文本。
+ * @param colonAt - 冒号的位置。
+ * @returns 赋值号的位置，没找到为 -1。
+ */
+function typeAnnotationEnd(code: string, colonAt: number): number {
+    const lineBreakAt = code.indexOf('\n', colonAt)
+    const equalsAt = code.indexOf('=', colonAt)
+    if (equalsAt < 0) return -1
+    return lineBreakAt >= 0 && equalsAt > lineBreakAt ? -1 : equalsAt
+}
+
+/**
+ * 这个位置上，「值」后面收住了没有。
+ *
+ * 跳空格与制表符，**不跳换行**。真实程序里不加分号的写法满地都是：
+ *
+ *     const scriptPath = 'C:\…\probe.ps1'
+ *     const script = `…`
+ *
+ * 用「跳过所有空白」去找值后面是什么，就会越过行尾撞上下一行的 `const`，把一个本来读得出的绑定判成
+ * 拼接——实测这一处会吃掉两成的读出率（77 份真实程序里 55 处写入因此从「有路径」掉成「什么都没有」）。
+ * @param code - 程序全文。
+ * @param at - 值的结束位置。
+ * @returns 是不是收尾了。
+ */
+function endsHere(code: string, at: number): boolean {
+    let cursor = at
+    while (cursor < code.length) {
+        const char = code.charAt(cursor)
+        if (char !== ' ' && char !== '\t') break
+        cursor += 1
+    }
+    return isValueEnd(code.charAt(cursor))
+}
+
+/**
+ * 这里是不是一个值的结束。
+ *
+ * 别名与字面量后面再接着别的运算符，就不再是「那一个值」了。
+ * @param char - 那个位置上的字符；越界是空串。
+ * @returns 是不是收尾。
+ */
+function isValueEnd(char: string): boolean {
+    return char === '' || char === ';' || char === ',' || char === ')' || char === '}'
+        || char === ']' || char === '\n' || char === '\r'
+}
+
+/**
+ * 标识符字符。
+ * @param char - 一个字符。
+ * @returns 是不是标识符的一部分。
+ */
+function isNameChar(char: string): boolean {
+    return char !== '' && /[A-Za-z0-9_$]/.test(char)
+}
+
+/**
+ * 从 `at` 读一个标识符。
+ * @param text - 文本。
+ * @param at - 起始位置。
+ * @returns 标识符；那里不是标识符时是空串。
+ */
+function readIdentifier(text: string, at: number): string {
+    let cursor = at
+    while (cursor < text.length && isNameChar(text.charAt(cursor))) cursor += 1
+    return text.slice(at, cursor)
+}
+
+/**
+ * 跳过空白。
+ * @param text - 文本。
+ * @param at - 起始位置。
+ * @returns 第一个非空白字符的位置。
+ */
+function skipSpaces(text: string, at: number): number {
+    let cursor = at
+    while (cursor < text.length && /\s/.test(text.charAt(cursor))) cursor += 1
+    return cursor
+}
+
+/**
+ * 是不是一个光溜溜的变量名。
+ * @param text - 候选文本。
+ * @returns 是则为 true。
+ */
+function isPlainName(text: string): boolean {
+    if (!/^[A-Za-z_$]/.test(text)) return false
+    return readIdentifier(text, 0).length === text.length
 }
 
 /**
@@ -277,18 +458,20 @@ function argumentsBody(code: string, openAt: number, closeAt: number): string {
  * 按顺序取第一个读得出的字段值。
  * @param fields - 实参键值对。
  * @param keys - 候选字段名。
- * @param bindings - 一层变量绑定。
+ * @param bindings - 变量绑定表。
+ * @param code - 程序全文（绑定的值按它里面的位置取）。
  * @returns 那一段文字与它收尾了没有，或 null（都没读出来）。
  */
 function fieldValue(
     fields: {key: string, value: string}[],
     keys: readonly string[],
-    bindings: Map<string, FieldText>,
+    bindings: Bindings,
+    code: string,
 ): FieldText | null {
     for (const key of keys) {
         for (const field of fields) {
             if (field.key !== key) continue
-            const text = valueText(field.value, bindings)
+            const text = valueText(field.value, bindings, code)
             if (text !== null) return text
         }
     }
@@ -298,23 +481,33 @@ function fieldValue(
 /**
  * 一个字段值读出来的文本。
  *
- * 字面量收，一层变量收，其余（拼接、调用、成员访问）一律 null——那几种的真值要跑起来才知道。
+ * 字面量收，变量收（**沿着别名一路追到字面量**，模板里的 `${…}` 只要是简单变量名也一并解开），其余
+ * （拼接、调用、成员访问、三元）一律 null——那几种的真值要跑起来才知道。
+ *
+ * 这一处的覆盖面直接决定折叠态那一截有没有 `+n -m`：真实程序里正文类字段一半以上写成变量
+ * （`{file_path, content}` 的简写），而它们多数只是**换个名字的同一段字面量**。改造前这些全判成读不出，
+ * 现在能追进去。
  * @param value - 值的原文。
- * @param bindings - 一层变量绑定。
+ * @param bindings - 变量绑定表。
+ * @param code - 程序全文。
  * @returns 文本与收尾标记，或 null。
  */
-function valueText(value: string, bindings: Map<string, FieldText>): FieldText | null {
+function valueText(value: string, bindings: Bindings, code: string): FieldText | null {
     const text = value.trim()
+    const expand: ExpandContext = {code, bindings, depth: MAX_EXPAND_DEPTH, seen: EMPTY_SEEN}
     const quote = text.charAt(0)
     if (quote === '"' || quote === "'" || quote === '`') {
-        const read = readString(text, 0)
+        const read = readString(text, 0, expand)
         // 字面量后面还接着东西（`'a' + b`）就是拼接，不读。
         if (read.end !== text.length) return null
         return read.interpolated ? null : {text: read.value, closed: read.closed}
     }
-    if (/^[A-Za-z_$][\w$]*$/.test(text)) return bindings.get(text) ?? null
+    if (isPlainName(text)) return resolveName(text, expand)
     return null
 }
+
+/** 一条空的追链，给每次从字段出发的解析当起点。 */
+const EMPTY_SEEN: ReadonlySet<string> = new Set()
 
 /** 读出来的一段文字，以及它收尾了没有。 */
 interface FieldText {
@@ -322,6 +515,27 @@ interface FieldText {
     text: string
     /** 引号收尾了没有。 */
     closed: boolean
+}
+
+/**
+ * 变量绑定表：名字 → 它那个值的**起始位置**（全程序坐标）。
+ *
+ * 存位置而不是文本，是为了「按需解析」：一个变量要经过别名、插值才落到正文上，而只有真用到它的那几处
+ * 才值得追。也正因为存的是位置，`const content = \`…${para1}…\`` 这种含插值的绑定可以先收进来——
+ * 解不解得开，等真要它的时候再定。
+ */
+type Bindings = Map<string, number>
+
+/** 展开插值时的上下文：靠它递归查绑定表，并且有环、过深就停。 */
+interface ExpandContext {
+    /** 程序全文——绑定的值都按它里面的绝对位置取。 */
+    code: string
+    /** 变量名到值的位置。 */
+    bindings: Bindings
+    /** 还剩几层可追。 */
+    depth: number
+    /** 这条链上已经追过的名字，防 `const a = \`${a}\`` 这种自己咬自己。 */
+    seen: ReadonlySet<string>
 }
 
 /** 读一段字符串字面量读出来的东西。 */
@@ -340,11 +554,16 @@ interface StringRead {
  * 从 `at`（引号）读一段字符串字面量。
  *
  * 未闭合不是错误：流式期它就停在这里，正文按已收到的算。
+ *
+ * 反引号里那些 `${…}` 交给 `expand` 去解：解开就换成那个变量读出来的正文（读者要的是行数，而
+ * `para1` 这种变量本身就写在上面几行）；任何一个解不开，整段就按「含插值」收场，与改造前一样
+ * 什么都不报——**绝不拿半截正文去凑数**。
  * @param text - 含引号的文本。
  * @param at - 起始引号的位置。
+ * @param expand - 展开插值要用的上下文；不传就只做标记，不展开。
  * @returns 读出来的正文、结束位置、插值标记与收尾标记。
  */
-function readString(text: string, at: number): StringRead {
+function readString(text: string, at: number, expand?: ExpandContext): StringRead {
     const quote = text.charAt(at)
     const triple = text.slice(at, at + 3) === quote.repeat(3)
     const closer = triple ? quote.repeat(3) : quote
@@ -362,11 +581,66 @@ function readString(text: string, at: number): StringRead {
             return {value, end: cursor + closer.length, interpolated, closed: true}
         }
         // JSON 那一层的转义（`\n`）到这里已经解开了，这一层只管程序文本自己的转义。
-        if (closer === '`' && char === '$' && text.charAt(cursor + 1) === '{') interpolated = true
+        if (closer === '`' && char === '$' && text.charAt(cursor + 1) === '{') {
+            const closeAt = matchInterpolation(text, cursor + 1)
+            if (closeAt >= 0) {
+                const resolved = expandInterpolation(text.slice(cursor + 2, closeAt), expand)
+                if (resolved !== null) {
+                    value += resolved.text
+                    cursor = closeAt + 1
+                    continue
+                }
+            }
+            interpolated = true
+        }
         value += char
         cursor += 1
     }
     return {value, end: text.length, interpolated, closed: false}
+}
+
+/**
+ * `${` 那个花括号的配对位置。
+ *
+ * 只在**这一段文本内部**配对：插值里再嵌对象、再嵌字符串都算得对，嵌不上的（流式半截）返回 -1，
+ * 调用处就退回「含插值」的保守判断。
+ * @param text - 含 `${` 的文本。
+ * @param braceAt - `{` 的位置。
+ * @returns 配对的 `}` 位置，找不到为 -1。
+ */
+function matchInterpolation(text: string, braceAt: number): number {
+    let depth = 0
+    let cursor = braceAt
+    while (cursor < text.length) {
+        const char = text.charAt(cursor)
+        if (char === '"' || char === "'" || char === '`') {
+            cursor = readString(text, cursor).end
+            continue
+        }
+        if (char === '{') depth += 1
+        else if (char === '}') {
+            depth -= 1
+            if (depth === 0) return cursor
+        }
+        cursor += 1
+    }
+    return -1
+}
+
+/**
+ * 把一个插值表达式换成它代表的正文。
+ *
+ * 只认**一个光溜溜的变量名**：`${para1}` 收，`${JSON.stringify(config)}`、`${a.b}`、`${a + b}` 一律
+ * 不收——那几种的真值要跑起来才知道，猜错比不说更糟。
+ * @param expression - `${` 与 `}` 之间的原文。
+ * @param expand - 展开上下文；缺席时不展开。
+ * @returns 那个变量读出来的正文，或 null（不是简单变量名、或解不开）。
+ */
+function expandInterpolation(expression: string, expand?: ExpandContext): FieldText | null {
+    if (expand === undefined) return null
+    const name = expression.trim()
+    if (!isPlainName(name)) return null
+    return resolveName(name, expand)
 }
 
 /**
