@@ -31,13 +31,14 @@
  * 主线程上每帧只剩两件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行）写在最外层；形变段走完
  * 那一帧把壳归一（见 `startMorph` 里的 `compact`）。两件都在 `send-flight.ts` 的帧循环里。
  *
- * **替身凭什么长得像真卡片。** 四条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
+ * **替身凭什么长得像真卡片。** 五条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
  * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、**卡片那一层
  * 的面**（卡片自身与它两个伪元素的背景照抄那一刻算出来的值，见 `ComposerSurface`：玻璃的底就画在
- * 卡片的 `::before` 上，而模拟链一个 `data-*` 都不抄，只认规则的话整块卡面都会丢），以及**祖先
- * 链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照着卡片的
- * 祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属性另
- * 有抄法，理由见 `snapshotComposer`。
+ * 卡片的 `::before` 上，而模拟链一个 `data-*` 都不抄，只认规则的话整块卡面都会丢）、**克隆子树里每个
+ * 元素的面**（同样照抄那一刻的值，起飞时跟替身现算的比一次、只把失配的写进去，见 `ElementSurface`），
+ * 以及**祖先链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照
+ * 着卡片的祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属
+ * 性另有抄法，理由见 `snapshotComposer`。
  *
  * @module dsh-chat-ux/client/chat/send-flight/send-morph
  */
@@ -162,12 +163,34 @@ interface ComposerSurface {
     readonly behind: string
 }
 
+/**
+ * 克隆子树里一个元素的「面」：它自己那层，以及它两个伪元素那层。
+ *
+ * 与 `ComposerSurface` 同一个道理（照抄那一刻算出来的值，不是规则），只是覆盖到整棵子树：替身靠
+ * class 与祖先链只能命中一部分规则，凡是选择器里认祖先 `data-*` 的（同页皮肤那几条、玻璃给按钮
+ * 上色的那一条）在替身上全失配。起飞时拿这里的值与替身现算的值比一次，只把不一样的写进去。
+ */
+interface ElementSurface {
+    /** 元素自己那层。 */
+    readonly own: readonly LookDeclaration[]
+    /** 这个元素的 `::before`；没有这个伪元素时为 null。 */
+    readonly before: readonly LookDeclaration[] | null
+    /** 这个元素的 `::after`；没有这个伪元素时为 null。 */
+    readonly after: readonly LookDeclaration[] | null
+}
+
 /** 起飞之前在输入卡片上抓下来的一切。全部在 React 清空草稿之前拿到。 */
 export interface ComposerSnapshot {
     /** 卡片的视口矩形：替身的起点。 */
     readonly box: DOMRect
     /** 卡片那一层的面（见 `ComposerSurface`）。 */
     readonly surface: ComposerSurface
+    /**
+     * 克隆子树里每个元素的面（见 `ElementSurface`），按 DOM 序与 `clone.querySelectorAll('*')`
+     * 一一对应，**不含卡片自己那一层**（它归 `surface`，而且要画在气泡色底下）。子树太大时为
+     * null——整块不抄，退回本来的样子。
+     */
+    readonly subtree: readonly ElementSurface[] | null
     readonly radius: number
     readonly shadow: string
     /** 整张卡片的克隆：底色与阴影已经摘掉，草稿区的高度钉死。 */
@@ -283,6 +306,61 @@ const SURFACE_PROPERTIES = [
 ] as const
 
 /**
+ * 克隆子树里每个元素要抄哪些属性。
+ *
+ * 与 `SURFACE_PROPERTIES` 同一口径（只抄画出来的东西），只是铺得开一些：一个元素画在页面上的
+ * 东西除了背景还有边框、阴影、圆角、字与那几样跟绘制有关的开关。**不抄几何与布局**——替身的壳
+ * 自己管几何（逐格缩放、反向缩放、圆角补偿），把 `width` / `position` / `transform` 这一类抄进去
+ * 会和它打架；也不抄 `transition` / `animation`，抄下来克隆会自己动起来，把整段时间轴搅乱。
+ * **`opacity` 也不抄**：替身自己那几段淡出就是靠它，而差异抄法写下去的声明带着 `!important`、在层叠
+ * 顺序里压得过动画——真卡片某个元素那一刻恰好是半透明的（例如禁用的按钮），那个元素就会在整段飞行
+ * 里一直半透明，不肯淡出去。
+ */
+const PAINT_PROPERTIES = [
+    'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+    'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+    'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
+    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
+    'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
+    'box-shadow', 'text-shadow', 'visibility', 'filter', 'mix-blend-mode', 'clip-path',
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'letter-spacing', 'line-height',
+    'text-align', 'text-transform', 'white-space', 'word-break', 'overflow-wrap',
+] as const
+
+/**
+ * 伪元素那一层要抄哪些属性：**全量**，连 `content` 与定位几何一起。
+ *
+ * 与元素自己那层不同：替身身上那条伪元素规则多半整个不成立（玻璃那条要祖先带 `data-phase`），
+ * 不给 `content` 它根本不会出现，不给定位与尺寸它会落在错的地方。这里抄的 `position` / `top` /
+ * `width` 是**伪元素自己的**几何，不是替身壳管的那套几何，两者不打架。
+ */
+const PSEUDO_PROPERTIES = [
+    'content', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 'z-index',
+    ...PAINT_PROPERTIES,
+] as const
+
+/** 替身里每个元素身上的坐号：那一小段 `<style>` 的选择器靠它定位到具体哪个元素。 */
+const PAINT_ATTRIBUTE = 'data-chat-ux-send-paint'
+
+/**
+ * 插入符那一层。`scrub` 会把它整块从克隆里摘掉，所以逐元素抄面的名单里也不能有它（含它的后代）——
+ * 少一个元素就整体错位，抄上去的会是一排别人的样式。
+ */
+const CARET_LAYER_SELECTOR = '[data-chat-ux-caret-layer]'
+
+/**
+ * 逐元素抄面的元素数上限。超过就整块不抄，退回「卡片那一层 + 三条路」。
+ *
+ * 这一步要读两遍子树的计算样式（真卡片一遍、替身一遍），而提交那一帧 dsh 的主线程本来就重
+ * （见 `文档/开发/性能风险.md`）。所以它是「更好」，不是「必须」：宁可退回本来的样子，也不让
+ * 起手那一停变长。
+ *
+ * **这个数是拍的，不是量出来的**：输入卡片子树常见在几十到一百多个元素之间，取 240 留一倍余量。
+ * 第一次实测之后按读数回来改它。
+ */
+const MAX_PAINT_ELEMENTS = 240
+
+/**
  * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
  *
  * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
@@ -338,11 +416,24 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     // 卡片那一层的面得在这一帧抄下来：既因为克隆要的就是那一刻的样子，也因为伪元素那条规则
     // （玻璃只在本插件开着、且祖先是 `active` / `hero` 相位时才命中）在替身上不一定还匹配。
     const surface: ComposerSurface = {
-        card: readSurface(cardStyle),
-        before: readPseudoSurface(card, '::before'),
-        after: readPseudoSurface(card, '::after'),
+        card: readDeclarations(cardStyle, SURFACE_PROPERTIES),
+        before: readPseudoLayer(card, '::before', SURFACE_PROPERTIES),
+        after: readPseudoLayer(card, '::after', SURFACE_PROPERTIES),
         behind: behindColorOf(card),
     }
+    // 克隆子树里每个元素的面：替身靠 class 与祖先链只能命中一部分规则，凡是选择器里认祖先 `data-*`
+    // 的（同页皮肤那几条、玻璃给按钮上色的那一条）在替身上全失配。所以这一帧把真卡片子树里每个元素
+    // 画出来的值抄下来，起飞时跟替身现算的值比一次、只把不一样的写进去（见 `startMorph` 里那段）。
+    // 元素太多就整块不抄（见 `MAX_PAINT_ELEMENTS`）。
+    // 名单要和克隆里的元素一一对应：`scrub` 会把插入符那一层整块摘掉，所以那一支（连同它的后代）
+    // 在这一份里也不能有——少一个就整体错位，抄上去的会是一排别人的样式。
+    const descendants = [...card.querySelectorAll<HTMLElement>('*')]
+        .filter(element => element.closest(CARET_LAYER_SELECTOR) === null)
+    const subtree: ElementSurface[] | null = descendants.length > MAX_PAINT_ELEMENTS ? null : descendants.map((element) => ({
+        own: readDeclarations(getComputedStyle(element), PAINT_PROPERTIES),
+        before: readPseudoLayer(element, '::before', PSEUDO_PROPERTIES),
+        after: readPseudoLayer(element, '::after', PSEUDO_PROPERTIES),
+    }))
     const inputStyle = getComputedStyle(input)
     const inputBox = input.getBoundingClientRect()
     const text: TextFrame = {
@@ -465,6 +556,7 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     return {
         box,
         surface,
+        subtree,
         radius: pixel(cardStyle.borderTopLeftRadius),
         shadow: cardStyle.boxShadow,
         clone,
@@ -650,6 +742,48 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 克隆要进了文档才能滚到原来的位置。
     if (snapshot.draftScrollTop > 0) snapshot.draft.scrollTop = snapshot.draftScrollTop
 
+    // 克隆里每个元素再跟真卡片那一刻的值比一次，只把不一样的写下来。
+    //
+    // **必须在替身进了文档之后读**：要比的是「替身此刻算出来的值」，它得先拿得到链上的规则与继承。
+    // 早一步（克隆还游离着）读到的是一份断了继承的值，那时就只剩「把值全量钉一遍」这条路——而全量钉
+    // 会把不该钉的也钉住（理由见 `PAINT_PROPERTIES` 里的 `opacity` 那一条）。
+    //
+    // 替身多半已经靠 class 与祖先链画对了，差的就是规则失配的那几笔——包括伪元素：替身身上那条伪元素
+    // 规则多半整个不成立（见 `ElementSurface`），得把它连 `content` 与定位一起写进去。写成 `<style>`
+    // 而不是行内，是因为伪元素没法行内设置——两者共用同一套选择器，靠打在元素上的坐号定位。
+    const subtree = snapshot.subtree
+    if (subtree !== null) {
+        /** 那一刻抄下来的值里，有哪些与替身现在算出来的不一样。 */
+        const differences = (from: readonly LookDeclaration[], now: CSSStyleDeclaration): string[] => {
+            const declarations: string[] = []
+            for (const [name, value] of from) {
+                if (now.getPropertyValue(name) === value) continue
+                declarations.push(name + ':' + value + ' !important')
+            }
+            return declarations
+        }
+        const rules: string[] = []
+        const clones = [...snapshot.clone.querySelectorAll<HTMLElement>('*')]
+        clones.forEach((element, index) => {
+            const surface = subtree[index]
+            if (surface === undefined) return
+            const own = differences(surface.own, getComputedStyle(element))
+            const before = surface.before === null ? [] : differences(surface.before, getComputedStyle(element, '::before'))
+            const after = surface.after === null ? [] : differences(surface.after, getComputedStyle(element, '::after'))
+            if (own.length + before.length + after.length === 0) return
+            element.setAttribute(PAINT_ATTRIBUTE, String(index))
+            const selector = '[' + PAINT_ATTRIBUTE + '="' + index + '"]'
+            if (own.length > 0) rules.push(selector + '{' + own.join(';') + '}')
+            if (before.length > 0) rules.push(selector + '::before{' + before.join(';') + '}')
+            if (after.length > 0) rules.push(selector + '::after{' + after.join(';') + '}')
+        })
+        if (rules.length > 0) {
+            const paintStyle = document.createElement('style')
+            paintStyle.textContent = rules.join('')
+            shell.appendChild(paintStyle)
+        }
+    }
+
     const timing: KeyframeAnimationOptions = {duration: FLIGHT_MS, easing: 'linear', fill: 'forwards'}
     const animations: Animation[] = []
     const run = (element: HTMLElement, frames: Keyframe[]): Animation => {
@@ -823,8 +957,9 @@ function ghostHost(): HTMLElement {
  * 替身里有两样东西会被**别人的**规则命中：带着卡片 class 与 `data-*` 的克隆（要的就是命中），以及
  * 套在它外面的模拟祖先链。这些选择器上可能有 `!important` 的规则——实测同页的颜色插件就用它压过
  * `[data-composer-card]`。普通行内样式压不住 `!important`：一条居中的规则就足以让克隆飞到屏幕
- * 正中再掉回来。行内 + `!important` 是样式层级的顶格（只输给动画），把"错一下就看得出"的那几项
- * 钉在起飞时量到的值上。
+ * 正中再掉回来。行内 + `!important` 是样式层级的顶格：级联顺序里作者声明的 `!important` 排在动画之上
+ * （动画与过渡都在它下面）。也正因为这样，钉的时候要留意别把替身自己那几段动画驱动的属性一起钉死
+ * ——`PAINT_PROPERTIES` 里因此没有 `opacity`。
  * @param element - 要钉的元素。
  * @param declarations - 属性名与值，按顺序写。
  */
@@ -1018,7 +1153,7 @@ function scrub(root: Element): void {
     for (const element of all) {
         for (const name of IDENTITY_ATTRIBUTES) element.removeAttribute(name)
     }
-    for (const layer of root.querySelectorAll('[data-chat-ux-caret-layer]')) layer.remove()
+    for (const layer of root.querySelectorAll(CARET_LAYER_SELECTOR)) layer.remove()
 }
 
 /**
@@ -1082,31 +1217,32 @@ function shadowSpread(shadow: string): number {
 }
 
 /**
- * 抄下一层「面」：这一层画出来的颜色与图像。
+ * 抄下一层的「面」：按白名单把这一刻算出来的值读下来。
  *
- * 只抄画出来的东西，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），抄进去
- * 会和它打架。伪元素的**几何**也同样不抄：一律按卡片那个矩形铺满（替身那几片填充都是 `inset: 0`）。
- * 卡片上的伪元素今天正好都是这么铺的（玻璃那个 `::before` 就是 `inset: 0`）；哪天出现不铺满的伪元素，
- * 这里要连几何一起抄。
+ * 抄的永远是**画出来的东西**，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），
+ * 抄进去会和它打架。伪元素的定位几何也不在这份白名单里（元素那层根本用不上那几条），它由
+ * `PSEUDO_PROPERTIES` 单独列上，理由见那里。
  * @param style - 这一层的计算样式。
+ * @param properties - 抄哪些属性。
  * @returns 属性名与那一刻算出来的值。
  */
-function readSurface(style: CSSStyleDeclaration): readonly LookDeclaration[] {
-    return SURFACE_PROPERTIES.map((name): LookDeclaration => [name, style.getPropertyValue(name)])
+function readDeclarations(style: CSSStyleDeclaration, properties: readonly string[]): readonly LookDeclaration[] {
+    return properties.map((name): LookDeclaration => [name, style.getPropertyValue(name)])
 }
 
 /**
- * 抄一个伪元素的面。
+ * 抄一个伪元素那一层。
  *
  * `content` 是 `none` 就是没有这个伪元素，给 null——替身那一层什么都不写，回落到本来的样子。
- * @param card - 卡片。
+ * @param element - 带伪元素的元素。
  * @param pseudo - `'::before'` 或 `'::after'`。
+ * @param properties - 抄哪些属性。
  * @returns 那一层的面；没有这个伪元素时为 null。
  */
-function readPseudoSurface(card: HTMLElement, pseudo: '::before' | '::after'): readonly LookDeclaration[] | null {
-    const style = getComputedStyle(card, pseudo)
+function readPseudoLayer(element: HTMLElement, pseudo: '::before' | '::after', properties: readonly string[]): readonly LookDeclaration[] | null {
+    const style = getComputedStyle(element, pseudo)
     if (style.content === 'none') return null
-    return readSurface(style)
+    return readDeclarations(style, properties)
 }
 
 /**
