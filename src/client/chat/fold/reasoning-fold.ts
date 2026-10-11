@@ -52,8 +52,6 @@ export function installReasoningFold(): () => void {
             const control = row.querySelector('[role="button"], button')
             if (!(control instanceof HTMLElement)) continue
             // 下面那个捕获阶段的监听同样会看到这次点击，所以这一段要声明出去：那不是读者要求的。
-            // token-motion 的折叠守卫在同一趟事件里也会看到它——否则自动收起会把刚开头的正文
-            // 静默掉 400 ms。
             beginProgrammaticToggle()
             try {
                 control.click()

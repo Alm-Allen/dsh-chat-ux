@@ -4,10 +4,6 @@
  *
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
  * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
- *
- * token 淡入的档位规则与它那条页面级兜底色**都不在这里**：它们跟着 `token-motion.ts` 走一张单独的
- * 样式表（见它里面的 `buildRevealCss`）——那批规则的条数是拿得出来单独看的一份代价，而那一项默认
- * 关着，关着时页面上不该留着只有它用得上的一条声明。
  */
 import {CARET_MOTION_CSS} from './chat/caret/caret-motion-styles'
 import {RAMP_TONE_CSS} from './chat/ramp'
@@ -33,7 +29,7 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
    overflow: visible，两轴一起放开，本来就没有这个问题，所以这一条只认收纳档。
 
    横向超出只裁剪、不给滚：组体里能横向滚的东西（代码块、表格）各自带着自己的 overflow-x，不该由
-   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——process-follow 量的是 scrollHeight
+   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——dsh 自己量的是 scrollHeight
    减 clientHeight，少一条滚动条就少一份偏差。 */
 [data-step-process]:not([data-group-expanded-mode]) [data-step-process-body] {
   overflow-x: hidden;
@@ -119,8 +115,6 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的那张表
- * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
- * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
 export const ALL_CSS = [CHAT_AREA_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, SEND_FLIGHT_CSS, COMPOSER_GLASS_CSS].join('\n')

@@ -52,8 +52,6 @@ const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-st
 const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
 const fold_glide_1 = require("./chat/fold/fold-glide");
-const follow_guard_1 = require("./chat/follow/follow-guard");
-const process_follow_1 = require("./chat/follow/process-follow");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
 const send_flight_1 = require("./chat/send-flight/send-flight");
@@ -61,7 +59,6 @@ const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
 const transcript_default_1 = require("./settings/transcript-default");
 const styles_1 = require("./styles");
-const token_motion_1 = require("./chat/token-motion");
 /**
  * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
  * 后者由 `@deepseek-ai/dsh-client-ui-settings` 提供，而它自己声明了 `remote` 与 `remote.settings`，
@@ -95,7 +92,6 @@ function apply(ctx) {
         autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
         sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
-        tokenFade: settings_scope_1.DEFAULT_TOKEN_FADE,
         pie: settings_scope_1.DEFAULT_CONTEXT_PIE,
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
@@ -103,7 +99,6 @@ function apply(ctx) {
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
-    const tokenMotion = (0, token_motion_1.installTokenMotion)(() => settings.tokenFade);
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
     // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
     // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
@@ -151,38 +146,16 @@ function apply(ctx) {
             return;
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
-    // 跟随那一块（增强跟随 + 组体跟随）不再有自己的开关：它跟着「token 淡入」那一个开关走。
-    // 关着时两处都不装——页面上不留 MutationObserver、ResizeObserver、那个每 500 ms 一次的全文档
-    // 查询，也不留那些 capture 监听；打开时装回来的就是原来那两处。
-    let followDispose = null;
-    const syncFollow = () => {
-        if (!settings.tokenFade) {
-            followDispose?.();
-            followDispose = null;
-            return;
-        }
-        if (followDispose !== null)
-            return;
-        const disposeGuard = (0, follow_guard_1.installFollowGuard)();
-        const disposeProcess = (0, process_follow_1.installProcessFollow)();
-        followDispose = () => {
-            disposeGuard();
-            disposeProcess();
-        };
-    };
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
         settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
         settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
-        settings.tokenFade = value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
         settings.pie = value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         syncGlass();
         caret.resync();
-        tokenMotion.resync();
-        syncFollow();
         syncPie();
         syncAutoFold();
     };
@@ -206,9 +179,6 @@ function apply(ctx) {
     // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
-    // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
-    // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
-    ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal');
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
     // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
     // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
@@ -220,19 +190,6 @@ function apply(ctx) {
             autoFoldDispose = null;
         };
     }, 'dsh-chat-ux: auto fold');
-    // 跟随那一块的两处安装都在 syncFollow 里，装与卸跟着「token 淡入」那一个开关走：
-    //
-    //   增强跟随  跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻（思考行收起、工具行插入），
-    //             这一处挑那些时刻把滚动位置交还给 dsh 的跟随。
-    //   组体跟随  标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而平滑滚动追不上匀速
-    //             增长的内容，位置就长期停在离底几十像素的地方；这一处在它旁边补一次钉底。
-    ctx.effect(() => {
-        syncFollow();
-        return () => {
-            followDispose?.();
-            followDispose = null;
-        };
-    }, 'dsh-chat-ux: follow');
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
     // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
@@ -893,24 +850,13 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_STATS_ROW_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.STREAMING_SELECTOR = exports.STREAMING_ATTRIBUTE = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = exports.FLOW_BLOCK_SELECTOR = void 0;
-/** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
-exports.FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]';
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_STATS_ROW_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 /** 聊天列。 */
 exports.CHAT_FLOW_SELECTOR = '[data-chat-flow]';
 /** 每一行思考行；它的阶段看 `data-state`。 */
 exports.THINK_ROW_SELECTOR = '[data-variant="think"]';
 /** 模型还在思考、过程还在跑时的阶段值。 */
 exports.RUNNING_STATE = 'running';
-/**
- * Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。
- *
- * 属性名与选择器两种形式各有人用（前者喂 `MutationObserver` 的 `attributeFilter`，后者查页面），
- * 所以两个都写在这里：各自就地拼字符串的话，改一处就会漏一处。
- */
-exports.STREAMING_ATTRIBUTE = 'data-streaming';
-/** 同一个契约的选择器形式。 */
-exports.STREAMING_SELECTOR = '[' + exports.STREAMING_ATTRIBUTE + ']';
 /**
  * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
  *
@@ -1315,7 +1261,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_TOKEN_FADE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
 /**
  * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1334,16 +1280,6 @@ exports.DEFAULT_CARET_MOTION = 'typing';
  * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
  */
 exports.DEFAULT_SEND_FLIGHT = true;
-/**
- * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认关着。它是这一批动效里唯一要随每一批新字符制造样式失效的一项，所以关着时那个模块整块不装——
- * 档位规则表、扫描观察者、绘制帧，连那条兜底色一起，页面上什么都不留。
- *
- * 它还兼着跟随那一块（`chat/follow/` 的增强跟随与组体跟随）：关着时那两处也不装，页面上不留
- * 观察者与定时器。卡片上没有单独的跟随开关。
- */
-exports.DEFAULT_TOKEN_FADE = false;
 /**
  * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -4327,7 +4263,7 @@ const SHUT_CONFIRM_FRAMES = 3;
  * 人看见了。
  */
 const FOLD_WATCH_TTL_MS = INTENT_TTL_MS + ROLL_MS + follow_tail_1.FOLLOW_LOOK_TOTAL_MS;
-/** 卷帘门跑完之后再多算一会儿「位置归动画管」，免得收尾那一帧跟跟随守护撞上。 */
+/** 卷帘门跑完之后再多算一会儿「位置归动画管」，让收尾那一帧落在窗口之外。 */
 const FOLD_BUSY_GRACE_MS = 50;
 /**
  * 卷帘门正在走的那个真身带着这个标记，`fold-motion-styles.ts` 见到它就让子元素一律 `flex: none`：
@@ -4348,8 +4284,9 @@ let foldBusyUntil = 0;
 /**
  * 卷帘门正在跑。
  *
- * 位置在这一段里归动画管：跟随守护要是这时把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来
- * 是抖。所以它自己会等这一段过去。
+ * 位置在这一段里归动画管：这中间要是有人把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来是抖。
+ * 从前那个「跟随守护」就是照着它让路的，守护跟「token 淡入」一起删掉之后暂时没有查询者——时间窗
+ * 照旧维护（排时间、卡顿时把拨回去的那一段补进来），留着这个把柄。
  * @returns 上一次动画排到的时刻还没过时为真。
  */
 function isFoldGlideBusy() {
@@ -4488,7 +4425,7 @@ function installFoldGlide() {
      *
      * 折叠是一次量级很大的高度变化，而 dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉——
      * 它自己那个「回到底部」按钮是唯一的重开入口。这一处只判断这一次交还算不算数；怎么交还
-     * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里，跟随守护走的是同一条路。
+     * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里。
      *
      * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
      * @param watch - 这一轮折叠的收尾凭证。
@@ -4535,7 +4472,7 @@ function installFoldGlide() {
      * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
      * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
      * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
-     * 动画管」的时间，跟随守护会多等这么久。
+     * 动画管」的时间。
      *
      * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
      * @param roll - 正在走的那条卷帘门动画。
@@ -4830,12 +4767,13 @@ function installFoldGlide() {
  * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
  * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
  *
+ * **现在只剩折叠收尾在调它**：增强跟随与组体跟随（`follow-guard.ts`、`process-follow.ts`）已经
+ * 连同「token 淡入」那一个开关一起删掉，这里的能力一个字没动——折叠收尾那一次交还照旧走这条路。
+ *
  * @module dsh-chat-ux/client/chat/follow/follow-tail
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_INTERVAL_MS = exports.FOLLOW_LOOK_ROUNDS = void 0;
-exports.conversationScroller = conversationScroller;
-exports.isAtBottom = isAtBottom;
 exports.ensureFollowTail = ensureFollowTail;
 const dom_contract_1 = require("../../dom-contract");
 /** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
@@ -4847,14 +4785,6 @@ exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_ROUNDS * exports.FOLLOW_LOOK_
 /** 会话的滚动容器。dsh 的跟随与折叠动画都挂在它身上。 */
 function conversationScroller() {
     return document.querySelector(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-}
-/**
- * 读者此刻是不是贴着会话底部，用的是 dsh 自己的那条线。
- * @param scroller - 会话的滚动容器。
- * @returns 离地线不超过 dsh 的阈值时为真。
- */
-function isAtBottom(scroller) {
-    return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= dom_contract_1.FOLLOW_THRESHOLD_PX;
 }
 /**
  * 确保会话重新跟上底部，并在必要时把 dsh 的跟随一起点亮。
@@ -4941,10 +4871,9 @@ exports.isReaderScrollIntent = isReaderScrollIntent;
 /**
  * 读者接管滚动的意图。
  *
- * 三处都盯着同一件事——读者是不是自己动了手：跟随守护要因此让位，折叠收尾要因此作废那次交还，
- * 组体跟随要因此停止补齐。判据于是放在一处，免得三份在各自的改动里慢慢分叉。
- *
- * 判据只有两条，三条路都一样：
+ * 判据只有一条：读者是不是自己动了手。它当年由三处共用（跟随守护让位、折叠收尾作废那次交还、
+ * 组体跟随停止补齐），跟随那两块删掉之后只剩折叠收尾一处——但判据仍留在这里，不并回调用点：它认
+ * 的那组滚动键与 dsh 自己的一致，与谁在调无关。
  *
  *   落在输入区不算  指针与按键落在 `[data-composer-seat]` 里，那是读者在打字，不是在接管滚动。
  *   滚动键才算按键  键盘有一半是打字与编辑，只有会滚动视口的那几个键与滚动有关——认的那一组
@@ -4967,411 +4896,6 @@ function isReaderScrollIntent(event) {
     if (event.type !== 'keydown')
         return true;
     return event instanceof KeyboardEvent && dom_contract_1.SCROLL_KEYS.has(event.key);
-}
-    };
-
-    __registry["chat/follow/follow-guard.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 跟随守护：在「思考结束」「出现工具调用」这些时刻，刻意把聊天区交还给 dsh 的跟随。
- *
- * dsh 的跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻：思考行收起、工具行插入、过程组开合。
- * 它们同时做两件事——让滚动位置离开地线，又让内容成片到达，而这两件事落在同一个五百毫秒的采样
- * 窗口里，结算时位置早已离底，跟随就此关掉。读者一下都没碰过键鼠。交还本身怎么做、为什么是
- * 「先钉底、再点按钮」这两步，见 `follow-tail.ts`。
- *
- * 这一处只负责**挑时刻**：
- *
- *   结构时刻   新插入的流块（`[data-chat-flow-key]`）或工具调用行（`[data-chat-call-id]`）；
- *              思考行的 `data-state` 从 `running` 停下来。工具调用不一定自成流块——它住在
- *              assistant 节点内部——所以两族各有自己的锚点。
- *   守护        `data-chat-following-tail` **从有到无**。用转变而不是「当前没有」：切会话、
- *              恢复上次阅读位置时它本来就是关的，那一种是读者自己选的位置。
- *
- * 读者永远优先。他一旦用滚轮、触摸、指针或滚动键离开底部，此后直到他自己回到底部（或者自己点了
- * 「回到底部」）为止，这一处一概不动手——真正要修的本来就是「读者没碰过键鼠」的那一类丢失。
- * 交还的动作还要再让开折叠动画那两百毫秒，否则卷帘门正拉着，位置跟着动，看起来是抖。
- *
- * @module dsh-chat-ux/client/chat/follow/follow-guard
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.installFollowGuard = installFollowGuard;
-const dom_contract_1 = require("../../dom-contract");
-const fold_glide_1 = require("../fold/fold-glide");
-const follow_tail_1 = require("./follow-tail");
-const reader_intent_1 = require("./reader-intent");
-/** 工具调用行自己带一个；它住在 assistant 节点内部，不必是新流块。 */
-const CALL_SELECTOR = '[data-chat-call-id]';
-/** 上面两族合成一条，用来判断一批新增节点里有没有值得动手的东西。 */
-const STRUCTURE_SELECTOR = dom_contract_1.FLOW_BLOCK_SELECTOR + ', ' + CALL_SELECTOR;
-/** 现在有内容正在流：两个标记都由 dsh 发，有它，才有「跟随」可言。 */
-const RUNNING_CONTENT_SELECTOR = dom_contract_1.STREAMING_SELECTOR + ', ' + dom_contract_1.SHIMMER_SELECTOR;
-/**
- * dsh 自己的折叠动效正在走的那一行。
- *
- * `flow-motion.ts` 收起时给行挂 `data-chat-motion="collapse"`、长出来时挂 `"reveal"`，动完撤掉。
- * 折叠期间它会关掉原生滚动锚定、并吞掉滚动归因，这一处插进去只会跟它的收尾抢同一段高度。
- */
-const DSH_FOLDING_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]';
-/** 读者接管滚动的意图。与 dsh 自己的 `READING_INTENTS` 同源。 */
-const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'beforematch'];
-/** 两次交还之间至少隔这么久，免得一串工具调用把位置按在底部反复写。 */
-const MIN_INTERVAL_MS = 200;
-/**
- * 刚刚还有结构变化，就算「正在执行」。
- *
- * 守护那一侧看的是 `data-chat-following-tail` 的消失，而它在会话切换、历史恢复里也会消失——
- * 那些场合页面上没有流式内容，也没有新鲜的结构变化。留一段宽限，让「刚插入的工具行」也算执行中，
- * 免得属性比流式标记早半步消失时错过。
- */
-const ACTIVITY_GRACE_MS = 2000;
-/** 折叠动画在飞时等一等；等几轮还没完就放弃这一轮。 */
-const FOLD_WAIT_MS = 150;
-const FOLD_WAIT_ATTEMPTS = 4;
-/**
- * 给整页安装跟随守护。
- *
- * 装与卸由调用方按开关决定（跟随那一块跟着「token 淡入」走），所以装上就是生效中：卸下时除了断开
- * observer 与监听，还要把已经排出去的那几次等待一并作废，免得它们在卸下之后又写一次位置。
- * @returns disposer：断开 observer、摘掉意图监听、作废在途的等待。
- */
-function installFollowGuard() {
-    /** 已经卸下：在途的那几次等待作废。 */
-    let disposed = false;
-    /** 读者上一次接管滚动之后，有没有自己回到底部。 */
-    let readerTookOver = false;
-    /** 上一次解析出来的滚动容器。会话切换会把整个框换掉，所以每次用之前核一次还在不在文档里。 */
-    let scrollerCache = null;
-    /** 上一次真正交还的时刻，用来节流。 */
-    let lastEnsureAt = 0;
-    /** 最后一次见到结构变化的时刻。 */
-    let lastActivityAt = 0;
-    let scanQueued = false;
-    /** 这一批变化里有结构事件 / 跟随被关掉。 */
-    let structureSeen = false;
-    let guardSeen = false;
-    /**
-     * 读者是不是正在上面看。
-     *
-     * 他只置位一次，之后靠位置自己解除：回到地线以内，就说明他看完了（或者自己点了按钮）。这样不
-     * 需要一个「多久没动静就算放弃」的定时器——那一种会在读者慢慢读的时候把他拽回去。
-     */
-    const readerAway = () => {
-        if (!readerTookOver)
-            return false;
-        const scroller = (0, follow_tail_1.conversationScroller)();
-        // 拿不到滚动容器时保守处理：当作他还在上面，这一轮不动手。
-        if (scroller === null)
-            return true;
-        if (!(0, follow_tail_1.isAtBottom)(scroller))
-            return true;
-        readerTookOver = false;
-        return false;
-    };
-    /** 此刻算不算「正在执行」。 */
-    const running = () => document.querySelector(RUNNING_CONTENT_SELECTOR) !== null
-        || performance.now() - lastActivityAt <= ACTIVITY_GRACE_MS;
-    /**
-     * 把这一轮的跟随交还出去。位置、读者意图、折叠动画三道都放行才算数。
-     * @param attempt - 已经因为折叠动画推迟过几次。
-     */
-    const ensure = (attempt = 0) => {
-        if (disposed)
-            return;
-        if (readerAway())
-            return;
-        const scroller = (0, follow_tail_1.conversationScroller)();
-        if (scroller === null)
-            return;
-        // 离底超过一屏就不动手：那是读者自己在看上面，不是跟随丢了一步。
-        if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > scroller.clientHeight)
-            return;
-        // 折叠动画正把高度拉着走，位置此刻归它管；插进去只会让卷帘门抖一下。插件自己的卷帘门与
-        // dsh 自己那套折叠都算：等满几次就整轮放弃，把它交给 dsh 的折叠收尾。
-        if ((0, fold_glide_1.isFoldGlideBusy)() || document.querySelector(DSH_FOLDING_SELECTOR) !== null) {
-            if (attempt >= FOLD_WAIT_ATTEMPTS)
-                return;
-            window.setTimeout(() => {
-                ensure(attempt + 1);
-            }, FOLD_WAIT_MS);
-            return;
-        }
-        const now = performance.now();
-        if (now - lastEnsureAt < MIN_INTERVAL_MS)
-            return;
-        lastEnsureAt = now;
-        (0, follow_tail_1.ensureFollowTail)({ stillWanted: () => !readerAway() });
-    };
-    /** 一批变化看完了，决定要不要动手。 */
-    const settle = () => {
-        const structure = structureSeen;
-        const guarded = guardSeen;
-        structureSeen = false;
-        guardSeen = false;
-        // 守护那一侧要多一道「正在执行」：属性消失本身也可能是会话切换或历史恢复。
-        if (!structure && !(guarded && running()))
-            return;
-        ensure();
-    };
-    const queue = () => {
-        if (scanQueued)
-            return;
-        scanQueued = true;
-        requestAnimationFrame(() => {
-            scanQueued = false;
-            settle();
-        });
-    };
-    /** 这一批新增的节点里有没有流块或工具调用行。 */
-    const marksStructure = (node) => {
-        if (!(node instanceof Element))
-            return false;
-        return node.matches(STRUCTURE_SELECTOR) || node.querySelector(STRUCTURE_SELECTOR) !== null;
-    };
-    /**
-     * 记下读者接管滚动的意图。
-     *
-     * 只有内容真的长出了滚动条才算：那之前读者怎么滚都滚不动，置位只会让守护白等一轮。什么算读者的
-     * 意图交给 `isReaderScrollIntent`——落在输入区里、以及与滚动无关的按键都不算。
-     */
-    const noteReaderIntent = (event) => {
-        // 接管了就不必再判：这个函数唯一的作用就是置位，而它一旦置位，同一手势里后面那几十个
-        // 事件的结果都改不了它。
-        if (readerTookOver)
-            return;
-        if (!(0, reader_intent_1.isReaderScrollIntent)(event))
-            return;
-        // 容器缓存下来：滚轮在触控板上能到每秒上百次，而这几次读（全文档查询 + 两个几何值）本来
-        // 就落在读者正在滚、布局正被新内容写脏的时刻。
-        if (scrollerCache === null || !scrollerCache.isConnected)
-            scrollerCache = (0, follow_tail_1.conversationScroller)();
-        const scroller = scrollerCache;
-        if (scroller === null || scroller.scrollHeight - scroller.clientHeight <= 0)
-            return;
-        readerTookOver = true;
-    };
-    const observer = new MutationObserver((records) => {
-        for (const record of records) {
-            if (record.type === 'attributes') {
-                // 跟随从有到无：dsh 刚刚把它关掉。
-                if (record.attributeName === dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE) {
-                    if (record.target instanceof Element && !record.target.hasAttribute(dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE))
-                        guardSeen = true;
-                    continue;
-                }
-                // 思考行从「正在思考」停下来：这一段过程的分界点。
-                if (record.oldValue === dom_contract_1.RUNNING_STATE
-                    && record.target instanceof Element
-                    && record.target.matches(dom_contract_1.THINK_ROW_SELECTOR)
-                    && record.target.getAttribute('data-state') !== dom_contract_1.RUNNING_STATE) {
-                    lastActivityAt = performance.now();
-                    structureSeen = true;
-                }
-                continue;
-            }
-            for (const node of record.addedNodes) {
-                if (!marksStructure(node))
-                    continue;
-                lastActivityAt = performance.now();
-                structureSeen = true;
-            }
-        }
-        if (structureSeen || guardSeen)
-            queue();
-    });
-    for (const type of INTENT_TYPES) {
-        document.addEventListener(type, noteReaderIntent, { capture: true, passive: true });
-    }
-    observer.observe(document.body ?? document.documentElement, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ['data-state', dom_contract_1.FOLLOWING_TAIL_ATTRIBUTE],
-        attributeOldValue: true,
-    });
-    return () => {
-        disposed = true;
-        observer.disconnect();
-        for (const type of INTENT_TYPES)
-            document.removeEventListener(type, noteReaderIntent, true);
-    };
-}
-    };
-
-    __registry["chat/follow/process-follow.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 组体跟随：封顶的过程组里，思考与工具输出不会掉队。
- *
- * 「标准」与「简洁」两档把一段过程收进一个封顶的组体（`max-height: min(400px, 50vh)`），组体
- * 自己带滚动条。dsh 给这一层的跟随是 `use-process-scroll` 那套：内容一变就
- * `toBottom(body, metrics, 'smooth')`——一次原生平滑滚动。两个地方让它在流式输出时追不上：
- *
- *   速度    原生平滑滚动的行程按距离调，越接近目标越慢；而内容的增长是匀速的，一段思考连着
- *           一串工具调用时，长出去的量并不比它慢。
- *   单发    `toBottom` 只在没有动画在飞时才发起新的滚动（`if (this.target === null)`），动画
- *           跑完之前内容再长多少都不追，只能等这一次落地再补下一次。
- *
- * 两者叠起来，位置就长期停在离底二三十到五十像素的地方——正好是最新那两行。
- *
- * 这一处不改 dsh 的状态，只在它旁边补一件事：落后超过 CATCH_UP_GAP_PX 才接管，把位置直接补到
- * 组体的底（`scrollTop = scrollHeight`，即时）。阈值以内一次都不动手——那一截距离留给 dsh 自己的
- * 平滑滚动，追得上的时候它是好看的；只有它追不回来时才由这一处兜住，免得最新那两行一直悬着。
- * 读者一旦在这个组体里滚过就让位，直到他自己滚回组体的底为止。
- *
- * 补齐与 dsh 那套不冲突：写 `scrollTop` 会走它的 `onScroll`，而它把「位置到底」认成读者到底，
- * 于是重新点亮自己的跟随，并放下那个卡住的动画目标。
- *
- * @module dsh-chat-ux/client/chat/follow/process-follow
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.installProcessFollow = installProcessFollow;
-const dom_contract_1 = require("../../dom-contract");
-const reader_intent_1 = require("./reader-intent");
-/** 读者滚回组体底部多近算「看完了」。 */
-const RELEASE_THRESHOLD_PX = 4;
-/**
- * 落后超过它才接管。
- *
- * 阈值以内归 dsh 的平滑滚动——它追得上的正是这一截，追得上的时候它是好看的。实测流式输出时它
- * 的稳态落后在二三十到五十像素之间，40 卡在中间：让大部分平滑滚动获得自由，又能在真的掉队之前
- * 兜住。
- */
-const CATCH_UP_GAP_PX = 40;
-/** 同步被观察组体的间隔；会话切换与过程组增减都靠它跟上。 */
-const SYNC_INTERVAL_MS = 500;
-/**
- * 认的事件：滚轮、触摸拖动（含 touchmove）、指针与滚动键。比 dsh 自己的 `READING_INTENTS`
- * 多一个 touchmove（组体里的拖动算接管）、少一个 beforematch（那是页内查找，与组体无关）。
- */
-const INTENT_TYPES = ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown'];
-/**
- * 给整页安装组体跟随。
- *
- * 装与卸由调用方按开关决定（跟随那一块跟着「token 淡入」走），所以装上就是生效中。
- * @returns disposer：断开 observer、摘掉监听与定时器。
- */
-function installProcessFollow() {
-    /** 读者在这个组体里真的滚过之后，直到他自己回到底为止，这一处不动手。 */
-    const takenOver = new WeakSet();
-    /** 已经交给 observer 的组体，以及它此刻的内容层。 */
-    const watched = new Map();
-    /** 这个组体现在归不归我们管。 */
-    const followable = (body) => {
-        // 收起时它整块不可见。
-        if (body.hasAttribute('hidden'))
-            return false;
-        // 「详细」与「完全展开」不收纳：组体不封顶、没有内层滚动条，也就没有跟随可言。
-        if (body.closest(`[${dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE}]`) !== null)
-            return false;
-        // 没有可滚的余量时什么都做不了。
-        return body.scrollHeight - body.clientHeight > 0;
-    };
-    /** 离组体自己的底还差多远。 */
-    const gapOf = (body) => body.scrollHeight - body.clientHeight - body.scrollTop;
-    /** 落后得太多、dsh 的平滑滚动追不回来时，直接补到组体的底。 */
-    const catchUp = (body) => {
-        if (takenOver.has(body))
-            return;
-        if (!followable(body))
-            return;
-        if (gapOf(body) <= CATCH_UP_GAP_PX)
-            return;
-        body.scrollTop = body.scrollHeight;
-    };
-    /**
-     * 记下读者接管这个组体滚动的意图。
-     *
-     * 落在组体内容上的指针不算：那是点开某一行，不是碰滚动条。滚动条是组体自己那一段，按在它上面
-     * 时事件的目标正是组体。
-     */
-    const noteIntent = (event) => {
-        const target = event.target;
-        if (!(target instanceof Element))
-            return;
-        const body = target.closest(dom_contract_1.PROCESS_BODY_SELECTOR);
-        if (body === null)
-            return;
-        if (event.type === 'pointerdown' && target !== body)
-            return;
-        if (!(0, reader_intent_1.isReaderScrollIntent)(event))
-            return;
-        // 被 dsh 自己处理掉的滚动键不算——它已经知道这一下要滚到哪里了。
-        if (event.type === 'keydown' && event.defaultPrevented)
-            return;
-        takenOver.add(body);
-    };
-    /** 读者自己滚回组体的底，让位就结束。 */
-    const noteScroll = (event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLElement))
-            return;
-        if (!target.matches(dom_contract_1.PROCESS_BODY_SELECTOR))
-            return;
-        if (gapOf(target) > RELEASE_THRESHOLD_PX)
-            return;
-        takenOver.delete(target);
-    };
-    // 内容一变就判一次。观察组体自己也必要：窗口换宽窄会让封顶高度换一档。
-    const observer = new ResizeObserver(entries => {
-        for (const entry of entries) {
-            const target = entry.target;
-            if (!(target instanceof HTMLElement))
-                continue;
-            const body = target.closest(dom_contract_1.PROCESS_BODY_SELECTOR);
-            if (body === null)
-                continue;
-            catchUp(body);
-        }
-    });
-    /**
-     * 会话切换、过程组增减、以及内容层被重挂，都要跟着走。
-     *
-     * 内容层每一轮都重新对一次，而不是认一次就完：组体自己是封顶的，内容再长它的尺寸也不动，真正会
-     * 变尺寸的是里面那一层；而 React 把那一层重挂之后，旧元素上的观察就再也收不到通知了。
-     */
-    const sync = () => {
-        const present = new Set(document.querySelectorAll(dom_contract_1.PROCESS_BODY_SELECTOR));
-        for (const body of present) {
-            const first = !watched.has(body);
-            if (first)
-                observer.observe(body);
-            const content = body.querySelector(dom_contract_1.PROCESS_CONTENT_SELECTOR);
-            const watchedContent = watched.get(body);
-            if (!first && watchedContent === content)
-                continue;
-            if (watchedContent !== undefined && watchedContent !== null)
-                observer.unobserve(watchedContent);
-            watched.set(body, content);
-            if (content !== null)
-                observer.observe(content);
-        }
-        for (const [body, content] of [...watched]) {
-            if (!present.has(body)) {
-                watched.delete(body);
-                takenOver.delete(body);
-                observer.unobserve(body);
-                if (content !== null)
-                    observer.unobserve(content);
-                continue;
-            }
-            // 收起过的组体重新展开时，上一次那回让位不该跟过来。
-            if (body.hasAttribute('hidden'))
-                takenOver.delete(body);
-        }
-    };
-    const timer = window.setInterval(sync, SYNC_INTERVAL_MS);
-    window.addEventListener('scroll', noteScroll, { capture: true, passive: true });
-    for (const type of INTENT_TYPES)
-        window.addEventListener(type, noteIntent, { capture: true, passive: true });
-    sync();
-    return () => {
-        window.clearInterval(timer);
-        observer.disconnect();
-        window.removeEventListener('scroll', noteScroll, true);
-        for (const type of INTENT_TYPES)
-            window.removeEventListener(type, noteIntent, true);
-    };
 }
     };
 
@@ -5657,8 +5181,6 @@ function installReasoningFold() {
             if (!(control instanceof HTMLElement))
                 continue;
             // 下面那个捕获阶段的监听同样会看到这次点击，所以这一段要声明出去：那不是读者要求的。
-            // token-motion 的折叠守卫在同一趟事件里也会看到它——否则自动收起会把刚开头的正文
-            // 静默掉 400 ms。
             (0, programmatic_toggle_1.beginProgrammaticToggle)();
             try {
                 control.click();
@@ -7282,7 +6804,6 @@ const config_card_styles_1 = require("./config-card-styles");
 const settings_scope_1 = require("./settings-scope");
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const AUTO_FOLD_FIELD = 'autoFold';
-const TOKEN_FADE_FIELD = 'tokenFade';
 const CARET_FIELD = 'caretMotion';
 const SEND_FLIGHT_FIELD = 'sendFlight';
 const HIT_REEL_FIELD = 'hitReel';
@@ -7294,10 +6815,6 @@ const ZH_COPY = {
     autoFoldLabel: '自动开合',
     autoFoldHint: '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
         + '你自己动手折叠过的，它不再打扰。',
-    tokenLabel: 'token 淡入',
-    tokenHint: '打开后，回复逐字出现时新出现的文字会轻轻浮现；回复还在继续时聊天区也自己待在最新内容上，'
-        + '不用手动往下拖，而你往上翻看历史的那段时间它不会来抢你的位置。'
-        + '关着就如同直接显示，这两件事一起停下；与其它插件一起用时若明显卡顿，就让它保持关着。',
     caretLabel: '光标动效',
     caretHint: '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
         + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
@@ -7330,10 +6847,6 @@ const EN_COPY = {
     autoFoldLabel: 'Automatic folding',
     autoFoldHint: 'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
-    tokenLabel: 'Token fade-in',
-    tokenHint: 'When on, new text fades in as a reply streams, and the transcript keeps up with the newest content by '
-        + 'itself — without pulling you back while you scroll through history. When off, text appears immediately '
-        + 'and both stop. If the page stutters noticeably alongside other plugins, leave it off.',
     caretLabel: 'Caret motion',
     caretHint: 'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
         + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
@@ -7387,7 +6900,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [failed, setFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
     const autoFoldOn = storedAutoFold(snapshot.value);
-    const tokenFadeOn = storedTokenFade(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
     const pieOn = storedContextPie(snapshot.value);
@@ -7430,7 +6942,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (field, label, hint, control, badge) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }), badge] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: tokenFadeOn, disabled: controlsDisabled, label: copy.tokenLabel, onChange: (next) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) })), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "info", children: "beta" })), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
@@ -7445,10 +6957,6 @@ function overrideBadges(copy, disabled, onReset) {
 /** 从 host 的值里读自动开合的开关。 */
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
-}
-/** 从 host 的值里读 token 淡入的开关。 */
-function storedTokenFade(value) {
-    return value?.tokenFade ?? settings_scope_1.DEFAULT_TOKEN_FADE;
 }
 /** 从 host 的值里读聊天气泡动效的开关。 */
 function storedSendOn(value) {
@@ -7694,10 +7202,6 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  *
  * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
  * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
- *
- * token 淡入的档位规则与它那条页面级兜底色**都不在这里**：它们跟着 `token-motion.ts` 走一张单独的
- * 样式表（见它里面的 `buildRevealCss`）——那批规则的条数是拿得出来单独看的一份代价，而那一项默认
- * 关着，关着时页面上不该留着只有它用得上的一条声明。
  */
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const ramp_1 = require("./chat/ramp");
@@ -7721,7 +7225,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
    overflow: visible，两轴一起放开，本来就没有这个问题，所以这一条只认收纳档。
 
    横向超出只裁剪、不给滚：组体里能横向滚的东西（代码块、表格）各自带着自己的 overflow-x，不该由
-   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——process-follow 量的是 scrollHeight
+   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——dsh 自己量的是 scrollHeight
    减 clientHeight，少一条滚动条就少一份偏差。 */
 [data-step-process]:not([data-group-expanded-mode]) [data-step-process-body] {
   overflow-x: hidden;
@@ -7806,9 +7310,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。token 淡入的那张表
- * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
- * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
 exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
@@ -7987,853 +7489,6 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
   visibility: hidden;
 }
 `;
-    };
-
-    __registry["chat/token-motion.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 流式回答的一次性 token 淡入。
- *
- * 流式消息里新出现的每个字符都先淡淡地到达，然后淡入到文字自己的颜色上，之后就停住。回答的
- * 两半都自动覆盖：思考和正文走的是同一个 Markdown 层，而在消息生长期间它俩都待在这一层标了
- * `data-streaming` 的那个容器里。
- *
- * 一个字符就是一个区间，而一个区间从头到尾只带一个 alpha：alpha 不在字符内部扫过一遍。同一批
- * 到达的字符按它们在流里的先后各错开一点相位，于是「整块一起变亮」摊成
- * 「亮度沿着新文字扫过去」——一次分片带几个字符是 API 的形状，不该是读者看到的东西。相位只由
- * 到达顺序决定，阅读顺序仍然来自 API 自己，而不是这个模块发明的什么顺序。
- *
- * 为什么用 CSS Custom Highlight API，而不是把 token 包进 <span>：聊天记录是 React 掌管的，
- * 而 Markdown 层（`@deepseek-ai/dsh-client-ui-primitives`）不暴露任何节点渲染钩子——它的
- * `MarkdownDelegate` 只管链接导航。改写文本节点会和 reconciliation 打架，而 highlight 区间
- * 能在不碰 DOM 的前提下标出字符段：React 继续拥有结构，这个模块只拥有文字的透明度。
- *
- * `::highlight()` 不接受 transition，所以淡入是采样出来的、而不是动画出来的：活着的区间按
- * 存活时长分档，大致一帧一档，一档一个 highlight 名字来承载 alpha（规则由下面的 `buildRevealCss`
- * 从 `REVEAL_STEPS` 推出，alpha 线性移动，于是文字以恒定速率变实）。
- *
- * 淡入用的颜色是区间自己的颜色——从它文字渲染所在的元素上读出来，发布到 `RUN_COLOR_VAR` 下——
- * 既不是 `currentColor`，也不是全页面共用一个值。`::highlight()` 里的 `currentColor` 在
- * Chromium 中不解析到承载元素上，而是塌缩成初始色：实测（`rgb(21, 21, 23)` 画布 +
- * `color-scheme: dark`）只以它作为颜色的规则画出了 `rgb(0, 0, 0)`——在那块画布上不可见，
- * 表现为每个字符在 highlight 撤销前闪一下黑。所以 alpha 只能挂在显式的 `color` 上。
- * 这个颜色也不能是同一个：一段回答里不只有正文，把链接、语法 token 或列表标记在淡入期间涂成
- * 正文色，读起来是高亮闪一下，而不是淡入。
- *
- * 这个模块和页面上别的东西共用一条主线程、一张样式表集合、一套 DOM，所以它的每一份开销都按
- * 「会不会叠到别人身上」来收：
- *
- *   档位规则  **收在 `[data-streaming]` 底下，常驻不插拔**。不带作用域的 `::highlight()` 规则
- *             对每个元素都要试一遍，二十四条在五千六百节点上实测给每一次全量样式重算添二十五毫秒——
- *             别的插件每触发一次全量重算，都要替这些规则付一次钱；而为了躲这笔钱去翻 `disabled`，
- *             翻一次本身又是一次整页失效。收进作用域之后，浏览器用祖先过滤直接跳过流式容器以外的
- *             元素，同一张页面上实测多出来的是零；dsh 翻 `data-streaming` 那一下也只失效那一条消息。
- *             这张表（连同里面那条页面级兜底色）只在淡入开着的时候存在：开关关着时它、扫描观察者
- *             与绘制帧一个都不装，聊天区这一块是零。
- *   区间      **用 StaticRange，不用 Range**。活的 Range 在被回收之前，页面上每一次 DOM 变动都要
- *             逐个修正它们的边界——绘制帧每帧新建一批，一秒下来上千个等着回收，实测让两千次与它
- *             无关的 DOM 变动从一毫秒半涨到六十多毫秒，React 与别的插件都在替它付。StaticRange
- *             不跟踪变动，而这里每帧都从新快照现建区间，本来就用不着它跟踪。
- *   扫描      **只看流式容器里的变动**。页面上别处的 DOM 变动（别的插件、侧栏、计时器）不触发扫描；
- *             容器里的变动也只重扫被碰到的那一个。
- *   内联样式  **继承下来的颜色已经对了就不写**。每写一次就是一次样式失效，还会惊动别人盯着 style
- *             属性的观察者。
- *   主线程忙  **让路**。绘制帧一连几帧都隔得很久，说明主线程已经被别的事占满，这时候再给新字符排
- *             淡入只会把卡顿叠得更重：手上的区间直接落定，接下来一段时间里新字符以本色出现。
- *
- * @module dsh-chat-ux/client/chat/token-motion
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.RUN_COLOR_VAR = exports.HIGHLIGHT_PREFIX = exports.REVEAL_MS = exports.TOKEN_MIN_OPACITY = exports.REVEAL_STEPS = void 0;
-exports.installTokenMotion = installTokenMotion;
-const dom_contract_1 = require("../dom-contract");
-const programmatic_toggle_1 = require("./fold/programmatic-toggle");
-/**
- * 一个字符从极淡到停稳之间有多少档。
- *
- * 下界由最可能跑这个渐变的最快显示器定：`REVEAL_MS` 120 ms 在 144 Hz 上是 17 帧，档数少于帧数
- * 就必然有绘制帧共用一档，眼睛看到的是台阶。24 档在下界之上留了一点余量。
- *
- * 上界由规则条数的代价定，而这是实测出来的：每一档就是下面 `buildRevealCss` 里的一条
- * `::highlight()` 规则。不带作用域时规则条数直接乘在浏览器每一次全量样式重算上——在一个 5800
- * 节点的会话里，96 条把「提交」那一刻的样式重算从约 18 ms 抬到约 77 ms。现在的规则收在
- * `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，这笔账基本清零（见模块注释）；
- * 档数仍然留在 24，是因为它已经够用，而不是因为更多就付不起。
- */
-exports.REVEAL_STEPS = 24;
-/**
- * 一个字符开始淡入之前的不透明度。
- *
- * 淡入是文字自身透明度的变化，不是换成别的颜色：字符淡淡地到达、然后坐实，没有任何东西的颜色
- * 被替换成某个高亮色。`::highlight()` 不接受 `opacity`——它能用的属性集很小，并不包含它——
- * 所以 alpha 挂在 `color` 上，由下面的档位规则变成每档一条。
- *
- * 五分之一淡到两种主题下都读不出字来——`rgb(249, 250, 251)` 以 20% 压在 `rgb(21, 21, 23)` 上
- * 约合 `rgb(67, 68, 70)`——同时仍然看得见，读起来像文字正在到达，而不是什么都没渲染出来。
- */
-exports.TOKEN_MIN_OPACITY = 0.2;
-/**
- * 一个字符从最淡到完全不透明所用的时长。
- *
- * 它不是一个设置项：更长的渐变会把按 `REVEAL_STEPS` 生成的档位规则摊成看得见的台阶，更短的
- * 在常规刷新率下一帧就跨过去了、等于没有渐变——120 ms 是两头都合适的那个点。要动它，得连
- * `REVEAL_STEPS` 与档位规则一起想。
- */
-exports.REVEAL_MS = 120;
-/** 这个模块注册的每一个 highlight 名字的前缀。 */
-exports.HIGHLIGHT_PREFIX = 'dsh-chat-ux-tok-';
-/**
- * 一个元素自己的颜色所发布到的自定义属性。
- *
- * 下面那份档位规则在 `::highlight()` 里读它——在那个位置自定义属性确实会解析到区间所在的元素
- * 上：实测一个带着 `rgb(77, 155, 255)` 的元素，在第 0 档读出
- * `color(srgb 0.301961 0.607843 1 / 0.7)`。正是这一点让「每档一条规则」能覆盖一段回答里
- * 所有的颜色。
- */
-exports.RUN_COLOR_VAR = '--dsh-chat-ux-run-color';
-/** 同一批字符之间错开多少相位：步长与渐变时长成比例，所以把设置调快调慢都不会让错峰反客为主。 */
-const STAGGER_DIVISOR = 50;
-/** 错峰步长的上下限：再小看不出扫动，再大就让最后到的字符显得迟滞。 */
-const MIN_STAGGER_MS = 1;
-const MAX_STAGGER_MS = 8;
-/**
- * 给整页装上淡入效果，并且跟着设置里的开关装卸。
- *
- * 开关关着时它**一次都不装**——档位规则表、扫描观察者、绘制帧一个都不存在，页面上看不出这个插件
- * 在这一块做过任何事；打开就是原样装回来。设置一改由调用方调一次 `resync` 重落。
- *
- * 引擎没有 Highlight API、或者读者开了「减少动态效果」时都能安全调用：那两种情况会装出一个
- * 什么都不做的实例。
- * @param readEnabled - 现读一次开关；`true` 表示要淡入。
- * @returns 一个 `resync` / `dispose` 的把柄。
- */
-function installTokenMotion(readEnabled) {
-    /** 装出来的那个引擎的 disposer；`null` 表示现在没装。 */
-    let teardown = null;
-    const resync = () => {
-        if (readEnabled()) {
-            if (teardown === null)
-                teardown = runTokenMotion();
-            return;
-        }
-        if (teardown === null)
-            return;
-        teardown();
-        teardown = null;
-    };
-    resync();
-    return {
-        resync,
-        dispose: () => {
-            if (teardown === null)
-                return;
-            teardown();
-            teardown = null;
-        },
-    };
-}
-/**
- * 真正把那套引擎装上：档位规则表、扫描与绘制。
- * @returns disposer：断开 observer、清掉全部 highlight、撤掉规则表。
- */
-function runTokenMotion() {
-    const registry = globalThis.CSS?.highlights;
-    if (registry === undefined)
-        return () => {
-        };
-    const HighlightConstructor = globalThis.Highlight;
-    if (HighlightConstructor === undefined)
-        return () => {
-        };
-    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
-        return () => {
-        };
-    /** 还没有停稳的字符区间。 */
-    const liveRuns = [];
-    /** 安装那一刻就已经在页面上的流式容器：它们是历史，不重播淡入。 */
-    const historyContainers = new WeakSet();
-    for (const container of document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR))
-        historyContainers.add(container);
-    /** 上一个绘制帧的时间戳；0 表示还没有画过。 */
-    let lastFrameAt = 0;
-    /** 每个流式容器当前的文本快照：扫描时写入，绘制帧直接复用。 */
-    const textSnapshots = new WeakMap();
-    /** 读者刚刚折叠或展开过的容器，记到守卫过期为止。 */
-    const foldQuietUntil = new WeakMap();
-    /** 上一次全量扫描时在页面上的流式容器；不在了的那些，区间与快照一起丢掉。 */
-    let liveContainers = [];
-    /** 已经写到元素上的颜色，重复的那一遍就跳过样式读取。 */
-    const writtenColors = new WeakMap();
-    /** 排队中的绘制帧句柄；0 表示没有排队。 */
-    let scheduledFrame = 0;
-    /** 每一档一个 highlight：注册一次，之后每帧只换里面的区间。null 表示这一档此刻没有注册。 */
-    const highlights = new Array(exports.REVEAL_STEPS).fill(null);
-    /** 绘制帧一连隔得很久的帧数；攒够 `SLOW_FRAME_RUN` 就让路。 */
-    let slowFrames = 0;
-    /** 这个时刻之前不给新字符排淡入：主线程正忙，见 `yieldToBusyThread`。 */
-    let yieldUntil = 0;
-    // 档位规则与它们那条页面级兜底色单独一张样式表，跟着引擎挂上、跟着引擎撤下，中间不翻
-    // `disabled`：规则收在 `[data-streaming]` 底下，流式容器以外的元素被祖先过滤直接跳过，常驻
-    // 没有代价；翻一下却是一次整页的样式失效（见模块注释）。
-    const revealStyleElement = document.createElement('style');
-    revealStyleElement.id = REVEAL_STYLE_ID;
-    revealStyleElement.textContent = buildRevealCss();
-    document.head.append(revealStyleElement);
-    /** 注销全部档位的 highlight。 */
-    const clearHighlights = () => {
-        for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
-            if (highlights[step] === null)
-                continue;
-            registry.delete(exports.HIGHLIGHT_PREFIX + step);
-            highlights[step] = null;
-        }
-    };
-    /**
-     * 把这一档画的区间换成这一批。
-     *
-     * 注册表只在一档第一次用到时写一次，之后只换 highlight 里的区间：每帧对二十四个名字各注销、
-     * 注册一遍，浏览器要为每一次都重排一遍 highlight 的标记。这一档这一帧空着就清掉，但不注销——
-     * 下一帧多半还要用它。
-     * @param step - 档位。
-     * @param ranges - 这一帧落在这一档的区间。
-     */
-    const showStep = (step, ranges) => {
-        let highlight = highlights[step] ?? null;
-        if (ranges.length === 0) {
-            if (highlight !== null && highlight.size > 0)
-                highlight.clear();
-            return;
-        }
-        if (highlight === null) {
-            highlight = new HighlightConstructor();
-            highlights[step] = highlight;
-            registry.set(exports.HIGHLIGHT_PREFIX + step, highlight);
-        }
-        else {
-            highlight.clear();
-        }
-        for (const range of ranges)
-            highlight.add(range);
-    };
-    /**
-     * 把一个元素自己的颜色发布到 `RUN_COLOR_VAR` 上。
-     *
-     * 读的是算出来的颜色，而不是记下来的颜色：要紧的是 Markdown 层实际画出来的那个颜色——
-     * 链接的令牌、语法 token、列表标记——而不是本模块上一次写进去的东西。元素上仍然带着记给它的
-     * 那个颜色时跳过这次读取，而这正是第一帧之后每一帧的常见情况。
-     *
-     * 从祖先那里继承下来的值已经就是它的颜色时（段落里的加粗、列表项里的正文），不写：一次内联
-     * 样式就是一次样式失效，还会惊动页面上别人盯着 style 属性的观察者。
-     * @param element - 区间文字渲染所在的元素。
-     */
-    const publishRunColor = (element) => {
-        if (element === null)
-            return;
-        const style = window.getComputedStyle(element);
-        const color = style.color;
-        if (writtenColors.get(element) === color)
-            return;
-        writtenColors.set(element, color);
-        if (style.getPropertyValue(exports.RUN_COLOR_VAR).trim() === color)
-            return;
-        const styled = element;
-        styled.style.setProperty(exports.RUN_COLOR_VAR, color);
-    };
-    /**
-     * 记下折叠即将重排的那些容器。
-     *
-     * 点一下思考行并不是模型在吐字，但它切换的那一行就住在一个仍然带着 `data-streaming` 的容器里；
-     * 当收起时的摘要恰好是展开后内容的前缀时，它产生的 mutation 看起来和一次追加一模一样。
-     * 点击是区分二者的唯一信号，所以在 React 的处理函数跑之前就捕获它，把它能触达的容器从淡入里
-     * 摘出去。
-     * @param event - 页面上任意一处点击或按键。
-     */
-    const rememberReaderFold = (event) => {
-        // 本插件自己的自动收起不是读者的意图，它落在思考刚停、正文刚开头的位置上。
-        if ((0, programmatic_toggle_1.isProgrammaticToggle)())
-            return;
-        const target = event.target;
-        if (!(target instanceof Element))
-            return;
-        const until = performance.now() + FOLD_QUIET_MS;
-        const ownContainer = target.closest(dom_contract_1.STREAMING_SELECTOR);
-        if (ownContainer !== null)
-            foldQuietUntil.set(ownContainer, until);
-        // 触发折叠的控件可能住在它要重排的那个容器之外，所以这里连子树一起扫，而不是只看目标自己的
-        // 祖先——但只在点击时扫：键盘事件的目标常常是整个 body，那时「子树」就是整篇文档，一次
-        // PageUp 会把页面上每一个流式容器一起静默掉，而按方向键的读者并没有碰过它们。
-        if (event.type !== 'click')
-            return;
-        for (const container of target.querySelectorAll(dom_contract_1.STREAMING_SELECTOR))
-            foldQuietUntil.set(container, until);
-    };
-    /**
-     * 主线程已经被占满：手上的区间直接落定，接下来一段时间里新字符以本色出现。
-     *
-     * 这时候淡入本来也画不顺——每一档都要在帧里停好几十毫秒——而它每帧的那份活又叠在别人的卡顿
-     * 上。让出来比硬撑强：文字照常到达，只是少了那一下渐变。
-     */
-    const yieldToBusyThread = () => {
-        yieldUntil = performance.now() + YIELD_MS;
-        slowFrames = 0;
-        lastFrameAt = 0;
-        liveRuns.length = 0;
-        clearHighlights();
-    };
-    /** 排下一个绘制帧。 */
-    const scheduleFrame = () => {
-        scheduledFrame = requestAnimationFrame((now) => {
-            paint(now, true);
-        });
-    };
-    /**
-     * 按当前年龄重画每一个还活着的区间，然后排下一帧。
-     * @param now - 这一帧的时间戳。
-     * @param fromFrame - 由绘制帧调起，而不是扫描时同步补画的那一次：只有这种帧间隔才说明主线程忙不忙。
-     */
-    const paint = (now, fromFrame) => {
-        scheduledFrame = 0;
-        if (liveRuns.length === 0) {
-            clearHighlights();
-            return;
-        }
-        // 上一帧到现在隔得太久，说明这段空白里根本没有绘制帧：页面被藏起来时 rAF 不跑，主线程
-        // 被占住时也会跳帧，而 `performance.now()` 一直在走。把没绘制的时长从每个区间的年龄里
-        // 扣掉，它们才能在切回来（或卡顿结束）之后接着自己的淡入往下走，而不是一帧之内全部过期。
-        const previousFrameAt = lastFrameAt;
-        lastFrameAt = now;
-        const gap = previousFrameAt === 0 ? 0 : now - previousFrameAt;
-        // 一连好几帧都这么慢，那不是一次偶发的卡顿，是主线程被占满了：让路。页面藏起来那种长达
-        // 好几秒的空白不算——那是没人在看，不是忙。
-        if (fromFrame && gap > SLOW_FRAME_MS && gap < HIDDEN_GAP_MS)
-            slowFrames += 1;
-        else if (fromFrame && gap > 0)
-            slowFrames = 0;
-        if (slowFrames >= SLOW_FRAME_RUN) {
-            yieldToBusyThread();
-            return;
-        }
-        if (gap > FRAME_GAP_LIMIT_MS) {
-            const unspent = gap - NOMINAL_FRAME_MS;
-            for (const run of liveRuns) {
-                // 空白期里出生的区间按「此刻出生」算，否则它还要再等这段空白过去才开始淡入。
-                run.bornAt = run.bornAt <= previousFrameAt ? run.bornAt + unspent : now;
-            }
-        }
-        /** 每一档本帧已经画出来的那一段；后一个区间与它接得上就并进去，不再单独建一个。 */
-        const drawn = new Array(exports.REVEAL_STEPS).fill(null);
-        const buckets = [];
-        for (let step = 0; step < exports.REVEAL_STEPS; step += 1)
-            buckets.push([]);
-        /** 活下来的区间就地往前压：splice 每去掉一个都要搬动后面的元素，一批上千个就是平方级。 */
-        let kept = 0;
-        for (let index = 0; index < liveRuns.length; index += 1) {
-            const run = liveRuns[index];
-            if (run === undefined)
-                continue;
-            const age = now - run.bornAt - run.delay;
-            // 到点就出列：它已经和别的文字一样实了，不再需要 highlight。
-            if (age >= exports.REVEAL_MS)
-                continue;
-            liveRuns[kept] = run;
-            kept += 1;
-            // 排队这些区间的扫描顺手建好了快照，而之后的每一次 mutation 都会先经过一次新的扫描才轮到
-            // 这一帧绘制，所以缓存里就是屏幕上那份文本。在这里重新走一遍容器，等于给每一帧都塞进一个
-            // O(整条消息) 的 TreeWalker。
-            const snapshot = textSnapshots.get(run.container);
-            if (snapshot === undefined)
-                continue;
-            // 按快照里的偏移二分找出第一个能装下这段区间的文本节点：逐字符区间意味着每帧很多次查找，
-            // 从消息开头逐个扫太慢。
-            const end = run.start + run.length;
-            let low = 0;
-            let high = snapshot.entries.length - 1;
-            let firstIndex = -1;
-            while (low <= high) {
-                const middle = (low + high) >> 1;
-                const entry = snapshot.entries[middle];
-                if (entry === undefined)
-                    break;
-                if (entry.start + entry.node.data.length <= run.start) {
-                    low = middle + 1;
-                    continue;
-                }
-                firstIndex = middle;
-                high = middle - 1;
-            }
-            // 这段区间已经不在 DOM 里了。
-            const firstEntry = snapshot.entries[firstIndex];
-            if (firstEntry === undefined)
-                continue;
-            if (firstEntry.start >= end)
-                continue;
-            const start = Math.max(0, run.start - firstEntry.start);
-            let lastNode = firstEntry.node;
-            let lastEnd = Math.min(firstEntry.node.data.length, end - firstEntry.start);
-            for (let next = firstIndex + 1; next < snapshot.entries.length; next += 1) {
-                const entry = snapshot.entries[next];
-                if (entry === undefined)
-                    break;
-                if (entry.start >= end)
-                    break;
-                lastNode = entry.node;
-                lastEnd = Math.min(entry.node.data.length, end - entry.start);
-            }
-            // 元素是从区间所在的文本节点反查的，不是扫描时看到的那个。Markdown 层在消息流式期间会重建节点
-            // （重新解析 `**bold`、折叠某一行），区间所在的元素被换掉之后，旧元素上的颜色再也没人渲染，
-            // 真正在渲染的新元素会回退到页面默认色——于是闪一下正文色，而不是淡入。
-            //
-            // 但只在**元素真的换了**才去读它的颜色。`publishRunColor` 的第一步是 `getComputedStyle`，
-            // 而它是一次强制样式结算——一帧里几百个区间各读一次，等于把整页的样式重算拖进 rAF 里。元素
-            // 没换的那些帧（绝大多数）只需要一次比较。
-            const element = firstEntry.node.parentElement;
-            if (element !== run.colorElement) {
-                publishRunColor(element);
-                run.colorElement = element;
-            }
-            // 档位：0 是最淡，最后一档就是本色；按时间线性映射，所以颜色以恒定速率变实。
-            // 上面的卫语句已经排除了 age >= REVEAL_MS，比值必然小于 1，档位必然落在范围内。
-            const step = age <= 0 ? 0 : Math.floor((age / exports.REVEAL_MS) * exports.REVEAL_STEPS);
-            const bucket = buckets[step];
-            if (bucket === undefined)
-                continue;
-            // 同一个文本节点里、偏移接得上的相邻字符，这一帧本来就落在同一档——画出来是同一段文字，
-            // 合成一个区间就够：区间数于是从「字符数」降到「段数」。
-            const previous = drawn[step] ?? null;
-            if (previous !== null && lastNode === firstEntry.node && previous.node === firstEntry.node && previous.end === start) {
-                previous.end = lastEnd;
-                continue;
-            }
-            const segment = { node: firstEntry.node, start, end: lastEnd };
-            drawn[step] = segment;
-            bucket.push(segment);
-        }
-        liveRuns.length = kept;
-        for (let step = 0; step < exports.REVEAL_STEPS; step += 1) {
-            const list = buckets[step] ?? [];
-            // StaticRange 不跟踪 DOM 变动：每帧都从新快照现建，用不着它跟踪；活的 Range 在被回收之前
-            // 会让页面上每一次 DOM 变动都替它修正边界（见模块注释）。
-            const ranges = list.map(segment => new StaticRange({
-                startContainer: segment.node,
-                startOffset: segment.start,
-                endContainer: segment.node,
-                endOffset: segment.end,
-            }));
-            showStep(step, ranges);
-        }
-        if (liveRuns.length > 0)
-            scheduleFrame();
-        else
-            clearHighlights();
-    };
-    /**
-     * 把流式容器与上一次的快照对比，然后把新出现的那一段排成区间。
-     * @param only - 只看这几个容器（这一批变动碰到的）；null 表示把页面上的流式容器全看一遍，
-     *   并清掉已经不在的那些。
-     */
-    const scan = (only) => {
-        const now = performance.now();
-        let containers;
-        if (only === null) {
-            containers = [...document.querySelectorAll(dom_contract_1.STREAMING_SELECTOR)];
-            // 这一趟不在流式里的容器：它的区间与文本快照一起丢掉。快照是整段文本的副本，跟着消息元素一直
-            // 留在 DOM 里，长会话下那是随会话线性增长的一份常驻内存。
-            for (const gone of liveContainers) {
-                if (containers.includes(gone))
-                    continue;
-                textSnapshots.delete(gone);
-                for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-                    if (liveRuns[index]?.container === gone)
-                        liveRuns.splice(index, 1);
-                }
-            }
-            liveContainers = containers;
-        }
-        else {
-            containers = [...only].filter(container => container.isConnected && container.matches(dom_contract_1.STREAMING_SELECTOR));
-            for (const container of containers)
-                if (!liveContainers.includes(container))
-                    liveContainers.push(container);
-        }
-        if (containers.length === 0)
-            return;
-        /** 主线程正忙、正在让路：快照照常更新，只是这一段新字符不排淡入。 */
-        const yielding = now < yieldUntil;
-        /** 这一次扫描里新排出来的区间，用来按批分配错峰相位。 */
-        const createdRuns = [];
-        for (const container of containers) {
-            const batchStart = createdRuns.length;
-            // 先把容器下每一个文本节点拼起来，同时记住每个节点在拼接串里的偏移。
-            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-            const entries = [];
-            let text = '';
-            let node = walker.nextNode();
-            while (node !== null) {
-                const textNode = node;
-                entries.push({ node: textNode, start: text.length });
-                text += textNode.data;
-                node = walker.nextNode();
-            }
-            const previous = textSnapshots.get(container)?.text;
-            textSnapshots.set(container, { text, entries });
-            // 第一次见到这个容器。安装那一刻就在页面上的，是历史；一出现就已经很长（切会话、翻历史
-            // 时整段挂载）的，也当历史。只有安装之后才冒出来、还没长出几个字的那种——新的一轮回答——
-            // 才把它开头这几个字符也算成新出现的。
-            if (previous === undefined && (historyContainers.has(container) || text.length > FIRST_SIGHT_LIMIT))
-                continue;
-            const before = previous ?? '';
-            // 这一趟变化里的两段稳定区：公共前缀里的区间位置不变，公共后缀里的区间整体平移，中间那段
-            // 才是真被改写的地方。展开或收起一行思考正是这个形状——容器前面的文本被摘要和正文互相
-            // 替换，后面正在流的正文一个字都没动，那些字不该因为读者碰了一下折叠控件就整片定格；而
-            // 重排一次就把整个容器里的区间杀光，会让正淡到一半的文字直接跳成实色。
-            const overlapLimit = Math.min(before.length, text.length);
-            let prefix = 0;
-            while (prefix < overlapLimit && before.charCodeAt(prefix) === text.charCodeAt(prefix))
-                prefix += 1;
-            // 后缀不与前缀重叠，所以中间那段改写区不会被两边同时认领。
-            let suffix = 0;
-            while (suffix < overlapLimit - prefix
-                && before.charCodeAt(before.length - 1 - suffix) === text.charCodeAt(text.length - 1 - suffix))
-                suffix += 1;
-            const stableFrom = before.length - suffix;
-            const shift = text.length - before.length;
-            for (let index = liveRuns.length - 1; index >= 0; index -= 1) {
-                const run = liveRuns[index];
-                if (run === undefined)
-                    continue;
-                if (run.container !== container)
-                    continue;
-                if (run.start + run.length <= prefix)
-                    continue;
-                if (run.start >= stableFrom) {
-                    // 同一段字符，只是整体挪了位：跟着挪，它的年龄和相位都不动。
-                    liveRuns[index] = { ...run, start: run.start + shift };
-                    continue;
-                }
-                liveRuns.splice(index, 1);
-            }
-            if (yielding)
-                continue;
-            // 读者刚折叠或展开过：这一次变化是那一下重排引起的，不是模型在吐字。
-            const quietUntil = foldQuietUntil.get(container);
-            if (quietUntil !== undefined && now <= quietUntil)
-                continue;
-            // 新出现的字符。纯粹在尾部追加时，它就是最后那一段；Markdown 闭合一个标记（`**`、反引号、
-            // 链接）时，新字符夹在旧文字中间，那种改写里对不上旧文本的那几个字同样该淡入。
-            //
-            // 改写要看中间那段：把旧文本与新文本各自的前后缀剥掉之后，两边剩下的部分用一次字符级公共子
-            // 序列对齐，对不上的新字符就是新出现的。中间那段一旦大起来就放弃——整块重写（流式结束时整体
-            // 重排、切换渲染分支）不该让读者重看一遍淡入，只有小范围闭合才值得给那几个字动画。
-            const oldMiddle = before.slice(prefix, before.length - suffix);
-            const newMiddle = text.slice(prefix, text.length - suffix);
-            if (newMiddle.length === 0)
-                continue;
-            if (oldMiddle.length > 0 && oldMiddle.length * newMiddle.length > REWRITE_DIFF_BUDGET)
-                continue;
-            // 每个新字符在旧文本里对不对得上。旧文本的中间段是空的，就是整段都没对上——这一次变化全是
-            // 新增，不必走一次对齐。
-            const matched = new Uint8Array(newMiddle.length);
-            if (oldMiddle.length > 0) {
-                // 自底向上的公共子序列长度表，回溯时用它判断哪个新字符对得上旧文本。
-                const columns = newMiddle.length + 1;
-                const lengths = new Uint16Array((oldMiddle.length + 1) * columns);
-                for (let row = oldMiddle.length - 1; row >= 0; row -= 1) {
-                    for (let column = newMiddle.length - 1; column >= 0; column -= 1) {
-                        const sameCharacter = oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column);
-                        lengths[row * columns + column] = sameCharacter
-                            ? (lengths[(row + 1) * columns + column + 1] ?? 0) + 1
-                            : Math.max(lengths[(row + 1) * columns + column] ?? 0, lengths[row * columns + column + 1] ?? 0);
-                    }
-                }
-                let matchedCount = 0;
-                let row = 0;
-                let column = 0;
-                while (row < oldMiddle.length && column < newMiddle.length) {
-                    if (oldMiddle.charCodeAt(row) === newMiddle.charCodeAt(column)) {
-                        matched[column] = 1;
-                        matchedCount += 1;
-                        row += 1;
-                        column += 1;
-                        continue;
-                    }
-                    // 哪边的表值大就往哪边走。
-                    const skipOldRow = lengths[(row + 1) * columns + column] ?? 0;
-                    const skipNewColumn = lengths[row * columns + column + 1] ?? 0;
-                    const advanceOldRow = skipOldRow >= skipNewColumn;
-                    if (advanceOldRow)
-                        row += 1;
-                    if (!advanceOldRow)
-                        column += 1;
-                }
-                if (matchedCount === 0 || newMiddle.length - matchedCount > LOCAL_REWRITE_LIMIT)
-                    continue;
-            }
-            // 对不上的新字符就是要淡入的那批，连续的合并成一段。
-            const addedRanges = [];
-            let rangeStart = -1;
-            for (let index = 0; index < newMiddle.length; index += 1) {
-                if (matched[index] === 1) {
-                    if (rangeStart >= 0)
-                        addedRanges.push({ start: rangeStart + prefix, end: index + prefix });
-                    rangeStart = -1;
-                    continue;
-                }
-                if (rangeStart < 0)
-                    rangeStart = index;
-            }
-            if (rangeStart >= 0)
-                addedRanges.push({ start: rangeStart + prefix, end: newMiddle.length + prefix });
-            if (addedRanges.length === 0)
-                continue;
-            // 一批到的字太多就不淡入：几千个字一起淡，读者看到的是一片糊，而区间数就是字符数、直接乘在
-            // 每一帧上（每帧每个区间一个 Range）。实测一万五千字符一块到达就能把单帧推到七百毫秒，而且
-            // 帧间隔补偿会不断给这些区间续命、自己缓不过来。真实流式的单批增量中位十几个字符。
-            let addedLength = 0;
-            for (const range of addedRanges)
-                addedLength += range.end - range.start;
-            if (addedLength > BURST_LIMIT)
-                continue;
-            // 逐个文本节点走，而不是在拼接后的整串上走：每个区间都要带上它渲染所在的元素，而
-            // `styles.ts` 正是从这个元素读淡入用的颜色，一个节点的文本总是渲染在一个元素里。
-            // 同一个节点里的字符出生时间相同，相位在遍历完之后按位次统一分配——一到屏幕就整块变亮的
-            // 台阶感，正是错峰要摊掉的东西。
-            // 按码点迭代，所以代理对算作一个区间；空白不单独成区间，但仍然推进偏移。
-            const touchedElements = new Set();
-            for (const range of addedRanges) {
-                for (const entry of entries) {
-                    if (entry.start + entry.node.data.length <= range.start)
-                        continue;
-                    if (entry.start >= range.end)
-                        break;
-                    const begin = Math.max(range.start, entry.start);
-                    const end = Math.min(range.end, entry.start + entry.node.data.length);
-                    const element = entry.node.parentElement;
-                    let offset = begin;
-                    for (const character of entry.node.data.slice(begin - entry.start, end - entry.start)) {
-                        if (character.trim().length === 0) {
-                            offset += character.length;
-                            continue;
-                        }
-                        // 每个元素每次扫描只读一次样式：一批文本通常落在一两个节点里，
-                        // 所以哪怕整段一次到达也只有几次读取。
-                        if (element !== null && !touchedElements.has(element)) {
-                            touchedElements.add(element);
-                            publishRunColor(element);
-                        }
-                        const run = {
-                            container,
-                            start: offset,
-                            length: character.length,
-                            bornAt: now,
-                            delay: 0,
-                            // 一排好就记住它渲染所在的元素：紧接着那次同步绘制不必为它再读一次颜色。读一次颜色
-                            // 就是一次强制样式结算，而这一次读取恰好落在新字符刚插进来、样式刚失效的那一帧——
-                            // 实测单帧 190 ms 里有 190 ms 是它。元素真的换掉时（Markdown 层重建节点）绘制帧的
-                            // 那次比较仍然会发现，颜色照旧补上。
-                            colorElement: element,
-                        };
-                        liveRuns.push(run);
-                        createdRuns.push(run);
-                        offset += character.length;
-                    }
-                }
-            }
-            // 按这批字符在流里的位次错开：整批摊开的总相位不超过一次渐变，所以一次插入几百个字符也不会
-            // 让尾巴等上好几秒。字符越多，每个字符让出的相位越小，扫动仍然连成一片；再小看不出扫动，
-            // 再大就让最后到的字符显得迟滞。
-            const batchCount = createdRuns.length - batchStart;
-            const staggerLimit = Math.min(MAX_STAGGER_MS, Math.max(MIN_STAGGER_MS, exports.REVEAL_MS / STAGGER_DIVISOR));
-            const step = batchCount <= 1 ? 0 : Math.min(staggerLimit, exports.REVEAL_MS / (batchCount - 1));
-            for (let slot = batchStart; slot < createdRuns.length; slot += 1) {
-                const run = createdRuns[slot];
-                if (run === undefined || step === 0)
-                    continue;
-                run.delay = (slot - batchStart) * step;
-            }
-        }
-        if (createdRuns.length === 0)
-            return;
-        // 新字符必须在同一帧就带上最淡的一档。排一次绘制帧是等下一个渲染步骤，而这一次扫描可能正好
-        // 发生在本次渲染步骤的 rAF 阶段之后——那样新字会先以本色画一帧、下一帧才被压回最淡再淡入，
-        // 也就是眼睛看到的「闪一下」。这里直接同步画一次：区间刚建好，立刻就有自己的 alpha。
-        if (scheduledFrame !== 0) {
-            cancelAnimationFrame(scheduledFrame);
-            scheduledFrame = 0;
-        }
-        paint(performance.now(), false);
-    };
-    // 只看流式容器里的变动：页面上别处的 DOM 变动（别的插件、侧栏、计时器、输入框）一次扫描都不
-    // 触发，流式容器里的变动也只重扫被碰到的那一个。整页重看只留给容器本身出现、消失或者换了
-    // `data-streaming` 的那几种变动。
-    const observer = new MutationObserver((records) => {
-        let everything = false;
-        const touched = new Set();
-        for (const record of records) {
-            // 也看着 `data-streaming`：流式容器不总是「新插进来的一个节点」——React 给已经在那儿的 div
-            // 补上这个属性时只有一次属性变化，漏掉它就漏掉那一整段回答的开头。
-            if (record.type === 'attributes') {
-                everything = true;
-                continue;
-            }
-            const target = record.target;
-            const element = target instanceof Element ? target : target.parentElement;
-            const container = element?.closest(dom_contract_1.STREAMING_SELECTOR) ?? null;
-            if (container !== null)
-                touched.add(container);
-            if (record.type !== 'childList' || everything)
-                continue;
-            for (const added of record.addedNodes) {
-                if (!(added instanceof Element))
-                    continue;
-                if (added.matches(dom_contract_1.STREAMING_SELECTOR) || added.querySelector(dom_contract_1.STREAMING_SELECTOR) !== null)
-                    everything = true;
-            }
-            for (const removed of record.removedNodes) {
-                if (liveContainers.some(live => live === removed || removed.contains(live)))
-                    everything = true;
-            }
-        }
-        if (everything)
-            scan(null);
-        else if (touched.size > 0)
-            scan(touched);
-    });
-    observer.observe(document.body, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: [dom_contract_1.STREAMING_ATTRIBUTE],
-    });
-    document.addEventListener('click', rememberReaderFold, true);
-    document.addEventListener('keydown', rememberReaderFold, true);
-    scan(null);
-    return () => {
-        observer.disconnect();
-        document.removeEventListener('click', rememberReaderFold, true);
-        document.removeEventListener('keydown', rememberReaderFold, true);
-        if (scheduledFrame !== 0)
-            cancelAnimationFrame(scheduledFrame);
-        scheduledFrame = 0;
-        liveRuns.length = 0;
-        clearHighlights();
-        revealStyleElement.remove();
-    };
-}
-/**
- * 承载档位规则的那张样式表的 id，用于排查。
- *
- * 它和 `styles.ts` 那张 `ALL_CSS` 是两张表：这一张只装淡入自己的东西——`REVEAL_STEPS` 条档位
- * 规则，加上页面级那两条兜底色（见 `buildRevealCss`）——跟着 `installTokenMotion` 一起挂上和撤下。
- * 这一项默认关着，所以关着时这张表根本不存在。
- */
-const REVEAL_STYLE_ID = 'dsh-chat-ux-reveal';
-/**
- * 那张表的全部文本：页面级那两条兜底色，加 `REVEAL_STEPS` 条档位规则。
- *
- * 文本现拼，不留在模块级：这一项默认关着，关着时连这几十行字符串都不该在页面启动那一路被拼出来；
- * 而进来拼的每一次都是装上引擎的那一次。
- *
- * 兜底色说的是「从没自己发布过颜色的元素」用哪个颜色——`::highlight()` 会把自定义属性解析到承载
- * 元素上，容器里的段落、列表项这些元素读的就是它。它是必需的而不是保险：下面规则里那个
- * `var(..., currentColor)` 的 fallback 不生效（实测写出灰色），而正文自己的令牌跟着主题走，所以
- * 深色画布单独再给一条。
- *
- * 档位规则。第 0 档是字符最淡的样子，最后一档完全不透明，所以文字正好在区间离开 highlight
- * 注册表的那一刻到达它最终的颜色。
- *
- * 淡入是「变实」，不是「变色」：每一档都把文字画在它最终会停住的那个颜色上——也就是它自己的
- * 颜色，由 `RUN_COLOR_VAR` 逐元素发布——从 `TOKEN_MIN_OPACITY` 一路走到完全不透明。透明度只能
- * 走 `color` 的 alpha 通道（`::highlight()` 的属性集里没有 `opacity`），而
- * `color-mix(in srgb, C p%, transparent)` 的语义正好是它：与 `transparent` 混合会把结果的
- * alpha 按 `p` 加权，色相不变。
- *
- * 每一条都收在 `[data-streaming]` 底下，两个选择器各管一种：容器自己直属的文本，与容器里任意
- * 一层元素里的文本。淡入只发生在流式容器里，作用域不丢任何东西；换来的是流式容器以外的元素在
- * 样式匹配时被祖先过滤直接跳过——同一张五千六百节点的页面上，不带作用域的二十四条给每次全量
- * 重算添二十五毫秒，带上之后实测是零。
- *
- * alpha 仍然写成两位小数：档数降到 24 之后整数百分比其实也够表达，留两位小数只是按比例算出来
- * 的值本来就在那儿，不必再舍一次。
- * @returns 那张表的全部文本。
- */
-function buildRevealCss() {
-    const fallback = [
-        'body {',
-        '  /* 页面级兜底：正文自己的令牌，跟着主题走。区间真正渲染所在的元素会用自己算出来的',
-        '     颜色覆盖它。 */',
-        '  ' + exports.RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #0f1115);',
-        '}',
-        '',
-        'body[data-ds-dark-theme] {',
-        '  /* 深色画布：同一个令牌解析出来是亮色，默认值的读法一致。 */',
-        '  ' + exports.RUN_COLOR_VAR + ': var(--dsw-alias-label-primary, #f9fafb);',
-        '}',
-    ].join('\n');
-    const stepRules = Array.from({ length: exports.REVEAL_STEPS }, (_, step) => {
-        const ratio = exports.TOKEN_MIN_OPACITY + (1 - exports.TOKEN_MIN_OPACITY) * (step / (exports.REVEAL_STEPS - 1));
-        const alpha = Number((ratio * 100).toFixed(2));
-        const name = exports.HIGHLIGHT_PREFIX + step;
-        return [
-            dom_contract_1.STREAMING_SELECTOR + '::highlight(' + name + '), ' + dom_contract_1.STREAMING_SELECTOR + ' ::highlight(' + name + ') {',
-            '  color: color-mix(in srgb, var(' + exports.RUN_COLOR_VAR + ', currentColor) ' + alpha + '%, transparent);',
-            '}',
-        ].join('\n');
-    }).join('\n\n');
-    return fallback + '\n\n' + stepRules;
-}
-/**
- * 一次折叠之后，它重排过的容器要被排除在淡入之外多久。
- *
- * 容器只要消息还在 `running` 就一直带着 `data-streaming`，而这段时间覆盖整轮——包括思考停下
- * 之后才到的正文。所以点一下思考行或工具行，会改写扫描仍然在看的那个容器。这个时长够长，能盖住
- * React 的重渲染和它产生的那批 mutation；又够短，让点击之后立刻续上的流仍然有动效。
- */
-const FOLD_QUIET_MS = 400;
-/**
- * 一批里最多认多少字符。
- *
- * 区间数就是这批的字符数，而它直接乘在每一帧上（每帧每个区间一个 Range）：实测一万五千字符一块
- * 到达就能把单帧推到七百毫秒，而且帧间隔补偿会一直给这些区间续命，页面自己缓不过来。真实流式的
- * 单批增量中位十几个字符、最大几十个，所以这道闸门平时一次都不碰它。
- */
-const BURST_LIMIT = 10000;
-/**
- * 一个刚冒出来的流式容器最多带多少字符，还算「刚开头的一轮回答」。
- *
- * 新的一轮回答是容器先出现、字符再一个个到；而切会话、翻历史时挂上来的容器一出现就已经是整段
- * 文本。两者都算「第一次见到这个容器」，区别只在长度。
- */
-const FIRST_SIGHT_LIMIT = 200;
-/** 两帧之间超过这么久，就认为中间没有绘制帧：页面被藏起来、主线程被占住时都会这样。 */
-const FRAME_GAP_LIMIT_MS = 40;
-/** 正常的一帧有多长（按 60 Hz 算）；补偿时从空白里扣掉它，区间就接着上一帧的位置往下走。 */
-const NOMINAL_FRAME_MS = 16.7;
-/**
- * 绘制帧之间隔得超过这么久，算一帧「慢帧」：不到二十帧每秒，淡入的每一档都要停好几十毫秒，
- * 已经画不顺了。
- */
-const SLOW_FRAME_MS = 50;
-/** 连着这么多个慢帧才让路：一次偶发的长任务（React 挂一条大消息）不该把淡入关掉。 */
-const SLOW_FRAME_RUN = 4;
-/** 帧间隔长到这个程度，是页面被藏起来了（rAF 停摆），不是主线程忙。 */
-const HIDDEN_GAP_MS = 1000;
-/** 让路之后多久再给新字符排淡入。 */
-const YIELD_MS = 3000;
-/**
- * 一次改写里最多认几个新字符。
- *
- * 中间那段已经被 `REWRITE_DIFF_BUDGET` 限制过大小，这里再给「新增字符」本身一个上限：Markdown
- * 闭合一个标记只会多出一两个字，一次多出几十个字的那种变化是整块重写，不该给它动画。
- */
-const LOCAL_REWRITE_LIMIT = 64;
-/**
- * 中间那段最多允许多大（旧段长度 × 新段长度）。
- *
- * 字符级对齐是 O(旧段 × 新段) 的，而它每次 mutation 都要跑一遍，所以给一个预算：超出预算就
- * 认为这是整块重写，一个字符都不动。
- */
-const REWRITE_DIFF_BUDGET = 4096;
     };
 
     return __load("index.js");

@@ -20,10 +20,13 @@
  * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
  * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
  *
+ * **现在只剩折叠收尾在调它**：增强跟随与组体跟随（`follow-guard.ts`、`process-follow.ts`）已经
+ * 连同「token 淡入」那一个开关一起删掉，这里的能力一个字没动——折叠收尾那一次交还照旧走这条路。
+ *
  * @module dsh-chat-ux/client/chat/follow/follow-tail
  */
 
-import {CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR, FOLLOW_THRESHOLD_PX} from '../../dom-contract'
+import {CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR} from '../../dom-contract'
 
 /** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
 export const FOLLOW_LOOK_ROUNDS = 5
@@ -50,17 +53,8 @@ export interface FollowEnsure {
 }
 
 /** 会话的滚动容器。dsh 的跟随与折叠动画都挂在它身上。 */
-export function conversationScroller(): HTMLElement | null {
+function conversationScroller(): HTMLElement | null {
     return document.querySelector<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
-}
-
-/**
- * 读者此刻是不是贴着会话底部，用的是 dsh 自己的那条线。
- * @param scroller - 会话的滚动容器。
- * @returns 离地线不超过 dsh 的阈值时为真。
- */
-export function isAtBottom(scroller: HTMLElement): boolean {
-    return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= FOLLOW_THRESHOLD_PX
 }
 
 /**

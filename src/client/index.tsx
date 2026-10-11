@@ -5,8 +5,8 @@
  * `scripts/wrap-client.cjs` 生成，后者把 CommonJS 产物包成客户端模块加载器要求的那个单文件
  * `window.__ModuleLoader__.load({...})` bundle。
  *
- * 读者看得见的一切都归这一半：聊天区样式表、token 淡入、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、跟随守护、输入框插入符的位移过渡、提交后气泡的起飞、输入框那块玻璃、轨迹视图里
+ * 读者看得见的一切都归这一半：聊天区样式表、思考行的自动展开与收起、过程组的自动
+ * 开合、折叠过渡、输入框插入符的位移过渡、提交后气泡的起飞、输入框那块玻璃、轨迹视图里
  * 收掉输入区、网页端「工作步骤展示」的默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
  * 上改的值就是这样到达效果里的，不用刷新。
  *
@@ -22,20 +22,17 @@ import {installContextMeterPie} from './chat/context-meter/context-meter-pie'
 import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
 import type {SlotsService} from './chat/file-mutation/file-mutation-row'
 import {installFoldGlide} from './chat/fold/fold-glide'
-import {installFollowGuard} from './chat/follow/follow-guard'
-import {installProcessFollow} from './chat/follow/process-follow'
 import {installProcessFold} from './chat/fold/process-fold'
 import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
 import {ALL_CSS, STYLE_ID} from './styles'
-import {installTokenMotion} from './chat/token-motion'
 
 /**
  * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
@@ -73,7 +70,6 @@ export function apply(ctx: ClientContext): void {
         autoFold: DEFAULT_AUTO_FOLD,
         caret: DEFAULT_CARET_MOTION,
         sendOn: DEFAULT_SEND_FLIGHT,
-        tokenFade: DEFAULT_TOKEN_FADE,
         pie: DEFAULT_CONTEXT_PIE,
         glass: DEFAULT_COMPOSER_GLASS,
         liveDiff: DEFAULT_LIVE_DIFF,
@@ -82,7 +78,6 @@ export function apply(ctx: ClientContext): void {
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
     const caret = installCaretMotion(() => settings.caret)
-    const tokenMotion = installTokenMotion(() => settings.tokenFade)
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
     // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
     // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
@@ -127,37 +122,16 @@ export function apply(ctx: ClientContext): void {
         if (glassDispose !== null) return
         glassDispose = installComposerGlass()
     }
-    // 跟随那一块（增强跟随 + 组体跟随）不再有自己的开关：它跟着「token 淡入」那一个开关走。
-    // 关着时两处都不装——页面上不留 MutationObserver、ResizeObserver、那个每 500 ms 一次的全文档
-    // 查询，也不留那些 capture 监听；打开时装回来的就是原来那两处。
-    let followDispose: (() => void) | null = null
-    const syncFollow = (): void => {
-        if (!settings.tokenFade) {
-            followDispose?.()
-            followDispose = null
-            return
-        }
-        if (followDispose !== null) return
-        const disposeGuard = installFollowGuard()
-        const disposeProcess = installProcessFollow()
-        followDispose = () => {
-            disposeGuard()
-            disposeProcess()
-        }
-    }
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
         settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
         settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
-        settings.tokenFade = value?.tokenFade ?? DEFAULT_TOKEN_FADE
         settings.pie = value?.contextPie ?? DEFAULT_CONTEXT_PIE
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         syncGlass()
         caret.resync()
-        tokenMotion.resync()
-        syncFollow()
         syncPie()
         syncAutoFold()
     }
@@ -190,10 +164,6 @@ export function apply(ctx: ClientContext): void {
         'dsh-chat-ux: send flight',
     )
 
-    // 思考和正文都渲染在 Markdown 层那个流式容器里，所以一处安装就覆盖整段回答。开关关着时它整块
-    // 不装：那二十几条档位规则、扫描观察者与绘制帧一个都不存在。
-    ctx.effect(() => tokenMotion.dispose, 'dsh-chat-ux: token reveal')
-
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
     // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
     // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
@@ -205,23 +175,6 @@ export function apply(ctx: ClientContext): void {
             autoFoldDispose = null
         }
     }, 'dsh-chat-ux: auto fold')
-
-    // 跟随那一块的两处安装都在 syncFollow 里，装与卸跟着「token 淡入」那一个开关走：
-    //
-    //   增强跟随  跟随偶尔会丢，而丢的那一刻几乎总是结构事件的时刻（思考行收起、工具行插入），
-    //             这一处挑那些时刻把滚动位置交还给 dsh 的跟随。
-    //   组体跟随  标准与简洁两档把过程收进封顶的组体，dsh 用平滑滚动追它，而平滑滚动追不上匀速
-    //             增长的内容，位置就长期停在离底几十像素的地方；这一处在它旁边补一次钉底。
-    ctx.effect(
-        () => {
-            syncFollow()
-            return () => {
-                followDispose?.()
-                followDispose = null
-            }
-        },
-        'dsh-chat-ux: follow',
-    )
 
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
@@ -287,8 +240,6 @@ interface ChatUxSettings {
     caret: CaretMotionMode
     /** 聊天气泡动效开着没有，每一段起手前现读。 */
     sendOn: boolean
-    /** token 淡入开着没有；它整块装不装由 `syncSettings` 重落，跟随那一块也看它。 */
-    tokenFade: boolean
     /** 上下文占用那圈环是否换成一枚实心饼；改一次就得重落一次（装或卸）。 */
     pie: boolean
     /** 输入框那块玻璃开着没有；它是 body 上的一层常驻状态，改一次就得重落一次。 */

@@ -27,13 +27,12 @@ import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, DEFAULT_TOKEN_FADE,
+    DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
 /** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
 const AUTO_FOLD_FIELD = 'autoFold'
-const TOKEN_FADE_FIELD = 'tokenFade'
 const CARET_FIELD = 'caretMotion'
 const SEND_FLIGHT_FIELD = 'sendFlight'
 const HIT_REEL_FIELD = 'hitReel'
@@ -46,8 +45,6 @@ interface Copy {
     summary: () => string
     autoFoldLabel: string
     autoFoldHint: string
-    tokenLabel: string
-    tokenHint: string
     caretLabel: string
     caretHint: string
     caretOff: string
@@ -76,11 +73,6 @@ const ZH_COPY: Copy = {
     autoFoldHint:
         '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
         + '你自己动手折叠过的，它不再打扰。',
-    tokenLabel: 'token 淡入',
-    tokenHint:
-        '打开后，回复逐字出现时新出现的文字会轻轻浮现；回复还在继续时聊天区也自己待在最新内容上，'
-        + '不用手动往下拖，而你往上翻看历史的那段时间它不会来抢你的位置。'
-        + '关着就如同直接显示，这两件事一起停下；与其它插件一起用时若明显卡顿，就让它保持关着。',
     caretLabel: '光标动效',
     caretHint:
         '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
@@ -120,11 +112,6 @@ const EN_COPY: Copy = {
     autoFoldHint:
         'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
-    tokenLabel: 'Token fade-in',
-    tokenHint:
-        'When on, new text fades in as a reply streams, and the transcript keeps up with the newest content by '
-        + 'itself — without pulling you back while you scroll through history. When off, text appears immediately '
-        + 'and both stop. If the page stutters noticeably alongside other plugins, leave it off.',
     caretLabel: 'Caret motion',
     caretHint:
         'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
@@ -203,7 +190,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const fieldId = useId()
 
     const autoFoldOn = storedAutoFold(snapshot.value)
-    const tokenFadeOn = storedTokenFade(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
     const pieOn = storedContextPie(snapshot.value)
@@ -280,14 +266,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.autoFoldLabel}
                     onChange={(next: boolean) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold)}
-                />
-            ))}
-            {rowChrome(TOKEN_FADE_FIELD, copy.tokenLabel, copy.tokenHint, (
-                <Switch
-                    checked={tokenFadeOn}
-                    disabled={controlsDisabled}
-                    label={copy.tokenLabel}
-                    onChange={(next: boolean) => void writeField(TOKEN_FADE_FIELD, next, storedTokenFade)}
                 />
             ))}
             {rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, (
@@ -368,11 +346,6 @@ function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): Rea
 /** 从 host 的值里读自动开合的开关。 */
 function storedAutoFold(value: ChatUxSection | undefined): boolean {
     return value?.autoFold ?? DEFAULT_AUTO_FOLD
-}
-
-/** 从 host 的值里读 token 淡入的开关。 */
-function storedTokenFade(value: ChatUxSection | undefined): boolean {
-    return value?.tokenFade ?? DEFAULT_TOKEN_FADE
 }
 
 /** 从 host 的值里读聊天气泡动效的开关。 */

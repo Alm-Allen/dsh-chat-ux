@@ -31,17 +31,6 @@ export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 export const DEFAULT_SEND_FLIGHT = true
 
 /**
- * token 淡入默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认关着。它是这一批动效里唯一要随每一批新字符制造样式失效的一项，所以关着时那个模块整块不装——
- * 档位规则表、扫描观察者、绘制帧，连那条兜底色一起，页面上什么都不留。
- *
- * 它还兼着跟随那一块（`chat/follow/` 的增强跟随与组体跟随）：关着时那两处也不装，页面上不留
- * 观察者与定时器。卡片上没有单独的跟随开关。
- */
-export const DEFAULT_TOKEN_FADE = false
-
-/**
  * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
  * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
@@ -79,8 +68,6 @@ export interface ChatUxSection {
     caretMotion?: CaretMotionMode
     /** 提交之后气泡是否从输入框起飞；默认开着。时长不是一个设置项，见 `send-morph.ts` 的 `FLIGHT_MS`。 */
     sendFlight?: boolean
-    /** 流式回答里新出现的字符是否先淡后实；默认关着。 */
-    tokenFade?: boolean
     /** 命中率读数变化时，变了的那一位是否原地弹到新值；默认开着。 */
     hitReel?: boolean
     /** 上下文占用那圈环是否换成一枚实心饼；默认开着。关掉时这一处整块不装。 */

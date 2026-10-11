@@ -22,18 +22,6 @@ export const DEFAULT_CARET_MOTION = 'typing';
  */
 export const DEFAULT_SEND_FLIGHT = true;
 /**
- * token 淡入默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认关着：它是这一批动效里唯一要随每一批新字符制造样式失效的一项——档位规则表、扫描观察者与
- * 绘制帧都得挂上（见 `client/chat/token-motion.ts`），而这三样只有关掉才能一起不存在。想看的读者
- * 在插件管理页上打开，装回来的就是同一套。
- *
- * 它还兼着跟随那一块（`client/chat/follow/`：增强跟随与组体跟随）。两块合成一个开关，是因为跟随
- * 只在回复还在推进时才有意义——关掉这一项，跟随那两处也一起不装，页面上不留观察者与定时器。
- * 卡片上不再有单独的跟随开关。
- */
-export const DEFAULT_TOKEN_FADE = false;
-/**
  * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
  *
  * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
@@ -71,7 +59,6 @@ export const Config = Schema.object({
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(['off', 'move', 'typing']).default(DEFAULT_CARET_MOTION).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
-    tokenFade: Schema.boolean().default(DEFAULT_TOKEN_FADE).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
     contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
     composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),

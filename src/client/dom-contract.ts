@@ -8,9 +8,6 @@
  * @module dsh-chat-ux/client/dom-contract
  */
 
-/** 每个流块带一个。新块插进来，就是这一段流又往前走了。 */
-export const FLOW_BLOCK_SELECTOR = '[data-chat-flow-key]'
-
 /** 聊天列。 */
 export const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
 
@@ -19,17 +16,6 @@ export const THINK_ROW_SELECTOR = '[data-variant="think"]'
 
 /** 模型还在思考、过程还在跑时的阶段值。 */
 export const RUNNING_STATE = 'running'
-
-/**
- * Markdown 层在助手消息流式期间标记的容器；新字符的淡入按它扫描。
- *
- * 属性名与选择器两种形式各有人用（前者喂 `MutationObserver` 的 `attributeFilter`，后者查页面），
- * 所以两个都写在这里：各自就地拼字符串的话，改一处就会漏一处。
- */
-export const STREAMING_ATTRIBUTE = 'data-streaming'
-
-/** 同一个契约的选择器形式。 */
-export const STREAMING_SELECTOR = '[' + STREAMING_ATTRIBUTE + ']'
 
 /**
  * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
