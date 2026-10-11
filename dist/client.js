@@ -6134,8 +6134,10 @@ function sameScreen(start, end, viewportExtent) {
  * 主线程上每帧只剩两件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行）写在最外层；形变段走完
  * 那一帧把壳归一（见 `startMorph` 里的 `compact`）。两件都在 `send-flight.ts` 的帧循环里。
  *
- * **替身凭什么长得像真卡片。** 三条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
- * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、以及**祖先
+ * **替身凭什么长得像真卡片。** 四条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
+ * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、**卡片那一层
+ * 的面**（卡片自身与它两个伪元素的背景照抄那一刻算出来的值，见 `ComposerSurface`：玻璃的底就画在
+ * 卡片的 `::before` 上，而模拟链一个 `data-*` 都不抄，只认规则的话整块卡面都会丢），以及**祖先
  * 链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照着卡片的
  * 祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属性另
  * 有抄法，理由见 `snapshotComposer`。
@@ -6256,6 +6258,15 @@ const TEXT_PROPERTIES = [
     'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
 ];
 /**
+ * 卡片那一层的面要抄哪些属性。
+ *
+ * 只抄**画出来的东西**：颜色、图像，以及图像怎么铺。**不抄几何与布局**——替身的壳自己管几何
+ * （逐格缩放、反向缩放、圆角补偿），把 `width` / `position` / `transform` 这一类抄进去会和它打架。
+ */
+const SURFACE_PROPERTIES = [
+    'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+];
+/**
  * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
  *
  * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
@@ -6308,6 +6319,14 @@ function snapshotComposer(input, card) {
     if (scroll === null || scroll.parentElement !== card)
         return null;
     const cardStyle = getComputedStyle(card);
+    // 卡片那一层的面得在这一帧抄下来：既因为克隆要的就是那一刻的样子，也因为伪元素那条规则
+    // （玻璃只在本插件开着、且祖先是 `active` / `hero` 相位时才命中）在替身上不一定还匹配。
+    const surface = {
+        card: readSurface(cardStyle),
+        before: readPseudoSurface(card, '::before'),
+        after: readPseudoSurface(card, '::after'),
+        behind: behindColorOf(card),
+    };
     const inputStyle = getComputedStyle(input);
     const inputBox = input.getBoundingClientRect();
     const text = {
@@ -6433,7 +6452,7 @@ function snapshotComposer(input, card) {
     }
     return {
         box,
-        background: cardStyle.backgroundColor,
+        surface,
         radius: pixel(cardStyle.borderTopLeftRadius),
         shadow: cardStyle.boxShadow,
         clone,
@@ -6545,16 +6564,34 @@ function startMorph(snapshot, bubble, end) {
     // 半径补偿见下面那段动画。
     shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight);
     shell.appendChild(scaler);
-    // 底色是两层实色叠着淡，不是 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会
-    // 掉回主线程（实测主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那
-    // 条路，旧一点的 Chromium 上也稳。两层不透明的实色按 α 叠，正好就是两色的线性插值。
-    const bubbleFill = document.createElement('div');
-    bubbleFill.style.cssText = 'position:absolute;inset:0';
-    bubbleFill.style.backgroundColor = style.backgroundColor;
+    // 底色不做 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会掉回主线程（实测
+    // 主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那条路，旧一点的
+    // Chromium 上也稳。所以起手那格与落定那格各画一层，中间靠上面那层的透明度淡过去——两层都是不
+    // 透明的实色，按 α 叠正好就是两色的线性插值。
+    //
+    // 绘制序（DOM 序就是绘制序，都是 `absolute`）：卡片背后那层底色 → 卡片自身 → `::before` 那层 →
+    // `::after` 那层 → 气泡色从透明淡到实。中间那三层都是**照抄卡片那一刻算出来的值**（见
+    // `ComposerSurface`），所以画在卡片 `::before` 上的东西——玻璃的底与两片端色——跟着一起飞，
+    // 不必认识它是什么。
+    //
+    // 为什么要垫那层背后底色：卡面可能是半透明的（玻璃的底只有七成），替身飞过消息列时若直接透过去，
+    // 会看见下面滚过的字。垫一层卡片原来位置背后的底色，替身就与真卡片一样，只透到画布为止。
+    const behindFill = document.createElement('div');
+    behindFill.style.cssText = 'position:absolute;inset:0';
+    behindFill.style.backgroundColor = snapshot.surface.behind;
     const cardFill = document.createElement('div');
-    cardFill.style.cssText = 'position:absolute;inset:0;will-change:opacity';
-    cardFill.style.backgroundColor = snapshot.background;
-    scaler.append(bubbleFill, cardFill);
+    cardFill.style.cssText = 'position:absolute;inset:0';
+    paintSurface(cardFill, snapshot.surface.card);
+    const beforeFill = document.createElement('div');
+    beforeFill.style.cssText = 'position:absolute;inset:0';
+    paintSurface(beforeFill, snapshot.surface.before);
+    const afterFill = document.createElement('div');
+    afterFill.style.cssText = 'position:absolute;inset:0';
+    paintSurface(afterFill, snapshot.surface.after);
+    const bubbleFill = document.createElement('div');
+    bubbleFill.style.cssText = 'position:absolute;inset:0;will-change:opacity';
+    bubbleFill.style.backgroundColor = style.backgroundColor;
+    scaler.append(behindFill, cardFill, beforeFill, afterFill, bubbleFill);
     // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
     // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
     // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
@@ -6708,7 +6745,9 @@ function startMorph(snapshot, bubble, end) {
         shell.style.borderRadius = final.radius + 'px';
         scaler.style.transform = 'none';
     };
-    run(cardFill, between(0, MORPH_END, sample => ({ opacity: String(1 - sample.m) }), 2));
+    // 落定那格是气泡自己：不透明，把下面四层整个盖住。方向与从前相反（从前是卡面那层从 1 淡到 0），
+    // 因为卡面现在是照抄来的、可能半透明，压在气泡色上会偏色。
+    run(bubbleFill, between(0, MORPH_END, sample => ({ opacity: String(sample.m) }), 2));
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
     const shadow = shadowSpread(snapshot.shadow);
@@ -7000,6 +7039,58 @@ function shadowSpread(shadow) {
         spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0));
     }
     return spread;
+}
+/**
+ * 抄下一层「面」：这一层画出来的颜色与图像。
+ *
+ * 只抄画出来的东西，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），抄进去
+ * 会和它打架。伪元素的**几何**也同样不抄：一律按卡片那个矩形铺满（替身那几片填充都是 `inset: 0`）。
+ * 卡片上的伪元素今天正好都是这么铺的（玻璃那个 `::before` 就是 `inset: 0`）；哪天出现不铺满的伪元素，
+ * 这里要连几何一起抄。
+ * @param style - 这一层的计算样式。
+ * @returns 属性名与那一刻算出来的值。
+ */
+function readSurface(style) {
+    return SURFACE_PROPERTIES.map((name) => [name, style.getPropertyValue(name)]);
+}
+/**
+ * 抄一个伪元素的面。
+ *
+ * `content` 是 `none` 就是没有这个伪元素，给 null——替身那一层什么都不写，回落到本来的样子。
+ * @param card - 卡片。
+ * @param pseudo - `'::before'` 或 `'::after'`。
+ * @returns 那一层的面；没有这个伪元素时为 null。
+ */
+function readPseudoSurface(card, pseudo) {
+    const style = getComputedStyle(card, pseudo);
+    if (style.content === 'none')
+        return null;
+    return readSurface(style);
+}
+/**
+ * 卡片背后最先画实的那层底色。
+ *
+ * 一路往上找第一个不透明的 `background-color`——多半是画布。到 `body` 都没找到就给 `transparent`：
+ * 垫不出来就不垫，宁可不透，也不画一块来路不明的色。
+ * @param card - 卡片。
+ * @returns 一个颜色；找不到时是 `transparent`。
+ */
+function behindColorOf(card) {
+    for (let node = card.parentElement; node !== null; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (alphaOf(color) >= 1)
+            return color;
+    }
+    return 'transparent';
+}
+/**
+ * 把抄下来的一层「面」写到替身的某一片填充上。
+ * @param element - 填充层。
+ * @param declarations - 抄下来的属性；这一层不存在时为 null，那就什么都不写。
+ */
+function paintSurface(element, declarations) {
+    for (const [name, value] of declarations ?? [])
+        element.style.setProperty(name, value);
 }
 /** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
 function colorParts(color) {
