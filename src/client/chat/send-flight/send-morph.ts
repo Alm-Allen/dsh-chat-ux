@@ -77,21 +77,41 @@ export const FLIGHT_MS = 300
  *
  * 临界阻尼，不过冲：形状不该弹。
  *
+ * **这个数同时定着「开局那几帧各自走多远」，取 5 是照这个量出来的。** 时间轴压进 `MORPH_END` 之后，
+ * 弹簧的角频率相对那一段长度就偏大：取 16 时第一帧（提交后 16.7 ms 那一格）已经走掉 58.8%、第二帧
+ * 90.4%——读者看到的是一上来就闪到半路；而提交那一刻 dsh 的主线程本来就重，首帧没提交出来，第一眼
+ * 就是九成。取 5 之后那一串（每帧 16.7 ms）是 13.3 / 23.1 / 21.2 / 16.1 / 11.1 / 7.4 / 4.7 / 2.9（%），
+ * 首帧丢了也只是三成六，整段没有哪一帧跨掉一半。
+ *
+ * **再往下取要付两笔代价。** 一是收尾：形变在 135 ms 一刀定死，取 4 时最后一格横向还剩 2%/帧（约 12 px）
+ * 才归零，看得见一次顿。二是轨迹：横向拖得越久，「先横着离开输入卡片、再一路上升」就越像一条对角线
+ * （`ω = 7`、`MORPH_END = 0.7` 那一版整段方向角都在 -50° 上下，读者直接说「曲线像直线了」）。
+ *
  * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 **2.84%**（`exp(-πζ/√(1-ζ²))`，只由阻尼比定、
  * 与 ω 无关），峰值落在 190 ms，之后一路落回目标——落定那一下的弹性就是它。
  *
  * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
  */
-const ACROSS_OMEGA = 16
+const ACROSS_OMEGA = 5
 
 /**
  * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
  * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
  */
-const RISE_DAMPING = 0.75
+const RISE_DAMPING = 0.8
 
 /** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
 const RISE_OMEGA = 7.5
+
+/**
+ * 纵向起步的延迟（占整段的比例）：这一段里替身只横着走、一步都不上升。
+ *
+ * 横向那条放慢之后（见 `ACROSS_OMEGA`），前段的方向角本来会一直贴在 -40° ~ -64° 的斜线上，读者
+ * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
+ * 0.2 是六十毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
+ * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
+ */
+const RISE_DELAY = 0.2
 
 /**
  * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
@@ -99,7 +119,7 @@ const RISE_OMEGA = 7.5
  *
  * 它曾经压在 0.45 是因为形变每帧由主线程写、必须早收；后来形变搬上合成器，一度放宽到 0.7。现在压回
  * 0.45，理由换了一条：形变越早收完，宽度就越早收到位，右边缘也就越早退进列内（算式见 `ACROSS_OMEGA`）。
- * 配上那一条曲线，二十毫秒走掉一半、五十毫秒走掉七成九、百毫秒九成九，一百三十五毫秒就定形，剩下那
+ * 配上那一条曲线，二十毫秒走掉一成八、五十毫秒走掉五成八、百毫秒九成二，一百三十五毫秒就定形，剩下那
  * 一段只有上升与落定。
  */
 const MORPH_END = 0.45
@@ -820,8 +840,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 左边，右边由宽度决定，两条边都单调。
     const travel = run(mover, samples.map(sample => ({
         offset: sample.u,
-        transform: 'translate(' + dx * sample.m + 'px, '
-            + dy * springProgress(sample.u, RISE_DAMPING, RISE_OMEGA) + 'px)',
+        transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
     })))
     // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
     // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
@@ -1175,6 +1194,17 @@ function morphProgress(u: number): number {
  * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
  * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
  */
+/**
+ * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
+ * @param u - 时间占比，0 到 1。
+ * @returns 位移进度；延迟段里恒为 0。
+ */
+function riseProgress(u: number): number {
+    const shifted = (u - RISE_DELAY) / (1 - RISE_DELAY)
+    if (!(shifted > 0)) return 0
+    return springProgress(shifted, RISE_DAMPING, RISE_OMEGA)
+}
+
 function springProgress(u: number, damping: number, omega: number): number {
     if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
     const damped = omega * Math.sqrt(1 - damping * damping)
