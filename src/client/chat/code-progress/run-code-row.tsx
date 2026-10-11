@@ -98,8 +98,6 @@ interface PreviewCopy {
     unknownPath: string
     /** 只认出长内容、还没有锚点时那句「可能」的开头。 */
     draftLead: string
-    /** 数字后面那个单位。 */
-    draftUnit: string
 }
 
 const ZH_PREVIEW: PreviewCopy = {
@@ -107,7 +105,6 @@ const ZH_PREVIEW: PreviewCopy = {
     note: '还没执行，写什么由程序自己决定',
     unknownPath: '目标未知',
     draftLead: '可能写入 ',
-    draftUnit: ' 行',
 }
 
 const EN_PREVIEW: PreviewCopy = {
@@ -115,7 +112,6 @@ const EN_PREVIEW: PreviewCopy = {
     note: 'Not run yet — the program decides what it writes',
     unknownPath: 'unknown target',
     draftLead: 'maybe writing ',
-    draftUnit: ' lines',
 }
 
 /**
@@ -326,17 +322,17 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                     {pacedDraft.heading !== '' && (
                         <span className={PREVIEW_SUMMARY_PATH_CLASS}>{pacedDraft.heading}</span>
                     )}
+                    {' '}
                     <span className={PREVIEW_ADD_CLASS}>
                         <DigitReel
-                            text={String(pacedDraft.lines)}
-                            prefix=""
+                            text={'+' + pacedDraft.lines}
+                            prefix="+"
                             suffix=""
                             rolling
-                            cadence={running ? 'fast' : undefined}
+                            cadence={running ? 'fast' as const : undefined}
                             spoken
                         />
                     </span>
-                    {copy.draftUnit}
                 </span>
             )}
             {showTargets && (
