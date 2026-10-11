@@ -14,7 +14,6 @@ import {RAMP_TONE_CSS} from './chat/ramp'
 import {REEL_CSS} from './chat/reel/reel-styles'
 import {CARD_CSS} from './settings/config-card-styles'
 import {CACHE_HIT_CSS} from './chat/cache-hit/cache-hit-styles'
-import {CODE_PROGRESS_CSS} from './chat/code-progress/code-progress-styles'
 import {COMPOSER_GLASS_CSS} from './chat/composer-glass/composer-glass-styles'
 import {CONTEXT_METER_CSS} from './chat/context-meter/context-meter-styles'
 import {FILE_MUTATION_CSS} from './chat/file-mutation/file-mutation-styles'
@@ -124,4 +123,4 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 不进这里：档位规则与它那条页面级兜底色都由 `token-motion.ts` 自己带着（见那个模块里的
  * `REVEAL_STYLE_ID`），跟着引擎挂上撤下。
  */
-export const ALL_CSS = [CHAT_AREA_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CODE_PROGRESS_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, SEND_FLIGHT_CSS, COMPOSER_GLASS_CSS].join('\n')
+export const ALL_CSS = [CHAT_AREA_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, SEND_FLIGHT_CSS, COMPOSER_GLASS_CSS].join('\n')
