@@ -14,7 +14,8 @@
  *
  * 除此之外这一行还多给准备态一次：内置要等参数 JSON 收齐（`parsedToolCall` 在 preparing 直接返回
  * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
- * 的内容一出现就有 `+n -0`，并随流式增长。
+ * 的内容一出现就有 `+n -0`，并随流式增长；edit 那一对字段**各自到、各自开始数**，不等另一半——等齐
+ * 才画的话，行数要等参数里靠后的那个字段，实测滞后 4.5–6.8 s（见 `streamedTotals`）。
  *
  * 这一段默认关着（插件管理页上的「实时改动行数」，标 beta）：关掉时这一行回到接管之前的样子——
  * 准备态不画那两个数，派发后只看参数 JSON。
@@ -29,9 +30,12 @@
  * 所以这一行与内置同序：只看路径与字段类型。
  *
  * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
- * 上下文占用同款。外部仍套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点
- * 另渲染一棵惰性副本（平台契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，
- * 代价只是动画期间那一位的透明度叠了一层。
+ * 上下文占用同款；流式那两态（`preparing` / `running`）只改两处——时长短一档，并且**按节拍换数**。
+ * 行数跟着换行走，那两态每一两百毫秒就跳一次，500 ms 那一档下旧数字还没退完就被下一跳换掉，读数会
+ * 糊在一起；所以宁让读数滞后一拍，也要让每一轮动画走完整（见 `usePacedTotals` 与 `cadence`）。外部仍
+ * 套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点另渲染一棵惰性副本（平台
+ * 契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，代价只是动画期间那一位
+ * 的透明度叠了一层。
  *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
@@ -40,7 +44,7 @@
  *
  * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
  */
-import {useCallback, useMemo} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import type {KeyboardEvent, MouseEvent, ReactElement} from 'react'
 import {
     DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer, diffTotals,
@@ -60,6 +64,15 @@ const CHAT_DIFF_MAX_LINES = 9
 
 /** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
 const CONTENT_FIELDS = ['content', 'old_string', 'new_string'] as const
+
+/**
+ * 流式期间行尾那两个数的更新节拍（毫秒）：一条读数两次更新之间至少隔这么久。
+ *
+ * 它要盖过快档那一轮的**完整周期**——新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms）——
+ * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。代价是读数最多滞后一拍
+ * （高速流式下就是一次台阶），换读者看清每一次跳动。
+ */
+const STREAM_TOTALS_STEP_MS = 300
 
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024
@@ -141,7 +154,12 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
     // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
     const running = model.state === 'running' || model.state === 'preparing'
-    const totals = useMemo(() => rowTotals(block, hunks), [block, hunks])
+    const rawTotals = useMemo(() => rowTotals(block, hunks), [block, hunks])
+    // 老虎机常开，只是流式那两态换一档更短的弹动，并且**读数按那一档的节拍离散更新**：高速流式下
+    // 读数跳得比动画快得多，若逐批换数，一位上会同时挂着两三个残影、读数糊在一起。所以宁让读数
+    // 滞后一拍，也要让每一轮动画走完整——见 `usePacedTotals`。
+    const cadence = running ? 'fast' as const : undefined
+    const totals = usePacedTotals(rawTotals, running)
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null)
@@ -192,6 +210,7 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                                     prefix="+"
                                     suffix=""
                                     rolling
+                                    cadence={cadence}
                                     spoken
                                 />
                             </TextShimmer>
@@ -201,6 +220,7 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                                     prefix="-"
                                     suffix=""
                                     rolling
+                                    cadence={cadence}
                                     spoken
                                 />
                             </TextShimmer>
@@ -677,9 +697,14 @@ function rowTotals(block: ToolCallBlock, hunks: DiffHunk[] | null): {added: numb
  *
  * 行级 diff 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），而这一处要的是一个
  * 只会往上跳的数——与数字轮那边的口径一致。
+ *
+ * **两个字段各自到、各自开始数**，不等另一半：等齐才画意味着行数要等参数 JSON 里**靠后**的那一个字段
+ * 到达——模型先把 `old_string` 写完再写 `new_string` 时，那是一整段原文的时长（实测同一段参数流里 KB
+ * 在 96 ms 就显示，行数要等 4.5–6.8 s）。那一位没到之前先报 0，到齐之前它只往上跳；等齐写法反而会在
+ * 另一半到达时把已经数过的那一半按新进度重报一次，读数往回跳，与数字轮那一套相冲。
  * @param name - 线上工具名。
  * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 增删两个数，或 null（参数还没到那一步）。
+ * @returns 增删两个数，或 null（两个内容字段都还没出现）。
  */
 function streamedTotals(name: string, view: ToolArgs | undefined): {added: number, removed: number} | null {
     if (view === undefined) return null
@@ -687,8 +712,13 @@ function streamedTotals(name: string, view: ToolArgs | undefined): {added: numbe
         return view.has('content') ? {added: streamedLineCount(view, 'content'), removed: 0} : null
     }
     if (name !== 'edit') return null
-    if (!view.has('old_string') || !view.has('new_string')) return null
-    return {added: streamedLineCount(view, 'new_string'), removed: streamedLineCount(view, 'old_string')}
+    const hasOld = view.has('old_string')
+    const hasNew = view.has('new_string')
+    if (!hasOld && !hasNew) return null
+    return {
+        added: hasNew ? streamedLineCount(view, 'new_string') : 0,
+        removed: hasOld ? streamedLineCount(view, 'old_string') : 0,
+    }
 }
 
 /**
@@ -761,4 +791,65 @@ function diffBlockLabels(t: Translate): DiffBlockLabels {
         collapse: t('collapse'),
         expand: hidden => t('diff.expandRest', {count: hidden}),
     }
+}
+
+/**
+ * 按节拍交出读数：流式那两态最多每 `STREAM_TOTALS_STEP_MS` 换一次，其余情形实时跟随。
+ *
+ * 节拍只压「换数的频率」，不压真值——交给 `DigitReel` 的仍是最新读数（只是晚到下一拍），所以一轮动画
+ * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
+ * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
+ *
+ * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
+ * 不会一跳一跳地补播中间值。
+ * @param target - 最新读数；这一行没有可画的改动时为 null。
+ * @param paced - 要不要按节拍走（流式那两态）。
+ * @returns 现在该显示的读数。
+ */
+function usePacedTotals(
+    target: {added: number, removed: number} | null,
+    paced: boolean,
+): {added: number, removed: number} | null {
+    const [shown, setShown] = useState(target)
+    const targetRef = useRef(target)
+    const nextAtRef = useRef<number | null>(null)
+    const pendingRef = useRef(false)
+    targetRef.current = target
+    useEffect(() => {
+        // 不在流式那两态（或这一行没有可画的改动）：实时跟随，并让节拍归零——上一次流式的相位不该
+        // 影响下一次。
+        if (!paced) {
+            nextAtRef.current = null
+            pendingRef.current = false
+            setShown(target)
+            return
+        }
+        const now = Date.now()
+        // 第一次换数：读数刚出现，直接给（这一拍就是它的起点）。若这里也走「等一拍」，节拍会因为
+        // `nextAtRef` 一直是 null 而永远起不来。
+        if (nextAtRef.current === null) {
+            nextAtRef.current = now + STREAM_TOTALS_STEP_MS
+            setShown(target)
+            return
+        }
+        const wait = nextAtRef.current - now
+        if (wait <= 0) {
+            nextAtRef.current = now + STREAM_TOTALS_STEP_MS
+            setShown(target)
+            return
+        }
+        // 这一段里读数还会继续长；到点取那一刻的最新值，所以只需一个定时器，不必每批都重排。
+        if (pendingRef.current) return
+        pendingRef.current = true
+        const timer = setTimeout(() => {
+            pendingRef.current = false
+            nextAtRef.current = Date.now() + STREAM_TOTALS_STEP_MS
+            setShown(targetRef.current)
+        }, wait)
+        return () => {
+            pendingRef.current = false
+            clearTimeout(timer)
+        }
+    }, [paced, target])
+    return shown
 }

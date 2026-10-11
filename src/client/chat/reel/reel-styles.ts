@@ -29,12 +29,23 @@
  */
 
 /**
- * 一次弹动多久。与下面那两条关键帧的时长是同一个数，改一处就要改另一处。
+ * 一次弹动多久：常规那一档。两条关键帧的 `animation` 读的是 `--dsh-chat-ux-reel-turn`，这个常量就是它
+ * 在容器上的默认值，改一处就要改另一处。
  *
  * 500 ms 与下面那个 70 ms 都是照着那张参考卡取的：280 ms 那一版在真机上「动完了但没看见」，一位
  * 数字的位移只有 6px，时间一短就只剩一次闪烁。时长与起手延后是一对，一起改。
  */
 export const REEL_TURN_MS = 500
+
+/**
+ * 高频那一档：读数变化比上面那 500 ms 还密时用（文件变更行准备态/运行态那两个数，行数跟着换行走）。
+ *
+ * 这一档是配着**节拍**用的：调用方（`file-mutation-row` 的 `usePacedTotals`）把换数压到比这一轮的
+ * 完整周期还长（220 ms 落回来 + 低位最多 70 ms 起手延后 → 节拍 300 ms），所以每一轮动画都走得完整、
+ * 不会被下一批参数打断。留旧那一档 500 ms 则做不到——读数每一两百毫秒就跳一次，一位上会挂着一串
+ * 残影，读数糊在一起。
+ */
+export const REEL_TURN_FAST_MS = 220
 
 /** 低位比高位晚这么多起手，动起来的次序从左往右。同样对齐那张参考卡。 */
 export const REEL_STAGGER_MS = 70
@@ -47,6 +58,9 @@ const REEL_EASE = 'cubic-bezier(0.34, 1.45, 0.64, 1)'
 
 /** 这一截的容器：几位数字、小数点、百分号并排。 */
 export const REEL_TEXT_CLASS = 'dsh-chat-ux-reel-text'
+
+/** 高频那一档：挂在这一截的容器上，时长经自定义属性往下传（内联 style 定不了关键帧时长）。 */
+export const REEL_FAST_CLASS = 'dsh-chat-ux-reel-fast'
 
 /** 一位数占的那个槽位：现在的数字在文档流里，上一个压在它上面。 */
 export const REEL_SLOT_CLASS = 'dsh-chat-ux-reel-slot'
@@ -85,10 +99,16 @@ export const REEL_CSS = `
    （命中率胶囊与上下文占用）本来就都是「次级文字再减一档」，与 dsh 在那两处的表达式同值。 */
 .${REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: 20px;
+  --dsh-chat-ux-reel-turn: ${REEL_TURN_MS}ms;
   display: inline-flex;
   align-items: center;
   height: var(--dsh-chat-ux-reel-cell);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+}
+
+/* 高频那一档：只换时长，位移、曲线、错峰起手都不动。 */
+.${REEL_FAST_CLASS} {
+  --dsh-chat-ux-reel-turn: ${REEL_TURN_FAST_MS}ms;
 }
 
 /* 一位数：一个槽位。现在的数字在文档流里（槽宽由它决定），上一个数字绝对定位压在同一个位置上。 */
@@ -115,7 +135,7 @@ export const REEL_CSS = `
   line-height: var(--dsh-chat-ux-reel-cell);
   text-align: center;
   will-change: transform, opacity;
-  animation: dsh-chat-ux-reel-in ${REEL_TURN_MS}ms ${REEL_EASE} backwards;
+  animation: dsh-chat-ux-reel-in var(--dsh-chat-ux-reel-turn) ${REEL_EASE} backwards;
 }
 
 /* 上一个数字：朝反方向淡出，走完停在自己的零透明度上，不碍事。
@@ -128,7 +148,7 @@ export const REEL_CSS = `
   line-height: var(--dsh-chat-ux-reel-cell);
   text-align: center;
   will-change: transform, opacity;
-  animation: dsh-chat-ux-reel-out ${REEL_TURN_MS}ms ${REEL_EASE} both;
+  animation: dsh-chat-ux-reel-out var(--dsh-chat-ux-reel-turn) ${REEL_EASE} both;
 }
 
 @keyframes dsh-chat-ux-reel-in {

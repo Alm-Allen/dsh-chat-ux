@@ -1757,17 +1757,20 @@ const reel_styles_1 = require("./reel-styles");
 const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/;
 /**
  * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
- * @param props - 读数、首尾标记、开关与读屏那一份。
+ * @param props - 读数、首尾标记、开关、时长档与读屏那一份。
  * @returns 这一截。
  */
-function DigitReel({ text, prefix = '', suffix = '%', rolling, spoken }) {
+function DigitReel(props) {
+    const { text, prefix = '', suffix = '%', rolling, cadence, spoken } = props;
     const reading = splitReading(text, prefix, suffix);
     // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
     if (!rolling || reading === null) {
         return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, children: text });
     }
+    // 时长经自定义属性往下传，不写成内联 style：关键帧那一侧要用 `var()`，内联只写得了声明值。
+    const className = cadence === 'fast' ? reel_styles_1.REEL_TEXT_CLASS + ' ' + reel_styles_1.REEL_FAST_CLASS : reel_styles_1.REEL_TEXT_CLASS;
     const digits = reading.integer.split('');
-    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_TEXT_CLASS, "aria-hidden": true, children: [prefix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: prefix }), digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), suffix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: suffix })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: className, "aria-hidden": true, children: [prefix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: prefix }), digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), suffix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: suffix })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
 }
 /**
  * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
@@ -1837,14 +1840,24 @@ function splitReading(text, prefix, suffix) {
  * @module dsh-chat-ux/chat/reel/reel-styles
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.REEL_CSS = exports.REEL_HOST_CLASS = exports.REEL_TAKEOVER_ATTRIBUTE = exports.REEL_SPOKEN_CLASS = exports.REEL_STATIC_CLASS = exports.REEL_WAS_CLASS = exports.REEL_CELL_CLASS = exports.REEL_SLOT_CLASS = exports.REEL_TEXT_CLASS = exports.REEL_STAGGER_MS = exports.REEL_TURN_MS = void 0;
+exports.REEL_CSS = exports.REEL_HOST_CLASS = exports.REEL_TAKEOVER_ATTRIBUTE = exports.REEL_SPOKEN_CLASS = exports.REEL_STATIC_CLASS = exports.REEL_WAS_CLASS = exports.REEL_CELL_CLASS = exports.REEL_SLOT_CLASS = exports.REEL_FAST_CLASS = exports.REEL_TEXT_CLASS = exports.REEL_STAGGER_MS = exports.REEL_TURN_FAST_MS = exports.REEL_TURN_MS = void 0;
 /**
- * 一次弹动多久。与下面那两条关键帧的时长是同一个数，改一处就要改另一处。
+ * 一次弹动多久：常规那一档。两条关键帧的 `animation` 读的是 `--dsh-chat-ux-reel-turn`，这个常量就是它
+ * 在容器上的默认值，改一处就要改另一处。
  *
  * 500 ms 与下面那个 70 ms 都是照着那张参考卡取的：280 ms 那一版在真机上「动完了但没看见」，一位
  * 数字的位移只有 6px，时间一短就只剩一次闪烁。时长与起手延后是一对，一起改。
  */
 exports.REEL_TURN_MS = 500;
+/**
+ * 高频那一档：读数变化比上面那 500 ms 还密时用（文件变更行准备态/运行态那两个数，行数跟着换行走）。
+ *
+ * 这一档是配着**节拍**用的：调用方（`file-mutation-row` 的 `usePacedTotals`）把换数压到比这一轮的
+ * 完整周期还长（220 ms 落回来 + 低位最多 70 ms 起手延后 → 节拍 300 ms），所以每一轮动画都走得完整、
+ * 不会被下一批参数打断。留旧那一档 500 ms 则做不到——读数每一两百毫秒就跳一次，一位上会挂着一串
+ * 残影，读数糊在一起。
+ */
+exports.REEL_TURN_FAST_MS = 220;
 /** 低位比高位晚这么多起手，动起来的次序从左往右。同样对齐那张参考卡。 */
 exports.REEL_STAGGER_MS = 70;
 /** 进场的起点：从下方这么多像素往上落回来。 */
@@ -1853,6 +1866,8 @@ const REEL_RISE = '6px';
 const REEL_EASE = 'cubic-bezier(0.34, 1.45, 0.64, 1)';
 /** 这一截的容器：几位数字、小数点、百分号并排。 */
 exports.REEL_TEXT_CLASS = 'dsh-chat-ux-reel-text';
+/** 高频那一档：挂在这一截的容器上，时长经自定义属性往下传（内联 style 定不了关键帧时长）。 */
+exports.REEL_FAST_CLASS = 'dsh-chat-ux-reel-fast';
 /** 一位数占的那个槽位：现在的数字在文档流里，上一个压在它上面。 */
 exports.REEL_SLOT_CLASS = 'dsh-chat-ux-reel-slot';
 /** 槽位里现在的那个数字：从下方落回来，终态零位移、零模糊。 */
@@ -1883,10 +1898,16 @@ exports.REEL_CSS = `
    （命中率胶囊与上下文占用）本来就都是「次级文字再减一档」，与 dsh 在那两处的表达式同值。 */
 .${exports.REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: 20px;
+  --dsh-chat-ux-reel-turn: ${exports.REEL_TURN_MS}ms;
   display: inline-flex;
   align-items: center;
   height: var(--dsh-chat-ux-reel-cell);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+}
+
+/* 高频那一档：只换时长，位移、曲线、错峰起手都不动。 */
+.${exports.REEL_FAST_CLASS} {
+  --dsh-chat-ux-reel-turn: ${exports.REEL_TURN_FAST_MS}ms;
 }
 
 /* 一位数：一个槽位。现在的数字在文档流里（槽宽由它决定），上一个数字绝对定位压在同一个位置上。 */
@@ -1913,7 +1934,7 @@ exports.REEL_CSS = `
   line-height: var(--dsh-chat-ux-reel-cell);
   text-align: center;
   will-change: transform, opacity;
-  animation: dsh-chat-ux-reel-in ${exports.REEL_TURN_MS}ms ${REEL_EASE} backwards;
+  animation: dsh-chat-ux-reel-in var(--dsh-chat-ux-reel-turn) ${REEL_EASE} backwards;
 }
 
 /* 上一个数字：朝反方向淡出，走完停在自己的零透明度上，不碍事。
@@ -1926,7 +1947,7 @@ exports.REEL_CSS = `
   line-height: var(--dsh-chat-ux-reel-cell);
   text-align: center;
   will-change: transform, opacity;
-  animation: dsh-chat-ux-reel-out ${exports.REEL_TURN_MS}ms ${REEL_EASE} both;
+  animation: dsh-chat-ux-reel-out var(--dsh-chat-ux-reel-turn) ${REEL_EASE} both;
 }
 
 @keyframes dsh-chat-ux-reel-in {
@@ -3284,7 +3305,8 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  *
  * 除此之外这一行还多给准备态一次：内置要等参数 JSON 收齐（`parsedToolCall` 在 preparing 直接返回
  * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
- * 的内容一出现就有 `+n -0`，并随流式增长。
+ * 的内容一出现就有 `+n -0`，并随流式增长；edit 那一对字段**各自到、各自开始数**，不等另一半——等齐
+ * 才画的话，行数要等参数里靠后的那个字段，实测滞后 4.5–6.8 s（见 `streamedTotals`）。
  *
  * 这一段默认关着（插件管理页上的「实时改动行数」，标 beta）：关掉时这一行回到接管之前的样子——
  * 准备态不画那两个数，派发后只看参数 JSON。
@@ -3299,9 +3321,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 所以这一行与内置同序：只看路径与字段类型。
  *
  * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
- * 上下文占用同款。外部仍套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点
- * 另渲染一棵惰性副本（平台契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，
- * 代价只是动画期间那一位的透明度叠了一层。
+ * 上下文占用同款；流式那两态（`preparing` / `running`）只改两处——时长短一档，并且**按节拍换数**。
+ * 行数跟着换行走，那两态每一两百毫秒就跳一次，500 ms 那一档下旧数字还没退完就被下一跳换掉，读数会
+ * 糊在一起；所以宁让读数滞后一拍，也要让每一轮动画走完整（见 `usePacedTotals` 与 `cadence`）。外部仍
+ * 套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点另渲染一棵惰性副本（平台
+ * 契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，代价只是动画期间那一位
+ * 的透明度叠了一层。
  *
  * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
  * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
@@ -3318,6 +3343,14 @@ const file_mutation_styles_1 = require("./file-mutation-styles");
 const CHAT_DIFF_MAX_LINES = 9;
 /** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
 const CONTENT_FIELDS = ['content', 'old_string', 'new_string'];
+/**
+ * 流式期间行尾那两个数的更新节拍（毫秒）：一条读数两次更新之间至少隔这么久。
+ *
+ * 它要盖过快档那一轮的**完整周期**——新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms）——
+ * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。代价是读数最多滞后一拍
+ * （高速流式下就是一次台阶），换读者看清每一次跳动。
+ */
+const STREAM_TOTALS_STEP_MS = 300;
 /** 一个 KB 的字符数。 */
 const KILOBYTE = 1024;
 /** 两个文件工具共用同一枚图标：编辑铅笔。 */
@@ -3362,7 +3395,12 @@ function FileMutationRow(props) {
     // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
     // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
     const running = model.state === 'running' || model.state === 'preparing';
-    const totals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
+    const rawTotals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
+    // 老虎机常开，只是流式那两态换一档更短的弹动，并且**读数按那一档的节拍离散更新**：高速流式下
+    // 读数跳得比动画快得多，若逐批换数，一位上会同时挂着两三个残影、读数糊在一起。所以宁让读数
+    // 滞后一拍，也要让每一轮动画走完整——见 `usePacedTotals`。
+    const cadence = running ? 'fast' : undefined;
+    const totals = usePacedTotals(rawTotals, running);
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null);
@@ -3388,7 +3426,7 @@ function FileMutationRow(props) {
         if (event.key === 'Enter' || event.key === ' ')
             event.stopPropagation();
     }, []);
-    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, spoken: true }) })] }))] }))] }));
+    const collapsedContent = summaryText === '' ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
@@ -3723,9 +3761,14 @@ function rowTotals(block, hunks) {
  *
  * 行级 diff 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），而这一处要的是一个
  * 只会往上跳的数——与数字轮那边的口径一致。
+ *
+ * **两个字段各自到、各自开始数**，不等另一半：等齐才画意味着行数要等参数 JSON 里**靠后**的那一个字段
+ * 到达——模型先把 `old_string` 写完再写 `new_string` 时，那是一整段原文的时长（实测同一段参数流里 KB
+ * 在 96 ms 就显示，行数要等 4.5–6.8 s）。那一位没到之前先报 0，到齐之前它只往上跳；等齐写法反而会在
+ * 另一半到达时把已经数过的那一半按新进度重报一次，读数往回跳，与数字轮那一套相冲。
  * @param name - 线上工具名。
  * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 增删两个数，或 null（参数还没到那一步）。
+ * @returns 增删两个数，或 null（两个内容字段都还没出现）。
  */
 function streamedTotals(name, view) {
     if (view === undefined)
@@ -3735,9 +3778,14 @@ function streamedTotals(name, view) {
     }
     if (name !== 'edit')
         return null;
-    if (!view.has('old_string') || !view.has('new_string'))
+    const hasOld = view.has('old_string');
+    const hasNew = view.has('new_string');
+    if (!hasOld && !hasNew)
         return null;
-    return { added: streamedLineCount(view, 'new_string'), removed: streamedLineCount(view, 'old_string') };
+    return {
+        added: hasNew ? streamedLineCount(view, 'new_string') : 0,
+        removed: hasOld ? streamedLineCount(view, 'old_string') : 0,
+    };
 }
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
@@ -3812,6 +3860,64 @@ function diffBlockLabels(t) {
         collapse: t('collapse'),
         expand: hidden => t('diff.expandRest', { count: hidden }),
     };
+}
+/**
+ * 按节拍交出读数：流式那两态最多每 `STREAM_TOTALS_STEP_MS` 换一次，其余情形实时跟随。
+ *
+ * 节拍只压「换数的频率」，不压真值——交给 `DigitReel` 的仍是最新读数（只是晚到下一拍），所以一轮动画
+ * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
+ * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
+ *
+ * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
+ * 不会一跳一跳地补播中间值。
+ * @param target - 最新读数；这一行没有可画的改动时为 null。
+ * @param paced - 要不要按节拍走（流式那两态）。
+ * @returns 现在该显示的读数。
+ */
+function usePacedTotals(target, paced) {
+    const [shown, setShown] = (0, react_1.useState)(target);
+    const targetRef = (0, react_1.useRef)(target);
+    const nextAtRef = (0, react_1.useRef)(null);
+    const pendingRef = (0, react_1.useRef)(false);
+    targetRef.current = target;
+    (0, react_1.useEffect)(() => {
+        // 不在流式那两态（或这一行没有可画的改动）：实时跟随，并让节拍归零——上一次流式的相位不该
+        // 影响下一次。
+        if (!paced) {
+            nextAtRef.current = null;
+            pendingRef.current = false;
+            setShown(target);
+            return;
+        }
+        const now = Date.now();
+        // 第一次换数：读数刚出现，直接给（这一拍就是它的起点）。若这里也走「等一拍」，节拍会因为
+        // `nextAtRef` 一直是 null 而永远起不来。
+        if (nextAtRef.current === null) {
+            nextAtRef.current = now + STREAM_TOTALS_STEP_MS;
+            setShown(target);
+            return;
+        }
+        const wait = nextAtRef.current - now;
+        if (wait <= 0) {
+            nextAtRef.current = now + STREAM_TOTALS_STEP_MS;
+            setShown(target);
+            return;
+        }
+        // 这一段里读数还会继续长；到点取那一刻的最新值，所以只需一个定时器，不必每批都重排。
+        if (pendingRef.current)
+            return;
+        pendingRef.current = true;
+        const timer = setTimeout(() => {
+            pendingRef.current = false;
+            nextAtRef.current = Date.now() + STREAM_TOTALS_STEP_MS;
+            setShown(targetRef.current);
+        }, wait);
+        return () => {
+            pendingRef.current = false;
+            clearTimeout(timer);
+        };
+    }, [paced, target]);
+    return shown;
 }
     };
 

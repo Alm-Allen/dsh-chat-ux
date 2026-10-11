@@ -37,14 +37,14 @@
 import {useState} from 'react'
 import type {CSSProperties, ReactElement} from 'react'
 import {
-    REEL_CELL_CLASS, REEL_SLOT_CLASS, REEL_SPOKEN_CLASS, REEL_STAGGER_MS, REEL_STATIC_CLASS,
+    REEL_CELL_CLASS, REEL_FAST_CLASS, REEL_SLOT_CLASS, REEL_SPOKEN_CLASS, REEL_STAGGER_MS, REEL_STATIC_CLASS,
     REEL_TEXT_CLASS, REEL_WAS_CLASS,
 } from './reel-styles'
 
 /** 读数中间那一段的形状：一至六位整数，可带一位小数。首尾那两个不变的标记由调用方给。 */
 const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/
 
-/** 这一枚收到的：读数、它首尾那两个不变的标记、翻动开着没有，以及要不要给读屏另留一份。 */
+/** 这一枚收到的：读数、它首尾那两个不变的标记、翻动开着没有、用哪一档时长，以及要不要给读屏另留一份。 */
 export interface DigitReelProps {
     /** `97.3%` 或 `+96` 这样的读数。 */
     text: string
@@ -54,25 +54,36 @@ export interface DigitReelProps {
     suffix?: string
     /** 翻动开着没有；关着时这一截就是一段静态读数。 */
     rolling: boolean
+    /**
+     * 读数变化有多密：`'fast'` 用更短的一次弹动（`REEL_TURN_FAST_MS`）。
+     *
+     * 高频那一处（文件变更行准备态/运行态那两个数，行数跟着换行走，每一两百毫秒一跳）必须走它：
+     * 500 ms 那一档下旧数字还没退完就被下一跳换掉，一位上挂着一串残影，读数糊在一起。低频那两处
+     * （命中率、上下文占用）不给这个字段，照走 500 ms。
+     */
+    cadence?: 'fast' | undefined
     /** 视觉块是否标 `aria-hidden` 并另给一份视觉隐藏的纯文本——页面上没有别的可读文本时才要。 */
     spoken: boolean
 }
 
 /**
  * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
- * @param props - 读数、首尾标记、开关与读屏那一份。
+ * @param props - 读数、首尾标记、开关、时长档与读屏那一份。
  * @returns 这一截。
  */
-export function DigitReel({text, prefix = '', suffix = '%', rolling, spoken}: DigitReelProps): ReactElement {
+export function DigitReel(props: DigitReelProps): ReactElement {
+    const {text, prefix = '', suffix = '%', rolling, cadence, spoken} = props
     const reading = splitReading(text, prefix, suffix)
     // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
     if (!rolling || reading === null) {
         return <span className={REEL_TEXT_CLASS}>{text}</span>
     }
+    // 时长经自定义属性往下传，不写成内联 style：关键帧那一侧要用 `var()`，内联只写得了声明值。
+    const className = cadence === 'fast' ? REEL_TEXT_CLASS + ' ' + REEL_FAST_CLASS : REEL_TEXT_CLASS
     const digits = reading.integer.split('')
     return (
         <>
-            <span className={REEL_TEXT_CLASS} aria-hidden>
+            <span className={className} aria-hidden>
                 {/* 首尾两个标记不弹，与数字位并排；它们跟着调用方给的形状走。 */}
                 {prefix !== '' && <span className={REEL_STATIC_CLASS}>{prefix}</span>}
                 {digits.map((digit, index) => (
