@@ -5707,22 +5707,23 @@ exports.FLIGHT_MS = 300;
  *
  * 临界阻尼，不过冲：形状不该弹。
  *
- * **这个数同时定着「开局那几帧各自走多远」，取 5 是照这个量出来的。** 时间轴压进 `MORPH_END` 之后，
+ * **这个数同时定着「开局那几帧各自走多远」，取 7 是照这个量出来的。** 时间轴压进 `MORPH_END` 之后，
  * 弹簧的角频率相对那一段长度就偏大：取 16 时第一帧（提交后 16.7 ms 那一格）已经走掉 58.8%、第二帧
  * 90.4%——读者看到的是一上来就闪到半路；而提交那一刻 dsh 的主线程本来就重，首帧没提交出来，第一眼
- * 就是九成。取 5 之后那一串（每帧 16.7 ms）是 13.3 / 23.1 / 21.2 / 16.1 / 11.1 / 7.4 / 4.7 / 2.9（%），
- * 首帧丢了也只是三成六，整段没有哪一帧跨掉一半。
+ * 就是九成。取 7 之后那一串（每帧 16.7 ms）是 21.7 / 30.2 / 21.8 / 12.9 / 7.0 / 3.6 / 1.8 / 0.9（%），
+ * 首帧丢了是五成二；想再小就往 6、5 走，代价见下一段。
  *
- * **再往下取要付两笔代价。** 一是收尾：形变在 135 ms 一刀定死，取 4 时最后一格横向还剩 2%/帧（约 12 px）
+ * **再往下取要付两笔代价。** 一是收尾：形变在 135 ms 一刀定死，取到 4 时最后一格横向还剩 2%/帧（约 12 px）
  * 才归零，看得见一次顿。二是轨迹：横向拖得越久，「先横着离开输入卡片、再一路上升」就越像一条对角线
- * （`ω = 7`、`MORPH_END = 0.7` 那一版整段方向角都在 -50° 上下，读者直接说「曲线像直线了」）。
+ * （当年 `ω = 7`、`MORPH_END = 0.7`、纵向又没有延迟的那一版整段方向角都在 -50° 上下，读者直接说
+ * 「曲线像直线了」——同样是 7，差别全在后面那两项上）。
  *
  * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 **2.84%**（`exp(-πζ/√(1-ζ²))`，只由阻尼比定、
  * 与 ω 无关），峰值落在 190 ms，之后一路落回目标——落定那一下的弹性就是它。
  *
  * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
  */
-const ACROSS_OMEGA = 5;
+const ACROSS_OMEGA = 7;
 /**
  * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
  * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
@@ -5735,10 +5736,10 @@ const RISE_OMEGA = 7.5;
  *
  * 横向那条放慢之后（见 `ACROSS_OMEGA`），前段的方向角本来会一直贴在 -40° ~ -64° 的斜线上，读者
  * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
- * 0.2 是六十毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
+ * 0.15 是四十五毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
  * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
  */
-const RISE_DELAY = 0.2;
+const RISE_DELAY = 0.15;
 /**
  * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
  * 形变走的还是同一个弹簧，只是时间轴压到这一段的长度上。
@@ -5749,6 +5750,18 @@ const RISE_DELAY = 0.2;
  * 一段只有上升与落定。
  */
 const MORPH_END = 0.45;
+/** 上面那几条常量的合订本：`readTuning` 的兜底值，也是每段飞行默认用的那一套。 */
+const DEFAULT_TUNING = {
+    acrossOmega: ACROSS_OMEGA,
+    riseDelay: RISE_DELAY,
+    riseOmega: RISE_OMEGA,
+    riseDamping: RISE_DAMPING,
+    morphEnd: MORPH_END,
+};
+/** 覆盖曲线参数用的 `localStorage` 键（见 `readTuning`）。 */
+const TUNING_KEY = 'dsh-chat-ux:send-flight';
+/** 这一段飞行正在用的参数；每段起飞前由 `readTuning()` 现读一次。 */
+let tuning = DEFAULT_TUNING;
 /**
  * 内容反向缩放的除数下限（**像素**）。`visible` 被右边缘那道夹子夹到 0 时，倒数会算出 `Infinity`——
  * 那几帧壳本来就什么都看不见（缩放是 0），给个半像素的下限只为让关键帧里是一个有限数。
@@ -6116,6 +6129,9 @@ function startMorph(snapshot, bubble, end) {
     // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
     // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
     const reach = end.right - start.left;
+    // 这一段用哪一套参数：默认值，或者浏览器里那一份覆盖（见 `readTuning`）。现读一次，所以调完参数
+    // 发下一条消息就是新的，不必刷新页面。
+    tuning = readTuning();
     // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
     const samples = [];
     for (let step = 0; step <= SAMPLES; step += 1) {
@@ -6331,12 +6347,12 @@ function startMorph(snapshot, bubble, end) {
     // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
     // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
     // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
-    const shape = run(shell, between(0, MORPH_END, sample => ({
+    const shape = run(shell, between(0, tuning.morphEnd, sample => ({
         transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
     })));
     // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
     // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
-    const inverse = run(scaler, between(0, MORPH_END, sample => ({
+    const inverse = run(scaler, between(0, tuning.morphEnd, sample => ({
         transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
             + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
     })));
@@ -6344,7 +6360,7 @@ function startMorph(snapshot, bubble, end) {
     // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
     // 壳的 `transform` 照样在合成器上。卡住时半径停在旧值，圆还是圆的。
     // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
-    const corners = run(shell, between(0, MORPH_END, sample => ({
+    const corners = run(shell, between(0, tuning.morphEnd, sample => ({
         borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
     }), 2));
     /**
@@ -6383,9 +6399,9 @@ function startMorph(snapshot, bubble, end) {
      * @param u - 这一刻的进度；还没走完形变段就什么都不做。
      */
     const compact = (u) => {
-        if (normalized || u < MORPH_END)
+        if (normalized || u < tuning.morphEnd)
             return;
-        const final = samples.find(sample => sample.u >= MORPH_END) ?? samples.at(-1);
+        const final = samples.find(sample => sample.u >= tuning.morphEnd) ?? samples.at(-1);
         if (final === undefined)
             return;
         normalized = true;
@@ -6400,11 +6416,11 @@ function startMorph(snapshot, bubble, end) {
     };
     // 落定那格是气泡自己：不透明，把下面四层整个盖住。方向与从前相反（从前是卡面那层从 1 淡到 0），
     // 因为卡面现在是照抄来的、可能半透明，压在气泡色上会偏色。
-    run(bubbleFill, between(0, MORPH_END, sample => ({ opacity: String(sample.m) }), 2));
+    run(bubbleFill, between(0, tuning.morphEnd, sample => ({ opacity: String(sample.m) }), 2));
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
     const shadow = shadowSpread(snapshot.shadow);
-    run(halo, between(0, MORPH_END, sample => ({
+    run(halo, between(0, tuning.morphEnd, sample => ({
         transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
         opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
     }), 2));
@@ -6414,7 +6430,7 @@ function startMorph(snapshot, bubble, end) {
         const anchorRight = x + width / 2 > W0 / 2;
         const anchorBottom = y + height / 2 > H0 / 2;
         piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%');
-        run(piece.element, between(0, MORPH_END, (sample) => {
+        run(piece.element, between(0, tuning.morphEnd, (sample) => {
             const gone = Math.min(1, sample.m / CHROME_GONE_AT);
             const shiftX = anchorRight ? sample.visible - W0 : 0;
             const shiftY = anchorBottom ? sample.height - H0 : 0;
@@ -6635,13 +6651,24 @@ function scrub(root) {
         layer.remove();
 }
 /**
- * 形变进度：一条临界阻尼的弹簧，压进前 `MORPH_END` 段。弹簧在窗口末端还差一点点没到，整条按末端的
- * 值归一，终点严丝合缝、中间也不跳。
+ * 形变进度：一条临界阻尼的弹簧，压进前 `tuning.morphEnd` 段。弹簧在窗口末端还差一点点没到，整条按
+ * 末端的值归一，终点严丝合缝、中间也不跳。
  */
 function morphProgress(u) {
-    if (u >= MORPH_END)
+    if (u >= tuning.morphEnd)
         return 1;
-    return springProgress(u / MORPH_END, 1, ACROSS_OMEGA) / springProgress(1, 1, ACROSS_OMEGA);
+    return springProgress(u / tuning.morphEnd, 1, tuning.acrossOmega) / springProgress(1, 1, tuning.acrossOmega);
+}
+/**
+ * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
+ * @param u - 时间占比，0 到 1。
+ * @returns 位移进度；延迟段里恒为 0。
+ */
+function riseProgress(u) {
+    const shifted = (u - tuning.riseDelay) / (1 - tuning.riseDelay);
+    if (!(shifted > 0))
+        return 0;
+    return springProgress(shifted, tuning.riseDamping, tuning.riseOmega);
 }
 /**
  * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
@@ -6653,23 +6680,63 @@ function morphProgress(u) {
  * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
  * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
  */
-/**
- * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
- * @param u - 时间占比，0 到 1。
- * @returns 位移进度；延迟段里恒为 0。
- */
-function riseProgress(u) {
-    const shifted = (u - RISE_DELAY) / (1 - RISE_DELAY);
-    if (!(shifted > 0))
-        return 0;
-    return springProgress(shifted, RISE_DAMPING, RISE_OMEGA);
-}
 function springProgress(u, damping, omega) {
     if (damping >= 1)
         return 1 - (1 + omega * u) * Math.exp(-omega * u);
     const damped = omega * Math.sqrt(1 - damping * damping);
     return 1 - Math.exp(-damping * omega * u)
         * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
+}
+/**
+ * 这一段飞行要用的曲线参数：默认值，加上浏览器里那一份覆盖。
+ *
+ * **这是给开发期试参数的口子。** 在控制台里写
+ *
+ *     localStorage.setItem('dsh-chat-ux:send-flight', '{"acrossOmega":7,"riseDelay":0.15}')
+ *
+ * 然后发一条消息就能看到新的一套：每段起飞前现读一次，不必重新构建、也不必刷新页面。
+ * `localStorage.removeItem('dsh-chat-ux:send-flight')` 就回到默认值。能覆盖的键就是 `FlightTuning`
+ * 那五个——`acrossOmega`（越大开局越快、横向越早走完）、`riseDelay`（越大开头那段水平滑行越长）、
+ * `riseOmega`、`riseDamping`、`morphEnd`。它不进配置：卡片上没有这一行，schema 里也没有。
+ *
+ * **只认说得通的值**：不是有限数、或越界（`morphEnd` 要在 0 与 1 之间、阻尼比夹在 0.05~1）就退回
+ * 默认——一次笔误不该把动画钉死在半路。读不到 `localStorage`（隐私模式会直接抛）时同样退默认。
+ * @returns 这一次要用的那一套参数。
+ */
+function readTuning() {
+    let raw = null;
+    try {
+        raw = window.localStorage.getItem(TUNING_KEY);
+    }
+    catch {
+        return DEFAULT_TUNING;
+    }
+    if (raw === null || raw === '')
+        return DEFAULT_TUNING;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        return DEFAULT_TUNING;
+    }
+    if (parsed === null || typeof parsed !== 'object')
+        return DEFAULT_TUNING;
+    const source = parsed;
+    const read = (key) => {
+        const value = source[key];
+        return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_TUNING[key];
+    };
+    const acrossOmega = read('acrossOmega');
+    const riseOmega = read('riseOmega');
+    const morphEnd = read('morphEnd');
+    return {
+        acrossOmega: acrossOmega > 0 ? acrossOmega : DEFAULT_TUNING.acrossOmega,
+        riseDelay: Math.min(0.9, Math.max(0, read('riseDelay'))),
+        riseOmega: riseOmega > 0 ? riseOmega : DEFAULT_TUNING.riseOmega,
+        riseDamping: Math.min(1, Math.max(0.05, read('riseDamping'))),
+        morphEnd: morphEnd > 0 && morphEnd < 1 ? morphEnd : DEFAULT_TUNING.morphEnd,
+    };
 }
 /**
  * 一个圆角半径在非均匀缩放的壳上该怎么写。
