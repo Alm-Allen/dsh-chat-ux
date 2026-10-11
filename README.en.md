@@ -72,7 +72,8 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 ## Compatibility
 
 - Developed and verified on dsh `0.2.1-alpha.2` (web) and `0.2.1-alpha.1` (desktop); **`0.2.0-rc.2` and older keep working** (the adaptation rounds in 2026-10 had silently broken three things on older releases — the cache-hit pill, the context pie, and the file-mutation row's preparing stage; all are now fixed).
-- On older releases one difference is visible: the **cache-hit pill** does not apply on `0.2.0-rc.2` and earlier — dsh had a single `stats` pill there and registering `usage` would add a second pill instead of shadowing it, so the plugin draws nothing and you see dsh's own reading.
+- On `0.2.0-rc.2` what you see matches the newer releases: the **cache-hit pill** is still drawn by the plugin (one decimal + the 90%–99% colour ramp). Only the takeover differs — that dsh has a single `stats` pill in the dock and id-based shadowing does not apply there, so the plugin hides dsh's own pill through the DOM instead (a plain `display: none`), which means you never get two readings side by side.
+- Older `0.1.x` was never checked release by release: the `data-composer-*` family only exists from dsh `0.2`, so the row under the composer may be shaped quite differently, and the plugin leaves it alone when it cannot recognise it.
 - Node `^22.19.0 || >=24.0.0`.
 
 ## About this repository
