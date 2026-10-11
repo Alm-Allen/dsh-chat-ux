@@ -43,8 +43,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {DiffBlockLabels, DiffHunk} from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-    FILE_BODY_CLASS, FILE_IO_CLASS, FILE_IO_LABEL_CLASS, FILE_IO_SECTION_CLASS, FILE_IO_TEXT_CLASS,
-    FILE_ROW_CLASS, FILE_ROW_LINE_CLASS,
+    FILE_BODY_CLASS, FILE_DIFF_CLASS, FILE_IO_CLASS, FILE_IO_LABEL_CLASS, FILE_IO_SECTION_CLASS,
+    FILE_IO_TEXT_CLASS, FILE_ROW_CLASS, FILE_ROW_LINE_CLASS,
 } from '../file-mutation/file-mutation-styles'
 import {DigitReel} from '../reel/digit-reel'
 import {usePacedValue} from '../paced-value'
@@ -63,6 +63,9 @@ const KILOBYTE = 1024
 
 /** 展开体里那份代码的行数上限；`run_code` 的程序比文件 diff 长得多，所以不沿用 9。 */
 const CODE_MAX_LINES = 200
+
+/** 预览里那份 diff 的行数上限；它与聊天区里真正的 diff 卡片同一个口径。 */
+const PREVIEW_DIFF_MAX_LINES = 9
 
 /** 拿它给 `DiffBlock` 推语言：那一层只认路径后缀，不认别的提示。 */
 const CODE_LANGUAGE_PATH = 'run_code.ts'
@@ -385,34 +388,51 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                         <span className={PREVIEW_NOTE_CLASS}>{copy.note}</span>
                     </div>
                     {previews.map(target => (
-                        <div key={target.at} className={PREVIEW_ROW_CLASS}>
-                            <span className={PREVIEW_ICON_CLASS}>{PREVIEW_ICON}</span>
-                            <span className={PREVIEW_PATH_CLASS}>{target.path ?? copy.unknownPath}</span>
-                            {target.added !== null && (
-                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
-                                    <DigitReel
-                                        text={'+' + target.added}
-                                        prefix="+"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
+                        <Fragment key={target.at}>
+                            <div className={PREVIEW_ROW_CLASS}>
+                                <span className={PREVIEW_ICON_CLASS}>{PREVIEW_ICON}</span>
+                                <span className={PREVIEW_PATH_CLASS}>{target.path ?? copy.unknownPath}</span>
+                                {target.added !== null && (
+                                    <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_ADD_CLASS}>
+                                        <DigitReel
+                                            text={'+' + target.added}
+                                            prefix="+"
+                                            suffix=""
+                                            rolling
+                                            cadence="fast"
+                                            spoken
+                                        />
+                                    </span>
+                                )}
+                                {target.removed !== null && (
+                                    <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
+                                        <DigitReel
+                                            text={'-' + target.removed}
+                                            prefix="-"
+                                            suffix=""
+                                            rolling
+                                            cadence="fast"
+                                            spoken
+                                        />
+                                    </span>
+                                )}
+                            </div>
+                            {/* 改动的那两段都读出来了，就把真正的 diff 画一次——这是「实时」两个字落到实处的地方：
+                                它出现在程序还在生成的时候，而不是等子调用跑起来。`write` 不画：它的 diff 就是那份
+                                内容本身，而展开体下面已经有一份正在长的代码了，再画一遍只是把它誊一次。 */}
+                            {target.name === 'edit' && target.oldText !== null && target.newText !== null && (
+                                <DiffBlock
+                                    diffs={[{
+                                        path: target.path ?? CODE_LANGUAGE_PATH,
+                                        oldText: target.oldText,
+                                        newText: target.newText,
+                                    }]}
+                                    labels={labels}
+                                    maxLines={PREVIEW_DIFF_MAX_LINES}
+                                    className={FILE_DIFF_CLASS}
+                                />
                             )}
-                            {target.removed !== null && (
-                                <span className={PREVIEW_STAT_CLASS + ' ' + PREVIEW_DEL_CLASS}>
-                                    <DigitReel
-                                        text={'-' + target.removed}
-                                        prefix="-"
-                                        suffix=""
-                                        rolling
-                                        cadence="fast"
-                                        spoken
-                                    />
-                                </span>
-                            )}
-                        </div>
+                        </Fragment>
                     ))}
                 </div>
             )}

@@ -44,7 +44,7 @@
  *
  * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
  */
-import {useCallback, useMemo} from 'react'
+import {useCallback, useEffect, useMemo, useRef} from 'react'
 import type {KeyboardEvent, MouseEvent, ReactElement} from 'react'
 import {
     DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer, diffTotals,
@@ -160,6 +160,25 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null)
     const open = expanded && expandable
+
+    // 子调用行（`run_code` 程序里派发出去的那些）出现时就替读者展开：它们的参数在**执行那一刻**就已经完整
+    // （见 `ptc.ts` 的派发），没有准备态可言，而读者要的是「一眼看见这次改了什么」——不点也能看见。顶层
+    // 调用不在此列：那是读者自己发起的动作，行尾那两个数就够了，展开与否留给他。
+    const autoExpanded = useRef(false)
+    const userToggled = useRef(false)
+    const isSubCall = block.parentCallId !== undefined
+    useEffect(() => {
+        if (userToggled.current || autoExpanded.current) return
+        if (!isSubCall || !expandable) return
+        autoExpanded.current = true
+        if (!expanded) toggle()
+    }, [expandable, expanded, isSubCall, toggle])
+
+    // 读者自己点过这一行的开合，就把自动展开让给他（含自动展开之后他自己收起）。
+    const handleToggle = useCallback(() => {
+        userToggled.current = true
+        toggle()
+    }, [toggle])
     const summaryText = model.errorSummary ?? model.summary
     // 输入大小只要读得到就显示——**不再要求路径已经有了**。
     //
@@ -290,7 +309,7 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                 expandable={expandable}
                 expandOnRowClick
                 keepContentWhenOpen
-                onToggle={toggle}
+                onToggle={handleToggle}
                 collapsedContent={collapsedContent}
             >
                 {expandedContent}

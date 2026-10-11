@@ -39,6 +39,10 @@ export interface PreviewTarget {
     added: number | null
     /** 会删掉几行；`write` 没有这一面，读不出也是 null。 */
     removed: number | null
+    /** 要写出去的正文：`write` 是 `content`、`edit` 是 `new_string`；读不出为 null。 */
+    newText: string | null
+    /** `edit` 被替换掉的原文；`write` 与读不出时为 null。 */
+    oldText: string | null
 }
 
 /** 只认这两类调用：其余子调用（read / glob / bash…）不在这块预览的范围内。 */
@@ -122,7 +126,8 @@ export function scanPreviewTargets(code: string, previous?: readonly PreviewTarg
             : countLines((name === 'write' ? content : newText) ?? '')
         const removed = oldText === null ? seen?.removed ?? null : countLines(oldText)
         if (path === null && added === null && removed === null) continue
-        targets.push({name, at, path, added, removed})
+        // 原文一并交出去：展开体里那时候要拿它画一次真正的 diff（`edit` 的两段都在才行）。
+        targets.push({name, at, path, added, removed, newText: content ?? newText, oldText})
     }
     return targets
 }
