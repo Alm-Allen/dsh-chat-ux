@@ -184,7 +184,7 @@ export function apply(ctx: ClientContext): void {
     // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
-    // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认关，卡片上标 beta）。
+    // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认开着）。
     installFileMutationRow(services.slots, () => settings.liveDiff)
 
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同

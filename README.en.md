@@ -4,14 +4,13 @@ English | [中文](./README.md)
 
 A chat-area UX plugin for the [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) web GUI.
 
-With it installed, reasoning rows fold themselves away when thinking ends, process groups open and close on their own, and the composer and readouts take on this plugin's own look—and none of it ever yanks a reader who scrolled away. Token fade-in (every token easing in as it arrives) is off by default; turn it on on the Plugins page.
+With it installed, reasoning rows fold themselves away when thinking ends, process groups open and close on their own, and the composer and readouts take on this plugin's own look—and none of it ever yanks a reader who scrolled away.
 
 ## What it does
 
-- **Token fade-in** (off by default): when on, every token fades in, for both reasoning and answer text, and **follow goes with it** — the transcript keeps to the newest content on its own, holds on at the moments content jumps (thinking ends, a tool call appears), and keeps up inside height-capped process groups in standard / compact. Its cost stays inside the streaming message, so it doesn't add to other plugins' style or DOM work, and it steps aside while the main thread is already overloaded; a reader who scrolled away is never pulled back.
 - **Self-folding reasoning rows**: a reasoning row expands while thinking and folds when it ends; once you touch it yourself, it stops moving.
 - **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page. A height-capped process group in standard / compact scrolls vertically only — that rule is always on and is not behind any switch.
-- **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, both counts growing as the content arrives (each starts counting as soon as its own field arrives, and neither waits for the path — a write puts `file_path` last); the digits at the end of the row pop on a beat so each reel turn plays out in full (same for a write and an edit), and switch to live following once the call settles (this stretch is marked beta and off by default; turn it on on the Plugins page).
+- **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, both counts growing as the content arrives (each starts counting as soon as its own field arrives, and neither waits for the path — a write puts `file_path` last); the digits at the end of the row pop on a beat so each reel turn plays out in full (same for a write and an edit), and switch to live following once the call settles (on by default; turn it off on the Plugins page).
 - **Caret motion**: the input caret slides, 80 ms, whether you type, arrow around, or click. It covers the main composer, the answer box of a question card, and the inline editor for queued messages (the one you use for follow-ups to a running subagent).
 - **Chat bubble motion** (on by default): the composer lifts off when you submit—its toolbar shrinks into the corners and fades, the card narrows into the bubble while the text re-wraps to fit—and lands in the transcript; the run is a fixed 300 ms. It runs entirely on the compositor, so it keeps its frame rate even while dsh's main thread is busy with the send.
 - **Work details default to Standard**: on the web client, dsh's "Work details" setting is filled in as **Standard** (dsh's own web default is Detailed). Once you pick a mode yourself under Settings → **General**, your choice wins and the plugin leaves it alone.
@@ -61,13 +60,12 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
-| Token fade-in | off | When on, new text fades in as it arrives, and follow comes with it (bottom follow when it slips, plus reasoning and tool output inside height-capped process groups). If the page stutters noticeably alongside other plugins, leave it off. |
 | Caret motion | always | Three steps: off / on move / always. |
 | Chat bubble motion | on | When off, the send has no flight and the message simply appears. |
 | Cache-hit reels | on | When off, a changed rate swaps instantly. |
 | Context pie | on | When off, dsh's own ring comes back. |
 | Composer glass | on | When off, the composer, the send button and the add button all go back to dsh's own look, and nothing behind it is blurred. |
-| Live change counts | off (beta) | When on, the `+n -m` at the end of a directly-called write / edit row grows while the content streams (each count starts as soon as its own field arrives), and a changed digit pops in place — on a beat while streaming, so each reel turn plays out in full. |
+| Live change counts | on | The `+n -m` at the end of a directly-called write / edit row grows while the content streams (each count starts as soon as its own field arrives), and a changed digit pops in place — on a beat while streaming, so each reel turn plays out in full. |
 
 "Work details" is not on the plugin card: it lives in dsh's own Settings → **General**, and the plugin only fills in Standard while you have not chosen a mode yourself.
 

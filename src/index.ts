@@ -77,10 +77,11 @@ export const DEFAULT_COMPOSER_GLASS = true
  * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。前端有一份同样的常量
  * （`client/settings/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认关着、卡片上标 beta：这一段还在收，而且它只在**直接调用**的 write / edit 上有意义——
- * run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐。
+ * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标）。它只在**直接调用**的 write / edit
+ * 上有意义——run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐，那些行看到的仍是
+ * 接管之前的样子。
  */
-export const DEFAULT_LIVE_DIFF = false
+export const DEFAULT_LIVE_DIFF = true
 
 // 这个插件拥有的配置字段。
 export interface Config {
@@ -97,7 +98,7 @@ export interface Config {
     contextPie: Volatile<boolean>
     // 输入框那块玻璃是否生效。它在前端只是一层 DOM 状态（body 上的属性），关掉时整张规则表不命中。
     composerGlass: Volatile<boolean>
-    // 文件变更行的 `+n -m` 是否在准备态就显示、并跟着流式内容增长。默认关着（beta）。
+    // 文件变更行的 `+n -m` 是否在准备态就显示、并跟着流式内容增长。默认开着。
     liveDiff: Volatile<boolean>
 }
 

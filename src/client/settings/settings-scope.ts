@@ -56,9 +56,10 @@ export const DEFAULT_COMPOSER_GLASS = true
  * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。host 侧 `src/index.ts` 里有一份同样的
  * 常量，改一处就要改另一处。
  *
- * 默认关着、卡片上标 beta：这一段还在收，而且它只对**直接调用**的 write / edit 有意义。
+ * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标），它只对**直接调用**的 write / edit
+ * 有意义。
  */
-export const DEFAULT_LIVE_DIFF = false
+export const DEFAULT_LIVE_DIFF = true
 
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
@@ -74,7 +75,7 @@ export interface ChatUxSection {
     contextPie?: boolean
     /** 输入框那块玻璃是否生效；默认开着。关掉时那整张规则表一条都不命中。 */
     composerGlass?: boolean
-    /** 文件变更行的 `+n -m` 是否在准备态就显示并跟着流式内容增长；默认关着，卡片上标 beta。 */
+    /** 文件变更行的 `+n -m` 是否在准备态就显示并跟着流式内容增长；默认开着。 */
     liveDiff?: boolean
 }
 

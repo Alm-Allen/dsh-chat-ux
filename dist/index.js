@@ -47,10 +47,11 @@ export const DEFAULT_COMPOSER_GLASS = true;
  * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。前端有一份同样的常量
  * （`client/settings/settings-scope.ts`），改一处就要改另一处。
  *
- * 默认关着、卡片上标 beta：这一段还在收，而且它只在**直接调用**的 write / edit 上有意义——
- * run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐。
+ * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标）。它只在**直接调用**的 write / edit
+ * 上有意义——run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐，那些行看到的仍是
+ * 接管之前的样子。
  */
-export const DEFAULT_LIVE_DIFF = false;
+export const DEFAULT_LIVE_DIFF = true;
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。

@@ -98,7 +98,7 @@ const ZH_COPY: Copy = {
     liveDiffHint:
         '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
         + '数字一变，变了的那一位会像读数那样在原地弹到新值。'
-        + '这一段还在收，标着 beta，默认关着。',
+        + '默认开着。',
     overridden: '已覆盖',
     reset: '重置',
     failed: '保存未生效，请重试。',
@@ -142,7 +142,7 @@ const EN_COPY: Copy = {
     liveDiffHint:
         'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
         + 'is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value '
-        + 'the way the readouts do. This stretch is still settling, so it is marked beta and off by default.',
+        + 'the way the readouts do. On by default.',
     overridden: 'Overridden',
     reset: 'Reset',
     failed: 'The save did not take effect. Please try again.',
@@ -235,20 +235,17 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
     /**
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，几行开关共用。
-     * @param badge - 跟在标签后面的小标；只有还在收的那一行带它（beta）。
      */
     const rowChrome = (
         field: string,
         label: string,
         hint: string,
         control: ReactElement,
-        badge?: ReactElement | undefined,
     ): ReactElement => (
         <div className={CARD_CLASS.row}>
             <div className={CARD_CLASS.rowText}>
                 <div className={CARD_CLASS.labelLine}>
                     <span className={CARD_CLASS.label}>{label}</span>
-                    {badge}
                 </div>
                 <p className={CARD_CLASS.hint}>{hint}</p>
             </div>
@@ -318,7 +315,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     label={copy.liveDiffLabel}
                     onChange={(next: boolean) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff)}
                 />
-            ), <Tag tone="info">beta</Tag>)}
+            ))}
             {failed && <p className={CARD_CLASS.failed} role="status">{copy.failed}</p>}
         </div>
     )
