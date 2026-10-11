@@ -36,7 +36,7 @@
  *
  * @module dsh-chat-ux/chat/code-progress/run-code-row
  */
-import {useEffect, useMemo, useRef} from 'react'
+import {Fragment, useMemo, useRef} from 'react'
 import type {ReactElement} from 'react'
 import {
     DiffBlock, DisclosureRow, IconEditOutlineRegular, IconInspectOutlineRegular, TextShimmer,
@@ -53,7 +53,7 @@ import type {LocaleLike} from '../../settings/settings-scope'
 import {
     CODE_PROGRESS_CLASS, PREVIEW_ADD_CLASS, PREVIEW_BOX_CLASS, PREVIEW_DEL_CLASS, PREVIEW_HEAD_CLASS,
     PREVIEW_ICON_CLASS, PREVIEW_NOTE_CLASS, PREVIEW_PATH_CLASS, PREVIEW_ROW_CLASS, PREVIEW_STAT_CLASS,
-    PREVIEW_TAG_CLASS,
+    PREVIEW_SUMMARY_CLASS, PREVIEW_SUMMARY_PATH_CLASS, PREVIEW_TAG_CLASS,
 } from './code-progress-styles'
 import {scanPreviewTargets} from './preview-scan'
 import type {PreviewTarget} from './preview-scan'
@@ -69,6 +69,13 @@ const CODE_LANGUAGE_PATH = 'run_code.ts'
 
 /** 没有预览时用的空清单：引用要稳定，否则节拍器每一批都会重排一次定时器。 */
 const NO_PREVIEWS: readonly PreviewTarget[] = []
+
+/**
+ * 折叠态那一截预告最多列几处。
+ *
+ * 它是 `flex: none` 的，不收缩；列多了会把左边的描述挤没。剩下的用省略号带过——展开体里有完整的清单。
+ */
+const PREVIEW_SUMMARY_LIMIT = 2
 
 /**
  * 这一行的图标。
@@ -250,29 +257,24 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
     }, [block, previewOn])
     const previews = usePacedValue(rawPreviews, previewOn)
 
-    // 认出要动文件就替读者展开一次。只做一次，而且读者自己动过之后不再抢回来——「自动开合」那一族在
-    // 别处也守同一条规矩：替读者打开的，读者收得回去。
-    const autoExpanded = useRef(false)
-    const userToggled = useRef(false)
-    useEffect(() => {
-        if (userToggled.current || autoExpanded.current) return
-        if (!previewOn || !expandable || rawPreviews.length === 0) return
-        autoExpanded.current = true
-        if (!expanded) toggle()
-    }, [expandable, expanded, previewOn, rawPreviews.length, toggle])
-
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = useMemo(() => (open ? callCode(block) : null), [block, open])
     const hunks = useMemo(() => codeHunks(code), [code])
     const status = stateLabel(state, t)
 
-    // 读者自己点过这一行的开合，就把自动展开让给他（含自动展开之后他自己收起）。
-    const handleToggle = (): void => {
-        userToggled.current = true
-        toggle()
-    }
+    // 折叠态那一截预告——**「尽快把子调用露出来」的着力点就在这一处**。
+    //
+    // `tools.write` 那一段文本一出现（真实程序里常在 90% 之后），这一截立刻跟上，读者不必展开任何东西
+    // 就能看见「接下来要写哪份文件、多少行」。在那之前程序里根本没有「要调用什么」这几个字：dsh 的子调用
+    // 行是执行到那一句才 append 的（`ptc.ts:617`），而参数是运行时求值的——**上限就是这么高**，不是这一
+    // 处偷懒。参见 `./preview-scan` 开头那段「尽力而为」的说明。
+    //
+    // 早先这一处试过替读者把整行展开（预览块在展开体里），那是错的方向：读者要的是「不用动就能看见」，
+    // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
+    const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT)
+    const trailingPreviews = previews.length - shownPreviews.length
 
-    const collapsedContent = description === '' && size === null ? null : (
+    const collapsedContent = description === '' && size === null && previews.length === 0 ? null : (
         <>
             {/* 那个分隔点是「标题 · 描述」的一部分：没有描述时它不该单独出现。 */}
             {description !== '' && (
@@ -284,6 +286,44 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                 </>
             )}
             {size !== null && <span className={CODE_PROGRESS_CLASS}>{size}</span>}
+            {previews.length > 0 && (
+                <span className={PREVIEW_SUMMARY_CLASS}>
+                    {'→ '}
+                    {shownPreviews.map((target, index) => (
+                        <Fragment key={target.at}>
+                            {index > 0 && ' · '}
+                            <span className={PREVIEW_SUMMARY_PATH_CLASS}>
+                                {target.path === null ? copy.unknownPath : fileNameOf(target.path)}
+                            </span>
+                            {target.added !== null && (
+                                <span className={PREVIEW_ADD_CLASS}>
+                                    <DigitReel
+                                        text={'+' + target.added}
+                                        prefix="+"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
+                            )}
+                            {target.removed !== null && (
+                                <span className={PREVIEW_DEL_CLASS}>
+                                    <DigitReel
+                                        text={'-' + target.removed}
+                                        prefix="-"
+                                        suffix=""
+                                        rolling
+                                        cadence="fast"
+                                        spoken
+                                    />
+                                </span>
+                            )}
+                        </Fragment>
+                    ))}
+                    {trailingPreviews > 0 && ' …'}
+                </span>
+            )}
         </>
     )
 
@@ -365,7 +405,7 @@ export function RunCodeRow(props: RunCodeRowProps): ReactElement {
                 expandable={expandable}
                 expandOnRowClick
                 keepContentWhenOpen
-                onToggle={handleToggle}
+                onToggle={toggle}
                 collapsedContent={collapsedContent}
             >
                 {expandedContent}
@@ -504,6 +544,18 @@ function pickString(args: Record<string, unknown>, keys: readonly string[]): str
         if (typeof value === 'string' && value !== '') return value
     }
     return undefined
+}
+
+/**
+ * 路径最后那一段。
+ *
+ * 折叠态那一截只有几十像素的位置，放不下绝对路径；读者要认的是文件名，目录在展开体里能看到完整的。
+ * @param path - 参数里给出的路径。
+ * @returns 最后一段；没有分隔符时就是它自己。
+ */
+function fileNameOf(path: string): string {
+    const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+    return at < 0 ? path : path.slice(at + 1)
 }
 
 /**

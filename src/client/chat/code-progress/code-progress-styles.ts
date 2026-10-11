@@ -16,6 +16,17 @@ import {REEL_TEXT_CLASS} from '../reel/reel-styles'
 /** 挂进行里的读数元素。 */
 export const CODE_PROGRESS_CLASS = 'dsh-chat-ux-code-progress'
 
+/**
+ * 折叠态那一截预告：认出子调用之后，**不用展开**就能看见要写哪份文件。
+ *
+ * 它和 `CODE_PROGRESS_CLASS` 是两种东西：那个说「程序写到哪了」，这个说「接下来要动什么」——后者才是
+ * 读者真正在等的信息，所以它必须出现在折叠态，而不是藏在展开体里。
+ */
+export const PREVIEW_SUMMARY_CLASS = 'dsh-chat-ux-preview-summary'
+
+/** 折叠态预告里那一截路径（比数字显眼一档：读者先认文件，再看行数）。 */
+export const PREVIEW_SUMMARY_PATH_CLASS = 'dsh-chat-ux-preview-summary-path'
+
 /** 预览清单的容器。 */
 export const PREVIEW_BOX_CLASS = 'dsh-chat-ux-preview'
 /** 预览清单的头一行（标签 + 那句说明）。 */
@@ -139,5 +150,33 @@ export const CODE_PROGRESS_CSS = `
 
 .${PREVIEW_DEL_CLASS} {
   color: var(--dsh-chat-ux-diff-deleted);
+}
+
+/* 折叠态那一截预告。与读数同一口径（同一行盒、同一末级字色），但路径那一截用次级色——读者扫一眼要
+   先认出「写到哪份文件」，数字是其次。flex: none 与 white-space: nowrap 两个都不能省，理由同读数那里。 */
+.${PREVIEW_SUMMARY_CLASS} {
+  flex: none;
+  margin-left: 6px;
+  white-space: nowrap;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-caption);
+}
+
+.${PREVIEW_SUMMARY_CLASS} > .${PREVIEW_SUMMARY_PATH_CLASS} {
+  font-family: var(--dsw-font-markdown-code-block-small, ui-monospace, monospace);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${PREVIEW_SUMMARY_CLASS} > .${PREVIEW_ADD_CLASS},
+.${PREVIEW_SUMMARY_CLASS} > .${PREVIEW_DEL_CLASS} {
+  font-family: var(--ds-font-family-code);
+}
+
+/* 折叠态预告里那两个数也走数字轮，所以槽高要按这一行的 24px 行盒重写一遍——与文件变更行行尾那一截
+   遇到的是同一件事，不重写就会浮起来 2px。 */
+.${PREVIEW_SUMMARY_CLASS} .${REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 `

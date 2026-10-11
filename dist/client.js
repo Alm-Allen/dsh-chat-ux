@@ -2145,6 +2145,12 @@ const CODE_LANGUAGE_PATH = 'run_code.ts';
 /** 没有预览时用的空清单：引用要稳定，否则节拍器每一批都会重排一次定时器。 */
 const NO_PREVIEWS = [];
 /**
+ * 折叠态那一截预告最多列几处。
+ *
+ * 它是 `flex: none` 的，不收缩；列多了会把左边的描述挤没。剩下的用省略号带过——展开体里有完整的清单。
+ */
+const PREVIEW_SUMMARY_LIMIT = 2;
+/**
  * 这一行的图标。
  *
  * 内置的 code 变体用的是编码图标，但它不在基座模块表里（表里只有编辑、检视、数据库三枚），所以这里
@@ -2219,31 +2225,24 @@ function RunCodeRow(props) {
         return next;
     }, [block, previewOn]);
     const previews = (0, paced_value_1.usePacedValue)(rawPreviews, previewOn);
-    // 认出要动文件就替读者展开一次。只做一次，而且读者自己动过之后不再抢回来——「自动开合」那一族在
-    // 别处也守同一条规矩：替读者打开的，读者收得回去。
-    const autoExpanded = (0, react_1.useRef)(false);
-    const userToggled = (0, react_1.useRef)(false);
-    (0, react_1.useEffect)(() => {
-        if (userToggled.current || autoExpanded.current)
-            return;
-        if (!previewOn || !expandable || rawPreviews.length === 0)
-            return;
-        autoExpanded.current = true;
-        if (!expanded)
-            toggle();
-    }, [expandable, expanded, previewOn, rawPreviews.length, toggle]);
     // 那份程序：只有真的要画它（展开着）才读全文。
     const code = (0, react_1.useMemo)(() => (open ? callCode(block) : null), [block, open]);
     const hunks = (0, react_1.useMemo)(() => codeHunks(code), [code]);
     const status = stateLabel(state, t);
-    // 读者自己点过这一行的开合，就把自动展开让给他（含自动展开之后他自己收起）。
-    const handleToggle = () => {
-        userToggled.current = true;
-        toggle();
-    };
-    const collapsedContent = description === '' && size === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), size !== null && (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: size })] }));
+    // 折叠态那一截预告——**「尽快把子调用露出来」的着力点就在这一处**。
+    //
+    // `tools.write` 那一段文本一出现（真实程序里常在 90% 之后），这一截立刻跟上，读者不必展开任何东西
+    // 就能看见「接下来要写哪份文件、多少行」。在那之前程序里根本没有「要调用什么」这几个字：dsh 的子调用
+    // 行是执行到那一句才 append 的（`ptc.ts:617`），而参数是运行时求值的——**上限就是这么高**，不是这一
+    // 处偷懒。参见 `./preview-scan` 开头那段「尽力而为」的说明。
+    //
+    // 早先这一处试过替读者把整行展开（预览块在展开体里），那是错的方向：读者要的是「不用动就能看见」，
+    // 而展开会连带把整份代码摊开、把这一行的开合状态也一起改掉。
+    const shownPreviews = previews.slice(0, PREVIEW_SUMMARY_LIMIT);
+    const trailingPreviews = previews.length - shownPreviews.length;
+    const collapsedContent = description === '' && size === null && previews.length === 0 ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [description !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-sep", "aria-hidden": true }), (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-summary", children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: description }) })] })), size !== null && (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.CODE_PROGRESS_CLASS, children: size }), previews.length > 0 && ((0, jsx_runtime_1.jsxs)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_CLASS, children: ['→ ', shownPreviews.map((target, index) => ((0, jsx_runtime_1.jsxs)(react_1.Fragment, { children: [index > 0 && ' · ', (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_SUMMARY_PATH_CLASS, children: target.path === null ? copy.unknownPath : fileNameOf(target.path) }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at))), trailingPreviews > 0 && ' …'] }))] }));
     const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [previews.length > 0 && ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_BOX_CLASS, "data-preview": "run_code", children: [(0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_HEAD_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_TAG_CLASS, children: copy.tag }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_NOTE_CLASS, children: copy.note })] }), previews.map(target => ((0, jsx_runtime_1.jsxs)("div", { className: code_progress_styles_1.PREVIEW_ROW_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_ICON_CLASS, children: PREVIEW_ICON }), (0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_PATH_CLASS, children: target.path ?? copy.unknownPath }), target.added !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_ADD_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + target.added, prefix: "+", suffix: "", rolling: true, cadence: "fast", spoken: true }) })), target.removed !== null && ((0, jsx_runtime_1.jsx)("span", { className: code_progress_styles_1.PREVIEW_STAT_CLASS + ' ' + code_progress_styles_1.PREVIEW_DEL_CLASS, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + target.removed, prefix: "-", suffix: "", rolling: true, cadence: "fast", spoken: true }) }))] }, target.at)))] })), hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CODE_MAX_LINES })) : ((0, jsx_runtime_1.jsx)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": state === 'error' || undefined, children: output })] })) })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: "dsh-chat-ux-file-inspect", onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
-    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: handleToggle, collapsedContent: collapsedContent, children: expandedContent })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": "code", "data-tool": "run_code", "data-state": state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: "dsh-chat-ux-file-hidden", children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: "dsh-chat-ux-file-leading", titleClassName: "dsh-chat-ux-file-title", chevronClassName: "dsh-chat-ux-file-chevron", icon: CODE_ICON, title: t('tool.title.code'), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
 /**
  * 行状态。
@@ -2380,6 +2379,17 @@ function pickString(args, keys) {
             return value;
     }
     return undefined;
+}
+/**
+ * 路径最后那一段。
+ *
+ * 折叠态那一截只有几十像素的位置，放不下绝对路径；读者要认的是文件名，目录在展开体里能看到完整的。
+ * @param path - 参数里给出的路径。
+ * @returns 最后一段；没有分隔符时就是它自己。
+ */
+function fileNameOf(path) {
+    const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    return at < 0 ? path : path.slice(at + 1);
 }
 /**
  * 取一段文本的第一行。
@@ -2846,7 +2856,7 @@ function nonEmpty(value) {
     __registry["chat/code-progress/code-progress-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CODE_PROGRESS_CSS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLASS = exports.PREVIEW_STAT_CLASS = exports.PREVIEW_PATH_CLASS = exports.PREVIEW_ICON_CLASS = exports.PREVIEW_ROW_CLASS = exports.PREVIEW_NOTE_CLASS = exports.PREVIEW_TAG_CLASS = exports.PREVIEW_HEAD_CLASS = exports.PREVIEW_BOX_CLASS = exports.CODE_PROGRESS_CLASS = void 0;
+exports.CODE_PROGRESS_CSS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLASS = exports.PREVIEW_STAT_CLASS = exports.PREVIEW_PATH_CLASS = exports.PREVIEW_ICON_CLASS = exports.PREVIEW_ROW_CLASS = exports.PREVIEW_NOTE_CLASS = exports.PREVIEW_TAG_CLASS = exports.PREVIEW_HEAD_CLASS = exports.PREVIEW_BOX_CLASS = exports.PREVIEW_SUMMARY_PATH_CLASS = exports.PREVIEW_SUMMARY_CLASS = exports.CODE_PROGRESS_CLASS = void 0;
 /**
  * `run_code` 行进度读数与预览清单自己的样式。
  *
@@ -2863,6 +2873,15 @@ exports.CODE_PROGRESS_CSS = exports.PREVIEW_DEL_CLASS = exports.PREVIEW_ADD_CLAS
 const reel_styles_1 = require("../reel/reel-styles");
 /** 挂进行里的读数元素。 */
 exports.CODE_PROGRESS_CLASS = 'dsh-chat-ux-code-progress';
+/**
+ * 折叠态那一截预告：认出子调用之后，**不用展开**就能看见要写哪份文件。
+ *
+ * 它和 `CODE_PROGRESS_CLASS` 是两种东西：那个说「程序写到哪了」，这个说「接下来要动什么」——后者才是
+ * 读者真正在等的信息，所以它必须出现在折叠态，而不是藏在展开体里。
+ */
+exports.PREVIEW_SUMMARY_CLASS = 'dsh-chat-ux-preview-summary';
+/** 折叠态预告里那一截路径（比数字显眼一档：读者先认文件，再看行数）。 */
+exports.PREVIEW_SUMMARY_PATH_CLASS = 'dsh-chat-ux-preview-summary-path';
 /** 预览清单的容器。 */
 exports.PREVIEW_BOX_CLASS = 'dsh-chat-ux-preview';
 /** 预览清单的头一行（标签 + 那句说明）。 */
@@ -2985,6 +3004,34 @@ exports.CODE_PROGRESS_CSS = `
 
 .${exports.PREVIEW_DEL_CLASS} {
   color: var(--dsh-chat-ux-diff-deleted);
+}
+
+/* 折叠态那一截预告。与读数同一口径（同一行盒、同一末级字色），但路径那一截用次级色——读者扫一眼要
+   先认出「写到哪份文件」，数字是其次。flex: none 与 white-space: nowrap 两个都不能省，理由同读数那里。 */
+.${exports.PREVIEW_SUMMARY_CLASS} {
+  flex: none;
+  margin-left: 6px;
+  white-space: nowrap;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-caption);
+}
+
+.${exports.PREVIEW_SUMMARY_CLASS} > .${exports.PREVIEW_SUMMARY_PATH_CLASS} {
+  font-family: var(--dsw-font-markdown-code-block-small, ui-monospace, monospace);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.${exports.PREVIEW_SUMMARY_CLASS} > .${exports.PREVIEW_ADD_CLASS},
+.${exports.PREVIEW_SUMMARY_CLASS} > .${exports.PREVIEW_DEL_CLASS} {
+  font-family: var(--ds-font-family-code);
+}
+
+/* 折叠态预告里那两个数也走数字轮，所以槽高要按这一行的 24px 行盒重写一遍——与文件变更行行尾那一截
+   遇到的是同一件事，不重写就会浮起来 2px。 */
+.${exports.PREVIEW_SUMMARY_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
+  --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 `;
     };
