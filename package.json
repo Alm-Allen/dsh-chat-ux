@@ -78,8 +78,18 @@
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
-    "chat",
-    "ux"
+    "dsh-chat-ux",
+    "cordis",
+    "deepseek",
+    "chat-ui",
+    "chat-ux",
+    "dsh-web",
+    "web-ui",
+    "plugin",
+    "typescript",
+    "react",
+    "glassmorphism",
+    "ui-animation"
   ],
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"
