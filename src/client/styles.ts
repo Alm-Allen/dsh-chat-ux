@@ -47,8 +47,8 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
    渐变，只共享周期；要换成同一套机制是另一件事。 */
 
 /* 让位的是 TextShimmer 的**整层**——data-shimmer 那个根上，主内容与那层装饰副本都在里面。这个
-   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer，两个名字都认。 */
-[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > :is([data-shimmer], [data-text-shimmer]) {
+   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer；2026-10-17 起只认新名。 */
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-shimmer] {
   display: none;
 }
 

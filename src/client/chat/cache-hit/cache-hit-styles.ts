@@ -85,8 +85,8 @@ export const CACHE_HIT_CSS = `
   max-width: 100%;
   padding: 1px 8px;
   border: none;
-  border-radius: 999px;
-  corner-shape: round;
+  /* 与 dsh 0.2.1-rc.1 起统计控件的小圆角一致（统计胶囊从 999px 改成了这个令牌）。 */
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit;

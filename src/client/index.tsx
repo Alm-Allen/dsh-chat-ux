@@ -66,6 +66,11 @@ export function apply(ctx: ClientContext): void {
     // 定时器。平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：
     // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
     const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
+    // 官方的「收起时机」：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，过程组
+    // 结束后的那一次收起归官方，见 process-fold 的让路。这里只现读，不订阅——过程组的每一次扫描都会读它。
+    const chatSettings = services.configForms.get<ChatSettingsLike>(CHAT_SETTINGS_NAMESPACE)
+    const defersCollapse = (): boolean =>
+        chatSettings.getSnapshot().value?.collapseTiming === 'next-input'
     const settings: ChatUxSettings = {
         autoFold: DEFAULT_AUTO_FOLD,
         caret: DEFAULT_CARET_MOTION,
@@ -102,7 +107,7 @@ export function apply(ctx: ClientContext): void {
         }
         if (autoFoldDispose !== null) return
         const disposeReasoning = installReasoningFold()
-        const disposeProcess = installProcessFold()
+        const disposeProcess = installProcessFold(defersCollapse)
         autoFoldDispose = () => {
             disposeReasoning()
             disposeProcess()
@@ -247,6 +252,15 @@ interface ChatUxSettings {
     /** 文件变更行的 `+n -m` 是否在准备态就长出来；那一行在渲染期现读它。 */
     liveDiff: boolean
 }
+
+/** dsh 那份 `ui-chat` 表单里这一处只读一个字段。 */
+interface ChatSettingsLike {
+    /** `completion`（默认）或 `next-input`。 */
+    collapseTiming?: string | null | undefined
+}
+
+/** dsh 的聊天设置条目 id；「工作步骤展示」与「收起时机」都住在它里面。 */
+const CHAT_SETTINGS_NAMESPACE = 'ui-chat'
 
 /** 共享配置表单的提供者，收窄到 `get`。 */
 interface ConfigFormsService {

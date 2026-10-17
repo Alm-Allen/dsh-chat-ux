@@ -19,8 +19,8 @@
  * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
  * 一个 svg 的 span。
  *
- * 坞那一层本身分两代：dsh 0.2.1-alpha.1 起 `data-composer-dock` 挂在它身上，更早的
- * 0.2.0-rc.2 只有类名。所以旧版退回「输入区里、不在统计行里的那些 span」，形状判据一字不改。
+ * 坞那一层自 dsh 0.2.1-alpha.1 起带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；
+ * 2026-10-17 起不再认更早那两代（0.2.0-rc.2 及以前没有这个属性）。
  *
  * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
  * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
@@ -41,9 +41,7 @@
  *
  * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
  */
-import {
-    COMPOSER_DOCK_SELECTOR, COMPOSER_SELECTOR, COMPOSER_STATS_ROW_SELECTOR,
-} from '../../dom-contract'
+import {COMPOSER_DOCK_SELECTOR} from '../../dom-contract'
 import {rampPosition, RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
 import {paintReel, releaseReel} from '../reel/reel-host'
 import {REEL_TAKEOVER_ATTRIBUTE} from '../reel/reel-styles'
@@ -158,21 +156,14 @@ export function installContextMeterPie(): () => void {
     /**
      * 这一轮要认的候选。
      *
-     * 新版（dsh 0.2.1-alpha.1 起）坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接
-     * 子元素，认它这一层最省事，认过就记住、换会话把它换掉时重认。更早的版本（0.2.0-rc.2 及以前）
-     * 坞那一层没有属性，而比例圆与统计之间夹着几层、层数会随渲染实现变，所以退回「输入区里、不在
-     * 统计行里的那些 span」——真正的形状判据在 paint 里，认不出就什么都不做。
-     * @returns 候选元素；页面上还没有输入区时是空的。
+     * 坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话
+     * 把它换掉时重认。真正的形状判据在 paint 里，认不出就什么都不做。
+     * @returns 候选元素；页面上还没有输入框时是空的。
      */
     const candidates = (): readonly Element[] => {
         if (dock !== null && dock.isConnected) return Array.from(dock.children)
         dock = document.querySelector(COMPOSER_DOCK_SELECTOR)
-        if (dock !== null) return Array.from(dock.children)
-        const seat = document.querySelector(COMPOSER_SELECTOR)
-        if (seat === null) return []
-        return Array.from(seat.querySelectorAll('span')).filter(
-            (span) => span.closest(COMPOSER_STATS_ROW_SELECTOR) === null,
-        )
+        return dock === null ? [] : Array.from(dock.children)
     }
 
     const sync = (): void => {

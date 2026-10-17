@@ -20,10 +20,9 @@ export const RUNNING_STATE = 'running'
 /**
  * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
  *
- * dsh 2026-09 那次更新把这个属性从 `data-text-shimmer` 改名成 `data-shimmer`——实机产物里只剩新名。
- * 两个都认：桌面端会自己升级，插件不该因为一次改名就静默失效。
+ * 2026-09 起这个属性就叫 `data-shimmer`；插件自 2026-10-17 起不再认旧名 `data-text-shimmer`。
  */
-export const SHIMMER_SELECTOR = '[data-shimmer], [data-text-shimmer]'
+export const SHIMMER_SELECTOR = '[data-shimmer]'
 
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
 export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
@@ -67,13 +66,6 @@ export const COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea'
  */
 export const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]'
 
-/**
- * 统计胶囊那一整行；更早的 dsh（0.2.0-rc.2 及以前）靠它认这一块。
- *
- * 它同时是「哪些 span 不归插件管」的边界：统计行里的读数不能当成比例圆。
- */
-export const COMPOSER_STATS_ROW_SELECTOR = '[data-composer-stats]'
-
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 export const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
 
@@ -97,6 +89,14 @@ export const PROCESS_GROUP_SELECTOR = '[data-step-process]'
  * 不能再靠「找不到组头」。
  */
 export const PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode'
+
+/**
+ * dsh 的折叠动效正在驱动这一行：`collapse` 是收起中、`reveal` 是展开中。
+ *
+ * 官方批量折叠/展开期间，插件的过程组自动开合与卷帘门都应让路——同一行上叠两套高度动画只会互相
+ * 打架。列上的作用域标记（`data-chat-motion=""`）不算，只认这两个值。
+ */
+export const MOTION_ROW_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]'
 
 /** 过程组体；收起时带 `hidden`。 */
 export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'

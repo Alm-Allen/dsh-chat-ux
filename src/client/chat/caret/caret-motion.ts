@@ -59,6 +59,9 @@ export const CARET_LAYER_ATTRIBUTE = 'data-chat-ux-caret-layer'
 /** 自绘插入符此刻可见。 */
 export const CARET_VISIBLE_ATTRIBUTE = 'data-chat-ux-caret-visible'
 
+/** 命令 chip 被选中的标记：dsh 这时候不画原生插入符。 */
+const CHIP_SELECTED_ATTRIBUTE = 'data-composer-chip-selected'
+
 /** 挂在不是定位上下文的父元素上：样式表见到它就补一条 `position: relative`。 */
 export const CARET_HOST_ATTRIBUTE = 'data-chat-ux-caret-host'
 
@@ -186,7 +189,7 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ['contenteditable', 'data-composer-input'],
+            attributeFilter: ['contenteditable', 'data-composer-input', CHIP_SELECTED_ATTRIBUTE],
         })
     }
 
@@ -516,6 +519,11 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
         }
         if (kind === 'plain' && active instanceof HTMLTextAreaElement && active.selectionStart === active.selectionEnd) {
             target = active
+        }
+        // 命令 chip 被选中时，dsh 把原生插入符按掉了：那一下不是光标，自绘的那根也藏起来。
+        if (target !== null && target.hasAttribute(CHIP_SELECTED_ATTRIBUTE)) {
+            target = null
+            range = null
         }
         for (const [input, layer] of layers) {
             // 切会话会把整个输入区换掉，提问卡片答完、排队行存完也会整块卸掉，跟着它走的那根一并撤掉。

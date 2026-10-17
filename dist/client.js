@@ -88,6 +88,10 @@ function apply(ctx) {
     // 定时器。平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：
     // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
     const scope = services.configForms.get(SETTINGS_NAMESPACE);
+    // 官方的「收起时机」：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，过程组
+    // 结束后的那一次收起归官方，见 process-fold 的让路。这里只现读，不订阅——过程组的每一次扫描都会读它。
+    const chatSettings = services.configForms.get(CHAT_SETTINGS_NAMESPACE);
+    const defersCollapse = () => chatSettings.getSnapshot().value?.collapseTiming === 'next-input';
     const settings = {
         autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
         caret: settings_scope_1.DEFAULT_CARET_MOTION,
@@ -125,7 +129,7 @@ function apply(ctx) {
         if (autoFoldDispose !== null)
             return;
         const disposeReasoning = (0, reasoning_fold_1.installReasoningFold)();
-        const disposeProcess = (0, process_fold_1.installProcessFold)();
+        const disposeProcess = (0, process_fold_1.installProcessFold)(defersCollapse);
         autoFoldDispose = () => {
             disposeReasoning();
             disposeProcess();
@@ -228,6 +232,8 @@ function apply(ctx) {
         rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? 'unknown',
     });
 }
+/** dsh 的聊天设置条目 id；「工作步骤展示」与「收起时机」都住在它里面。 */
+const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
 /**
  * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 `plugins.bundle.config` 按 **bundle** 的包名
  * 索引，而不是按设置命名空间，所以下面两个字符串都需要，且不能混为一谈。
@@ -298,6 +304,8 @@ exports.CARET_ATTRIBUTE = 'data-chat-ux-caret';
 exports.CARET_LAYER_ATTRIBUTE = 'data-chat-ux-caret-layer';
 /** 自绘插入符此刻可见。 */
 exports.CARET_VISIBLE_ATTRIBUTE = 'data-chat-ux-caret-visible';
+/** 命令 chip 被选中的标记：dsh 这时候不画原生插入符。 */
+const CHIP_SELECTED_ATTRIBUTE = 'data-composer-chip-selected';
 /** 挂在不是定位上下文的父元素上：样式表见到它就补一条 `position: relative`。 */
 exports.CARET_HOST_ATTRIBUTE = 'data-chat-ux-caret-host';
 /** 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来。 */
@@ -402,7 +410,7 @@ function installCaretMotion(read) {
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ['contenteditable', 'data-composer-input'],
+            attributeFilter: ['contenteditable', 'data-composer-input', CHIP_SELECTED_ATTRIBUTE],
         });
     };
     /** 焦点在这个面上，却还没有自绘的那根——切会话留下的空窗就是它。 */
@@ -749,6 +757,11 @@ function installCaretMotion(read) {
         if (kind === 'plain' && active instanceof HTMLTextAreaElement && active.selectionStart === active.selectionEnd) {
             target = active;
         }
+        // 命令 chip 被选中时，dsh 把原生插入符按掉了：那一下不是光标，自绘的那根也藏起来。
+        if (target !== null && target.hasAttribute(CHIP_SELECTED_ATTRIBUTE)) {
+            target = null;
+            range = null;
+        }
         for (const [input, layer] of layers) {
             // 切会话会把整个输入区换掉，提问卡片答完、排队行存完也会整块卸掉，跟着它走的那根一并撤掉。
             if (!input.isConnected) {
@@ -850,7 +863,7 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_STATS_ROW_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 /** 聊天列。 */
 exports.CHAT_FLOW_SELECTOR = '[data-chat-flow]';
 /** 每一行思考行；它的阶段看 `data-state`。 */
@@ -860,10 +873,9 @@ exports.RUNNING_STATE = 'running';
 /**
  * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
  *
- * dsh 2026-09 那次更新把这个属性从 `data-text-shimmer` 改名成 `data-shimmer`——实机产物里只剩新名。
- * 两个都认：桌面端会自己升级，插件不该因为一次改名就静默失效。
+ * 2026-09 起这个属性就叫 `data-shimmer`；插件自 2026-10-17 起不再认旧名 `data-text-shimmer`。
  */
-exports.SHIMMER_SELECTOR = '[data-shimmer], [data-text-shimmer]';
+exports.SHIMMER_SELECTOR = '[data-shimmer]';
 /** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
 exports.CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]';
 /**
@@ -898,12 +910,6 @@ exports.COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea';
  * 那一版里统计是**一枚**胶囊（带下面那个属性），比例圆是它的兄弟。
  */
 exports.COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
-/**
- * 统计胶囊那一整行；更早的 dsh（0.2.0-rc.2 及以前）靠它认这一块。
- *
- * 它同时是「哪些 span 不归插件管」的边界：统计行里的读数不能当成比例圆。
- */
-exports.COMPOSER_STATS_ROW_SELECTOR = '[data-composer-stats]';
 /** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
 exports.COMPOSER_CARD_SELECTOR = '[data-composer-card]';
 /**
@@ -923,6 +929,13 @@ exports.PROCESS_GROUP_SELECTOR = '[data-step-process]';
  * 不能再靠「找不到组头」。
  */
 exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode';
+/**
+ * dsh 的折叠动效正在驱动这一行：`collapse` 是收起中、`reveal` 是展开中。
+ *
+ * 官方批量折叠/展开期间，插件的过程组自动开合与卷帘门都应让路——同一行上叠两套高度动画只会互相
+ * 打架。列上的作用域标记（`data-chat-motion=""`）不算，只认这两个值。
+ */
+exports.MOTION_ROW_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]';
 /** 过程组体；收起时带 `hidden`。 */
 exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
 /** 过程组体里的内容层；组体滚的就是它。 */
@@ -961,10 +974,6 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 的 token 总量与中间那个分隔点在那一组之外，留在胶囊自己的文字色上。简洁档只留这一组，详细档另加
  * 总量与点开的明细，明细里的命中率走同一个小数口径。
  *
- * 版本边界：**两个 id 加 priority 遮蔽这一套，是 dsh 0.2.1-alpha.1 起才成立的**。0.2.0-rc.2 及
- * 以前，坞里只有一枚内置胶囊、id 是 stats，插件按 usage 注册上去不会遮蔽它，而是多出一枚。那一版
- * 里改由 DOM 把内置那一枚收起来（见 legacy-usage-pill），两版因此都只有一枚读数、同一套口径。
- *
  * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
  * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
  *
@@ -973,12 +982,10 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
-const dom_contract_1 = require("../../dom-contract");
 const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
 const ramp_1 = require("../ramp");
 const digit_reel_1 = require("../reel/digit-reel");
-const legacy_usage_pill_1 = require("./legacy-usage-pill");
 /** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
 const PANEL_GAP = 8;
 /** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
@@ -1036,25 +1043,6 @@ function installCacheHitPill(slots, configForms) {
     });
 }
 /**
- * 坞那一层是不是带 data-composer-dock 的那一代；读一次就记住。
- *
- * 一个页面生命周期里 dsh 的版本不会变，所以缓存安全；缓存的用处是重挂载时不必再从「还没量过」
- * 起一帧。
- */
-let composerDockIsModern = null;
-/**
- * 读一次坞的形态，结果留在 composerDockIsModern 里。
- * @returns 页面上的坞带不带新版属性。
- */
-function dshHasComposerDock() {
-    // 只把「是新版」这个肯定结论记住：认不出时每次都重探，免得某一次探测时机不巧（坞还没挂上）
-    // 就把这一枚永久关掉。
-    if (composerDockIsModern === true)
-        return true;
-    composerDockIsModern = document.querySelector(dom_contract_1.COMPOSER_DOCK_SELECTOR) !== null;
-    return composerDockIsModern;
-}
-/**
  * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
  * @param props - 投影读取座位与文案座位。
  * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
@@ -1071,20 +1059,6 @@ function CacheHitPill({ useProjection, t }) {
     });
     (0, dsh_client_ui_primitives_1.useDismissOnOutsidePointer)(rootRef, open, setOpen, panelRef);
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
-    // 坞的形态先按上一次读到的值起手，重挂载时不必再从「还没量过」起一帧。effect 跑在这一帧的
-    // DOM 提交之后，那时坞已经在页面里。
-    const [modernDock, setModernDock] = (0, react_1.useState)(composerDockIsModern === true);
-    (0, react_1.useEffect)(() => { setModernDock(dshHasComposerDock()); }, []);
-    // 整场都没计过账（例如每次请求都失败）就不占位，与内置一致。
-    const shows = usage !== undefined && (billedInputTokens(usage) !== 0 || usage.outputTokens !== 0);
-    // 老版坞里 dsh 那一枚与自己这一枚会同时在场——那一版只有一个 stats 条目，按 id 遮蔽不了座位，
-    // 收尾只能在 DOM 上做。这一枚画出来的帧里把内置那枚收起来；这一枚不画（这一场还没计过账）的帧
-    // 立刻放它回来，否则整行会只剩速度、或者干脆空掉。
-    (0, react_1.useEffect)(() => {
-        if (modernDock || !shows)
-            return;
-        return (0, legacy_usage_pill_1.hideLegacyUsagePill)();
-    }, [modernDock, shows]);
     if (usage === undefined)
         return null;
     const billedInput = billedInputTokens(usage);
@@ -1387,8 +1361,8 @@ exports.CACHE_HIT_CSS = `
   max-width: 100%;
   padding: 1px 8px;
   border: none;
-  border-radius: 999px;
-  corner-shape: round;
+  /* 与 dsh 0.2.1-rc.1 起统计控件的小圆角一致（统计胶囊从 999px 改成了这个令牌）。 */
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit;
@@ -1941,72 +1915,6 @@ exports.REEL_CSS = `
   white-space: nowrap;
 }
 `;
-    };
-
-    __registry["chat/cache-hit/legacy-usage-pill.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.hideLegacyUsagePill = hideLegacyUsagePill;
-/**
- * 老版坞（dsh 0.2.0-rc.2 及更早）里 dsh 自己画的那一枚用量胶囊：让位给插件这一枚。
- *
- * 新版从 `0.2.1-alpha.1` 起把坞拆成两个座位条目（`activity` order 0、`usage` order 1），插件按
- * `usage` 注册、靠 priority 更低遮蔽内置那一枚，所以内置的那个**根本不会渲染**。老版只有一个条目
- * `stats`，整行都是 dsh 的：按 id 遮蔽不了，插件这一枚只会**多出来一枚**（命中率并列两个读数）。
- * 这一处就在 DOM 上把内置那一枚收起来，让老版上看到的也是「速度 + 插件这一枚」。
- *
- * 判据是「统计数据行里的直接子元素中、读数带百分号的那个」：简洁档里那一行是两个 `span.pill`（速度、
- * 命中率），详细档里是两个 `span.anchor`（时间、用量），两种形态里只有用量那一枚带百分号。
- *
- * 收起来只是 `display: none`——内置那一枚仍在 DOM 里、仍按 dsh 自己的口径算，插件卸下时属性一撤就
- * 回来。这一枚不在场时**必须**不收起它（否则整行会空掉，见 `cache-hit-pill` 里那道闸门）。
- *
- * @module dsh-chat-ux/client/chat/cache-hit/legacy-usage-pill
- */
-const dom_contract_1 = require("../../dom-contract");
-const cache_hit_styles_1 = require("./cache-hit-styles");
-/** 用量那一枚的读数形状：命中率总带百分号，速度那枚不带。 */
-const USAGE_READING_PATTERN = /\d+(?:\.\d+)?%/;
-/**
- * 把内置那一枚用量胶囊收起来。
- * @returns 卸下观察者，并把写过的属性撤干净。
- */
-function hideLegacyUsagePill() {
-    let frame = 0;
-    /** 对账：统计行里带百分号的那一枚挂上收起标记。 */
-    const sync = () => {
-        for (const row of document.querySelectorAll(dom_contract_1.COMPOSER_STATS_ROW_SELECTOR)) {
-            for (const candidate of row.children) {
-                if (!(candidate instanceof HTMLElement))
-                    continue;
-                if (!USAGE_READING_PATTERN.test(candidate.textContent ?? ''))
-                    continue;
-                if (candidate.hasAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE))
-                    continue;
-                candidate.setAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE, '');
-            }
-        }
-    };
-    sync();
-    const observer = new MutationObserver(() => {
-        // 流式期间每一段字符变化都会叫到这里，所以只登记一帧：一帧最多认一次。
-        if (frame !== 0)
-            return;
-        frame = requestAnimationFrame(() => {
-            frame = 0;
-            sync();
-        });
-    });
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    return () => {
-        observer.disconnect();
-        if (frame !== 0)
-            cancelAnimationFrame(frame);
-        for (const shaded of document.querySelectorAll('[' + cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE + ']')) {
-            shaded.removeAttribute(cache_hit_styles_1.CACHE_HIT_SHADOWED_ATTRIBUTE);
-        }
-    };
-}
     };
 
     __registry["chat/composer-glass/composer-glass.js"] = function (module, exports, require) {
@@ -2600,8 +2508,8 @@ exports.pieImage = pieImage;
  * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
  * 一个 svg 的 span。
  *
- * 坞那一层本身分两代：dsh 0.2.1-alpha.1 起 `data-composer-dock` 挂在它身上，更早的
- * 0.2.0-rc.2 只有类名。所以旧版退回「输入区里、不在统计行里的那些 span」，形状判据一字不改。
+ * 坞那一层自 dsh 0.2.1-alpha.1 起带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；
+ * 2026-10-17 起不再认更早那两代（0.2.0-rc.2 及以前没有这个属性）。
  *
  * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
  * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
@@ -2690,22 +2598,15 @@ function installContextMeterPie() {
     /**
      * 这一轮要认的候选。
      *
-     * 新版（dsh 0.2.1-alpha.1 起）坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接
-     * 子元素，认它这一层最省事，认过就记住、换会话把它换掉时重认。更早的版本（0.2.0-rc.2 及以前）
-     * 坞那一层没有属性，而比例圆与统计之间夹着几层、层数会随渲染实现变，所以退回「输入区里、不在
-     * 统计行里的那些 span」——真正的形状判据在 paint 里，认不出就什么都不做。
-     * @returns 候选元素；页面上还没有输入区时是空的。
+     * 坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话
+     * 把它换掉时重认。真正的形状判据在 paint 里，认不出就什么都不做。
+     * @returns 候选元素；页面上还没有输入框时是空的。
      */
     const candidates = () => {
         if (dock !== null && dock.isConnected)
             return Array.from(dock.children);
         dock = document.querySelector(dom_contract_1.COMPOSER_DOCK_SELECTOR);
-        if (dock !== null)
-            return Array.from(dock.children);
-        const seat = document.querySelector(dom_contract_1.COMPOSER_SELECTOR);
-        if (seat === null)
-            return [];
-        return Array.from(seat.querySelectorAll('span')).filter((span) => span.closest(dom_contract_1.COMPOSER_STATS_ROW_SELECTOR) === null);
+        return dock === null ? [] : Array.from(dock.children);
     };
     const sync = () => {
         for (const candidate of candidates()) {
@@ -3315,9 +3216,8 @@ function installFileMutationRow(slots, liveDiff) {
 function FileMutationRow(props) {
     const { t, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
-    // 准备态的参数来源两版不同：新版在 block 上给 `args` 视图，旧版只给一个原始前缀订阅口。
-    // 这里把旧版那一份补成同形状的读法，下游（行模型、diff、行尾那两个数）一行都不用改。
-    const block = withPartialArguments(props.block, usePartialArguments(props));
+    // dsh 0.2.1-alpha.1 起每个阶段都带 `args` 视图；准备态的读数直接读它，不再有旧版那个前缀订阅口。
+    const block = props.block;
     const args = (0, react_1.useMemo)(() => {
         const head = callHead(block);
         return head === null ? null : parseArgs(head.argsRaw);
@@ -3806,166 +3706,6 @@ function diffBlockLabels(t) {
         collapse: t('collapse'),
         expand: hidden => t('diff.expandRest', { count: hidden }),
     };
-}
-/**
- * 旧版 dsh 的准备态参数前缀。
- *
- * 0.2.1-alpha.1 之前，准备态的 block 里没有任何参数（`PreparingToolCall` 只有 callId / name /
- * turn / step / time 与 subCalls），那一段的材料只能从这个座位绑定下来的订阅口拿；那一版 dsh 自己的
- * 文件变更行就是拿它算行尾那个 `nKB` 的。新版把参数做成了每个阶段都在的 `args` 视图，这个 prop
- * 随之消失，于是这里按「有就用、没有就退回 `block.args`」双认。
- *
- * 「有才调用」不违反 hook 的调用顺序：这个 prop 的有无由座位声明决定，一个页面生命周期里恒定。
- * @param props - 这一行的完整输入。
- * @returns 原始参数前缀；新版 dsh、或这一段还没有参数时为 null。
- */
-function usePartialArguments(props) {
-    const subscribe = props.useToolCallArgumentsPartial;
-    if (subscribe === undefined)
-        return null;
-    const raw = subscribe();
-    return raw === '' ? null : raw;
-}
-/**
- * 把旧版的前缀补成参数视图。
- *
- * 只补准备态：派发与结算的 block 自带 `argsRaw`，新版另有 `args` 视图，两处都不动。
- * @param block - 这一行的调用块。
- * @param partial - 原始参数前缀；没有时为 null。
- * @returns 带参数视图的调用块。
- */
-function withPartialArguments(block, partial) {
-    if (partial === null)
-        return block;
-    if (block.args !== undefined)
-        return block;
-    if ('kind' in block || block.phase !== 'preparing')
-        return block;
-    return { ...block, args: rawArgsView(partial) };
-}
-/** 上一份前缀的读法。前缀没变时复用它，好让那些按视图对象记忆的旁挂缓存在原地追加时认得同一份。 */
-let lastRawView = null;
-/**
- * 把原始参数前缀包成与 `ToolArgs` 同形状的读法。
- *
- * 只认顶层的字符串字段——这一行要的四个（`content` / `old_string` / `new_string` /
- * `file_path`）都是。`has` 与 `complete` 的语义与新版视图对齐：出现了、以及收尾引号到了。
- * 解码不抛错：半截转义按已经收到的部分给出，于是这些帧里的读数既不归零、也不倒回去。
- * @param raw - 原始参数 JSON 的前缀，可能截在任何位置。
- * @returns 同形状的参数读法。
- */
-function rawArgsView(raw) {
-    if (lastRawView !== null && lastRawView.raw === raw)
-        return lastRawView.view;
-    const fields = scanTopLevelStrings(raw);
-    const view = {
-        has: key => fields.has(key),
-        complete: key => fields.get(key)?.closed === true,
-        text: key => fields.get(key)?.text,
-        stringLength: key => fields.get(key)?.text.length,
-    };
-    lastRawView = { raw, view };
-    return view;
-}
-/** JSON 字符串里的单字符转义。 */
-const STRING_ESCAPES = {
-    '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
-};
-/**
- * 扫出顶层对象里的字符串字段。
- *
- * 半截的输入要能读：字符串没有收尾引号就标成没收尾，同时把已解码的那一段给出去。深处的（别的对象、
- * 数组里的字符串）不参与；一旦截在深处就停——后面的顶层字段还没到，读不到就是读不到。
- * @param raw - 原始参数 JSON 的前缀。
- * @returns 字段名到已解码文本的映射，按出现顺序。
- */
-function scanTopLevelStrings(raw) {
-    const fields = new Map();
-    let depth = 0;
-    let key = null;
-    let at = 0;
-    while (at < raw.length) {
-        const ch = raw[at];
-        if (ch === '"') {
-            const read = readJsonString(raw, at);
-            at = read.end;
-            if (depth !== 1) {
-                if (!read.closed)
-                    break;
-                continue;
-            }
-            // 顶层的一个字符串：后面跟着冒号就是字段名，否则就是字段值。
-            const colon = skipWhitespace(raw, at);
-            if (raw[colon] === ':') {
-                key = read.text;
-                at = colon + 1;
-                continue;
-            }
-            if (key !== null)
-                fields.set(key, { text: read.text, closed: read.closed });
-            key = null;
-            if (!read.closed)
-                break;
-            continue;
-        }
-        if (ch === '{' || ch === '[')
-            depth++;
-        else if (ch === '}' || ch === ']')
-            depth--;
-        else if (ch === ',' && depth === 1)
-            key = null;
-        at++;
-    }
-    return fields;
-}
-/**
- * 读一个 JSON 字符串，从开引号读起。
- *
- * 半截的转义不算错：反斜杠后面还不到字符、或 `\u` 后面不足四位十六进制时，按已经解出来的那一段
- * 给出并标成没收尾——参数只追加，这些帧里让上面那两处读数保留上一次的结果即可。
- * @param raw - 原文。
- * @param start - 开引号的下标。
- * @returns 已解码的文本、收尾引号到没到，以及读完之后的位置。
- */
-function readJsonString(raw, start) {
-    let text = '';
-    let at = start + 1;
-    while (at < raw.length) {
-        const ch = raw[at];
-        if (ch === '"')
-            return { text, closed: true, end: at + 1 };
-        if (ch !== '\\') {
-            text += ch;
-            at++;
-            continue;
-        }
-        const escape = raw[at + 1];
-        if (escape === undefined)
-            return { text, closed: false, end: raw.length };
-        if (escape === 'u') {
-            const hex = raw.slice(at + 2, at + 6);
-            if (!/^[0-9a-fA-F]{4}$/.test(hex))
-                return { text, closed: false, end: raw.length };
-            text += String.fromCharCode(parseInt(hex, 16));
-            at += 6;
-            continue;
-        }
-        text += STRING_ESCAPES[escape] ?? escape;
-        at += 2;
-    }
-    return { text, closed: false, end: raw.length };
-}
-/**
- * 跳过空白。
- * @param raw - 原文。
- * @param at - 起点。
- * @returns 第一个非空白字符的下标。
- */
-function skipWhitespace(raw, at) {
-    let cursor = at;
-    while (cursor < raw.length && (raw[cursor] === ' ' || raw[cursor] === '\n' || raw[cursor] === '\r' || raw[cursor] === '\t'))
-        cursor++;
-    return cursor;
 }
     };
 
@@ -4852,6 +4592,9 @@ function installFoldGlide() {
             ?? target.closest(TOGGLE_SELECTOR);
         if (control === null)
             return;
+        // dsh 的折叠动效正在驱动这一行：这一下归官方，插件不接管。
+        if (control.closest(dom_contract_1.MOTION_ROW_SELECTOR) !== null)
+            return;
         // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
         if (control.closest(SKIPPED_CONTROL_SELECTOR) !== null)
             return;
@@ -5085,6 +4828,10 @@ function isReaderScrollIntent(event) {
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
  *
+ * 另有两处让路：dsh 的折叠动效正在驱动这一行时（`data-chat-motion`），以及读者把「收起时机」选成
+ * 「下次发送时收起」时（`ui-chat.collapseTiming`），结束后的那一次收起都不归本模块——前者让官方的
+ * 批量折叠走完，后者留给官方在下次发送时统一折叠。
+ *
  * @module dsh-chat-ux/client/chat/fold/process-fold
  */
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -5117,9 +4864,10 @@ const SHIMMER_PIXELS_PER_CHARACTER = 8;
 const CLOSED = 'closed';
 /**
  * 给整页安装过程组的自动展开与收起。
+ * @param deferCollapse - 读者是否把 dsh 的「收起时机」选成了「下次发送时收起」；现读，不缓存。
  * @returns disposer：断开 observer 并摘掉两个监听。
  */
-function installProcessFold() {
+function installProcessFold(deferCollapse) {
     /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
     const touchedIn = new WeakMap();
     /** 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
@@ -5135,6 +4883,9 @@ function installProcessFold() {
             // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
             if (!group.isConnected)
                 continue;
+            // 官方正在折叠/展开这一行：这一行的开合归它的批量动画管，插件不插手。
+            if (group.closest(dom_contract_1.MOTION_ROW_SELECTOR) !== null)
+                continue;
             // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM（dsh 只是把它裹进一个
             // 带 `hidden` 的壳）。点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到。
             if (group.hasAttribute(dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE))
@@ -5144,6 +4895,9 @@ function installProcessFold() {
             if (!(header instanceof HTMLElement) || body === null)
                 continue;
             const phase = header.querySelector(dom_contract_1.SHIMMER_SELECTOR) === null ? CLOSED : dom_contract_1.RUNNING_STATE;
+            // 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收——那一次留给官方。
+            if (phase === CLOSED && deferCollapse())
+                continue;
             // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
             // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
             // 写到属性上，样式表在组体展开时用它替掉整段文本。
@@ -5270,7 +5024,7 @@ function installProcessFold() {
         childList: true,
         attributes: true,
         // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍。
-        attributeFilter: ['data-shimmer', 'data-text-shimmer', 'hidden', dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE],
+        attributeFilter: ['data-shimmer', 'hidden', dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE, 'data-chat-motion'],
         characterData: true,
     });
     document.addEventListener('click', rememberReaderTouched, true);
@@ -7473,8 +7227,8 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
    渐变，只共享周期；要换成同一套机制是另一件事。 */
 
 /* 让位的是 TextShimmer 的**整层**——data-shimmer 那个根上，主内容与那层装饰副本都在里面。这个
-   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer，两个名字都认。 */
-[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > :is([data-shimmer], [data-text-shimmer]) {
+   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer；2026-10-17 起只认新名。 */
+[data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-shimmer] {
   display: none;
 }
 

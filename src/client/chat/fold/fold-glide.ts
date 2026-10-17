@@ -56,6 +56,7 @@ import {
     DISCLOSURE_HEADER_SELECTOR,
     DISCLOSURE_ROW_SELECTOR,
     FOLLOW_THRESHOLD_PX,
+    MOTION_ROW_SELECTOR,
     PROCESS_BODY_SELECTOR,
     PROCESS_GROUP_SELECTOR,
     THINK_ROW_SELECTOR
@@ -576,6 +577,8 @@ export function installFoldGlide(): () => void {
         const control = target.closest<HTMLElement>(DISCLOSURE_ROW_SELECTOR)
             ?? target.closest<HTMLElement>(TOGGLE_SELECTOR)
         if (control === null) return
+        // dsh 的折叠动效正在驱动这一行：这一下归官方，插件不接管。
+        if (control.closest(MOTION_ROW_SELECTOR) !== null) return
         // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
         if (control.closest<HTMLElement>(SKIPPED_CONTROL_SELECTOR) !== null) return
         // 组头控制组体，成员行不控制——见 processBodyOf。

@@ -18,10 +18,14 @@
  * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
  * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
  *
+ * 另有两处让路：dsh 的折叠动效正在驱动这一行时（`data-chat-motion`），以及读者把「收起时机」选成
+ * 「下次发送时收起」时（`ui-chat.collapseTiming`），结束后的那一次收起都不归本模块——前者让官方的
+ * 批量折叠走完，后者留给官方在下次发送时统一折叠。
+ *
  * @module dsh-chat-ux/client/chat/fold/process-fold
  */
 
-import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from '../../dom-contract'
+import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, MOTION_ROW_SELECTOR, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from '../../dom-contract'
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from './programmatic-toggle'
 
 /** 组头那个开合控件。 */
@@ -59,9 +63,10 @@ const CLOSED = 'closed'
 
 /**
  * 给整页安装过程组的自动展开与收起。
+ * @param deferCollapse - 读者是否把 dsh 的「收起时机」选成了「下次发送时收起」；现读，不缓存。
  * @returns disposer：断开 observer 并摘掉两个监听。
  */
-export function installProcessFold(): () => void {
+export function installProcessFold(deferCollapse: () => boolean): () => void {
     /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
     const touchedIn = new WeakMap<Element, string>()
     /** 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
@@ -77,6 +82,8 @@ export function installProcessFold(): () => void {
         for (const group of groups) {
             // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
             if (!group.isConnected) continue
+            // 官方正在折叠/展开这一行：这一行的开合归它的批量动画管，插件不插手。
+            if (group.closest(MOTION_ROW_SELECTOR) !== null) continue
             // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM（dsh 只是把它裹进一个
             // 带 `hidden` 的壳）。点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到。
             if (group.hasAttribute(PROCESS_EXPANDED_MODE_ATTRIBUTE)) continue
@@ -84,6 +91,8 @@ export function installProcessFold(): () => void {
             const body = group.querySelector(PROCESS_BODY_SELECTOR)
             if (!(header instanceof HTMLElement) || body === null) continue
             const phase = header.querySelector(SHIMMER_SELECTOR) === null ? CLOSED : RUNNING_STATE
+            // 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收——那一次留给官方。
+            if (phase === CLOSED && deferCollapse()) continue
             // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
             // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
             // 写到属性上，样式表在组体展开时用它替掉整段文本。
@@ -195,7 +204,7 @@ export function installProcessFold(): () => void {
         childList: true,
         attributes: true,
         // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍。
-        attributeFilter: ['data-shimmer', 'data-text-shimmer', 'hidden', PROCESS_EXPANDED_MODE_ATTRIBUTE],
+        attributeFilter: ['data-shimmer', 'hidden', PROCESS_EXPANDED_MODE_ATTRIBUTE, 'data-chat-motion'],
         characterData: true,
     })
     document.addEventListener('click', rememberReaderTouched, true)
