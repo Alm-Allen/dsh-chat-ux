@@ -51,6 +51,7 @@ const composer_glass_1 = require("./chat/composer-glass/composer-glass");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
+const call_appeared_1 = require("./chat/follow/call-appeared");
 const fold_glide_1 = require("./chat/fold/fold-glide");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
@@ -99,6 +100,7 @@ function apply(ctx) {
         pie: settings_scope_1.DEFAULT_CONTEXT_PIE,
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
+        followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
     };
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
     // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
@@ -150,6 +152,20 @@ function apply(ctx) {
             return;
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
+    // 工具调用与思考行第一次出现时补一次底。它只挂一个门控属性与一个 document 级的
+    // animationstart 监听——没有观察者、没有定时器，流式期间一个回调都不进。关掉时两样一起撤，
+    // 探针规则一条都不命中。
+    let followDispose = null;
+    const syncFollow = () => {
+        if (!settings.followOn) {
+            followDispose?.();
+            followDispose = null;
+            return;
+        }
+        if (followDispose !== null)
+            return;
+        followDispose = (0, call_appeared_1.installCallAppearFollow)();
+    };
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -158,10 +174,12 @@ function apply(ctx) {
         settings.pie = value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
+        settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         syncGlass();
         caret.resync();
         syncPie();
         syncAutoFold();
+        syncFollow();
     };
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
@@ -194,6 +212,14 @@ function apply(ctx) {
             autoFoldDispose = null;
         };
     }, 'dsh-chat-ux: auto fold');
+    // 这一块自己管门控属性与监听，所以这里只负责按开关装、卸；卸的时候两样一起撤干净。
+    ctx.effect(() => {
+        syncFollow();
+        return () => {
+            followDispose?.();
+            followDispose = null;
+        };
+    }, 'dsh-chat-ux: follow on appear');
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
     // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
@@ -863,11 +889,18 @@ function surfaceOf(element) {
  * @module dsh-chat-ux/client/dom-contract
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 /** 聊天列。 */
 exports.CHAT_FLOW_SELECTOR = '[data-chat-flow]';
 /** 每一行思考行；它的阶段看 `data-state`。 */
 exports.THINK_ROW_SELECTOR = '[data-variant="think"]';
+/**
+ * 每一次工具调用的包装层——根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
+ *
+ * 它与思考行是「结构时刻」的两个锚点：它们第一次被渲染时，dsh 的跟随最容易掉队（见
+ * follow/call-appeared.ts）。
+ */
+exports.CALL_ROW_SELECTOR = '[data-chat-call-id]';
 /** 模型还在思考、过程还在跑时的阶段值。 */
 exports.RUNNING_STATE = 'running';
 /**
@@ -1235,7 +1268,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
 /**
  * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
  *
@@ -1281,6 +1314,14 @@ exports.DEFAULT_COMPOSER_GLASS = true;
  * 有意义。
  */
 exports.DEFAULT_LIVE_DIFF = true;
+/**
+ * 工具调用与思考行第一次出现时是否把滚动位置补到底。host 侧 `src/index.ts` 里有一份同样的常量，
+ * 改一处就要改另一处。
+ *
+ * 默认开着：它是把「结构时刻掉队」补回来的唯一一处——dsh 自己的平滑滚动撞上内容跳变就追不回来，
+ * 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好是一屏里新出现的那几行。
+ */
+exports.DEFAULT_FOLLOW_ON_APPEAR = true;
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -4080,6 +4121,140 @@ body {
 `;
     };
 
+    __registry["chat/follow/call-appeared.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installCallAppearFollow = installCallAppearFollow;
+/**
+ * 工具行与思考行第一次出现在页面上时，把它们所在的滚动器交还给底部。
+ *
+ * dsh 的跟随在**结构时刻**最容易掉队：一行新内容插进来、高度跳一截，它那套平滑滚动要重排一轮，
+ * 而重排的那一段时间里内容还在长。实测一次 run_code 执行（2026-10-18，标准档，33 次结构行到达）：
+ * 20 次位置本来就到底，11 次落后二十到三十三像素，2 次落后一百四十像素上下——后面那两次就是读者
+ * 说的「思考跑到视野外面」。全部发生在过程组的组体里，主滚动框一次都没掉队。
+ *
+ * 为什么不扫描：浏览器没有「元素出现了」这种原生事件，DOM 变化只有 MutationObserver，而它就是扫描。
+ * 这里换一条路——给这两族行挂一条 1 ms 的探针动画（见 follow-probe-styles.ts），animationstart 就是
+ * 元素第一次被渲染时的一次性通知。没有观察者、没有定时器、没有轮询，流式期间一个回调都不进，只在
+ * 这两族行出现的那一刻响一次。
+ *
+ * 同一帧里到达的几次用一次 requestAnimationFrame 合并：一次插入可能带出整棵子调用子树，父行与每个
+ * 子行都会各响一次，而它们需要的是同一脚。
+ *
+ * 代价只有一处：补位要读一次 scrollHeight，那是强制布局。位置本来就到底时（上面那 20 次）实测
+ * 0.00 ms——本帧的布局早已结算过；真要补的那几次是 0.5～2.0 ms。
+ *
+ * @module dsh-chat-ux/client/chat/follow/call-appeared
+ */
+const dom_contract_1 = require("../../dom-contract");
+const fold_glide_1 = require("../fold/fold-glide");
+const follow_probe_styles_1 = require("./follow-probe-styles");
+const reader_intent_1 = require("./reader-intent");
+/** 离底不超过这么多像素就算已经贴到底，不再写一次位置；半像素的舍入不值得补一脚。 */
+const BOTTOM_SLACK_PX = 2;
+/** 读者滚得动位置的那几种动作：来了就算接管，位置从此归他。 */
+const MARK_EVENTS = ['wheel', 'keydown'];
+/** 按下去本身不动位置的几种动作：只记下这一刻的位置，等下一次结构事件再判。 */
+const PRESS_EVENTS = ['pointerdown', 'touchstart'];
+/**
+ * 装上这一处：探针属性挂上，两个事件通道接上；返回卸下的把手。
+ * @returns 摘掉属性、撤掉监听、并作废还没落地的那一帧的函数。
+ */
+function installCallAppearFollow() {
+    const root = typeof document === 'undefined' ? null : document.documentElement;
+    if (root === null)
+        return () => undefined;
+    /** 已经自己动过手的滚动器：回到它的底之前，我们不再替他补。 */
+    const takenOver = new WeakSet();
+    /** 按下去那一刻的位置，等下一次结构事件到来时看它有没有真的动过。 */
+    const pressedAt = new WeakMap();
+    /** 这一帧里要处理的滚动器。一次插入可能带出整棵子调用子树，它们要的是同一脚。 */
+    const pending = new Set();
+    let frame = 0;
+    /** 这一行住在哪个滚动器里：过程组体优先，其次会话滚动框（详细与完全展开两档没有组体）。 */
+    const scrollerOf = (row) => row.closest(dom_contract_1.PROCESS_BODY_SELECTOR)
+        ?? row.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
+    /** 补一次。位置本来就到底时这里什么都不写，读那一次 scrollHeight 就是全部代价。 */
+    const follow = (scroller) => {
+        if (!scroller.isConnected)
+            return;
+        // 按下时记的位置到这一刻还没动过，说明读者只是点开了某一行看一眼，不算接管。
+        const pressed = pressedAt.get(scroller);
+        if (pressed !== undefined) {
+            pressedAt.delete(scroller);
+            if (Math.abs(scroller.scrollTop - pressed) > 0.5)
+                takenOver.add(scroller);
+        }
+        const behind = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+        if (behind <= BOTTOM_SLACK_PX) {
+            takenOver.delete(scroller);
+            return;
+        }
+        if (takenOver.has(scroller))
+            return;
+        // 折叠的卷帘门正在动高度，这一会儿位置归它管。
+        if ((0, fold_glide_1.isFoldGlideBusy)())
+            return;
+        scroller.scrollTop = scroller.scrollHeight;
+    };
+    const flush = () => {
+        frame = 0;
+        for (const scroller of pending)
+            follow(scroller);
+        pending.clear();
+    };
+    const onAppear = (event) => {
+        if (!(event instanceof AnimationEvent) || event.animationName !== follow_probe_styles_1.APPEAR_PROBE_NAME)
+            return;
+        const row = event.target;
+        if (!(row instanceof Element))
+            return;
+        const scroller = scrollerOf(row);
+        if (scroller === null)
+            return;
+        pending.add(scroller);
+        if (frame !== 0)
+            return;
+        frame = window.requestAnimationFrame(flush);
+    };
+    const onIntentMark = (event) => {
+        if (!(0, reader_intent_1.isReaderScrollIntent)(event))
+            return;
+        const scroller = event.target instanceof Element ? scrollerOf(event.target) : null;
+        if (scroller === null)
+            return;
+        takenOver.add(scroller);
+        pressedAt.delete(scroller);
+    };
+    const onIntentPress = (event) => {
+        if (!(0, reader_intent_1.isReaderScrollIntent)(event))
+            return;
+        const scroller = event.target instanceof Element ? scrollerOf(event.target) : null;
+        if (scroller === null)
+            return;
+        pressedAt.set(scroller, scroller.scrollTop);
+    };
+    root.setAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE, '');
+    document.addEventListener('animationstart', onAppear, true);
+    for (const type of MARK_EVENTS)
+        document.addEventListener(type, onIntentMark, { capture: true, passive: true });
+    for (const type of PRESS_EVENTS)
+        document.addEventListener(type, onIntentPress, { capture: true, passive: true });
+    return () => {
+        if (frame !== 0)
+            window.cancelAnimationFrame(frame);
+        frame = 0;
+        pending.clear();
+        document.removeEventListener('animationstart', onAppear, true);
+        for (const type of MARK_EVENTS)
+            document.removeEventListener(type, onIntentMark, true);
+        for (const type of PRESS_EVENTS)
+            document.removeEventListener(type, onIntentPress, true);
+        root.removeAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE);
+    };
+}
+    };
+
     __registry["chat/fold/fold-glide.js"] = function (module, exports, require) {
 "use strict";
 /**
@@ -4189,8 +4364,8 @@ let foldBusyUntil = 0;
  * 卷帘门正在跑。
  *
  * 位置在这一段里归动画管：这中间要是有人把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来是抖。
- * 从前那个「跟随守护」就是照着它让路的，守护跟「token 淡入」一起删掉之后暂时没有查询者——时间窗
- * 照旧维护（排时间、卡顿时把拨回去的那一段补进来），留着这个把柄。
+ * 从前那个「跟随守护」就是照着它让路的，守护跟「token 淡入」一起删掉之后一度没有查询者；2026-10-18
+ * 起「工具行跟随」（`follow/call-appeared.ts`）重新在补位之前问它一句。
  * @returns 上一次动画排到的时刻还没过时为真。
  */
 function isFoldGlideBusy() {
@@ -4804,6 +4979,44 @@ function isReaderScrollIntent(event) {
         return true;
     return event instanceof KeyboardEvent && dom_contract_1.SCROLL_KEYS.has(event.key);
 }
+    };
+
+    __registry["chat/follow/follow-probe-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FOLLOW_PROBE_CSS = exports.APPEAR_PROBE_NAME = exports.APPEAR_ATTRIBUTE = void 0;
+/**
+ * 「工具行出现了」这条探针：一条 1 ms 的动画，只为让 animationstart 响一次。
+ *
+ * 两帧都写 opacity: 1，所以画面上什么都不变；是 1 ms 而不是 0，是因为零时长的动画根本不会开始、
+ * 也就不会派发事件。
+ *
+ * 整条规则收在门控属性下（挂在 documentElement 上，见 call-appeared.ts）：开关关着时属性不在，
+ * 这条规则一条都不命中。作用域再收一层到聊天列——聊天区以外的元素在样式匹配时被祖先过滤直接跳过，
+ * 这是[性能风险](<文档/开发/性能风险.md>)里量过的那个差别；流式期间是增量重算，只对新节点匹配。
+ *
+ * @module dsh-chat-ux/client/chat/follow/follow-probe-styles
+ */
+const dom_contract_1 = require("../../dom-contract");
+/** 门控属性：在，就说明这一处在工作。关掉时摘掉它，探针一次都不跑。 */
+exports.APPEAR_ATTRIBUTE = 'data-dsh-chat-ux-follow';
+/** 探针动画的名字；监听那一侧按它过滤 animationstart。 */
+exports.APPEAR_PROBE_NAME = 'dsh-chat-ux-appear';
+/** 探针规则：工具调用行（含 run_code 里派发出去的子调用）与思考行。 */
+exports.FOLLOW_PROBE_CSS = `
+/* 这两族行第一次被渲染时各响一次 animationstart——那是浏览器「这个元素出现了」的一次性通知，
+   不是轮询也不是观察者。监听那一头在 call-appeared.ts：它把所在的滚动器补到底，然后静静等着
+   下一次。两帧之间画面上没有任何变化，所以这条规则只花一次动画对象。 */
+@keyframes ${exports.APPEAR_PROBE_NAME} {
+  from { opacity: 1; }
+  to { opacity: 1; }
+}
+
+[${exports.APPEAR_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} ${dom_contract_1.CALL_ROW_SELECTOR},
+[${exports.APPEAR_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} ${dom_contract_1.THINK_ROW_SELECTOR} {
+  animation: ${exports.APPEAR_PROBE_NAME} 1ms linear;
+}
+`;
     };
 
     __registry["chat/fold/process-fold.js"] = function (module, exports, require) {
@@ -6795,11 +7008,15 @@ const HIT_REEL_FIELD = 'hitReel';
 const CONTEXT_PIE_FIELD = 'contextPie';
 const COMPOSER_GLASS_FIELD = 'composerGlass';
 const LIVE_DIFF_FIELD = 'liveDiff';
+const FOLLOW_FIELD = 'followOnAppear';
 const ZH_COPY = {
     summary: () => '光标动效、气泡动效、读数与输入框玻璃都在这里调。',
     autoFoldLabel: '自动开合',
     autoFoldHint: '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
         + '你自己动手折叠过的，它不再打扰。',
+    followLabel: '工具行跟随',
+    followHint: '工具调用和新出现的思考行一到，滚动条就自己跟到底，新内容不会落到看不见的地方。'
+        + '你自己往上翻的时候它一概不动，回到最下面又接着跟。',
     caretLabel: '光标动效',
     caretHint: '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
         + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
@@ -6832,6 +7049,10 @@ const EN_COPY = {
     autoFoldLabel: 'Automatic folding',
     autoFoldHint: 'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
+    followLabel: 'Follow new rows',
+    followHint: 'When a tool call or a new reasoning row arrives, the scroll follows to the bottom so nothing lands '
+        + 'out of sight. While you scroll up yourself it keeps still, and picks up again once you are back at '
+        + 'the bottom.',
     caretLabel: 'Caret motion',
     caretHint: 'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
         + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
@@ -6885,6 +7106,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [failed, setFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
     const autoFoldOn = storedAutoFold(snapshot.value);
+    const followOn = storedFollow(snapshot.value);
     const sendOn = storedSendOn(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
     const pieOn = storedContextPie(snapshot.value);
@@ -6926,7 +7148,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
      * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，几行开关共用。
      */
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 /**
  * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
@@ -6941,6 +7163,10 @@ function overrideBadges(copy, disabled, onReset) {
 /** 从 host 的值里读自动开合的开关。 */
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
+}
+/** 从 host 的值里读工具行跟随的开关。 */
+function storedFollow(value) {
+    return value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
 }
 /** 从 host 的值里读聊天气泡动效的开关。 */
 function storedSendOn(value) {
@@ -7195,6 +7421,7 @@ const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
+const follow_probe_styles_1 = require("./chat/follow/follow-probe-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
 const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
 /** 注入样式表的固定 id，用于卸载和排查。 */
@@ -7296,7 +7523,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  *
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {

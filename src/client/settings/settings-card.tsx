@@ -27,7 +27,7 @@ import type {CaretMotionMode} from '../chat/caret/caret-motion'
 import {CARD_CLASS} from './config-card-styles'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
+    DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
 } from './settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings-scope'
 
@@ -39,12 +39,15 @@ const HIT_REEL_FIELD = 'hitReel'
 const CONTEXT_PIE_FIELD = 'contextPie'
 const COMPOSER_GLASS_FIELD = 'composerGlass'
 const LIVE_DIFF_FIELD = 'liveDiff'
+const FOLLOW_FIELD = 'followOnAppear'
 
 /** 一种语言的文案。 */
 interface Copy {
     summary: () => string
     autoFoldLabel: string
     autoFoldHint: string
+    followLabel: string
+    followHint: string
     caretLabel: string
     caretHint: string
     caretOff: string
@@ -73,6 +76,10 @@ const ZH_COPY: Copy = {
     autoFoldHint:
         '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
         + '你自己动手折叠过的，它不再打扰。',
+    followLabel: '工具行跟随',
+    followHint:
+        '工具调用和新出现的思考行一到，滚动条就自己跟到底，新内容不会落到看不见的地方。'
+        + '你自己往上翻的时候它一概不动，回到最下面又接着跟。',
     caretLabel: '光标动效',
     caretHint:
         '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
@@ -112,6 +119,11 @@ const EN_COPY: Copy = {
     autoFoldHint:
         'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
         + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
+    followLabel: 'Follow new rows',
+    followHint:
+        'When a tool call or a new reasoning row arrives, the scroll follows to the bottom so nothing lands '
+        + 'out of sight. While you scroll up yourself it keeps still, and picks up again once you are back at '
+        + 'the bottom.',
     caretLabel: 'Caret motion',
     caretHint:
         'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
@@ -190,6 +202,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const fieldId = useId()
 
     const autoFoldOn = storedAutoFold(snapshot.value)
+    const followOn = storedFollow(snapshot.value)
     const sendOn = storedSendOn(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
     const pieOn = storedContextPie(snapshot.value)
@@ -263,6 +276,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     disabled={controlsDisabled}
                     label={copy.autoFoldLabel}
                     onChange={(next: boolean) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold)}
+                />
+            ))}
+            {rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, (
+                <Switch
+                    checked={followOn}
+                    disabled={controlsDisabled}
+                    label={copy.followLabel}
+                    onChange={(next: boolean) => void writeField(FOLLOW_FIELD, next, storedFollow)}
                 />
             ))}
             {rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, (
@@ -343,6 +364,11 @@ function overrideBadges(copy: Copy, disabled: boolean, onReset: () => void): Rea
 /** 从 host 的值里读自动开合的开关。 */
 function storedAutoFold(value: ChatUxSection | undefined): boolean {
     return value?.autoFold ?? DEFAULT_AUTO_FOLD
+}
+
+/** 从 host 的值里读工具行跟随的开关。 */
+function storedFollow(value: ChatUxSection | undefined): boolean {
+    return value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
 }
 
 /** 从 host 的值里读聊天气泡动效的开关。 */

@@ -14,6 +14,14 @@ export const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
 /** 每一行思考行；它的阶段看 `data-state`。 */
 export const THINK_ROW_SELECTOR = '[data-variant="think"]'
 
+/**
+ * 每一次工具调用的包装层——根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
+ *
+ * 它与思考行是「结构时刻」的两个锚点：它们第一次被渲染时，dsh 的跟随最容易掉队（见
+ * follow/call-appeared.ts）。
+ */
+export const CALL_ROW_SELECTOR = '[data-chat-call-id]'
+
 /** 模型还在思考、过程还在跑时的阶段值。 */
 export const RUNNING_STATE = 'running'
 

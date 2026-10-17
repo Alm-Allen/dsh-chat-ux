@@ -71,6 +71,14 @@ export declare const DEFAULT_COMPOSER_GLASS = true;
  * 接管之前的样子。
  */
 export declare const DEFAULT_LIVE_DIFF = true;
+/**
+ * 工具调用与思考行第一次出现时是否把滚动位置补到底。前端有一份同样的常量
+ * （`client/settings/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：dsh 自己的跟随在结构时刻会掉队——实测一次 run_code 执行里有两回落后到一百四十像素
+ * 上下，正好把新出现的思考推出视野。关掉时前端不挂那个门控属性，探针一条都不命中。
+ */
+export declare const DEFAULT_FOLLOW_ON_APPEAR = true;
 export interface Config {
     autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
@@ -79,6 +87,7 @@ export interface Config {
     contextPie: Volatile<boolean>;
     composerGlass: Volatile<boolean>;
     liveDiff: Volatile<boolean>;
+    followOnAppear: Volatile<boolean>;
 }
 /**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
@@ -92,6 +101,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     contextPie: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
+    followOnAppear: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
@@ -100,6 +110,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     contextPie: Schema<boolean, boolean, "volatile-defined">;
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
+    followOnAppear: Schema<boolean, boolean, "volatile-defined">;
 }>>, "plain">;
 /**
  * host 侧入口。

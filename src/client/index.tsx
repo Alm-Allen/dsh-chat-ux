@@ -21,6 +21,7 @@ import {GLASS_ATTRIBUTE} from './chat/composer-glass/composer-glass-styles'
 import {installContextMeterPie} from './chat/context-meter/context-meter-pie'
 import {installFileMutationRow} from './chat/file-mutation/file-mutation-row'
 import type {SlotsService} from './chat/file-mutation/file-mutation-row'
+import {installCallAppearFollow} from './chat/follow/call-appeared'
 import {installFoldGlide} from './chat/fold/fold-glide'
 import {installProcessFold} from './chat/fold/process-fold'
 import {installReasoningFold} from './chat/fold/reasoning-fold'
@@ -28,7 +29,7 @@ import {installSendFlight} from './chat/send-flight/send-flight'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
+    DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
 } from './settings/settings-scope'
 import type {ChatUxSection, ConfigForm, LocaleLike} from './settings/settings-scope'
 import {applyTranscriptViewDefault} from './settings/transcript-default'
@@ -78,6 +79,7 @@ export function apply(ctx: ClientContext): void {
         pie: DEFAULT_CONTEXT_PIE,
         glass: DEFAULT_COMPOSER_GLASS,
         liveDiff: DEFAULT_LIVE_DIFF,
+        followOn: DEFAULT_FOLLOW_ON_APPEAR,
     }
 
     // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
@@ -127,6 +129,19 @@ export function apply(ctx: ClientContext): void {
         if (glassDispose !== null) return
         glassDispose = installComposerGlass()
     }
+    // 工具调用与思考行第一次出现时补一次底。它只挂一个门控属性与一个 document 级的
+    // animationstart 监听——没有观察者、没有定时器，流式期间一个回调都不进。关掉时两样一起撤，
+    // 探针规则一条都不命中。
+    let followDispose: (() => void) | null = null
+    const syncFollow = (): void => {
+        if (!settings.followOn) {
+            followDispose?.()
+            followDispose = null
+            return
+        }
+        if (followDispose !== null) return
+        followDispose = installCallAppearFollow()
+    }
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
         settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
@@ -135,10 +150,12 @@ export function apply(ctx: ClientContext): void {
         settings.pie = value?.contextPie ?? DEFAULT_CONTEXT_PIE
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
+        settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
         syncGlass()
         caret.resync()
         syncPie()
         syncAutoFold()
+        syncFollow()
     }
     syncSettings()
     ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror')
@@ -180,6 +197,18 @@ export function apply(ctx: ClientContext): void {
             autoFoldDispose = null
         }
     }, 'dsh-chat-ux: auto fold')
+
+    // 这一块自己管门控属性与监听，所以这里只负责按开关装、卸；卸的时候两样一起撤干净。
+    ctx.effect(
+        () => {
+            syncFollow()
+            return () => {
+                followDispose?.()
+                followDispose = null
+            }
+        },
+        'dsh-chat-ux: follow on appear',
+    )
 
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
@@ -251,6 +280,8 @@ interface ChatUxSettings {
     glass: boolean
     /** 文件变更行的 `+n -m` 是否在准备态就长出来；那一行在渲染期现读它。 */
     liveDiff: boolean
+    /** 工具调用与思考行出现时是否补一次底；改一次就得重落一次（装或卸）。 */
+    followOn: boolean
 }
 
 /** dsh 那份 `ui-chat` 表单里这一处只读一个字段。 */

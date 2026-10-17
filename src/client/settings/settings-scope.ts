@@ -61,6 +61,15 @@ export const DEFAULT_COMPOSER_GLASS = true
  */
 export const DEFAULT_LIVE_DIFF = true
 
+/**
+ * 工具调用与思考行第一次出现时是否把滚动位置补到底。host 侧 `src/index.ts` 里有一份同样的常量，
+ * 改一处就要改另一处。
+ *
+ * 默认开着：它是把「结构时刻掉队」补回来的唯一一处——dsh 自己的平滑滚动撞上内容跳变就追不回来，
+ * 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好是一屏里新出现的那几行。
+ */
+export const DEFAULT_FOLLOW_ON_APPEAR = true
+
 /** host 解析出来的、本插件占用的那个条目。 */
 export interface ChatUxSection {
     /** 思考行与过程组是否自己开合；关掉时两块都整块不装。 */
@@ -77,6 +86,8 @@ export interface ChatUxSection {
     composerGlass?: boolean
     /** 文件变更行的 `+n -m` 是否在准备态就显示并跟着流式内容增长；默认开着。 */
     liveDiff?: boolean
+    /** 工具调用与思考行第一次出现时是否把滚动位置补到底；默认开着。关掉时门控属性不挂，探针一条都不命中。 */
+    followOnAppear?: boolean
 }
 
 /**

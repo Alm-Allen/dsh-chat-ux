@@ -83,6 +83,15 @@ export const DEFAULT_COMPOSER_GLASS = true
  */
 export const DEFAULT_LIVE_DIFF = true
 
+/**
+ * 工具调用与思考行第一次出现时是否把滚动位置补到底。前端有一份同样的常量
+ * （`client/settings/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：dsh 自己的跟随在结构时刻会掉队——实测一次 run_code 执行里有两回落后到一百四十像素
+ * 上下，正好把新出现的思考推出视野。关掉时前端不挂那个门控属性，探针一条都不命中。
+ */
+export const DEFAULT_FOLLOW_ON_APPEAR = true
+
 // 这个插件拥有的配置字段。
 export interface Config {
     // 思考行与过程组是否自己开合。关掉时两块都整块不装，读者自己点开收起照常。
@@ -100,6 +109,8 @@ export interface Config {
     composerGlass: Volatile<boolean>
     // 文件变更行的 `+n -m` 是否在准备态就显示、并跟着流式内容增长。默认开着。
     liveDiff: Volatile<boolean>
+    // 工具调用与思考行第一次出现时是否把滚动位置补到底。默认开着。
+    followOnAppear: Volatile<boolean>
 }
 
 /**
@@ -114,6 +125,7 @@ export const Config = Schema.object({
     contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
     composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
     liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
+    followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
 })
 
 /**

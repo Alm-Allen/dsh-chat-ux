@@ -53,6 +53,14 @@ export const DEFAULT_COMPOSER_GLASS = true;
  */
 export const DEFAULT_LIVE_DIFF = true;
 /**
+ * 工具调用与思考行第一次出现时是否把滚动位置补到底。前端有一份同样的常量
+ * （`client/settings/settings-scope.ts`），改一处就要改另一处。
+ *
+ * 默认开着：dsh 自己的跟随在结构时刻会掉队——实测一次 run_code 执行里有两回落后到一百四十像素
+ * 上下，正好把新出现的思考推出视野。关掉时前端不挂那个门控属性，探针一条都不命中。
+ */
+export const DEFAULT_FOLLOW_ON_APPEAR = true;
+/**
  * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
  * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
  */
@@ -64,6 +72,7 @@ export const Config = Schema.object({
     contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
     composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
     liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
+    followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
 });
 /**
  * host 侧入口。
