@@ -17,6 +17,13 @@
  *             字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时照样在走。
  *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
  *
+ * 落点那一格也不是一开始就空出来的。默认设置下 dsh 在提交时就同步 `followTail('instant')`，
+ * 聊天区会先整体上移；读者看到的就成了「落点已让好、气泡才起飞」。这里把新行插进来造成的
+ * 那一截视觉位移先冻住（`send-reveal.ts` 给 `[data-chat-flow]` 加纯 `transform` 补偿），
+ * 起飞后 15 ms 再按 ease-out 放掉——平台段由这条帧循环吸收 dsh 后续的滚动，释放段是起飞那一刻
+ * 就建好的合成器动画（`send-reveal.ts`），收在「气泡底边越过输入框上沿」那一刻（`leaveAt` 按
+ * 几何算）；替身本来就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
+ *
  * 五条边界（前两条是实测踩出来的）：
  *
  *   同帧就得藏    用 MutationObserver 而不是每帧轮询找回显：它在本帧渲染**之前**回调，所以真实
@@ -31,7 +38,9 @@
  * @module dsh-chat-ux/client/chat/send-flight/send-flight
  */
 import {CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR} from '../../dom-contract'
-import {alphaOf, FLIGHT_MS, snapshotComposer, startMorph} from './send-morph'
+import {captureRevealAnchor, startReveal} from './send-reveal'
+import type {Reveal, RevealAnchor} from './send-reveal'
+import {alphaOf, FLIGHT_MS, snapshotComposer, startMorph, timeAtRise} from './send-morph'
 import type {ComposerSnapshot, Morph} from './send-morph'
 
 /** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
@@ -109,6 +118,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         rowWatcher.disconnect()
         window.clearTimeout(rescue)
         rescue = 0
+        // 让位早在落定前就收完了（补偿此刻本来就是 0）：这一步只是摘监听与行内属性。
+        activeFlight.reveal?.finish()
         activeFlight.hidden?.removeAttribute(FLYING_ATTRIBUTE)
         // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
         // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
@@ -119,15 +130,16 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     }
 
     /**
-     * 帧里三件事：认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。认行交给上面那个
-     * observer——它不是每帧都有新答案的事。
+     * 帧里四件事：吸收新的落点补偿、认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。
+     * 认行交给上面那个 observer——它不是每帧都有新答案的事。
      *
      * **位移与形状都不在这里写**：两条关键帧同一条时间轴（同一个 `FLIGHT_MS`、同一批 offset），dsh 解析
      * 响应占住主线程那几十到一百多毫秒里它们照样一起在走，右边缘的等式（见 `ACROSS_OMEGA`）在整段里都
      * 成立。这条路径上曾经栽过一次：位移在合成器上、形状留在主线程的 `clip-path` 里，主线程一卡，一整张
      * 还没收窄的卡片就飞到了终点。
      *
-     * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写，`followTarget` 读的是当前布局。
+     * 帧里剩下的三件都是主线程的事：`reveal` 的平台段是一次样式写（释放段交给合成器）、
+     * `compact` 是一次性的样式写、`followTarget` 读的是当前布局。
      */
     const tick = (): void => {
         const activeFlight = flight
@@ -137,6 +149,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             settle()
             return
         }
+        // 先更新落点补偿，再量终点的移动：同一帧里替身拿到的就是补偿后的位置。
+        activeFlight.reveal?.apply()
         activeFlight.morph.compact(u)
         followTarget(activeFlight)
         requestAnimationFrame(tick)
@@ -165,7 +179,12 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             previous: lastUserRow(),
             hidden: echo,
             bubble,
+            reveal: null,
         }
+        // 补偿必须等 `startMorph` 量完（形变要读一堆几何）再施加，所以放在这里。
+        flight.reveal = draft.revealAnchor === null
+            ? null
+            : startReveal(draft.revealAnchor, timeAtRise(leaveAt(card, box)))
         rowWatcher.observe(document.body, {childList: true, subtree: true})
         rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
         requestAnimationFrame(tick)
@@ -205,7 +224,11 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         if ((input.textContent ?? '').trim() === '') return
         const snapshot = snapshotComposer(input, card)
         if (snapshot === null) return
-        origin = {capturedAt: performance.now(), snapshot}
+        origin = {
+            capturedAt: performance.now(),
+            snapshot,
+            revealAnchor: captureRevealAnchor(card),
+        }
         echoWatcher.observe(document.body, {childList: true, subtree: true})
     }
 
@@ -242,6 +265,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
 interface DraftOrigin {
     readonly capturedAt: number
     readonly snapshot: ComposerSnapshot
+    /** 提交前的滚动几何；读不到就不做落点让位。 */
+    readonly revealAnchor: RevealAnchor | null
 }
 
 /** 一段正在飞的动画。`hidden` 会在回显被换掉时改指新来的那一行。 */
@@ -258,6 +283,24 @@ interface Flight {
     hidden: HTMLElement | null
     /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
     bubble: HTMLElement | null
+    /** 落点让位：飞行期间每帧喂进度，落定时收掉；不满足条件时为 null。 */
+    reveal: Reveal | null
+}
+
+/**
+ * 气泡底边越过输入卡片上沿那一刻，纵向位移走了多少（0 到 1）。
+ *
+ * 读者要的是「视觉上快离开输入框时，位置已经让好」（2026-10-18）：气泡从卡片的**顶边**起飞，
+ * 所以它得往上走自身高度那么多，底边才离开卡片；纵向总行程是「卡片顶边到落点」那一截。两者
+ * 之比就是那一刻的位移进度——气泡越高、行程越短，让位收得越晚。
+ * @param card - 起飞前的输入卡片矩形。
+ * @param end - 气泡的落点矩形。
+ * @returns 位移进度；夹在 0.25~0.85（太小让位短到看不见，太大就与落定对齐了）。
+ */
+function leaveAt(card: DOMRect, end: DOMRect): number {
+    const travel = card.top - end.top
+    if (!(travel > 0)) return 0.3
+    return Math.min(0.85, Math.max(0.25, end.height / travel))
 }
 
 /**
@@ -265,6 +308,10 @@ interface Flight {
  *
  * 这是每帧唯一的 JS：一次矩形读、至多一次样式写。飞行期间终点通常只动几十像素（提交后 dsh 自己会
  * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
+ *
+ * **让位的补偿要减掉。** 真实行的 rect 带着 `[data-chat-flow]` 的 `translateY`；替身的落点锁在
+ * 「最终位置」，不跟着补偿往下走——否则它前半段会落在输入框下方（提交前的那一格），读者看到的
+ * 就是气泡生成在聊天框下面。
  */
 function followTarget(value: Flight): void {
     const bubble = value.bubble
@@ -274,7 +321,7 @@ function followTarget(value: Flight): void {
     // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
     if (box.width === 0) return
     const shiftX = box.left - value.targetAt.left
-    const shiftY = box.top - value.targetAt.top
+    const shiftY = box.top - value.targetAt.top - (value.reveal?.offset() ?? 0)
     if (shiftX === value.shiftedX && shiftY === value.shiftedY) return
     value.shiftedX = shiftX
     value.shiftedY = shiftY

@@ -1319,6 +1319,26 @@ function riseProgress(u: number): number {
 }
 
 /**
+ * 反解纵向进度：气泡在视觉上走到 `progress` 那一刻，占整段飞行的多少。
+ *
+ * 让位要收在「气泡底边越过输入框上沿」那一刻，而那是一个**位移比例**、不是时间；纵向弹簧又不是
+ * 匀速的，所以要反解一次。二分 24 次，误差压在一帧以下（0.06 的进度差在 60 fps 里就是两帧）。
+ * @param progress - 纵向位移的比例（1 是落点）。
+ * @returns 时间占比；进度不大于 0 时是 0。
+ */
+export function timeAtRise(progress: number): number {
+    if (!(progress > 0)) return 0
+    let low = 0
+    let high = 1
+    for (let step = 0; step < 24; step += 1) {
+        const mid = (low + high) / 2
+        if (riseProgress(mid) < progress) low = mid
+        else high = mid
+    }
+    return (low + high) / 2
+}
+
+/**
  * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
  *
  * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性

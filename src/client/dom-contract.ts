@@ -106,6 +106,24 @@ export const PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode'
  */
 export const MOTION_ROW_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]'
 
+/**
+ * 会话内容的阶段（`hero` / `settling` / `active`），挂在会话内容根上。
+ *
+ * 发送动效只在 `active` 这一档里做「落点让位」：hero 与 settling 各有自己的一整套布局切换，
+ * 往里插一脚只会打架。
+ */
+export const CONTENT_PHASE_ATTRIBUTE = 'data-content-phase'
+export const CONTENT_PHASE_SELECTOR = '[' + CONTENT_PHASE_ATTRIBUTE + ']'
+export const ACTIVE_CONTENT_PHASE = 'active'
+
+/**
+ * 列上的折叠动效作用域标记（`data-chat-motion=""`）；行上的同名字符串另带阶段值。
+ *
+ * 它在列上时，说明 dsh 正在跑一段批量折叠/展开的高度动画——那一会儿的行高与滚动都在变，
+ * 想动聊天区的人应当让路。
+ */
+export const MOTION_ATTRIBUTE = 'data-chat-motion'
+
 /** 过程组体；收起时带 `hidden`。 */
 export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
 
