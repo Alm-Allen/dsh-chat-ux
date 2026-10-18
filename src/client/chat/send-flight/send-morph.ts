@@ -51,7 +51,7 @@
  * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
  * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
  */
-export const FLIGHT_MS = 330
+export const FLIGHT_MS = 350
 
 /**
  * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
@@ -100,6 +100,18 @@ const ACROSS_OMEGA = 7
  * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
  */
 const RISE_DAMPING = 0.8
+
+/**
+ * 过冲的像素下限。
+ *
+ * 过冲的绝对幅度是「纵向行程 × 过冲比例」（比例只由 `RISE_DAMPING` 定），而窄气泡、短会话里纵向行程
+ * 可能只有几十像素——1.52% 摊下来不到一个像素，落地那一下就只剩「停住」，读者读成「傻快」「没有 Q 弹」。
+ * 这里给过冲补一个下限：**主线仍然落在真实气泡上**（`dy` 一点不动），只把「冲过头」的那几像素补到
+ * 看得见；行程本来够长时（`|dy| × 过冲比例 ≥ 这个数`）它一个像素都不加。
+ *
+ * 4 像素是照着宽气泡那档实测取的：那边过冲 3.4~5.4 px，取它做下限，两头「弹一下」才像同一档动效。
+ */
+const MIN_OVERSHOOT_PX = 4
 
 /**
  * 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。
@@ -197,6 +209,13 @@ const CORNER_RECOVER_MS = 110
  * 低于它只当是帧率低或抖动，不补过渡，否则那段收拢会在低帧率的机器上每一次飞行都播一遍。
  */
 const CORNER_STALL_GAP = 0.15
+
+/**
+ * 起播后第一帧，动画的时间比墙钟快多少（毫秒）才值得把时间轴退回去（见 `Morph.alignStart`）。
+ *
+ * 一帧是十六点七毫秒，正常起跑两边最多差一帧的零头；取 24（一帧半）留出抖动，又不至于把真错位漏掉。
+ */
+const ALIGN_TOLERANCE_MS = 24
 
 /** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
 const SAMPLES = 60
@@ -347,6 +366,22 @@ export interface Morph {
     readonly compact: (u: number) => void
     /** 位移那条动画此刻的进度（0 到 1）；位移与形状同轴，拿它判「整段走完了没有」。 */
     readonly progress: () => number
+    /**
+     * 起跑：把预热期间停在起手格的那批动画放开。
+     *
+     * **由 `send-flight` 在预热帧走完之后调一次**。替身是刚插进文档的新子树，第一次 raster 要跨一两个
+     * 合成器帧，这段时间里合成器上的时间轴照走、屏幕上却一个像素都没有——读者第一眼看到的就是半路
+     * （见 `send-flight.ts` 的 `WARMUP_FRAMES`）。停住等它画得出来再起跑，起手那一段就落在可见之后。
+     */
+    readonly play: () => void
+    /**
+     * 起播后的第一帧核对一次时间轴（幂等，每帧调也行）。
+     *
+     * 正常的 pending 只会让起跑**晚**一点；只有起跑时刻被错定在过去，动画的时间才会一下子超过「`play()`
+     * 到现在」那段墙钟。那一格还没画出来（rAF 在绘制之前），把全部动画一起往后挪掉多出来的这一截，
+     * 第一眼就还是起手格。
+     */
+    readonly alignStart: () => void
     /** 位移、形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
     readonly animations: readonly Animation[]
 }
@@ -931,9 +966,35 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
     // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
     // 左边，右边由宽度决定，两条边都单调。
+    // 过冲的补充（见 `MIN_OVERSHOOT_PX`）：`overshootPeak` 是阻尼比决定的过冲比例，临界阻尼时为 0。
+    const overshootPeak = tuning.riseDamping >= 1 ? 0
+        : Math.exp(-Math.PI * tuning.riseDamping / Math.sqrt(1 - tuning.riseDamping * tuning.riseDamping))
+    // `overshootFloor` 是**要补足的像素数**（不是归一化幅度）：行程够长时它是 0，一帧都不改。
+    const overshootFloor = overshootPeak > 0
+        ? Math.max(0, MIN_OVERSHOOT_PX - Math.abs(dy) * overshootPeak)
+        : 0
+    // 过冲只出现在峰值之后那一段（`rise` 大于 1）。补足量的形状沿用主线，但**到整段末尾收回到 0**：
+    // 主线自己在 u=1 时还悬着零点三个百分点（落定时本来就有不到一像素的跳），补出来的那几像素不该
+    // 把这一跳放大。
+    const peakU = overshootPeak > 0
+        ? tuning.riseDelay + (1 - tuning.riseDelay)
+            * (Math.PI / (tuning.riseOmega * Math.sqrt(1 - tuning.riseDamping * tuning.riseDamping)))
+        : 1
+    /**
+     * 这一刻的纵向位移：主线是 `dy × 进度`，过冲那一段再沿同方向补上 `overshootFloor` 像素。
+     * @param u - 时间占比。
+     * @returns 纵向位移（像素，负值向上）。
+     */
+    const vertical = (u: number): number => {
+        const rise = riseProgress(u)
+        if (overshootFloor <= 0 || rise <= 1) return dy * rise
+        const tailSpan = 1 - peakU
+        const tail = tailSpan > 0 ? Math.max(0, 1 - (u - peakU) / tailSpan) : 0
+        return dy * rise + Math.sign(dy) * ((rise - 1) / overshootPeak) * tail * overshootFloor
+    }
     const travel = run(mover, samples.map(sample => ({
         offset: sample.u,
-        transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
+        transform: 'translate(' + dx * sample.m + 'px, ' + vertical(sample.u) + 'px)',
     })))
     // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
     // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
@@ -1080,7 +1141,47 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
         })))
         run(layer, stepOpacity(window.from, window.until))
     }
-    return {wrapper, compact, progress, animations}
+    // 预热：全部动画先停在起手那一格（见 `Morph.play`）。替身刚插进文档，第一次 raster 要跨一两个
+    // 合成器帧；这期间合成器上的时间轴照走、屏幕上却还没有它的像素，等 `send-flight` 的预热帧走完
+    // 再起跑，第一眼才落在起手格上。
+    for (const animation of animations) {
+        animation.pause()
+        animation.currentTime = 0
+    }
+    /** 起跑了没有（见 `Morph.play`）。 */
+    let started = false
+    /** 起跑那一刻的墙钟；没起跑时为 null。起首对齐拿它当尺子（见 `alignStart`）。 */
+    let playedAt: number | null = null
+    /** 首帧对齐做过没有（见 `Morph.alignStart`）。 */
+    let aligned = false
+    /** 见 `Morph.play`。 */
+    const play = (): void => {
+        if (started) return
+        started = true
+        playedAt = performance.now()
+        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程被长任务拖住时这一格会晚出几十毫秒
+        // （动画还没起跑，屏幕上却该动了）。
+        const now = document.timeline.currentTime
+        for (const animation of animations) {
+            animation.play()
+            if (typeof now === 'number') animation.startTime = now
+        }
+    }
+    /** 见 `Morph.alignStart`。 */
+    const alignStart = (): void => {
+        if (aligned) return
+        const raw = travel.currentTime
+        if (typeof raw !== 'number' || raw <= 0) return
+        aligned = true
+        if (playedAt === null) return
+        const ahead = raw - (performance.now() - playedAt)
+        if (ahead <= ALIGN_TOLERANCE_MS) return
+        for (const animation of animations) {
+            const start = animation.startTime
+            if (typeof start === 'number') animation.startTime = start + ahead
+        }
+    }
+    return {wrapper, compact, progress, play, alignStart, animations}
 }
 
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */

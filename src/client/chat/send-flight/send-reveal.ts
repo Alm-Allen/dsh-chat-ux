@@ -190,9 +190,11 @@ export function captureRevealAnchor(card: HTMLElement): RevealAnchor | null {
  * 起飞那一刻开始冻结落点。必须在 `startMorph` 之后调：形变要量一大堆几何，先加补偿会污染它。
  * @param anchor - 捕获阶段留下的锚点。
  * @param until - 让位在飞行的哪个时间点收完（0 到 1）；调用方按「气泡底边越过输入框上沿」算。
+ * @param delayMs - 气泡那边预热了几毫秒才起跑（见 `send-flight.ts` 的 `WARMUP_FRAMES`）。整条时间轴
+ *   一起推后，让位与气泡才不会错开；那几毫秒落在平台里，画面仍然冻着。
  * @returns 让位句柄；不满足条件时为 null。
  */
-export function startReveal(anchor: RevealAnchor, until = REVEAL_DONE): Reveal | null {
+export function startReveal(anchor: RevealAnchor, until = REVEAL_DONE, delayMs = 0): Reveal | null {
     if (!anchor.active || !anchor.atBottom || !anchor.calm) return null
     const scroller = anchor.scroller
     if (!scroller.isConnected) return null
@@ -205,7 +207,9 @@ export function startReveal(anchor: RevealAnchor, until = REVEAL_DONE): Reveal |
     if (column.getBoundingClientRect().height > MAX_REVEAL_COLUMN_PX) return null
 
     const frozenTop = anchor.scrollTop
-    const startedAt = performance.now()
+    // 起点整体推后 `delayMs`：那是气泡预热的那几毫秒。之后每处 `elapsed` 都是负数，剩下的时长自己
+    // 会长出来——平台仍收在气泡起跑后 3 ms，释放仍收在气泡落到落点那一刻。
+    const startedAt = performance.now() + delayMs
     /** 收完的时刻（占飞行的比例）：不能早于平台末尾，否则让位短到看不见。 */
     const doneAt = Number.isFinite(until) && until > REVEAL_HOLD ? Math.min(1, until) : REVEAL_DONE
     let lastShift = Number.NaN

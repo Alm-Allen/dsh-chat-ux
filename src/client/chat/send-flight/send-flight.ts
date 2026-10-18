@@ -11,7 +11,7 @@
  *   抓起点    提交的捕获阶段把整张输入卡片抓下来（克隆、几何、外观），全都早于 React 清空草稿。
  *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
  *   立替身    替身挂到页面上、整段动画交给合成器；真实的那一行挂属性藏起来（保留布局盒，终点每帧都
- *             量得到）。
+ *             量得到）。动画先停在起手格，等一两帧让替身画得出来再起跑（见 `WARMUP_FRAMES`）。
  *   逐帧补    **这一帧里只有两件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行）补到替身的
  *             最外层上；形变段走完那一帧把壳归一（见 `send-morph.ts` 的 `compact`）。位置、形状、颜色、
  *             字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时照样在走。
@@ -61,6 +61,21 @@ const FLIGHT_LIMIT_FLOOR_PX = 900
 
 /** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
 const RESCUE_MARGIN_MS = 400
+
+/**
+ * 起播前先等几帧。
+ *
+ * 替身是刚插进文档的新子树，第一次 raster 要跨一两个合成器帧；这期间合成器上的时间轴照走、屏幕上却
+ * 一个像素都没有——读者第一眼看到的就是「已经飞到半路」（`ACROSS_OMEGA` 那段：五十毫秒就走掉七成）。
+ * 等这两帧过去再放开动画，起手那一段就落在「画得出来」之后。
+ *
+ * 这两帧里读者看到的是静止的输入卡片——替身的起手格与真卡片逐点一致，所以看不出中间停顿过。
+ * 想验证它是否起效，量「替身第一次出现在屏幕上那一帧的动画进度」，见 `文档/业务/发送动效.md` 的验收口径。
+ */
+const WARMUP_FRAMES = 2
+
+/** 预热折算给让位的时长（毫秒）。按六十帧算，误差不到一帧，而让位前五十毫秒本来就不动。 */
+const WARMUP_MS = WARMUP_FRAMES * (1000 / 60)
 
 /** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
 const ECHO_SELECTOR = CHAT_FLOW_SELECTOR + ' ' + SUBMISSION_ECHO_SELECTOR
@@ -145,6 +160,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     const tick = (): void => {
         const activeFlight = flight
         if (activeFlight === null) return
+        // 起播后第一帧核对一次时间轴：预热之后才起跑，这一格还没画出来（见 `Morph.alignStart`）。
+        activeFlight.morph.alignStart()
         const u = activeFlight.morph.progress()
         if (u >= 1) {
             settle()
@@ -183,12 +200,24 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             reveal: null,
         }
         // 补偿必须等 `startMorph` 量完（形变要读一堆几何）再施加，所以放在这里。
+        // 让位的时间轴跟着预热一起推后：气泡晚几毫秒起跑，内容也不能先让开（见 `WARMUP_MS`）。
         flight.reveal = draft.revealAnchor === null
             ? null
-            : startReveal(draft.revealAnchor, timeAtRise(1))
+            : startReveal(draft.revealAnchor, timeAtRise(1), WARMUP_MS)
         rowWatcher.observe(document.body, {childList: true, subtree: true})
-        rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
+        rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS + WARMUP_MS)
         requestAnimationFrame(tick)
+        // 预热：替身先在屏幕上静止这两帧，等它被光栅化过再放开动画。中途连发时 `flight` 已经换成新的
+        // 一段，旧的那一轮在这里自然停掉（新的一段自己有自己的预热）。
+        const warmUp = (left: number): void => {
+            if (flight?.morph !== morph) return
+            if (left > 0) {
+                requestAnimationFrame(() => warmUp(left - 1))
+                return
+            }
+            morph.play()
+        }
+        requestAnimationFrame(() => warmUp(WARMUP_FRAMES))
     }
 
     /**
