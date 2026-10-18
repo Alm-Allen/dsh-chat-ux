@@ -172,6 +172,24 @@ const MIN_REVERSE_DIVISOR = 0.5
  */
 const MIN_CORNER_SCALE = 0.02
 
+/**
+ * 归一那一帧，画面上的圆角与终态差多少（水平 + 垂直，像素）才值得补一段过渡。
+ *
+ * 没卡过时两者本来就相等，剩下的是浮点噪声；卡过才差得出几像素到十几像素。
+ */
+const CORNER_SNAP_PX = 2
+
+/** 卡顿留下的那个椭圆收回正圆用的时长。短到看不出「角在动」，长到不像一帧的跳。 */
+const CORNER_RECOVER_MS = 110
+
+/**
+ * 相邻两次帧回调之间进度差多少才算「主线程卡过」。
+ *
+ * 摊到 300 ms 的整段上：60 fps 一帧是 0.056、**30 fps 一帧就到了 0.111**。阈值取 0.15（45 ms）——
+ * 低于它只当是帧率低或抖动，不补过渡，否则那段收拢会在低帧率的机器上每一次飞行都播一遍。
+ */
+const CORNER_STALL_GAP = 0.15
+
 /** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
 const SAMPLES = 60
 
@@ -690,7 +708,8 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
             // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
             visible: Math.max(0, Math.min(width, reach - dx * m)),
             height: H0 + (H1 - H0) * m,
-            radius: R0 + (R1 - R0) * m,
+            // 圆角要等字撑高的那几格落定之后再算（见 `textWindows` 调用之后那段），这里先占个位。
+            radius: 0,
             left,
             top: from.top + (to.top - from.top) * m,
             content: Math.max(1, width - left - right),
@@ -783,6 +802,34 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 自己，其余每段一层。
     const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
     const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding)
+    // 半径 = **可见区短边的一半 × 圆度**，圆度从 `2R0/短边` 走到 `2R1/短边`；半径因此总是跟着区域
+    // 一起收，两端精确还原真实值（起手与真卡片逐点一致，落定就是气泡自己的圆角）。
+    //
+    // **圆度用进度的平方根插值，不是线性。** 这是一次量出来的取舍：卡顿冻住的是 `border-radius` 的
+    // 写入值，形状却在合成器上继续收——而**圆度在冻结期间保持不变**（写入值除以缩放，分子分母按两个
+    // 方向各自的缩放比走，正好约掉）。所以冻结那一刻圆度越高，回来时看到的那个椭圆就越接近气泡自己
+    // 的角。平方根让圆度在前段抬得快：30 ms 时 75%（线性只有 64%）。四种卡顿跨度逐一比过，平方根
+    // 的「离 20×20 差多少」都比线性小一到两成——30 ms 冻到 90 ms 是 14.7 对 18.3，60 ms 冻到 90 ms
+    // 给的是 13.4×20.4，垂直方向正好贴上气泡的圆弧。中段仍是圆角矩形（75% 圆度），不是胶囊。
+    //
+    // 反过来把半径**压死**成一个恒定值（曾经试过收到的终值 20 px）会让卡顿椭圆变小四成，但离终点的
+    // 角更远，跳变更大：同一场景 7.5 变成 17.2。**「椭圆小」和「离终点近」不可兼得的，取后者。**
+    //
+    // **两端都夹在短边的一半以内**：圆度不超过 1，半径就不会撞上浏览器那条「半径之和超过边长就等比
+    // 缩小所有角」的静默规则——那条规则一接管，这条曲线说什么都不算了，极窄的气泡上还会连水平方向
+    // 一起缩。
+    //
+    // **必须在 `textWindows` 之后算**：多行时字会把外框撑高（那里写 `sample.height`），短边跟着变，
+    // 早算一步就会在归一那一帧对不上。
+    const shortStart = Math.min(W0, H0)
+    const shortEnd = Math.min(W1, H1)
+    const shareStart = shortStart > 0 ? Math.min(1, (2 * R0) / shortStart) : 0
+    const shareEnd = shortEnd > 0 ? Math.min(1, (2 * R1) / shortEnd) : 0
+    for (const sample of samples) {
+        const shortSide = Math.min(sample.visible, sample.height)
+        const share = shareStart + (shareEnd - shareStart) * Math.sqrt(sample.m)
+        sample.radius = (shortSide / 2) * share
+    }
     const layers = bubbleWindows.map((window) => {
         const layer = textLayer(bubble, style)
         layer.style.width = window.width + 'px'
@@ -894,11 +941,16 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     })))
     // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
     // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
-    // 壳的 `transform` 照样在合成器上。卡住时半径停在旧值，圆还是圆的。
+    // 壳的 `transform` 照样在合成器上。卡顿时半径停在旧值、形状却继续在合成器上收，两者的比例会散
+    // （宽收到 404 px 时圆角冻在 23.5 px，等缩到 44 高，那 23.5 px 就是满圆）。这是留在主线程的固有
+    // 代价，只能靠「半径本身跟着短边走」把错拍压到最小。
     // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
+    //
+    // **采样密度要与形状同格**：半径现在随短边逐格变，隔一格取一格会让这条折线与缩放那条错开，
+    // 中段能看见角比轮廓早一格到位。
     const corners = run(shell, between(0, tuning.morphEnd, sample => ({
         borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
-    }), 2))
+    })))
 
     /**
      * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
@@ -921,6 +973,13 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     /** 壳归一了没有（见 `compact`）。 */
     let normalized = false
     /**
+     * 上一次帧回调看到的进度。
+     *
+     * 主线程被占住时 `tick` 不跑，这个值就停在卡顿前那一格上——而圆角的写入值也正是冻在那一格。
+     * `compact` 靠它与当前 `u` 的差认出「这一帧之前卡了多久」。
+     */
+    let lastTickU: number | null = null
+    /**
      * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
      *
      * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
@@ -932,21 +991,46 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
      *
      * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
      * 改高，拿整段末尾去比就会在归一时跳一下。
+     *
+     * 圆角在这之前已经是**视觉半径**（按那一格的可见短边算出来的，见 `textWindows` 之后那段）；归一
+     * 之后壳的布局尺寸就是可见尺寸，同一把尺子，直接写回去即可。
      * @param u - 这一刻的进度；还没走完形变段就什么都不做。
      */
     const compact = (u: number): void => {
-        if (normalized || u < tuning.morphEnd) return
+        if (normalized) return
+        const stalledAt = lastTickU
+        lastTickU = u
+        if (u < tuning.morphEnd) return
         const final = samples.find(sample => sample.u >= tuning.morphEnd) ?? samples.at(-1)
-        if (final === undefined) return
+        const before = samples.find(sample => sample.u >= (stalledAt ?? 0)) ?? samples[0]
+        if (final === undefined || before === undefined) return
         normalized = true
+        // 卡顿跨过这一帧时，圆角停在**上一帧**那一格的补偿值上，而形状已经收到终点——直接换成
+        // `final.radius` 就是一次硬跳（读者报的「快落地时突然变成正确圆角」）。要补的正是这一下。
+        //
+        // **不读样式**：`getComputedStyle` 会按动画的 `currentTime` 采样，读到的永远是「这一帧该有的
+        // 值」，读不回冻结的那个。改成用进度差推算——卡顿时`tick` 不跑，`lastTickU` 就停在卡顿前那一格。
+        const stalled = stalledAt !== null && u - stalledAt > CORNER_STALL_GAP
+        // 冻结那一格的补偿值换算到终点的尺寸上，就是此刻画面上那个椭圆。
+        const frozenHorizontal = before.radius * (final.visible / Math.max(before.visible, 1))
+        const frozenVertical = before.radius * (final.height / Math.max(before.height, 1))
         shape.cancel()
         inverse.cancel()
         corners.cancel()
         shell.style.width = final.visible + 'px'
         shell.style.height = final.height + 'px'
         shell.style.transform = 'none'
-        shell.style.borderRadius = final.radius + 'px'
         scaler.style.transform = 'none'
+        shell.style.borderRadius = final.radius + 'px'
+        if (!stalled) return
+        const off = Math.abs(frozenHorizontal - final.radius) + Math.abs(frozenVertical - final.radius)
+        if (off < CORNER_SNAP_PX) return
+        // 归一之后壳的缩放是 1，`border-radius` 就是视觉半径：先摆回卡顿留下的那个椭圆，再用一小段收回
+        // 正圆。一帧的跳变成一瞬的舒展，而且**只在真卡过的时候才播**。
+        shell.animate([
+            {borderRadius: frozenHorizontal + 'px / ' + frozenVertical + 'px'},
+            {borderRadius: final.radius + 'px'},
+        ], {duration: CORNER_RECOVER_MS, easing: 'ease-out'})
     }
     // 落定那格是气泡自己：不透明，把下面四层整个盖住。方向与从前相反（从前是卡面那层从 1 淡到 0），
     // 因为卡面现在是照抄来的、可能半透明，压在气泡色上会偏色。
@@ -1035,7 +1119,8 @@ interface Sample {
     /** 这一刻真正画得出来的宽度：外框被位移推出右边缘上限时，从右边裁掉多出来的那一段。 */
     readonly visible: number
     height: number
-    readonly radius: number
+    /** 这一刻的视觉半径：可见区短边的一半乘圆度，圆度按进度的平方根从 `2R0/短边` 走到 `2R1/短边`（见 `textWindows` 调用之后那段）。 */
+    radius: number
     /** 字的内容区起点。 */
     readonly left: number
     readonly top: number
