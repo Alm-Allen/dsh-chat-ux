@@ -7746,6 +7746,14 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
  * 样式计算与布局——把两个属性写成零，这一帧 dsh 量到的就是零，它不滚；之后一帧长一点，它的
  * 跟随就一帧跟一帧。晚一步（等到 animationstart 或 rAF）这一帧已经按自然高度画过，就白做了。
  *
+ * **但压成零还不够：起跑得再等两帧（见 `WARMUP_FRAMES`）。** 这一行的插入几乎总是落在提交那
+ * 一记长任务里（实测 150 ms 量级，见 [性能风险](<文档/开发/性能风险.md>)），而 WAAPI 的时间轴
+ * 在长任务里照走。动画若在微任务里就起跑，主线程一恢复，第一帧读到的已经是那一记长任务末尾的
+ * 那一格——实测行高 **21.77 px**（自然高度 22）、dsh 一帧把整列顶上去 34 px，读者看到的就是
+ * 「一下子把气泡和历史记录顶上出一段像素」。所以这里与 `send-flight.ts` 的替身同一套办法：
+ * 先 `pause()` 在起手格，两拍 rAF 之后再 `play()`，起播后第一帧再核一次时间轴。
+ * 预热这一两帧里它停在零高——读者看不见，dsh 的跟随也一步都不走。
+ *
  * **这是唯一路径，不是回退**：2026-10-18 之前这里只在浏览器不认 interpolate-size 时才装，其余
  * 情形交给样式表里那条 @starting-style 过渡；实测那条 CSS 路径在 flex 列里一次都没生效
  * （overflow: clip 不解 flex item 的自动最小尺寸，插进去就是满高，height 过渡全程没动），已经
@@ -7770,6 +7778,20 @@ const ENTRY_MS = 180;
 const ENTRY_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
 /** 兜底清理在动画时长之后再多等多久（毫秒）。 */
 const CLEANUP_GRACE_MS = 80;
+/**
+ * 起播前先等几帧——与 `send-flight.ts` 的 `WARMUP_FRAMES` 同一个理由（见模块头）。这一行的插入
+ * 几乎总在提交那一记长任务里，动画若同时起跑，长任务结束时第一帧就是满高。
+ */
+const WARMUP_FRAMES = 2;
+/** 预热折算的毫秒数；兜底定时器要把它一起算进去。 */
+const WARMUP_MS = WARMUP_FRAMES * (1000 / 60);
+/**
+ * 起播后第一帧，动画比墙钟快多少（毫秒）才值得把时间轴退回去。
+ *
+ * 与替身那一处同值（`send-morph.ts` 的 `ALIGN_TOLERANCE_MS`）：一帧半以内是 rAF 与动画时间轴的
+ * 正常相位差，回拨反而会顿一下。
+ */
+const ALIGN_TOLERANCE_MS = 24;
 /**
  * 装上占位动画。
  * @returns 卸载函数。
@@ -7821,15 +7843,53 @@ function growFromZero(row, grown) {
     // fill 必须 forwards：不填的话动画一结束元素就回落到内联的那个零高，而 onfinish 到清理
     // 之间只要隔着一帧，读者就会看见这一行闪一下。填住之后末值一直挂着，直到 remove 接上。
     { duration: ENTRY_MS, easing: ENTRY_EASING, fill: 'forwards' });
+    // 先停在起手那一格，等两拍 rAF 再起跑（见 `WARMUP_FRAMES`）。停着的时候它就是零高——
+    // 读者看不见它，dsh 的跟随也一步都不走，所以这两帧不花任何视觉上的代价。
+    growth.pause();
+    growth.currentTime = 0;
+    let rescue = 0;
     const cleanup = () => {
+        window.clearTimeout(rescue);
         // cancel 与两个 removeProperty 在同一段同步代码里：样式只重算一次，中间没有可画的帧。
         growth.cancel();
         row.style.removeProperty('height');
         row.style.removeProperty('margin-top');
     };
+    const rescueIn = (delay) => {
+        window.clearTimeout(rescue);
+        rescue = window.setTimeout(cleanup, delay);
+    };
     growth.onfinish = cleanup;
     // 兜底：onfinish 在无头环境里实测有不触发的情形，而失败模式是这一行永远零高。脚本幂等。
-    setTimeout(cleanup, ENTRY_MS + CLEANUP_GRACE_MS);
+    // 从创建这一刻起算，起跑若被推迟（后台页签里 rAF 会停）也有一道保底。
+    rescueIn(WARMUP_MS + ENTRY_MS + CLEANUP_GRACE_MS);
+    const play = () => {
+        if (!row.isConnected) {
+            cleanup();
+            return;
+        }
+        const startedAt = performance.now();
+        growth.play();
+        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程一忙这一格就晚出几十毫秒。
+        const now = document.timeline.currentTime;
+        if (typeof now === 'number')
+            growth.startTime = now;
+        rescueIn(ENTRY_MS + CLEANUP_GRACE_MS);
+        // 起播后第一帧核一次时间轴：动画若跑在墙钟前面（超过一帧半），把起点后移，让这一格退回
+        // 起手。rAF 在绘制之前，回拨不可见；主线程被长任务吞掉时两边差值为负，不会误触发。
+        requestAnimationFrame(() => {
+            const reached = growth.currentTime;
+            if (typeof reached !== 'number' || reached <= 0 || reached >= ENTRY_MS)
+                return;
+            const ahead = reached - (performance.now() - startedAt);
+            if (ahead <= ALIGN_TOLERANCE_MS)
+                return;
+            const start = growth.startTime;
+            if (typeof start === 'number')
+                growth.startTime = start + ahead;
+        });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(play));
 }
     };
 
