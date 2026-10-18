@@ -51,7 +51,7 @@
  * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
  * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
  */
-export const FLIGHT_MS = 300
+export const FLIGHT_MS = 330
 
 /**
  * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
@@ -101,8 +101,13 @@ const ACROSS_OMEGA = 7
  */
 const RISE_DAMPING = 0.8
 
-/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
-const RISE_OMEGA = 7.5
+/**
+ * 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。
+ *
+ * **导出是为了让落点让位那条弹簧与它同源**：让位借的就是这条曲线的形状（同一个函数、同一个角频率），
+ * 阻尼比与时间窗自己一套——见 `send-reveal.ts` 的 `REVEAL_DAMPING`。
+ */
+export const RISE_OMEGA = 7.5
 
 /**
  * 纵向起步的延迟（占整段的比例）：这一段里替身只横着走、一步都不上升。
@@ -111,8 +116,11 @@ const RISE_OMEGA = 7.5
  * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
  * 0.15 是四十五毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
  * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
+ *
+ * **导出是为了让落点让位与它同一时刻起步**：让位那条弹簧把窗口内的比例先换算到这段延迟之后
+ * （见 `send-reveal.ts` 的 `atRise`），两者才读得出「气泡升多少、内容就让多少」。
  */
-const RISE_DELAY = 0.15
+export const RISE_DELAY = 0.15
 
 /**
  * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
@@ -1347,8 +1355,11 @@ export function timeAtRise(progress: number): number {
  * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
  * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
  * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
+ *
+ * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
+ * （见 `send-reveal.ts` 的 `springFrames`）。
  */
-function springProgress(u: number, damping: number, omega: number): number {
+export function springProgress(u: number, damping: number, omega: number): number {
     if (damping >= 1) return 1 - (1 + omega * u) * Math.exp(-omega * u)
     const damped = omega * Math.sqrt(1 - damping * damping)
     return 1 - Math.exp(-damping * omega * u)

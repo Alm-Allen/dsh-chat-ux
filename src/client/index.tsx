@@ -26,6 +26,8 @@ import {installFoldGlide} from './chat/fold/fold-glide'
 import {installProcessFold} from './chat/fold/process-fold'
 import {installReasoningFold} from './chat/fold/reasoning-fold'
 import {installSendFlight} from './chat/send-flight/send-flight'
+import {SEND_ON_ATTRIBUTE} from './chat/send-flight/send-flight-styles'
+import {installRunningEntry} from './chat/send-flight/running-entry'
 import {ChatUxConfigCard} from './settings/settings-card'
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
@@ -129,6 +131,22 @@ export function apply(ctx: ClientContext): void {
         if (glassDispose !== null) return
         glassDispose = installComposerGlass()
     }
+    // 「深度求索中」那一行（鲸鱼尾巴 + 流光）的入场：属性在，样式表里那两条静态声明才命中。它是
+    // 为让位配套的——没有让位时那一行凭空出现本来就看不出突变，所以这个开关一关就整条撤掉。
+    // 高度与行前那道 gap 的动画由 running-entry 在插入后的微任务里做：那一处 CSS 压不住
+    // （flex item 的自动最小尺寸，以及 dsh 那条 gap 规则的特异性），原因见那两个文件。
+    let runningEntryDispose: (() => void) | null = null
+    const syncSendGate = (): void => {
+        if (!settings.sendOn) {
+            document.body.removeAttribute(SEND_ON_ATTRIBUTE)
+            runningEntryDispose?.()
+            runningEntryDispose = null
+            return
+        }
+        document.body.setAttribute(SEND_ON_ATTRIBUTE, '')
+        if (runningEntryDispose !== null) return
+        runningEntryDispose = installRunningEntry()
+    }
     // 工具调用与思考行第一次出现时补一次底。它只挂一个门控属性与一个 document 级的
     // animationstart 监听——没有观察者、没有定时器，流式期间一个回调都不进。关掉时两样一起撤，
     // 探针规则一条都不命中。
@@ -151,6 +169,7 @@ export function apply(ctx: ClientContext): void {
         settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
+        syncSendGate()
         syncGlass()
         caret.resync()
         syncPie()
@@ -185,6 +204,15 @@ export function apply(ctx: ClientContext): void {
         () => installSendFlight(() => settings.sendOn),
         'dsh-chat-ux: send flight',
     )
+    // 门控属性跟着同一个开关走，插件卸下时摘干净——页面上一次都不留。
+    ctx.effect(() => {
+        syncSendGate()
+        return () => {
+            document.body.removeAttribute(SEND_ON_ATTRIBUTE)
+            runningEntryDispose?.()
+            runningEntryDispose = null
+        }
+    }, 'dsh-chat-ux: running entry')
 
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
     // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、

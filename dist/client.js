@@ -56,6 +56,8 @@ const fold_glide_1 = require("./chat/fold/fold-glide");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
 const send_flight_1 = require("./chat/send-flight/send-flight");
+const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
+const running_entry_1 = require("./chat/send-flight/running-entry");
 const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
 const transcript_default_1 = require("./settings/transcript-default");
@@ -152,6 +154,23 @@ function apply(ctx) {
             return;
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
+    // 「深度求索中」那一行（鲸鱼尾巴 + 流光）的入场：属性在，样式表里那两条静态声明才命中。它是
+    // 为让位配套的——没有让位时那一行凭空出现本来就看不出突变，所以这个开关一关就整条撤掉。
+    // 高度与行前那道 gap 的动画由 running-entry 在插入后的微任务里做：那一处 CSS 压不住
+    // （flex item 的自动最小尺寸，以及 dsh 那条 gap 规则的特异性），原因见那两个文件。
+    let runningEntryDispose = null;
+    const syncSendGate = () => {
+        if (!settings.sendOn) {
+            document.body.removeAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE);
+            runningEntryDispose?.();
+            runningEntryDispose = null;
+            return;
+        }
+        document.body.setAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE, '');
+        if (runningEntryDispose !== null)
+            return;
+        runningEntryDispose = (0, running_entry_1.installRunningEntry)();
+    };
     // 工具调用与思考行第一次出现时补一次底。它只挂一个门控属性与一个 document 级的
     // animationstart 监听——没有观察者、没有定时器，流式期间一个回调都不进。关掉时两样一起撤，
     // 探针规则一条都不命中。
@@ -175,6 +194,7 @@ function apply(ctx) {
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
+        syncSendGate();
         syncGlass();
         caret.resync();
         syncPie();
@@ -201,6 +221,15 @@ function apply(ctx) {
     // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
+    // 门控属性跟着同一个开关走，插件卸下时摘干净——页面上一次都不留。
+    ctx.effect(() => {
+        syncSendGate();
+        return () => {
+            document.body.removeAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE);
+            runningEntryDispose?.();
+            runningEntryDispose = null;
+        };
+    }, 'dsh-chat-ux: running entry');
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
     // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
     // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
@@ -5439,9 +5468,10 @@ exports.installSendFlight = installSendFlight;
  * 落点那一格也不是一开始就空出来的。默认设置下 dsh 在提交时就同步 `followTail('instant')`，
  * 聊天区会先整体上移；读者看到的就成了「落点已让好、气泡才起飞」。这里把新行插进来造成的
  * 那一截视觉位移先冻住（`send-reveal.ts` 给 `[data-chat-flow]` 加纯 `transform` 补偿），
- * 起飞后 15 ms 再按 ease-out 放掉——平台段由这条帧循环吸收 dsh 后续的滚动，释放段是起飞那一刻
- * 就建好的合成器动画（`send-reveal.ts`），收在「气泡底边越过输入框上沿」那一刻（`leaveAt` 按
- * 几何算）；替身本来就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
+ * 起飞后 3 ms 起由一段起飞时就建好的合成器动画放掉——平台段由这条帧循环吸收 dsh 后续的滚动；
+ * **放完的时刻就是气泡落到落点的时刻**（`timeAtRise(1)` 反解），两条曲线同一条时间线、同一段
+ * 起步延迟，所以读者看到的是「让开多少、气泡就贴过来多少」（2026-10-18 读者的口径）；替身本来
+ * 就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
  *
  * 五条边界（前两条是实测踩出来的）：
  *
@@ -5597,7 +5627,7 @@ function installSendFlight(readEnabled) {
         // 补偿必须等 `startMorph` 量完（形变要读一堆几何）再施加，所以放在这里。
         flight.reveal = draft.revealAnchor === null
             ? null
-            : (0, send_reveal_1.startReveal)(draft.revealAnchor, (0, send_morph_1.timeAtRise)(leaveAt(card, box)));
+            : (0, send_reveal_1.startReveal)(draft.revealAnchor, (0, send_morph_1.timeAtRise)(1));
         rowWatcher.observe(document.body, { childList: true, subtree: true });
         rescue = window.setTimeout(settle, send_morph_1.FLIGHT_MS + RESCUE_MARGIN_MS);
         requestAnimationFrame(tick);
@@ -5676,22 +5706,6 @@ function installSendFlight(readEnabled) {
         origin = null;
         settle();
     };
-}
-/**
- * 气泡底边越过输入卡片上沿那一刻，纵向位移走了多少（0 到 1）。
- *
- * 读者要的是「视觉上快离开输入框时，位置已经让好」（2026-10-18）：气泡从卡片的**顶边**起飞，
- * 所以它得往上走自身高度那么多，底边才离开卡片；纵向总行程是「卡片顶边到落点」那一截。两者
- * 之比就是那一刻的位移进度——气泡越高、行程越短，让位收得越晚。
- * @param card - 起飞前的输入卡片矩形。
- * @param end - 气泡的落点矩形。
- * @returns 位移进度；夹在 0.25~0.85（太小让位短到看不见，太大就与落定对齐了）。
- */
-function leaveAt(card, end) {
-    const travel = card.top - end.top;
-    if (!(travel > 0))
-        return 0.3;
-    return Math.min(0.85, Math.max(0.25, end.height / travel));
 }
 /**
  * 把终点动了多少补到替身的最外层上。
@@ -5832,16 +5846,20 @@ exports.startReveal = startReveal;
  * **两段式，因为 dsh 的让位不是一次滚动。** 实测（视口 1536×863、注入 2000px 填充）：
  * 回显出现时 dsh 已经滚了 +86 px，之后 150 ms 左右又滚 +36 px。所以：
  *
- *   平台段（0 → 15 ms）   补偿量取「此刻的 `scrollTop` 减提交前那一个」，**每帧 + 每次 scroll
+ *   平台段（0 → `REVEAL_HOLD`）  补偿量取「此刻的 `scrollTop` 减提交前那一个」，**每帧 + 每次 scroll
  *                        事件**都现算一次，把期间所有滚动都压住：视觉完全冻结。scroll 事件在
  *                        rAF 之后、绘制之前派发，所以即使某一帧的 rAF 被长任务吞掉，滚动带来的
  *                        那一截也会在画出来之前被补上。
- *   释放段（15 → 84 ms）  从平台末尾起一段**起飞那一刻就建好**的 WAAPI 动画（`translateY(D) → 0`，
- *                        ease-out）。整段都在合成器上，主线程被长任务占住时照样准点、照样平滑。
- *                        **收在「气泡底边越过输入框上沿」那一刻**（`send-flight` 的 `leaveAt` 按
- *                        几何算，这一版是 84 ms）：内容先让好，气泡随后才离开输入框——不做严丝
- *                        合缝的对接，与落定同帧收尾时最后几十毫秒内容还在微微挪（读者说像「空间站
- *                        对接」）。
+ *   释放段（平台末尾 → 收完）  从平台末尾起一段**起飞那一刻就建好**的 WAAPI 动画（`translateY(D) → 0`）。
+ *                        曲线与气泡纵向那条弹簧**同源**——同一个函数、同一个角频率、同一段起步延迟，
+ *                        阻尼比单独一套（`REVEAL_DAMPING`）。窗口收在气泡第一次到位那一刻，所以这一段
+ *                        里没有回弹（见那条常量的注释）。整段都在合成器上，主线程被长任务占住时照样
+ *                        准点、照样平滑。
+ *                        **收到「气泡落到落点」那一刻**（`send-flight` 用 `timeAtRise(1)` 反解，
+ *                        这一版约 185 ms）。曲线走的就是气泡那一条：同一段起步延迟、同一个角频率，
+ *                        所以读起来是「让开多少、气泡就贴过来多少」——两者同一时刻到位。
+ *                        2026-10-18 当天先试过收在「气泡底边越过输入框上沿」（那时约 84 ms，内容
+ *                        先让好、气泡后落），读者说没有对接感，改回收在落定。
  *                        **改成「到点再由主线程建动画」会被一次长任务整段吞掉**：2026-10-18 实测到
  *                        80 ms 的 rAF 空洞，聊天区在 266 ms 一帧瞬移 117 px。
  *
@@ -5869,32 +5887,68 @@ const dom_contract_1 = require("../../dom-contract");
 const reader_intent_1 = require("../follow/reader-intent");
 const send_morph_1 = require("./send-morph");
 /**
- * 起飞后多久开始让位（占飞行的比例）。
+ * 起飞后多久开始让位（占飞行的比例）。**3 ms，就是一个平台。**
+ *
+ * 2026-10-18 按读者要求试过 `0`（「不用任何延迟」），当天回退：那一版看到的是内容**闪一下让开、
+ * 又稍微闪回来、再继续走**。原因在续接——释放动画在起飞那一帧就已经在走，等 dsh 第二次滚进来
+ * （实测 +36 px）时 `apply` 从「此刻画着的那一格」加增量重起一段（见 `releaseFrom`），动画已经
+ * 离起点走了一段，这一截就被读成了内容多下移。当时的窗口只有九十来毫秒，留一格平台就足以让第二次
+ * 滚动落在动画几乎没动的位置上，那一截吸收得干净。
+ *
+ * 平台本身不负责吸收滚动量（起飞那一刻已经整体冻住了，见 `hold`；之后每一截由 `apply` 补），
+ * 它只决定释放晚起手多久。
+ *
+ * **窗口拉长之后这一格平台的保护变弱了。** 2026-10-18 把收尾从「底边越过输入框上沿」（约 93 ms）
+ * 挪到「气泡落到落点」（约 185 ms）之后，dsh 那次 +36 px 的续滚落在窗口后段，不再落在动画起点
+ * 附近——续接那一下从此刻画着的那一格加增量重起（见 `releaseFrom`），位置连续、只是曲线从头
+ * 再走一遍。这一版没有出现 `REVEAL_HOLD = 0` 时那种「闪回来」的观感；若在真机上看到顿挫，先把
+ * 收尾点从 `timeAtRise(1)` 往回挪到 `timeAtRise(0.85)` 再看。
  *
  * 不能按时间取一半：位移不是匀速的。横向那条 33 ms 就过半、135 ms 走完；纵向那条（`RISE_DELAY`
  * 起步、`RISE_OMEGA` 收尾）97 ms 过半、147 ms 过九成、223 ms 才落定。取 0.5 时气泡在视觉上
  * 已经飞完九成，读起来就是「气泡先落定，聊天区才动」（2026-10-18 读者截图）。
- *
- * 取 0.05（15 ms）：比纵向弹簧起步（`RISE_DELAY` = 45 ms）早得多——气泡刚离开输入卡片，内容
- * 就开始让。前面这 15 ms 只为一件事——把 dsh 在起飞帧里那一下滚动吸收掉，不让它在第一帧闪过。
  */
-const REVEAL_HOLD = 0.05;
+const REVEAL_HOLD = 0.01;
 /**
  * 让位在飞行的哪个时间点收完（占飞行的比例）的兜底值。
  *
- * 实际值由调用方按几何算出来：**气泡底边越过输入框上沿那一刻**（见 `send-flight` 的 `leaveAt`）。
- * 气泡越高、纵向行程越短，那一刻来得越晚。算不出来时才用这个 0.3。
+ * 实际值由调用方给：**气泡落到落点那一刻**（`send-flight` 用 `timeAtRise(1)` 反解，这一版约
+ * 0.62）。算不出来时才用这个 0.3。
  *
- * **不能等于 1**：与落定同一帧收尾读起来像空间站对接——两者速度严丝合缝、同时接触，最后那几十
- * 毫秒内容还在微微挪（2026-10-18 读者的原话）。
+ * **不能是 1**：整段末尾还剩形变收尾与气泡最后那点微回弹，让位拖到那里就成了「内容最后还在
+ * 挪」；贴着气泡**第一次到位**才是两者同时接触。
  */
 const REVEAL_DONE = 0.3;
 /** 补偿的硬上限（像素）：多行长消息、或读者离底不远但一次滚很多时，落点会被推得太深。 */
 const MAX_REVEAL_SHIFT_PX = 200;
 /** 列比这还高就不动它：一个超大的合成层不值得为一次 300 ms 的让位买单。 */
 const MAX_REVEAL_COLUMN_PX = 20000;
-/** 释放那一段的曲线：起步快、收尾慢，像滚动停下来的样子。 */
-const RELEASE_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+/**
+ * 释放那一段的曲线：**就是气泡纵向那一条**——同一个 `springProgress`、同一个 `RISE_OMEGA`、
+ * 同一段起步延迟（`RISE_DELAY`，见 `atRise`），只有阻尼比单独一套。前面那 15% 里气泡只横着走、
+ * 一步都不上升，让位在那一段里也就不动——两边的进度在任意一帧都是同一个数，这才是「让开多少、
+ * 气泡就贴过来多少」。
+ *
+ * **窗口收在气泡第一次到位那一刻，所以这一段里没有过冲**：峰位 `π / ωd` 落在窗口之外，曲线在
+ * 窗口内一路单调走到 0。阻尼比在这里只改窗口内的形状——取 0.7 比气泡那条 0.8 略快半个百分点，
+ * 逐帧最多差 2%（一百来像素的行程上是两三像素，看不出来）。**要让两者严丝合缝就取 0.8**；0.65
+ * 留给以后想看见回弹的时候，那时得把收尾点挪到 `timeAtRise(1)` 之后。
+ *
+ * 过冲量只由阻尼比定（`exp(-πζ/√(1-ζ²))`），**乘的是各自的行程**：气泡取 0.8 是 1.52%，而那七百来
+ * 像素的纵向行程上是十来个像素、落定那一下看得见；让位的行程小得多（实测 +86 与 +36，上限
+ * `MAX_REVEAL_SHIFT_PX`），1.52% 只剩一两个像素、等于没有，所以这里取 0.7（过冲 4.6%）：在让位的
+ * 行程上大约五到十个像素，收尾那一下轻轻弹一下再落回来。**要更明显往 0.65 走（6.7%），要更收敛往
+ * 0.8 走**（那就是气泡那一下）。
+ *
+ * **同源指的是默认值**：开发期在控制台覆盖那条 `dsh-chat-ux:send-flight` 里的 `riseOmega`／`riseDelay`
+ * 只带动气泡那条纵向曲线，让位读的是 `RISE_OMEGA` 这个常量与它自己那一套，不会跟着变。
+ */
+const REVEAL_DAMPING = 0.7;
+/**
+ * 弹簧采样的格数。**不跟窗口长短走**：续接时窗口会按剩余时间重算（见 `releaseFrom`），固定格数才能让
+ * 每一次都画出同一条形状。过冲那一格另外补（见 `springOffsets`）。
+ */
+const REVEAL_SAMPLES = 24;
 /** 读者接管滚动的意图事件；与 dsh 自己的 `READING_INTENTS` 是同一组。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
 /**
@@ -5995,17 +6049,8 @@ function startReveal(anchor, until = REVEAL_DONE) {
         currentOffset = from;
         column.style.transform = 'translateY(' + from + 'px)';
         const holdLeft = REVEAL_HOLD * send_morph_1.FLIGHT_MS - elapsed;
-        const frames = holdLeft > 0
-            ? [
-                { transform: 'translateY(' + from + 'px)' },
-                { transform: 'translateY(' + from + 'px)', offset: Math.min(1, holdLeft / remaining), easing: RELEASE_EASING },
-                { transform: 'translateY(0px)' },
-            ]
-            : [
-                { transform: 'translateY(' + from + 'px)', easing: RELEASE_EASING },
-                { transform: 'translateY(0px)' },
-            ];
-        release = column.animate(frames, { duration: Math.max(30, remaining), fill: 'both' });
+        const holdOffset = holdLeft > 0 ? Math.min(1, holdLeft / remaining) : 0;
+        release = column.animate(springFrames(from, holdOffset, elapsed / send_morph_1.FLIGHT_MS, doneAt), { duration: Math.max(30, remaining), fill: 'both' });
         release.onfinish = finish;
     };
     /**
@@ -6065,6 +6110,87 @@ function startReveal(anchor, until = REVEAL_DONE) {
 /** 滚动容器此刻还能滚多远。 */
 function scrollFloor(scroller) {
     return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+}
+/**
+ * 让位那一段的关键帧：平台 + 一条采样的弹簧。`travel` 是这一段要放掉的补偿量（像素，正值向下）。
+ *
+ * **每一格 linear，形状全在采样点里**——与气泡那条位移同一种写法（`send-morph.ts` 的 `mover`），
+ * 浏览器不再插值第二次。整条关键帧里从头到尾只有 `transform`，这是它整段留在合成器上的前提。
+ *
+ * `from` 与 `to` 不是时长：进度按**绝对时间**取气泡那条弹簧上的值（见 `atRise`），所以窗口拉长
+ * 之后形状不变、只是摊开——两条曲线因此同步，而不是各自压缩到自己的窗口里跑完。续接时窗口从
+ * 此刻起算（`from` 就是此刻的进度），曲线接在半路上，不会从起点重跑一遍。
+ * @param travel - 平台这一刻的补偿量。
+ * @param holdOffset - 平台结束在这段动画的哪个位置（0 到 1）；0 就是没有平台。
+ * @param from - 这段动画的起点（占整段飞行的比例）。
+ * @param to - 这段动画的终点（占整段飞行的比例），也就是 `startReveal` 的 `doneAt`。
+ * @returns 从 `travel` 走到 0 的关键帧。
+ */
+function springFrames(travel, holdOffset, from, to) {
+    const start = (0, send_morph_1.springProgress)(atRise(from), REVEAL_DAMPING, send_morph_1.RISE_OMEGA);
+    // 这段要放掉的进度：起点已经在弹簧上的某个位置，归一化要从它开始算。
+    const span = (0, send_morph_1.springProgress)(atRise(to), REVEAL_DAMPING, send_morph_1.RISE_OMEGA) - start;
+    if (!(span > 0))
+        return [{ transform: 'translateY(0px)' }];
+    const frames = [{ transform: 'translateY(' + travel + 'px)' }];
+    if (holdOffset > 0)
+        frames.push({ transform: 'translateY(' + travel + 'px)', offset: holdOffset });
+    for (const offset of springOffsets(holdOffset, from, to)) {
+        // 位置与进度必须用同一个时间：offset 是动画内的比例，换算成绝对占比就是 from + offset·(to−from)。
+        const reached = (0, send_morph_1.springProgress)(atRise(from + offset * (to - from)), REVEAL_DAMPING, send_morph_1.RISE_OMEGA);
+        frames.push({
+            transform: 'translateY(' + travel * (1 - (reached - start) / span) + 'px)',
+            offset,
+        });
+    }
+    return frames;
+}
+/**
+ * 窗口里的时间占比换算到气泡纵向弹簧上的占比：先扣掉起步那段水平滑行（`RISE_DELAY`）。
+ *
+ * 让位与气泡读的是同一条曲线的同一段——同一个 `springProgress`、同一个 `RISE_OMEGA`、同一段延迟，
+ * 所以任意一帧上两者的进度都是同一个数（阻尼比各一套，那一点差别只落在收尾的过冲上）。
+ * @param u - 绝对时间占比（0 到 1）。
+ * @returns 弹簧上的占比；延迟段里恒为 0。
+ */
+function atRise(u) {
+    const shifted = (u - send_morph_1.RISE_DELAY) / (1 - send_morph_1.RISE_DELAY);
+    return shifted > 0 ? shifted : 0;
+}
+/**
+ * 采样点：平台之后均分 `REVEAL_SAMPLES` 段，再把过冲峰值那一格单独补进去。
+ *
+ * 返回的就已经是**动画内的位置**（不是「平台之后的进度」）：位置与进度只能共用一个时间刻度，
+ * 两套刻度会把曲线画成另一个形状——这是 2026-10-18 改长窗口时踩到过的。
+ * @param holdOffset - 平台结束在这段动画的哪个位置。
+ * @param from - 这段动画的起点（占整段飞行的比例）。
+ * @param to - 这段动画的终点。
+ */
+function springOffsets(holdOffset, from, to) {
+    const points = [];
+    for (let index = 1; index <= REVEAL_SAMPLES; index += 1) {
+        points.push(holdOffset + (1 - holdOffset) * (index / REVEAL_SAMPLES));
+    }
+    const peak = peakOffset();
+    // 峰位算在弹簧坐标上；先加回起步延迟换成绝对占比，再折算成这段动画里的位置。落在窗外就不补。
+    const absolute = send_morph_1.RISE_DELAY + (1 - send_morph_1.RISE_DELAY) * peak;
+    const inWindow = to > from ? (absolute - from) / (to - from) : 0;
+    if (peak > 0 && inWindow > holdOffset && inWindow < 1)
+        points.push(inWindow);
+    return points.sort((left, right) => left - right);
+}
+/**
+ * 过冲峰值落在弹簧上的哪个位置：`π / ωd`。
+ *
+ * 少了这一格，采样会把回弹削平——峰只占一小段，二十几格未必落得上它。这是**弹簧坐标**上的位置
+ * （已经扣掉起步延迟），换算回窗口由 `springOffsets` 负责。
+ * @returns 位置（0 到 1）；阻尼比不小于 1（不过冲）时为 0。
+ */
+function peakOffset() {
+    if (REVEAL_DAMPING >= 1)
+        return 0;
+    const damped = send_morph_1.RISE_OMEGA * Math.sqrt(1 - REVEAL_DAMPING * REVEAL_DAMPING);
+    return damped > 0 ? Math.PI / damped : 0;
 }
 /**
  * 从一条计算出来的 transform 里读纵向平移。
@@ -6140,12 +6266,13 @@ function translateYOf(transform) {
  * @module dsh-chat-ux/client/chat/send-flight/send-morph
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.FLIGHT_MS = void 0;
+exports.RISE_DELAY = exports.RISE_OMEGA = exports.FLIGHT_MS = void 0;
 exports.snapshotComposer = snapshotComposer;
 exports.pixel = pixel;
 exports.alphaOf = alphaOf;
 exports.startMorph = startMorph;
 exports.timeAtRise = timeAtRise;
+exports.springProgress = springProgress;
 /**
  * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
  * 后来固定下来：这条动效只留一个开关，多一个旋钮不值得。
@@ -6154,7 +6281,7 @@ exports.timeAtRise = timeAtRise;
  * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
  * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
  */
-exports.FLIGHT_MS = 300;
+exports.FLIGHT_MS = 330;
 /**
  * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
  * 推出来。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开——这是 PR #4 之前那套
@@ -6201,8 +6328,13 @@ const ACROSS_OMEGA = 7;
  * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
  */
 const RISE_DAMPING = 0.8;
-/** 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。 */
-const RISE_OMEGA = 7.5;
+/**
+ * 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。
+ *
+ * **导出是为了让落点让位那条弹簧与它同源**：让位借的就是这条曲线的形状（同一个函数、同一个角频率），
+ * 阻尼比与时间窗自己一套——见 `send-reveal.ts` 的 `REVEAL_DAMPING`。
+ */
+exports.RISE_OMEGA = 7.5;
 /**
  * 纵向起步的延迟（占整段的比例）：这一段里替身只横着走、一步都不上升。
  *
@@ -6210,8 +6342,11 @@ const RISE_OMEGA = 7.5;
  * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
  * 0.15 是四十五毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
  * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
+ *
+ * **导出是为了让落点让位与它同一时刻起步**：让位那条弹簧把窗口内的比例先换算到这段延迟之后
+ * （见 `send-reveal.ts` 的 `atRise`），两者才读得出「气泡升多少、内容就让多少」。
  */
-const RISE_DELAY = 0.15;
+exports.RISE_DELAY = 0.15;
 /**
  * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
  * 形变走的还是同一个弹簧，只是时间轴压到这一段的长度上。
@@ -6225,8 +6360,8 @@ const MORPH_END = 0.45;
 /** 上面那几条常量的合订本：`readTuning` 的兜底值，也是每段飞行默认用的那一套。 */
 const DEFAULT_TUNING = {
     acrossOmega: ACROSS_OMEGA,
-    riseDelay: RISE_DELAY,
-    riseOmega: RISE_OMEGA,
+    riseDelay: exports.RISE_DELAY,
+    riseOmega: exports.RISE_OMEGA,
     riseDamping: RISE_DAMPING,
     morphEnd: MORPH_END,
 };
@@ -7257,6 +7392,9 @@ function timeAtRise(progress) {
  * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
  * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
  * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
+ *
+ * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
+ * （见 `send-reveal.ts` 的 `springFrames`）。
  */
 function springProgress(u, damping, omega) {
     if (damping >= 1)
@@ -7415,6 +7553,160 @@ function colorParts(color) {
     if (parts.length < 3 || parts.some(part => !Number.isFinite(part)))
         return null;
     return parts;
+}
+    };
+
+    __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 发送气泡起飞时的样式。
+ *
+ * 两条规则。第一条：真实那一行在替身飞行期间藏着。用 `visibility` 而不是 `display`——藏起来的那一行
+ * 必须**保留布局盒**，替身每一帧都要从它身上量终点在哪里。
+ *
+ * 第二条：「深度求索中，用时 N 秒」那一行（鲸鱼尾巴 + 流光的运行指示）的**占位**，静态那一半。
+ * 它只放两条常驻声明（min-height 与 overflow），把这一行从「flex item 的自动最小尺寸」里解放
+ * 出来；高度与行前那道 gap 的动画在 running-entry.ts 里做。为什么 CSS 只能扫干净地、不能自己
+ * 做这件事，见下面那道规则上方的注释。
+ *
+ * **没有淡入**（2026-10-18 读者点名去掉）：这一行的到达只靠长出来，不靠透明度，也没有位移。
+ *
+ * 属性名与 `send-flight.ts` 的 `FLYING_ATTRIBUTE`、以及 `index.tsx` 写门控属性的那两行必须一字不差。
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SEND_FLIGHT_CSS = exports.SEND_ON_ATTRIBUTE = void 0;
+/** 门控属性：跟着「聊天气泡动效」这个开关挂上与摘掉。 */
+exports.SEND_ON_ATTRIBUTE = 'data-chat-ux-send-on';
+/** 整份样式，由 `styles.ts` 拼进那张 `<style>`。 */
+exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
+[data-chat-ux-send-flight] {
+  visibility: hidden;
+}
+
+/* 「深度求索中，用时 N 秒」那一行的占位——静态那一半。门控属性跟着「聊天气泡动效」这个开关
+   走：没有让位时它本来就看不出突变，关掉就回到 dsh 原样。
+
+   只放两条常驻声明，高度与行前那道 gap 的动画在 running-entry.ts 里做。CSS 做不干净，两处：
+
+   1. [data-chat-flow] 是 flex 列，这一行是它的 flex item。flex item 的 min-height: auto
+      解析成内容最小高度，height: 0 会被撑回 22 px；只有 overflow 不是 visible 时才归零，而
+      overflow: clip 在 Chromium 里并不触发那一条（实测 min-height 仍是 auto，插进去就是满高，
+      整条 height 过渡一次都没跑过）。所以显式写 min-height: 0。
+   2. 行前那道 gap 是 dsh 给这一行的 margin-top: 12px。dsh 那条规则的特异性是 0,7,0，这里
+      0,3,0 压不住——@starting-style 里的 margin 起始值实测被丢弃。只能内联写。
+
+   overflow 常驻：零高时把内容裁掉，这一行本来就没有溢出，留着无害。 */
+[data-chat-ux-send-on] [data-chat-flow] [data-chat-running] {
+  min-height: 0;
+  overflow: clip;
+}
+`;
+    };
+
+    __registry["chat/send-flight/running-entry.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 「深度求索中，用时 N 秒」那一行的占位动画。
+ *
+ * 它是 dsh 插在聊天列末尾的一行：插进 DOM 的那一帧若是满高，dsh 会立刻瞬时跟到底，气泡与它
+ * 上面的内容一帧被顶上去（2026-10-18 读者实拍）。这里让它在插入的那一帧是零高、零 gap，之后
+ * 180 ms 里一帧跟一帧长到自己的高度——dsh 的 ResizeObserver 每帧量到一个高一点的列，跟随就
+ * 一帧跟一帧，那一下「顶」变成连续的上移。
+ *
+ * **为什么要动两个属性**：这一行是 flex 列（[data-chat-flow]）里的 flex item，占位由它自己的
+ * height 与它行前那道 gap 一起决定。只做 height 会剩下 12 px 的瞬移，而 gap 那段 CSS 压不住
+ * ——dsh 给这一行的 margin-top 来自一条特异性 0,7,0 的规则，@starting-style 里的起始值实测被
+ * 丢弃。内联样式在级联里最高，所以两条都写内联。min-height 与 overflow 由样式表常驻（见
+ * send-flight-styles.ts），这里不重复。
+ *
+ * **时序是这一处的全部要点**：选择器命中的时候是 React 插入之后的**微任务**里，早于这一帧的
+ * 样式计算与布局——把两个属性写成零，这一帧 dsh 量到的就是零，它不滚；之后一帧长一点，它的
+ * 跟随就一帧跟一帧。晚一步（等到 animationstart 或 rAF）这一帧已经按自然高度画过，就白做了。
+ *
+ * **这是唯一路径，不是回退**：2026-10-18 之前这里只在浏览器不认 interpolate-size 时才装，其余
+ * 情形交给样式表里那条 @starting-style 过渡；实测那条 CSS 路径在 flex 列里一次都没生效
+ * （overflow: clip 不解 flex item 的自动最小尺寸，插进去就是满高，height 过渡全程没动），已经
+ * 删掉，只剩这一条。
+ *
+ * 与 dsh 的关系：不动它的 DOM、不动 scrollTop、不动它的跟随状态，只在插入的那一小段里借这一行
+ * 自己的 height 与 margin-top 用一下，收尾把两个内联属性摘干净。
+ *
+ * @module dsh-chat-ux/client/chat/send-flight/running-entry
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installRunningEntry = installRunningEntry;
+/** 那一行自己。与样式表里的选择器必须一字不差。 */
+const RUNNING_ROW_SELECTOR = '[data-chat-running]';
+/** 占位时长（毫秒）。 */
+const ENTRY_MS = 180;
+/**
+ * 占位的缓动。**不能像气泡落地那样抢跑**：原先那条 0.22/1/0.36/1 在前四分之一时长就走完七成半，
+ * 三十几像素的位移挤进前四十毫秒，读起来还是一次「顶」。换成缓入缓出——同一时刻大约走一半，剩下的
+ * 摊在整段里。占位这件事本身是「空间被填出来」，不该有回弹。
+ */
+const ENTRY_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
+/** 兜底清理在动画时长之后再多等多久（毫秒）。 */
+const CLEANUP_GRACE_MS = 80;
+/**
+ * 装上占位动画。
+ * @returns 卸载函数。
+ */
+function installRunningEntry() {
+    const grown = new WeakSet();
+    const observer = new MutationObserver((records) => {
+        for (const record of records) {
+            for (const node of record.addedNodes) {
+                if (!(node instanceof Element))
+                    continue;
+                const rows = node.matches(RUNNING_ROW_SELECTOR)
+                    ? [node]
+                    : Array.from(node.querySelectorAll(RUNNING_ROW_SELECTOR));
+                for (const row of rows)
+                    growFromZero(row, grown);
+            }
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+}
+/**
+ * 把这一行的首帧高度与行前 gap 一起压成零，再动画回它们自己的值。
+ * @param row - 刚插进来的那一行（可能不是 HTMLElement，直接跳过）。
+ * @param grown - 已经处理过的元素；同一次出现只做一遍。
+ */
+function growFromZero(row, grown) {
+    if (!(row instanceof HTMLElement) || grown.has(row))
+        return;
+    grown.add(row);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches)
+        return;
+    // 两个值都必须在写内联之前读完：getComputedStyle 返回的是活对象，写一个会改掉另一个的读数。
+    // 关键帧里的 height 是 content-box 的高度，元素还没布局时 computed 是 auto，退回矩形高度。
+    const computed = getComputedStyle(row);
+    const measured = Number.parseFloat(computed.height);
+    const natural = Number.isFinite(measured) && measured > 0 ? measured : row.getBoundingClientRect().height;
+    if (natural <= 0)
+        return;
+    const gap = Number.parseFloat(computed.marginTop);
+    const settledGap = Number.isFinite(gap) && gap > 0 ? gap : 0;
+    row.style.height = '0px';
+    row.style.marginTop = '0px';
+    const growth = row.animate([
+        { height: '0px', marginTop: '0px' },
+        { height: natural + 'px', marginTop: settledGap + 'px' },
+    ], 
+    // fill 必须 forwards：不填的话动画一结束元素就回落到内联的那个零高，而 onfinish 到清理
+    // 之间只要隔着一帧，读者就会看见这一行闪一下。填住之后末值一直挂着，直到 remove 接上。
+    { duration: ENTRY_MS, easing: ENTRY_EASING, fill: 'forwards' });
+    const cleanup = () => {
+        // cancel 与两个 removeProperty 在同一段同步代码里：样式只重算一次，中间没有可画的帧。
+        growth.cancel();
+        row.style.removeProperty('height');
+        row.style.removeProperty('margin-top');
+    };
+    growth.onfinish = cleanup;
+    // 兜底：onfinish 在无头环境里实测有不触发的情形，而失败模式是这一行永远零高。脚本幂等。
+    setTimeout(cleanup, ENTRY_MS + CLEANUP_GRACE_MS);
 }
     };
 
@@ -8127,25 +8419,6 @@ exports.FOLD_MOTION_CSS = `
 /* 卷帘门走的时候，门里的每一张卡片按自然高度排好，不被 flex 挤扁。 */
 [${fold_glide_1.ROLLING_ATTRIBUTE}] > * {
   flex: none !important;
-}
-`;
-    };
-
-    __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SEND_FLIGHT_CSS = void 0;
-/**
- * 发送气泡起飞时的样式。
- *
- * 只有一条规则：真实那一行在替身飞行期间藏着。用 `visibility` 而不是 `display`——藏起来的那一行
- * 必须**保留布局盒**，替身每一帧都要从它身上量终点在哪里。
- *
- * 属性名与 `send-flight.ts` 的 `FLYING_ATTRIBUTE` 必须一字不差。
- */
-exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
-[data-chat-ux-send-flight] {
-  visibility: hidden;
 }
 `;
     };

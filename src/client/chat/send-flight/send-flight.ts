@@ -20,9 +20,10 @@
  * 落点那一格也不是一开始就空出来的。默认设置下 dsh 在提交时就同步 `followTail('instant')`，
  * 聊天区会先整体上移；读者看到的就成了「落点已让好、气泡才起飞」。这里把新行插进来造成的
  * 那一截视觉位移先冻住（`send-reveal.ts` 给 `[data-chat-flow]` 加纯 `transform` 补偿），
- * 起飞后 15 ms 再按 ease-out 放掉——平台段由这条帧循环吸收 dsh 后续的滚动，释放段是起飞那一刻
- * 就建好的合成器动画（`send-reveal.ts`），收在「气泡底边越过输入框上沿」那一刻（`leaveAt` 按
- * 几何算）；替身本来就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
+ * 起飞后 3 ms 起由一段起飞时就建好的合成器动画放掉——平台段由这条帧循环吸收 dsh 后续的滚动；
+ * **放完的时刻就是气泡落到落点的时刻**（`timeAtRise(1)` 反解），两条曲线同一条时间线、同一段
+ * 起步延迟，所以读者看到的是「让开多少、气泡就贴过来多少」（2026-10-18 读者的口径）；替身本来
+ * 就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
  *
  * 五条边界（前两条是实测踩出来的）：
  *
@@ -184,7 +185,7 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         // 补偿必须等 `startMorph` 量完（形变要读一堆几何）再施加，所以放在这里。
         flight.reveal = draft.revealAnchor === null
             ? null
-            : startReveal(draft.revealAnchor, timeAtRise(leaveAt(card, box)))
+            : startReveal(draft.revealAnchor, timeAtRise(1))
         rowWatcher.observe(document.body, {childList: true, subtree: true})
         rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
         requestAnimationFrame(tick)
@@ -285,22 +286,6 @@ interface Flight {
     bubble: HTMLElement | null
     /** 落点让位：飞行期间每帧喂进度，落定时收掉；不满足条件时为 null。 */
     reveal: Reveal | null
-}
-
-/**
- * 气泡底边越过输入卡片上沿那一刻，纵向位移走了多少（0 到 1）。
- *
- * 读者要的是「视觉上快离开输入框时，位置已经让好」（2026-10-18）：气泡从卡片的**顶边**起飞，
- * 所以它得往上走自身高度那么多，底边才离开卡片；纵向总行程是「卡片顶边到落点」那一截。两者
- * 之比就是那一刻的位移进度——气泡越高、行程越短，让位收得越晚。
- * @param card - 起飞前的输入卡片矩形。
- * @param end - 气泡的落点矩形。
- * @returns 位移进度；夹在 0.25~0.85（太小让位短到看不见，太大就与落定对齐了）。
- */
-function leaveAt(card: DOMRect, end: DOMRect): number {
-    const travel = card.top - end.top
-    if (!(travel > 0)) return 0.3
-    return Math.min(0.85, Math.max(0.25, end.height / travel))
 }
 
 /**
