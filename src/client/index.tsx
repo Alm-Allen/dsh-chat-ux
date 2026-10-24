@@ -241,6 +241,7 @@ export function apply(ctx: ClientContext): void {
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
     // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
+    // 聊天区与输入区上方的任务清单都归这一处；它是常驻效果，没有配置开关。
     ctx.effect(() => installFoldGlide(), 'dsh-chat-ux: fold glide')
 
     // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
