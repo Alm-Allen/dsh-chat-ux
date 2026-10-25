@@ -1,16 +1,8 @@
 /**
- * 缓存命中胶囊自己的样式表。
+ * 缓存命中胶囊的样式。
  *
- * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
- * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
- * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一处
- * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的；色阶涂在「缓存命中 +
- * 读数」那一组上，所以那个名字与读数同色。
- *
- * 数字轮的类名与规则**不在这里**：那是两处共用的（上下文占用那串百分比也在用），在
- * `../reel/reel-styles`；色阶的段标记与位置也不在这里，在 `../ramp`。
- *
- * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
+ * 这里遮蔽 dsh 的 usage 座位，所以内置胶囊与弹窗的皮肤要重画一份；数字轮与色阶的公共规则分别在
+ * ../reel/reel-styles 和 ../ramp。
  */
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, RAMP_SPAN_HIGH, RAMP_SPAN_LOW} from '../ramp'
 

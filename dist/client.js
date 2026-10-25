@@ -73,23 +73,21 @@ const styles_1 = require("./styles");
 exports.inject = ['slots', 'configForms'];
 /**
  * 浏览器侧入口。
- * @param ctx - 客户端根 context。
  */
 function apply(ctx) {
+    // Cordis 的 Context 类型不声明本插件动态取到的服务，在入口边界收窄一次
     const services = ctx;
     ctx.effect(() => {
         const style = document.createElement('style');
         style.id = styles_1.STYLE_ID;
         style.dataset.plugin = 'dsh-chat-ux';
-        // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场、字体接管。
-        // 那几份 CSS 由 `styles.ts` 的 `ALL_CSS` 拼起来，这里不再逐个模块地认。
+        // 一张样式表承载浏览器这侧的全部规则；各模块的 CSS 由 ALL_CSS 拼好，入口不再逐个安装。
         style.textContent = styles_1.ALL_CSS;
         document.head.appendChild(style);
         return () => style.remove();
     }, 'dsh-chat-ux: chat-area stylesheet');
-    // 这一份镜像在每一轮效果里现读，所以插件管理页上改完不必重新安装任何东西，也不会丢掉正在跑的
-    // 定时器。平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：
-    // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
+    // 配置每轮现场读取，插件页保存后不必重装效果
+    // 共享表单按 Host 条目 id 取；这里叫 scope，避免和座位 owner props 的 form 撞名
     const scope = services.configForms.get(SETTINGS_NAMESPACE);
     // 官方的「收起时机」：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，过程组
     // 结束后的那一次收起归官方，见 process-fold 的让路。这里只现读，不订阅——过程组的每一次扫描都会读它。
@@ -97,22 +95,21 @@ function apply(ctx) {
     const defersCollapse = () => chatSettings.getSnapshot().value?.collapseTiming === 'next-input';
     const settings = {
         autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
-        caret: settings_scope_1.DEFAULT_CARET_MOTION,
-        sendOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
-        pie: settings_scope_1.DEFAULT_CONTEXT_PIE,
-        glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
-        liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
-        followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
+        caretMotion: settings_scope_1.DEFAULT_CARET_MOTION,
+        sendFlightOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
+        contextPieOn: settings_scope_1.DEFAULT_CONTEXT_PIE,
+        composerGlassOn: settings_scope_1.DEFAULT_COMPOSER_GLASS,
+        liveDiffOn: settings_scope_1.DEFAULT_LIVE_DIFF,
+        followOnAppear: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
     };
-    // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
-    // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
-    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
+    // 插入符动效是常驻 DOM 状态：配置一改就得重落，卸载时要把写过的标记撤干净
+    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caretMotion);
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
     // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
     // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
     let pieDispose = null;
     const syncPie = () => {
-        if (!settings.pie) {
+        if (!settings.contextPieOn) {
             pieDispose?.();
             pieDispose = null;
             return;
@@ -143,7 +140,7 @@ function apply(ctx) {
     // 关掉时两样一起撤——观察者不跑，属性也摘掉，页面上一次都不动手。
     let glassDispose = null;
     const syncGlass = () => {
-        if (!settings.glass) {
+        if (!settings.composerGlassOn) {
             glassDispose?.();
             glassDispose = null;
             document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
@@ -160,7 +157,7 @@ function apply(ctx) {
     // （flex item 的自动最小尺寸，以及 dsh 那条 gap 规则的特异性），原因见那两个文件。
     let runningEntryDispose = null;
     const syncSendGate = () => {
-        if (!settings.sendOn) {
+        if (!settings.sendFlightOn) {
             document.body.removeAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE);
             runningEntryDispose?.();
             runningEntryDispose = null;
@@ -176,7 +173,7 @@ function apply(ctx) {
     // 探针规则一条都不命中。
     let followDispose = null;
     const syncFollow = () => {
-        if (!settings.followOn) {
+        if (!settings.followOnAppear) {
             followDispose?.();
             followDispose = null;
             return;
@@ -186,14 +183,14 @@ function apply(ctx) {
         followDispose = (0, call_appeared_1.installCallAppearFollow)();
     };
     const syncSettings = () => {
-        const value = scope.getSnapshot().value;
-        settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
-        settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
-        settings.sendOn = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
-        settings.pie = value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
-        settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
-        settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
-        settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
+        const savedSection = scope.getSnapshot().value;
+        settings.autoFold = savedSection?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
+        settings.caretMotion = savedSection?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+        settings.sendFlightOn = savedSection?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
+        settings.contextPieOn = savedSection?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
+        settings.composerGlassOn = savedSection?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+        settings.liveDiffOn = savedSection?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
+        settings.followOnAppear = savedSection?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         syncSendGate();
         syncGlass();
         caret.resync();
@@ -220,7 +217,7 @@ function apply(ctx) {
     // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
     // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
-    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendOn), 'dsh-chat-ux: send flight');
+    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendFlightOn), 'dsh-chat-ux: send flight');
     // 门控属性跟着同一个开关走，插件卸下时摘干净——页面上一次都不留。
     ctx.effect(() => {
         syncSendGate();
@@ -258,7 +255,7 @@ function apply(ctx) {
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认开着）。
-    (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiff);
+    (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiffOn);
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
     // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
@@ -305,51 +302,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_COLOR_PROPERTY = exports.CARET_HOST_ATTRIBUTE = exports.CARET_VISIBLE_ATTRIBUTE = exports.CARET_LAYER_ATTRIBUTE = exports.CARET_ATTRIBUTE = exports.CARET_BLINK_NAME = void 0;
 exports.installCaretMotion = installCaretMotion;
 /**
- * 输入框的插入符动效：把浏览器画的那根换成自己画的，位移走过渡。
+ * 输入框插入符动效：用自绘插入符替代浏览器那根，移动时走过渡。
  *
- * 浏览器的插入符除了颜色和闪烁，没有任何可以动画的属性，所以「移动时有过渡」只有一条路：
- * 用 `caret-color: transparent` 把它按下去，自己画一根。接管的是输入区座位里的两种面：
- *
- *   富文本面  dsh 的主输入框（`[data-composer-input]`），contenteditable。坐标是浏览器给的：
- *             折叠 Range 量出来就是。
- *   纯文本面  输入区里的 textarea——提问卡片的作答框、排队消息的行内编辑框（子智能体跑着时追加
- *             的那几条就在这里改）。textarea 的选区不进 DOM，Range 量不到，只能搭一层镜像：
- *             把样式抄到一个看不见的 div 上，文本从插入符处断开，量断点那一截的矩形。
- *
- * 几条事实决定了它怎么写，都在真实 Chromium 里量过：
- *
- *   挂哪儿   自绘的那根挂在可编辑面的父元素上（主输入框是 dsh 的 `.grow`）。富文本面和它同在一个
- *            滚动内容里，输入框内部滚动时两者的视口坐标一起变、相对坐标恒定——所以滚动同步不需要
- *            任何监听。父元素不是定位上下文时（作答框的 `.field`、排队行都是 static），给它挂一个
- *            标记，样式表把它变成 `position: relative`：它们都没有绝对定位的后代，这一下不改任何
- *            布局。textarea 自己是滚动容器，自绘的那根挂不进去，所以它内部滚动时要跟着重量一次，
- *            滚出可视区的那一截也要自己裁掉。
- *   量得到   折叠 Range 在文本里、在装饰器两侧、在折行处都给得出精确到小数像素的矩形。镜像那一截
- *            带着插入符后面的全部文本：软换行按整词走，只放前半截的话，正在打的那个词会留在上一行。
- *   量不到   光标贴着 `<br>` 时 Chromium 给 `0×0` 零矩形，而空段落与软换行正是这条路的常客。
- *            这时量那个换行符自己——它的矩形永远只有一行，高度还正好是字高。量不出来（附近没有
- *            换行符）就把原生插入符还回去：宁可不动手，也不能让读者看不见光标。
- *   颜色     每一种面的原生插入符颜色不一样（主输入框与作答框是品牌蓝，排队编辑框跟字色走），
- *            所以接管那一刻先读它自己算出来的 caret-color，自绘的那根照着画。
- *
- * 什么时候动、什么时候不动，由 {@link CaretMotionMode} 的三档决定：
- *
- *   无论何时  动。与 VS Code 的 `on` 档同义：每一格都滑一下（代价是快速连打时插入符略微落后于
- *             新字符）。默认档。
- *   移动时    只在方向键、点击这类显式移动上放过渡，打字瞬时——VS Code 默认的 `explicit` 就是
- *             它。判据也一样：看这次挪窝是不是打字引起的。这里是听 `beforeinput`：它会先于
- *             `selectionchange` 到达，所以「这一帧有输入」比事后从位置上猜要准。
- *   关        根本不动手：不建自绘的那根、不给可编辑面写标记，浏览器自己的插入符一直在。这套动效
- *             唯一真正会伤人的失败方式是读者看不见光标（原生那根被按下去、自绘那根没画出来），
- *             所以「关」必须是彻底的——它同时是这条路的兜底。
- *   刚露头    不动。从藏到露的那一帧先把位置写好，下一帧才把过渡接回来，否则它要从上次停的地方
- *             滑过来。
- *   合成中    照常，还是这一根。合成期间的每一次更新照样发 selectionchange、选区照样是折叠的
- *             （用 CDP 往真页面里注过输入法合成，逐帧量过），所以自绘的这根跟得住。早先这里
- *             是反过来做的——合成期间把原生插入符还回去——结果是打字的时候读者看到的是另一套
- *             光标：粗细不一样、渲染不一样，而且它不会动。候选框由浏览器自己定位，与这里无关。
- *
- * @module dsh-chat-ux/client/chat/caret/caret-motion
+ * 富文本面用折叠 Range 测量；textarea 的选区不进 DOM，需要镜像层。测量失败时必须把原生插入符
+ * 还回去，原生透明而自绘未画出，是这套动效唯一会伤到读者的失效方式。
  */
 const dom_contract_1 = require("../../dom-contract");
 /** 闪烁动画的名字。`caret-motion-styles.ts` 用它拼 keyframes，两处必须一字不差。 */
@@ -381,8 +337,6 @@ const MIRRORED_PROPERTIES = [
 ];
 /**
  * 给整页装上插入符动效。
- * @param read - 现读的档位。每一帧同步时读一次，所以运行期改档不必重新安装。
- * @returns 卸载入口与重同步入口。
  */
 function installCaretMotion(read) {
     /** 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项。 */
@@ -546,7 +500,6 @@ function installCaretMotion(read) {
      *
      * 内容盒的第一行开头就是光标该在的地方，但那一行有多高、字盒在行里怎么摆，得从别处问。
      * 探针每帧现建现删，而且**不碰 dsh 的任何容器**——往 `.grow` 里塞节点会惊动 React。
-     * @returns 视口里的左、上、高；量不出来给 null。
      */
     const emptyLineBox = (input) => {
         const body = document.body;
@@ -580,7 +533,6 @@ function installCaretMotion(read) {
     };
     /**
      * 富文本面上这一处折叠选区的视口矩形。
-     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
      */
     const measureRich = (input, range) => {
         const rect = range.getBoundingClientRect();
@@ -622,7 +574,6 @@ function installCaretMotion(read) {
      * 右缘，也就是上一行的行尾——和原生那根在 End 之后画的位置一致。
      *
      * 镜像挂在 body 上、量完就摘，**不碰 dsh 的任何容器**。
-     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
      */
     const measurePlain = (input, upstream) => {
         const body = document.body;
@@ -674,7 +625,6 @@ function installCaretMotion(read) {
     /**
      * 把一个视口矩形裁进 textarea 露出来的那一段。自绘的那根不在 textarea 里面，textarea 的裁剪管
      * 不到它：内部滚动时插入符滚出可视区，原生那根跟着消失，这一根也得自己消失。
-     * @returns 裁剩的矩形；整个被裁掉时为 null。
      */
     const clipToField = (input, box) => {
         const inputRect = input.getBoundingClientRect();
@@ -746,7 +696,6 @@ function installCaretMotion(read) {
     };
     /**
      * 把自绘的光标放到这个视口矩形上。
-     * @param paused - 这一帧不播位移过渡：刚露头，或者 `move` 档下的一次打字。
      */
     const draw = (layer, box, paused) => {
         // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量。
@@ -780,7 +729,6 @@ function installCaretMotion(read) {
     };
     /**
      * 这一帧的光标归谁。
-     * @param typing - 这一帧里来过一次输入。
      */
     const sync = (typing) => {
         const mode = read();
@@ -851,10 +799,12 @@ function installCaretMotion(read) {
             adoptCaretColor(target, layer);
         // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写。
         const box = target instanceof HTMLTextAreaElement ? clipToField(target, measured) : measured;
-        if (box === null)
+        if (box === null) {
             hide(layer);
-        else
-            draw(layer, box, mode === 'move' && typing);
+            target.setAttribute(exports.CARET_ATTRIBUTE, '');
+            return;
+        }
+        draw(layer, box, mode === 'move' && typing);
         target.setAttribute(exports.CARET_ATTRIBUTE, '');
     };
     document.addEventListener('selectionchange', queue);
@@ -894,8 +844,6 @@ function installCaretMotion(read) {
 }
 /**
  * 一个元素是不是本模块接管的可编辑面，是哪一种。
- * @param element - 通常是此刻拿着焦点的那个元素。
- * @returns `rich` 是主输入框，`plain` 是输入区里可编辑的 textarea，都不是时为 null。
  */
 function surfaceOf(element) {
     if (element.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR))
@@ -912,11 +860,7 @@ function surfaceOf(element) {
 /**
  * dsh 聊天区的 DOM 契约。
  *
- * 这里全是 dsh 自己发出的**语义**属性：它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版
- * 而坏，所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里——散在各处各写一份，
- * 改一处就会漏一处。
- *
- * @module dsh-chat-ux/client/dom-contract
+ * 只认 dsh 的语义属性，不认带构建期 hash 的 class 名；两个以上模块共用的选择器都收在这里。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.ACTIVE_CONTENT_PHASE = exports.CONTENT_PHASE_SELECTOR = exports.CONTENT_PHASE_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
@@ -1042,21 +986,10 @@ exports.installCacheHitPill = installCacheHitPill;
 exports.CacheHitPill = CacheHitPill;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 输入框下方那枚「缓存命中」胶囊。
+ * 输入框下方的缓存命中胶囊。
  *
- * dsh 在 `conversation.composer.dock` 上发两个座位条目（`activity` order 0、`usage` order 1），
- * 同一个 id 与同一个 order 上按 priority 取最低的那个渲染，内置那两个是默认的 0。这里用 -1 遮蔽
- * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
- * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
- * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
- * 段内位置多少」，再把这两个值写到「缓存命中 + 读数」那一组上——所以那个名字与读数同色；详细档里
- * 的 token 总量与中间那个分隔点在那一组之外，留在胶囊自己的文字色上。简洁档只留这一组，详细档另加
- * 总量与点开的明细，明细里的命中率走同一个小数口径。
- *
- * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
- * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
- *
- * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-pill
+ * 以更低的 priority 遮蔽 dsh 的 usage 座位：命中率恒一位小数，按 90% 到 99% 的色阶取色。
+ * 内置类名不可用，所以按座位契约重画；弹窗定位与外部点击复用 primitives。
  */
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
@@ -1100,8 +1033,6 @@ const HIT_TONE_STOPS = [90, 92, 94, 96, 98, 99];
  *
  * 档位读的是 dsh 自己那份 `ui-chat` 表单，而不是本插件的配置：简洁档只留命中率读数，详细档另加
  * 总量与明细，跟着读者在设置页里的选择走。
- * @param slots - 客户端座位注册表。
- * @param configForms - 共享配置表单的提供者。
  */
 function installCacheHitPill(slots, configForms) {
     slots.inject('conversation.composer.dock', () => {
@@ -1123,8 +1054,6 @@ function installCacheHitPill(slots, configForms) {
 }
 /**
  * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
- * @param props - 投影读取座位与文案座位。
- * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
  */
 function CacheHitPill({ useProjection, t }) {
     const usage = useProjection('tokenUsage');
@@ -1148,7 +1077,9 @@ function CacheHitPill({ useProjection, t }) {
     const hitLabel = t('message.turnUsage.cacheHit');
     // 「缓存命中」这几个字与它后面那串读数是一组，色阶就挂在这一组上（见样式表），名字与读数因此同色。
     // 数字轮那一截自己不带颜色，从这一组继承。
-    const reading = hit === null ? null : ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_READING_CLASS, [ramp_1.RAMP_SPAN_ATTRIBUTE]: hit.tone.span, style: { [ramp_1.RAMP_POSITION_VAR]: hit.tone.mix }, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, rolling: rolling, spoken: true })] }));
+    // 自定义属性不在 React 的 CSSProperties 键里，只能在这里收窄一次
+    const toneStyle = hit === null ? undefined : { [ramp_1.RAMP_POSITION_VAR]: hit.tone.mix };
+    const reading = hit === null ? null : ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_READING_CLASS, [ramp_1.RAMP_SPAN_ATTRIBUTE]: hit.tone.span, style: toneStyle, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, rolling: rolling, spoken: true })] }));
     if (mode === 'compact') {
         if (reading === null)
             return null;
@@ -1162,9 +1093,6 @@ function CacheHitPill({ useProjection, t }) {
 }
 /**
  * 命中率读数，恒一位小数。
- * @param cacheReadTokens - 从缓存读到的输入。
- * @param billedInputTokens - 三个输入计费桶之和。
- * @returns 文本与色阶位置；没有计过价的输入时是 null。
  */
 function hitReading(cacheReadTokens, billedInputTokens) {
     const percent = formatHitPercent(cacheReadTokens, billedInputTokens);
@@ -1177,9 +1105,6 @@ function hitReading(cacheReadTokens, billedInputTokens) {
  *
  * 先把千分之一的整数单位算出来再落成文本，躲开浮点误差在 x.x5 上翻面。部分命中不许读成满命中：
  * 舍进 100.0 但没有全中的压回 99.9。
- * @param cacheReadTokens - 从缓存读到的输入。
- * @param billedInputTokens - 三个输入计费桶之和。
- * @returns `97.3` 这样的文本；没有计过价的输入时是 null。
  */
 function formatHitPercent(cacheReadTokens, billedInputTokens) {
     if (billedInputTokens === 0)
@@ -1196,29 +1121,23 @@ function billedInputTokens(usage) {
 }
 /**
  * 紧凑的 token 计数：517 / 12.2K / 517K / 1.2M，与 dsh 的 formatTokens 同规则。
- * @param value - token 数。
- * @param t - chat 文案座位。
- * @returns 显示文本。
  */
-function formatTokens(value, t) {
-    if (value < THOUSAND)
-        return String(value);
-    if (value < MILLION)
-        return t('number.thousand', { value: scaledCount(value / THOUSAND) });
-    return t('number.million', { value: scaledCount(value / MILLION) });
+function formatTokens(tokenCount, t) {
+    if (tokenCount < THOUSAND)
+        return String(tokenCount);
+    if (tokenCount < MILLION)
+        return t('number.thousand', { value: scaledCount(tokenCount / THOUSAND) });
+    return t('number.million', { value: scaledCount(tokenCount / MILLION) });
 }
 /** 进位之后的缩放数：过百取整，否则留一位小数。 */
-function scaledCount(value) {
-    return value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
+function scaledCount(scaledValue) {
+    return scaledValue >= 100 ? String(Math.round(scaledValue)) : String(Math.round(scaledValue * 10) / 10);
 }
 /**
  * 精确 token 计数，带 chat 命名空间的千分位。
- * @param value - token 数。
- * @param t - chat 文案座位。
- * @returns 分组后的数字文本。
  */
-function formatExactTokens(value, t) {
-    const digits = String(value);
+function formatExactTokens(tokenCount, t) {
+    const digits = String(tokenCount);
     const groups = [];
     for (let end = digits.length; end > 0; end -= GROUP_SIZE) {
         groups.unshift(digits.slice(Math.max(0, end - GROUP_SIZE), end));
@@ -1226,8 +1145,8 @@ function formatExactTokens(value, t) {
     return groups.join(t('number.groupSeparator'));
 }
 /** 明细里的一行：精确计数加 chat 自己的计数单位。 */
-function exactCount(value, t) {
-    return t('message.turnUsage.count', { count: formatExactTokens(value, t) });
+function exactCount(tokenCount, t) {
+    return t('message.turnUsage.count', { count: formatExactTokens(tokenCount, t) });
 }
 /** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
 function useUsageMode() {
@@ -1240,10 +1159,6 @@ function useHitReel() {
 /**
  * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也
  * 关——后者走捕获阶段，让键盘激活旁边那个胶囊时这一颗先关掉，而不是两张面板叠在一起。
- * @param open - 面板是否开着。
- * @param setOpen - 开合状态。
- * @param rootRef - 触发点。
- * @param panelRef - 面板。
  */
 function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
     (0, react_1.useEffect)(() => {
@@ -1272,9 +1187,6 @@ function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
  * 造一份模块级镜像。
  *
  * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里。
- * @param initial - 表单缺席时的取值。
- * @param pick - 从表单的取值里挑出这个字段。
- * @returns 那一份镜像。
  */
 function createSettingMirror(initial, pick) {
     let current = initial;
@@ -1315,58 +1227,14 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
-/**
- * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
- */
+// ⚠️ 以下默认值与 host 的 src/index.ts 一一对应，改一处必须同步另一处
 exports.DEFAULT_AUTO_FOLD = true;
-/**
- * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
- */
 exports.DEFAULT_CARET_MOTION = 'typing';
-/**
- * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
- */
 exports.DEFAULT_SEND_FLIGHT = true;
-/**
- * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
- */
 exports.DEFAULT_HIT_REEL = true;
-/**
- * 上下文占用那枚饼默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：把 dsh 那圈环换成一枚按占用取色的实心饼（已占用那一角切开、推出去）。关掉时这一处整块
- * 不装，页面上一次都不动手。
- */
 exports.DEFAULT_CONTEXT_PIE = true;
-/**
- * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：它就是读者要的那一层磨砂。关掉后 body 上不挂属性，那一整张规则表一条都不命中。
- */
 exports.DEFAULT_COMPOSER_GLASS = true;
-/**
- * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。host 侧 `src/index.ts` 里有一份同样的
- * 常量，改一处就要改另一处。
- *
- * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标），它只对**直接调用**的 write / edit
- * 有意义。
- */
 exports.DEFAULT_LIVE_DIFF = true;
-/**
- * 工具调用与思考行第一次出现时是否把滚动位置补到底。host 侧 `src/index.ts` 里有一份同样的常量，
- * 改一处就要改另一处。
- *
- * 默认开着：它是把「结构时刻掉队」补回来的唯一一处——dsh 自己的平滑滚动撞上内容跳变就追不回来，
- * 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好是一屏里新出现的那几行。
- */
 exports.DEFAULT_FOLLOW_ON_APPEAR = true;
     };
 
@@ -1375,18 +1243,10 @@ exports.DEFAULT_FOLLOW_ON_APPEAR = true;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CACHE_HIT_CSS = exports.CACHE_HIT_SHADOWED_ATTRIBUTE = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
 /**
- * 缓存命中胶囊自己的样式表。
+ * 缓存命中胶囊的样式。
  *
- * 这一处遮蔽了 dsh 在 `conversation.composer.dock` 上 id 为 `usage` 的那个座位，所以内置
- * StatsPills.module.css 的胶囊皮肤与 stat-dialog.module.css 的弹窗皮肤都要在这里重写一份——
- * 那两套类名带构建期 hash，既拿不到、也不能当接口。尺寸、令牌与节奏逐条对齐，只有命中率那一处
- * 是新的：它按 90%~100% 的无极色阶取色（见下面那几段），这是 dsh 原版没有的；色阶涂在「缓存命中 +
- * 读数」那一组上，所以那个名字与读数同色。
- *
- * 数字轮的类名与规则**不在这里**：那是两处共用的（上下文占用那串百分比也在用），在
- * `../reel/reel-styles`；色阶的段标记与位置也不在这里，在 `../ramp`。
- *
- * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-styles
+ * 这里遮蔽 dsh 的 usage 座位，所以内置胶囊与弹窗的皮肤要重画一份；数字轮与色阶的公共规则分别在
+ * ../reel/reel-styles 和 ../ramp。
  */
 const ramp_1 = require("../ramp");
 /** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
@@ -1633,12 +1493,7 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
 /**
  * 无极色阶的公共部分：把读数落成「段标记 + 段内位置」。
  *
- * 色值不在这里——它们留在各自的样式表里（命中率那六个色标、上下文占用那六个色标），这一侧只算
- * 「落在哪一段、段内位置多少」，锚点之间的插值交给 CSS 的 `color-mix(in oklch, …)`。两处共用它，
- * 是因为要的是同一件事：在一个区间里连续取色，而两头各自恒定——命中率到 99.0 就绿、占用到 40 就红，
- * 都不必等到满。
- *
- * @module dsh-chat-ux/chat/ramp
+ * 色值留在各自样式表里，这里只算落在哪一段、段内位置多少，锚点之间交给 color-mix(in oklch, …)。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RAMP_TONE_CSS = exports.RAMP_SPAN_HIGH = exports.RAMP_SPAN_LOW = exports.RAMP_POSITION_VAR = exports.RAMP_SPAN_ATTRIBUTE = void 0;
@@ -1684,27 +1539,24 @@ body[data-ds-dark-theme] {
  *
  * `stops` 是色标在读数轴上的位置（升序、至少两个），个数与样式表里那组色标一一对应。落在第一个
  * 之前（`'low'`）或最后一个之后（`'high'`）时只给段标记：那两段的两端是同一个色，插值走不出别的颜色。
- * @param value - 显示值（读者看到的那一份读数）。
- * @param stops - 色标位置，升序。
- * @returns 段标记与段内位置。
  */
-function rampPosition(value, stops) {
-    const floor = stops[0] ?? value;
-    const top = stops[stops.length - 1] ?? value;
-    if (value < floor)
+function rampPosition(displayValue, stops) {
+    const floor = stops[0] ?? displayValue;
+    const top = stops[stops.length - 1] ?? displayValue;
+    if (displayValue < floor)
         return { span: exports.RAMP_SPAN_LOW, mix: '0%' };
-    if (value >= top)
+    if (displayValue >= top)
         return { span: exports.RAMP_SPAN_HIGH, mix: '0%' };
     let segment = 0;
     for (let index = 1; index < stops.length - 1; index += 1) {
         const stop = stops[index];
-        if (stop !== undefined && value >= stop)
+        if (stop !== undefined && displayValue >= stop)
             segment = index;
     }
     const from = stops[segment] ?? floor;
     const to = stops[segment + 1] ?? top;
     // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM。
-    return { span: String(segment), mix: (Math.round((value - from) / (to - from) * 1000) / 10) + '%' };
+    return { span: String(segment), mix: (Math.round((displayValue - from) / (to - from) * 1000) / 10) + '%' };
 }
     };
 
@@ -1714,40 +1566,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DigitReel = DigitReel;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 数字轮：变了的那一位原地弹一下。
+ * 数字轮：只让变化的那一位原地弹一下。
  *
- * 读数一有新值，**变了的那一位**把新数字从下方 6px 处淡入，上一个数字朝反方向淡出（500 ms，低位比
- * 高位晚 70 ms 起手）。两条用的都是那条带过冲的曲线，所以落定前会先越过去一点再弹回来；**终态是
- * 零位移**：动画走完，数字就在它本来的位置上（进场那一帧的模糊试过又退掉了，见 reel-styles.ts）。
- *
- * 这一处不可能「停歪」：位移是固定的 6px，不参与排版，也不问元素任何尺寸。
- *
- * 2026-10 的前两版都栽在「算一格」上：
- *
- * - 第一版按 CSS 变量算整格滚动，位移与每格真实高度每格差 0.84px，误差按格数累积——滚到第 9 格
- *   累计 7.55px，已经超过半格（6.90px），窗口里于是同时露着上下两个数字的各一半；
- * - 第二版整条带滚动加记账，位移换成了百分比，但仍然依赖「条带的高度正好是三十格」。
- *
- * 第三版去掉条带，只留一格窗口与两条 100% 位移的关键帧：稳是稳了，但整格位移下带过冲的曲线会把
- * 数字顶出窗口、切掉小半个字，所以那一版只能用一条不带过冲的缓动。
- *
- * 现在连窗口也不要了——位移收到 6px，过冲与模糊都接得住，也不再需要「一格有多高」这个数。
- *
- * 整枚刚挂上（刷新页面、切换会话、上下文占用那一处第一帧）与位数变了新长出来的那一位也照弹：
- * 没有上一个数字，就只有新数字进场——这正是「换了会话，读数跳了一下」那一下。
- *
- * 三处都用它：命中率那枚胶囊（座位里由 React 渲染）、上下文占用那串百分比（挂在 dsh 自己的文本
- * 节点旁边，见 reel-host），以及文件变更行行尾那两个 `+n` / `-m`（座位里由 React 渲染，见
- * ../file-mutation/file-mutation-row）。
- *
- * 读数的形状由调用方那一侧决定，这里只认「一个可选的不变前缀 + 几位数字 + 可选的一位小数 + 一个
- * 可选的不变后缀」：命中率与占用是 `97.3%` / `26%`（后缀 `%`），行尾统计是 `+96` / `-3`
- * （前缀正负号、没有后缀），整数位比三位的占用多也照认——行数会过千。
- *
- * 颜色不在这里：这一截**不写 color**，从调用方挂在它外面那一层继承——命中率那一处挂的是「缓存命中 +
- * 读数」那一组（名字与读数同色），占用那一处挂的是 dsh 那颗按钮；段标记与段内位置也归调用方写。
- *
- * @module dsh-chat-ux/chat/reel/digit-reel
+ * 每位最多两个数字，新旧各走同一套 6px 位移与透明度关键帧；没变的位不会重新挂载。
+ * 读数形状不对或关闭动效时退回纯文本，读屏另取一份完整读数。
  */
 const react_1 = require("react");
 const reel_styles_1 = require("./reel-styles");
@@ -1755,8 +1577,6 @@ const reel_styles_1 = require("./reel-styles");
 const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/;
 /**
  * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
- * @param props - 读数、首尾标记、开关、时长档与读屏那一份。
- * @returns 这一截。
  */
 function DigitReel(props) {
     const { text, prefix = '', suffix = '%', rolling, cadence, spoken } = props;
@@ -1772,8 +1592,6 @@ function DigitReel(props) {
 }
 /**
  * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
- * @param props - 数字与次序。
- * @returns 这一位。
  */
 function Digit({ digit, place }) {
     // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以**没变的那一
@@ -1788,10 +1606,6 @@ function Digit({ digit, place }) {
  * 把读数拆成整数部分与那一位小数：先按调用方给的形状削掉首尾那两个不变的标记，再认中间那一段。
  *
  * 两个标记都是空串时（行尾统计没有后缀）就是「削掉零个字符」，所以「有没有标记」这一层不必单独判。
- * @param text - `97.3%` 或 `+96` 这样的读数。
- * @param prefix - 前缀标记；没有时是空串。
- * @param suffix - 后缀标记；没有时是空串。
- * @returns 两截数字；形状对不上时是 null，调用方退回纯文本。
  */
 function splitReading(text, prefix, suffix) {
     if (!text.startsWith(prefix) || !text.endsWith(suffix))
@@ -1809,33 +1623,10 @@ function splitReading(text, prefix, suffix) {
     __registry["chat/reel/reel-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 数字轮自己的样式：变了的那一位，原地弹一下。
+ * 数字轮的样式。
  *
- * 一位上最多两个数字（现在的、上一个），落在同一个槽位上各播一段短动画：新的从下方 6px 处淡入，
- * 旧的朝反方向淡出；两条用同一条带过冲的曲线——落定前先越过去一点再弹回来。位移只有 6px，所以那
- * 45% 的过冲也就是 2.7px，槽位四周接得住，不需要裁切窗口。
- *
- * 这两条动画里**只有 transform 与 opacity**，一件非合成属性的活都没有；数字位自己还常驻一个
- * will-change（层要在动画之前就建好）。
- *
- * 2026-10 试过在进场那一帧加 1.1px 的模糊（落回来时聚清），两件事一起发生，又退掉了：切会话仍
- * 然卡（模糊每帧重新栅格化，will-change 保得住层、保不住这一步），而且落定之后那一位与相邻的
- * 数字、小数点、百分号在渲染路径上分了家（它们没有 filter），看着像没落在同一条线上。要模糊就得
- * 回到「每帧重新栅格化」那条路上，代价就是切会话那一下。
- *
- * 2026-10 之前那一版是「一格格滚」：每位一个 overflow: hidden 的窗口，新数字从下面一整格
- * （translateY(100%)）托上来。问题不在实现而在幅度——整格位移下带过冲的曲线会把数字顶出窗口、切掉
- * 小半个字，于是只能用一条不带过冲的缓动；而那几个 20px 的窗口又把「一格有多高」渗进了每一处位移
- * 的写法。位移收到 6px 之后这两样一起没了：现在只剩行盒高度这一个数，它管对齐，不管位移。
- *
- * 两处都用它——「缓存命中」那枚胶囊的读数（座位里由 React 渲染）与上下文占用那串百分比（dsh 自己
- * 渲染的文本，插件从 DOM 上接管）。两处形状不同（一个带一位小数、一个是整数），但这一位怎么动、
- * 终态落在哪里完全一样，所以类名与规则只有这一份。
- *
- * 接管那一处的规矩：读数原文本留在 DOM 里、读屏照旧读得到，只是让出视觉位置（由接管方把字号归零），
- * 轮子挂在同一个父节点下。这样 dsh 重渲染它自己那个文本节点时碰不到我们，读屏也不会读到两遍。
- *
- * @module dsh-chat-ux/chat/reel/reel-styles
+ * 每位一个槽位，新旧数字叠放，只动 transform 与 opacity；位移固定 6px，不依赖槽高。
+ * 常规 500ms，高频档 220ms，低位最多晚 70ms 起手。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REEL_CSS = exports.REEL_HOST_CLASS = exports.REEL_TAKEOVER_ATTRIBUTE = exports.REEL_SPOKEN_CLASS = exports.REEL_STATIC_CLASS = exports.REEL_WAS_CLASS = exports.REEL_CELL_CLASS = exports.REEL_SLOT_CLASS = exports.REEL_FAST_CLASS = exports.REEL_TEXT_CLASS = exports.REEL_STAGGER_MS = exports.REEL_TURN_FAST_MS = exports.REEL_TURN_MS = void 0;
@@ -1851,7 +1642,7 @@ exports.REEL_TURN_MS = 500;
  * 高频那一档：读数变化比上面那 500 ms 还密时用（文件变更行准备态/运行态那两个数，行数跟着换行走）。
  *
  * 这一档是配着**节拍**用的：调用方（`file-mutation-row` 的 `usePacedTotals`）把换数压到比这一轮的
- * 完整周期还长（220 ms 落回来 + 低位最多 70 ms 起手延后 → 节拍 300 ms），所以每一轮动画都走得完整、
+ * 完整周期还长（220 ms 落回来，低位最多再晚 70 ms 起手，节拍取 300 ms），所以每一轮动画都走得完整、
  * 不会被下一批参数打断。留旧那一档 500 ms 则做不到——读数每一两百毫秒就跳一次，一位上会挂着一串
  * 残影，读数糊在一起。
  */
@@ -2009,19 +1800,10 @@ exports.REEL_CSS = `
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installComposerGlass = installComposerGlass;
 /**
- * 输入框那块玻璃的几何，外加卡片里几枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）、它旁边
- * 可能在的那枚独立停止圆，与左下角那枚加号（添加文件 / 调指令）。
+ * 输入框玻璃的几何与按钮标记。
  *
- * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
- * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
- * 座位的两层背景拿它们让开那一段。
- *
- * 只在读者打开这个开关时安装（见 `index.tsx` 的 `syncGlass`）。要量的只有两个盒子，观察者也
- * 只有两个来源：座位与卡片各挂一个 `ResizeObserver`（卡片换行、加附件、上方卡片出现或消失，都会让
- * 这两个盒子的尺寸变），再加一个 `MutationObserver` 认座位出现与消失（切会话、进新会话页时整棵
- * 子树会重建）。
- *
- * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
+ * 量出卡片相对座位的上下边，写进两个自定义属性；同时认主按钮、独立停止键与加号。
+ * 座位和卡片各挂一个 ResizeObserver，另用 MutationObserver 处理切换会话时的整棵重建。
  */
 const composer_glass_styles_1 = require("./composer-glass-styles");
 /** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
@@ -2038,7 +1820,6 @@ const ADD_SELECTOR = 'button[aria-haspopup="listbox"]';
 /**
  * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
  *
- * @returns 卸下观察者、并把写过的属性都清干净的函数。
  */
 function installComposerGlass() {
     const bound = new Set();
@@ -2065,8 +1846,10 @@ function installComposerGlass() {
             seat.style.setProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE, bottom);
     };
     const resize = new ResizeObserver((entries) => {
-        for (const entry of entries)
-            measure(entry.target);
+        for (const entry of entries) {
+            if (entry.target instanceof HTMLElement)
+                measure(entry.target);
+        }
     });
     /** 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次。 */
     const sync = () => {
@@ -2143,7 +1926,6 @@ function installComposerGlass() {
  * 不会因为这一处再被叫醒。反面是 dsh 哪天把独立那枚挪到别处、或给两枚换上不同的 class——那时它退回
  * dsh 原来的样子（与没有这一条时一样），不报错、也不牵连主按钮与玻璃。
  *
- * @param card - 输入卡片。
  */
 function markPrimary(card) {
     const buttons = card.querySelectorAll('button');
@@ -2157,9 +1939,6 @@ function markPrimary(card) {
 /**
  * 主按钮旁边那枚独立的停止圆：紧邻它、且 className 与它逐字相同的那一个。
  *
- * @param buttons - 卡片里全部按钮，按文档序。
- * @param primary - 主按钮（最后一个）；认不出来时为 null。
- * @returns 要一并接管的那一枚；认不出来时为 null。
  */
 function independentStop(buttons, primary) {
     if (primary === null)
@@ -2174,9 +1953,6 @@ function independentStop(buttons, primary) {
 /**
  * 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它（少一次属性写入）。
  *
- * @param button - 目标按钮。
- * @param attribute - 属性名。
- * @param on - 这一枚是不是当前要标记的那一枚。
  */
 function applyGlassMark(button, attribute, on) {
     if (!on) {
@@ -2192,7 +1968,6 @@ function applyGlassMark(button, attribute, on) {
  *
  * 与主按钮同一个分寸：认不出就什么都不做（那枚按钮回到 dsh 原来的样子），不报错、也不牵连玻璃与
  * 主按钮——dsh 哪天把它换成别的口子（不再用 listbox），表现就只有这一处。
- * @param card - 输入卡片。
  */
 function markAdd(card) {
     const target = card.querySelector(ADD_SELECTOR);
@@ -2206,8 +1981,6 @@ function markAdd(card) {
 }
 /**
  * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
- * @param node - 这次加上或去掉的节点。
- * @returns 它本身、或它的子树里有座位或卡片时为真。
  */
 function touchesGlass(node) {
     if (!(node instanceof Element))
@@ -2221,84 +1994,13 @@ function touchesGlass(node) {
     __registry["chat/composer-glass/composer-glass-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 输入框毛玻璃：只把**输入卡片那个矩形**变成一块半透明、背后模糊的玻璃。
+ * 输入框毛玻璃样式。
  *
- * 范围就是卡片自己的边框盒——卡片下面那排统计与工具、上面那几张卡（待办、队列坞、目标条）都不在范围
- * 里，各自保持原样。这是读者看过第一版（整块座位磨砂）之后的要求。
+ * 只覆盖卡片的边框盒，座位上的缺口由 JS 写入的上下边变量决定。玻璃必须画在卡片的 ::before 上：
+ * 卡片自身若成为 backdrop root，会截断菜单的模糊并改变固定定位后代的包含块；也不能给卡片加
+ * isolation 或 z-index，否则菜单会被封进卡片的层叠上下文。
  *
- * 麻烦在于铺底的那一层不是卡片自己。有会话内容时（active 相位）铺底的是**座位**
- * (`[data-composer-seat]`)——dsh 给它 `sticky; bottom: 0; z-index: 7` 与一块画布色实底
- * （`ConversationRoot.module.css`），dsh-claude-style 那类皮肤只是换了个画法。玻璃的
- * `backdrop-filter` 采样的是它**背后**已经绘制的东西，座位那块不透明的底正好挡在中间，玻璃就什么
- * 也糊不到。所以座位必须在卡片这个矩形处**让出一块洞**。
- *
- * CSS 挖不出「位置由某个子元素决定」的洞，所以那两条边由 JS 量出来：`composer-glass.ts` 把卡片
- * 相对座位的上下边写进座位上的两个自定义属性，这里只负责画。
- *
- *   - 座位的底整块交给它的两层背景：上段从座位顶到卡片顶、下段从卡片底到座位底，中间那段留白就是
- *     让给玻璃的缺口；两个变量缺席时上段铺满整块，也就是 dsh 原来的样子（安全的一侧）。
- *   - 卡片那块玻璃画在卡片的 `::before` 上（为什么要这样，见下一节）：一条**自带的蓝调渐变**，
- *     照 dsh 自己在 `AppFrame.module.css` 的 `.sidebarCol` 上那条「两端带着淡淡颜色、中间
- *     **完全透明**」的四停渐变来写（浅色 0.022/0.018、深色 0.035/0.03），底下垫一层掺了一点蓝的底色，
- *     只让出一成不到（70%），再叠一层 `blur(22px)`；顶边亮边、内侧微光、底部内阴影那三笔质感
- *     留在卡片自己身上。
- *     第一次做的时候底是从画布色派生的，当场翻了车：画布色的 92% 叠在画布上就是画布本身，输入区整块
- *     融进背景，只剩一圈描边。底必须来自输入框自己那几档色，才与画布分得开。
- *   - 座位上方那条从画布淡出的带子照旧（座位的 `::before`），颜色刻意跟着**画布**走、不跟玻璃：
- *     跟着玻璃的深蓝走会在消息区底边压出一条看得见的横带（读者报过一次「一层光晕」）。
- *
- * 新会话（hero）时铺底的是卡片自己、座位不画底，所以那一档不需要挖洞，卡片那几条规则一并管两档。
- *
- * **为什么玻璃长在 `::before` 上，不长在卡片自己身上。** 卡片是输入区那一票浮层的**祖先**：
- * `/` 与 `@` 的候选菜单（`ui-input-trigger` 的 `MenuView`）就挂在卡片里的
- * `.overlayAnchor` 上（`MenuView.tsx` 用 `closest('[data-composer-card]')` 判「点在输入区
- * 里就不关」），模型选择、目录选择、反馈弹窗也都认 `[data-composer-card]` 当锚点。而 dsh 的菜单
- * 材质（`ui-primitives/MenuSurface.module.css`）特意把 `backdrop-filter` 放在菜单**自己的子层**
- * （`.material`）上，注释写明这是为了让「嵌套菜单与固定浮层免于祖先的 backdrop root」。给卡片加上
- * `backdrop-filter` 正好造出那个祖先 backdrop root：菜单那一层的模糊采样被掐断（菜单落在卡片边框盒
- * 之外，采样域里什么也没有），只剩 `--dsw-menu-surface-fill` 那点 58% / 45% 的底色，于是菜单整块
- * 透掉、底下的字透上来——读者报回来的就是这件事（「`/` 的指令弹窗有点透明，可读性非常差」）。
- * 挪到伪元素上就都好了：卡片自己不再是 backdrop root（伪元素没有后代，不会把这个问题转嫁给谁），
- * 模糊与底色和原来一模一样。顺带解掉另一半：卡片的 `backdrop-filter` 还会把 `position: fixed`
- * 的后代（`MenuSurface` 那个 portal 到 `body` 的 `.backing`，以及各家 picker 与 modal）
- * 的包含块改成卡片自己。
- *
- * 伪元素用 `z-index: -1` 落到卡片内容之下，这要它所在的层叠上下文兜住。**不能给卡片自己加
- * `isolation` 或 `z-index`**：那会把卡片变成一个层叠容器，菜单的 `z-index` 被封在卡片里，
- * 座位里排在卡片之上的那几张卡（dock 里的队列坞、待办）就会压住菜单——dsh 自己那条
- * `.composerSeat:has([data-trigger-menu]) { z-index: 9 }` 正是为了让菜单的层级由**座位**去挣。
- * 所以这里一个层叠属性都不加：座位（`sticky` + `z-index: 7`）本来就是层叠上下文，伪元素落到
- * 那里，绘制在座位底色之上、卡片内容之下，正合适；hero 相位那一层是 `.composerHero`
- * （`z-index: 1` 的 flex item），同理。
- *
- * **每一组规则都带 `body[data-chat-ux-composer-glass]` 这个前缀。** 开关关掉时属性被摘掉，
- * 整块表一条都不命中，于是真的回到 dsh 原来的输入框。只靠变量缺席是不够的：座位那两条边由 JS 写在
- * 座位元素上（卸载时会清），但卡片那几条是 `!important` 的静态声明，一旦表还在，卡片就会一直
- * 停在「底交出去了」的状态上，看起来像少了半层。
- *
- * **右下角那枚主操作按钮也归这里管。** dsh 给它的是一枚饱和的实心蓝圆
- * （`--dsw-alias-button-info-fill`，浅色 500、深色 400，白图标），摆在这块玻璃卡片上就是另一套
- * 材质：纯色、平、比卡片亮一档。这里把它改画成同一块玻璃上的一片蓝——底还是那个令牌，但让出一成多
- * （卡片那条渐变透上来）、按小圆调一遍那三笔质感、hover 跟着 dsh 的 hover 令牌。属性由 JS 打
- * （见 `composer-glass.ts` 的 `markPrimary`），因为 dsh 那枚按钮既不带语义属性、class 名又
- * 带构建期 hash。
- *
- * **左下角那枚加号也归这里管。** dsh 给它的是一枚 28px 的实心灰圆（`--dsw-specific-selector`，比卡片
- * 底深一档），摆在这块玻璃上同样是另一套材质。这里把它改画成**同一块玻璃上的一片灰**：底还是那个
- * 令牌，但让出两成、卡片那条横向渐变从小圆底下透上来，三笔质感按 28px 收一遍（主按钮那三笔是给
- * 34px 写的）。**不借主按钮那支蓝**——它是次要操作，整枚染蓝会把「哪一枚是发送」这件事弄糊。
- * 属性同样由 JS 打（见 `composer-glass.ts` 的 `markAdd`）。
- *
- * **为什么要 `!important`。** 同页的 dsh-claude-style 也管输入区外观（它把卡片改成透明、改由座位
- * 铺 `bg-base` 实底），而且它那几条选择器的特异度高得多。本插件只认语义属性、不去认别的插件挂在
- * body 上的属性，所以压过它的手段只剩 `!important`：那几条声明都没有 `!important`，
- * `!important` 对非 `!important` 是绝对优先。它那条 `border: none !important` 不在这
- * 份表的目标里（卡片边框按原样）。
- *
- * **不支持就整块不生效。** 没有 `backdrop-filter`（或 `color-mix`）的浏览器上，只做半透明会
- * 变成「文字叠文字」——比不做更糟，所以整套规则收在 `@supports` 里，条件不成立时一条都不命中。
- *
- * @module dsh-chat-ux/client/chat/composer-glass/composer-glass-styles
+ * 所有规则都以 body 门控属性为前缀；不支持 backdrop-filter 或 color-mix 时整块不生效。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.COMPOSER_GLASS_CSS = exports.GLASS_STOP_ATTRIBUTE = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
@@ -2335,7 +2037,7 @@ body[${exports.GLASS_ATTRIBUTE}] {
      玻璃把底让到七成之后，中间那一段（四停渐变里完全透明的那截）就只剩「画布色叠画布色」，
      读者报「中间太白、和背景融进去了」。压的是一层中性冷灰：既降亮度也降饱和，中间那段才交代得
      出边界。要调浓淡就改最后那个百分比与那枚灰——读者第二轮说浅色下整块「有一点点脏脏的」，灰从
-     15% 收到 10%、灰本身也提亮一档（rgb(150 158 176) → rgb(172 178 192)），合成之后仍比画布
+     15% 收到 10%、灰本身也提亮一档（从 rgb(150 158 176) 到 rgb(172 178 192)），合成之后仍比画布
      暗七八级，中间那段照旧交代得出边界。 */
   --dsh-chat-ux-glass-base: color-mix(
     in srgb,
@@ -2575,47 +2277,12 @@ exports.PIE_SIZE = void 0;
 exports.installContextMeterPie = installContextMeterPie;
 exports.pieImage = pieImage;
 /**
- * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并沿一条**折点在圆心**的
- * 折线切一刀——两段各是一条半径，把圆分成两块，已占用那一块沿角平分线**推出去**一段（缺口就是它原来
- * 的位置）。
+ * 输入框下方的上下文占用饼。
  *
- * **只有这一种画法**：折线切开之后那一块一定推出去。曾经还有一支「只留切口、两块都留在原位」的画法，
- * 读者得在插件页上二选一——那个选择删掉了：多一种画法并不能让这枚饼说得更清楚。插件页上现在只剩一个
- * 开关，语义是「要不要这枚饼」；关掉时这一处整块不装（装与卸都在客户端入口的 `syncPie` 里）。
+ * 用内联 SVG 背景图替代 dsh 的环：已占用扇形沿圆心折线切开并推出，缝宽固定；颜色取样式表算出的
+ * 当前档位。它不是座位，只能按坞与按钮的语义结构认出目标，认不出时什么都不改。
  *
- * 推出去时**缝宽恒定**，而且不由「推开多远」挣出来：洞口按那一块再向外一圈缝来挖（见 `pushImage`），
- * 于是缝环绕那一块的整条边界、处处一样宽，推开多远只决定那一块离开原位多少、盘面让出多少直径。
- *
- * 为什么不能拿位移去挣那道缝：两块相邻的两条边界互相平行，间距就是位移在边界法向上的投影，而法向与
- * 角平分线的夹角正是半个扇形角——位移一钉死，缝宽就跟着扇形角走（20px 的饼上能从 0.7px 漂到 2.6px）；
- * 反过来按 sin 反推位移，缝宽是恒定了，盘面却要跟着涨缩。这两条都试过，痕迹记在 `文档/业务/上下文占用饼.md`。
- *
- * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
- * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
- * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
- * 一个 svg 的 span。
- *
- * 坞那一层自 dsh 0.2.1-alpha.1 起带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；
- * 2026-10-17 起不再认更早那两代（0.2.0-rc.2 及以前没有这个属性）。
- *
- * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
- * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
- * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
- * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度与切口都由这里算。
- *
- * 扩张那一下为什么是逐帧重画、不是 CSS 过渡：背景图是一整张 data URL 的 SVG，换图插不了值；SVG
- * 的 d 能插值，但这一条 path 的大弧标记在 50% 处会从 0 跳到 1，插到一半会翻面；conic-gradient 能靠
- * CSS 过渡，可它在 20px 这个尺寸上的硬边有锯齿，而且换掉它就要把「读数同色」与「先让位再读色」这两
- * 处已经踩平的坑重做一遍。所以留着背景图，动画由 rAF 推读数、每帧重画一张图——一次变化十二帧上下，
- * 每帧只是拼一个字符串加一次样式写入。
- *
- * 颜色仍归样式表：这里只把**求值后的颜色**读出来涂进图里（`color-mix` 的结果），色标与插值都写在
- * context-meter-styles。读数那一串百分比由 reel-host 挂上同一枚数字轮——它同样不是座位，所以那一侧
- * 挂的是一棵自己的 React 树。段标记与段内位置走 `../ramp`，与命中率共用同一套机制。
- *
- * 判据失效时的表现是「什么都不变」：认不出就不动手，不会把别的元素改花。
- *
- * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
+ * 扩张用 rAF 逐帧重画背景图；换图不能插值，而 path 的大弧标记在 50% 会翻面。
  */
 const dom_contract_1 = require("../../dom-contract");
 const ramp_1 = require("../ramp");
@@ -2636,10 +2303,7 @@ const CONTEXT_STOPS = [20, 24, 28, 32, 36, 40];
 /**
  * 饼的边长：16px。
  *
- * 原来那圈环的外轮廓只有 13px（半径 6.5），那个尺寸上圆弧与那道切口都认不出来，所以先做到 20px——那
- * 正好是这颗按钮那一行的行高；随后一路收到 18px、16px：比原来那枚 14px 的图标大一圈就够，饼越大越
- * 压着这一行、看着突兀。16px 上下都还在那一行的行高以内；左右各借 1px（左面是按钮的内边距，右面是
- * 图标与读数之间那 6px 的间隔），离读数还剩 5px。
+ * 比 dsh 原来的 14px 图标大一圈，仍在按钮行高以内；左右各借 1px 后，离读数还剩 5px。
  */
 exports.PIE_SIZE = 16;
 /** 原图标那一格：dsh 那枚 svg 写的就是 14×14。饼比它大，靠这个数摆正。 */
@@ -2654,9 +2318,7 @@ const SLICE_GAP = 1.2;
 /**
  * 那一块沿角平分线推开多远，像素。
  *
- * 缝不靠它挣（见上），它只影响两件事：那一块离开原位多远，以及盘面还剩多少直径
- * （`PIE_SIZE - 位移`，位移越大盘面越小）。2.6px 是权衡后的取值——端出去的观感明显，盘面还剩 13.4px
- * （与原来那圈环的外轮廓同量级；实心饼比同直径的环看得清，所以还立得住。饼再往下缩，这一格要跟着收）。
+ * 缝不靠位移挣；位移只决定离开原位的距离和盘面剩下的直径。2.6px 让端出去的观感明显，盘面仍有 13.4px。
  */
 const SLICE_LIFT = 2.6;
 /** 那一圈缝的遮罩 id：同上，只在「推出去」那一套里用。 */
@@ -2677,7 +2339,6 @@ const GROW_MS = 220;
 const paintedPies = new WeakMap();
 /**
  * 装上这一处。
- * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
  */
 function installContextMeterPie() {
     let dock = null;
@@ -2687,7 +2348,6 @@ function installContextMeterPie() {
      *
      * 坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话
      * 把它换掉时重认。真正的形状判据在 paint 里，认不出就什么都不做。
-     * @returns 候选元素；页面上还没有输入框时是空的。
      */
     const candidates = () => {
         if (dock !== null && dock.isConnected)
@@ -2729,11 +2389,6 @@ function installContextMeterPie() {
  * 「洞口比那一块大一圈」给出，见 `pushImage`。
  *
  * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
- * @param percent - 已占用的百分比。
- * @param tone - 已占用那一块的颜色。
- * @param rest - 剩下那一块的颜色。
- * @param shape - 缝宽与位移；不带时用默认的那一套。
- * @returns 可以直接当 background-image 用的 url()。
  */
 function pieImage(percent, tone, rest, shape) {
     // 两头都单独走：满值时那道缝会与盘面的边界重合、而且「切了一刀还占满」本就说不通；空值时该画的
@@ -2755,12 +2410,6 @@ function pieImage(percent, tone, rest, shape) {
  *
  * 盘面的半径由位移定（`(PIE_SIZE - lift) / 2`），整幅图的外接尺寸恒为 `PIE_SIZE`，推开的那一侧不会被
  * 这一格的容器裁掉；圆心仍沿角平分线的反面退半个 lift，整幅图这才落在容器正中。
- * @param occupied - 已占用的角度，度。
- * @param tone - 已占用那一块的颜色。
- * @param rest - 剩下那一块的颜色。
- * @param seam - 缝宽，像素。
- * @param lift - 那一块沿角平分线推开多远，像素。
- * @returns url()。
  */
 function pushImage(occupied, tone, rest, seam, lift) {
     const direction = occupied / 2;
@@ -2782,9 +2431,6 @@ function pushImage(occupied, tone, rest, seam, lift) {
  *
  * 描边以 path 为中心向两侧各扩半个缝宽（`stroke-width` 是 `2 × seam`）：外侧那一半是缝，内侧那一半
  * 落在那一块自己的地界里，挖掉也不影响。拐角用 round，顶点那一头因此是一段圆角的缝，与两条直边同宽。
- * @param slice - 那一条扇形的 path。
- * @param seam - 缝宽，像素。
- * @returns mask 元素的文本。
  */
 function sliceGapMask(slice, seam) {
     return '<mask id="' + SLICE_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
@@ -2798,10 +2444,6 @@ function sliceGapMask(slice, seam) {
  * 一整圈：两段半圆拼起来。
  *
  * 不能只用一段弧——起点与终点重合时，那段弧按 SVG 的规矩会被整段忽略，画出来什么都没有。
- * @param cx - 圆心横坐标。
- * @param cy - 圆心纵坐标。
- * @param radius - 半径。
- * @returns SVG path 的 d。
  */
 function discPath(cx, cy, radius) {
     const x = round2(cx);
@@ -2816,12 +2458,6 @@ function discPath(cx, cy, radius) {
  *
  * 盘面与那一块都用它、用同一组角度与半径，差别只有顶点落在哪：盘面从容器正中那颗圆心起，推出去的
  * 那一块从挪开 lift 的那一点起。
- * @param cx - 顶点的横坐标。
- * @param cy - 顶点的纵坐标。
- * @param radius - 半径。
- * @param from - 起始角度，度；0 是 12 点。
- * @param to - 结束角度，度，顺时针。
- * @returns SVG path 的 d。
  */
 function sectorPath(cx, cy, radius, from, to) {
     const x = round2(cx);
@@ -2841,8 +2477,6 @@ function rad(degrees) {
 }
 /**
  * 把一段图元包成一张可以直接当背景图的 SVG。
- * @param body - 图元。
- * @returns url()。
  */
 function inlineSvg(body) {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + exports.PIE_SIZE + ' ' + exports.PIE_SIZE + '">'
@@ -2855,7 +2489,6 @@ function round2(value) {
 }
 /**
  * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
- * @param root - 候选元素；认不出来就什么都不做。
  */
 function paint(root) {
     const trigger = root.querySelector(TRIGGER_SELECTOR);
@@ -2898,10 +2531,6 @@ function paint(root) {
  *
  * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 `color` 就是这一档的颜色。读不到底色就
  * 什么都不画——那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
- * @param trigger - 那颗按钮。
- * @param target - 这一档已占用的百分比。
- * @param reading - 读数那一截；它的 `color` 就是扇形色。
- * @returns 这一帧接上了没有；没接上时调用方不该让原环让位。
  */
 function paintPie(trigger, target, reading) {
     // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
@@ -2956,8 +2585,6 @@ function paintImage(trigger, percent, tone, rest) {
  *
  * 缓动是收尾那一种（与数字轮那条 CSS 曲线同一档）。JS 里没有现成的三次贝塞尔求值，为一条曲线搬进来
  * 一个求解器不值——220ms 上两者的差别看不出来。
- * @param trigger - 那颗按钮。
- * @param now - 这一帧的时刻。
  */
 function advance(trigger, now) {
     const record = paintedPies.get(trigger);
@@ -3014,20 +2641,8 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 /**
  * 把数字轮挂进 dsh 自己渲染的那串读数旁边。
  *
- * 上下文占用那串百分比不是座位——dsh 在 ContextMeter 里直接渲染 `<span>26%</span>`，插件接不过来，
- * 所以这里不走座位：认到那一截之后挂一棵只属于自己的 React 树，渲染同一枚 `DigitReel`，两处的翻动
- * 必然同款。
- *
- * 挂的位置是那一截读数的**父级**（那颗按钮），不是读数自己里面——这一处唯一脆的地方就在这里。dsh 用
- * React 渲染 `<span>{reading}</span>`，读数一变 React 走 `setTextContent`：它在「首尾是同一个文本
- * 节点」时才只改 nodeValue，否则整段 `textContent =` 重设，**连带清掉我们塞进去的节点**。塞在读数里
- * 的写法因此每次读数更新都被抹掉一次（挂上、被抹、再挂），流式期间几乎看不见；更糟的是那一截的
- * `textContent` 会读成 `26%26%`，判据随即认不出读数，连饼也不再重画。挂在父级上没有这两回事：React
- * 只管它自己那两个子节点（图标与读数），我们这一个它不感知。
- *
- * 读数那一截留给读屏：视觉上由各处的让位规则收起，读出来还是那个读数。
- *
- * @module dsh-chat-ux/chat/reel/reel-host
+ * 读数不是座位，只能从 DOM 上认；轮子必须挂在读数的父级，不能塞进读数节点，否则 React 重设
+ * textContent 时会把它清掉。原读数保留给读屏。
  */
 const client_1 = require("react-dom/client");
 const digit_reel_1 = require("./digit-reel");
@@ -3040,10 +2655,6 @@ const hosts = new WeakMap();
  * 在读数那一截旁边放上（或更新）数字轮。
  *
  * 读数形状对不上就什么都不做：调用方照旧留着原文本。
- * @param host - 容器挂载的元素：读数那一截的父级，React 不管它的直接子节点。
- * @param reading - 读数那一截元素；只用来挂让位标记。
- * @param text - 当前读数，`26%` 这样。
- * @returns 这一帧接上了没有。
  */
 function paintReel(host, reading, text) {
     if (READING_PATTERN.exec(text) === null)
@@ -3070,7 +2681,6 @@ function paintReel(host, reading, text) {
 }
 /**
  * 卸下这一处的数字轮：原文本回到原样。
- * @param reading - 读数那一截元素；让位标记挂在它上面，容器在它的父级里。
  */
 function releaseReel(reading) {
     const host = reading.parentElement;
@@ -3089,20 +2699,10 @@ function releaseReel(reading) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CONTEXT_METER_CSS = exports.CONTEXT_REST_VAR = exports.CONTEXT_PIE_ATTRIBUTE = void 0;
 /**
- * 上下文占用那枚比例饼的样式。
+ * 上下文占用饼的样式。
  *
- * 这一处只管三件事：把原环留成占位（不塌格）、给出色阶、给出未占用那一角的底色。饼本身是浏览器
- * 半区画上去的——内联 SVG 作为那颗按钮的背景图，几何在 JS 里算。为什么不用伪元素 + conic-gradient
- * （那种写法不碰内联样式，本来更干净）：dsh 的主题把 corner-shape 全局设成 superellipse(1.5)
- * （连 :before/:after 一起），任何 border-radius: 50% 都画成圆角方块；而伪元素又只能从自定义属性里
- * 取值。改成自己画一张图，这两处一起绕开。
- *
- * 色阶与命中率同一套机制（见 `../ramp`）：六个色标、每 4 个点一个锚点，锚点之间由浏览器的
- * `color-mix(in oklch, …)` 插值；**20% 之前一律绿、40% 起一律红**。色只写在这一份样式表里读数那一
- * 截的 `color` 上，浏览器半区把它读出来涂进 SVG——读到的必须是求值后的真实颜色，所以这一处的色值
- * 不能写成 `var()` 串。
- *
- * @module dsh-chat-ux/client/chat/context-meter/context-meter-styles
+ * 这里只给原环留占位、定义色阶与未占用底色；饼本身由 JS 画成内联 SVG 背景图。
+ * 色值必须保持字面值，JS 会从计算样式里读出求值后的颜色。
  */
 const ramp_1 = require("../ramp");
 const reel_styles_1 = require("../reel/reel-styles");
@@ -3215,50 +2815,12 @@ exports.installFileMutationRow = installFileMutationRow;
 exports.FileMutationRow = FileMutationRow;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * run_code 内部的 write / edit 子调用行。
+ * run_code 内部 write 与 edit 子调用的文件变更行。
  *
- * 内置的文件变更行只给**根调用**画 diff 卡片，行尾那个 `+96 -0` 因此只出现在直接调用的
- * write/edit 上；从 run_code 的程序里派发出去的子调用拿不到它。原因不在渲染层，而在
- * `ui-tool` 的 diff-card-model：它第一行就写着
- * `if (block.parentCallId !== undefined) return null`。那行是 a4c296f9fe
- * （"refactor(client): derive tool cards from raw events"）留下的等价补丁——重构前卡片读的是
- * 事件里的 `callView` / `resultView`，而 PTC 子调用的事件（`tool/ptc-dispatch`）只带
- * name / arguments / content，从来不带那两个 view，所以子调用本来就画不出卡片；重构改成从原始
- * 参数重算之后，参数派生对子调用**也会成功**，于是那行检查把行为钉回原样。
+ * 内置行只给根调用画 diff；这里遮蔽 edit 与 write 两个 keyed 座位，用同一份参数派生改动。
+ * 准备态直接读参数视图，所以 +n -m 会随参数流增长；结算后优先使用结果元数据里的 hunks。
  *
- * 本插件要的正是被钉掉的那一半，所以这里自己写一份派生，唯一的差别就是不放行那行检查。
- *
- * 除此之外这一行还多给准备态一次：内置要等参数 JSON 收齐（`parsedToolCall` 在 preparing 直接返回
- * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
- * 的内容一出现就有 `+n -0`，并随流式增长；edit 那一对字段**各自到、各自开始数**，不等另一半——等齐
- * 才画的话，行数要等参数里靠后的那个字段，实测滞后 4.5–6.8 s（见 `streamedTotals`）。
- *
- * 这一段默认开着（插件管理页上的「实时改动行数」）：关掉时这一行回到接管之前的样子——准备态不画
- * 那两个数，派发后只看参数 JSON。
- *
- * 代价说得明白些：子调用不持久化 `presentationMeta`，所以结算之后拿不到"实际应用了什么"，
- * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
- * 或写入失败时可能与实际不符）。
- *
- * 参数那一侧不再自己校验沙箱升级字段。dsh 在 0.2.1-alpha.1 里把这道校验从客户端删掉了
- * （c74f39b4dc），理由是它取决于会话沙箱模式、只有 Host 知道，而被拒的调用本来就会以错误结果
- * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
- * 所以这一行与内置同序：只看路径与字段类型。
- *
- * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
- * 上下文占用同款；流式那两态（`preparing` / `running`）只改两处——时长短一档，并且**按节拍换数**。
- * 行数跟着换行走，那两态每一两百毫秒就跳一次，500 ms 那一档下旧数字还没退完就被下一跳换掉，读数会
- * 糊在一起；所以宁让读数滞后一拍，也要让每一轮动画走完整（见 `usePacedTotals` 与 `cadence`）。外部仍
- * 套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点另渲染一棵惰性副本（平台
- * 契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，代价只是动画期间那一位
- * 的透明度叠了一层。
- *
- * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
- * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
- * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
- * 是共享的，行 chrome 本身仍由它们承担）。
- *
- * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
+ * 子调用没有 presentationMeta，结算后只能按参数展示；edit 在 replace_all 或失败时可能与实际不同。
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
@@ -3280,8 +2842,6 @@ const FILE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutl
 let liveDiffEnabled = () => false;
 /**
  * 在 edit / write 两个座位上遮蔽内置的文件变更行。
- * @param slots - 客户端座位注册表。
- * @param liveDiff - 准备态那两个数开着没有；渲染期现读，所以卡片上一改就跟着变。
  */
 function installFileMutationRow(slots, liveDiff) {
     liveDiffEnabled = liveDiff;
@@ -3297,13 +2857,11 @@ function installFileMutationRow(slots, liveDiff) {
 }
 /**
  * 渲染一次 write / edit 调用：折叠态是标题、路径与 `+n -m`，展开态是 diff 卡片。
- * @param props - owner 载荷与文案座位。
- * @returns 这一行。
  */
 function FileMutationRow(props) {
     const { t, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
-    // dsh 0.2.1-alpha.1 起每个阶段都带 `args` 视图；准备态的读数直接读它，不再有旧版那个前缀订阅口。
+    // 每个阶段都带 `args` 视图；准备态的读数直接读它
     const block = props.block;
     const args = (0, react_1.useMemo)(() => {
         const head = callHead(block);
@@ -3318,29 +2876,18 @@ function FileMutationRow(props) {
     const rawTotals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
     // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' : undefined;
-    // 两个工具都走节拍（2026-10-11 晚些改回来）：读者要的是**每一轮动画走完整**，宁可读数滞后一拍。
-    //
-    // 早先只给 `edit` 上节拍、`write` 逐批跟随——那是为了让写入的数字尽早长（当时它确实几乎到终态才
-    // 出现）。可那个毛病的主因是**路径后置**（`write` 把 `file_path` 排在最后一个字符，见下面 `size` 那
-    // 一段），那一处已经修掉了；现在内容一到就显示数字，逐批跟随只会让 220 ms 的动画每 48 ms 被下一批
-    // 参数打断，读数看着像**硬切**——同一个行尾，编辑在跳、写入在闪，那曾是几处读数里唯一不一致的一处。
+    // 两个工具都走节拍：每一轮数字轮动画要走完整，宁可读数滞后一拍
+    // 逐批跟随会让 220 ms 的动画每 48 ms 被下一批参数打断
     const totals = (0, paced_value_1.usePacedValue)(rawTotals, running);
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null);
     const open = expanded && expandable;
     const summaryText = model.errorSummary ?? model.summary;
-    // 输入大小只要读得到就显示——**不再要求路径已经有了**。
-    //
-    // 内置的 `summarySuffix` 是「有路径才显示」，照抄它会踩到一个很具体的坑：模型给 `write` 生成的参数
-    // 顺序是 `content` 在前、`file_path` 在**最后一个字符**（2026-10-11 量了 30 次真实 write：content 在
-    // 第 1 批，file_path 在第 1041 批、即整段参数流的 100%），而 `edit` 反过来是 `file_path` 在最前
-    // （0%）。于是同样的规则下：写入的整段内容流式期间那两个数都被挡掉、只在末尾一起冒出来（读者看到的
-    // 就是这个），编辑却从头就在长。
-    //
-    // 没有路径时它直接跟在描述后面（那个分隔点只在有描述时渲染，所以不会留下一个孤立的点）。
-    // 输入大小自己拼，不借 dsh 那句 `tool.preparing.content`（「正在准备内容 5KB」）——准备态那一行
-    // 本来就只有这一个读数，前面那句把行头撑长一倍，读者要看的就是这个数。
+    // 输入大小只要读得到就显示，不要求路径已经到达
+    // write 的 `file_path` 常常排在参数流最末，等路径会让整段准备态都没有读数
+    // 没有路径时输入大小直接跟在描述后面，分隔点只在有描述时渲染
+    // 不借用 dsh 的 `tool.preparing.content`：准备态这一行只需要这个数，前面再加一句会把行头撑长
     const size = model.kilobytes === null ? null : model.kilobytes + 'KB';
     const status = stateLabel(model.state, t);
     // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
@@ -3357,10 +2904,9 @@ function FileMutationRow(props) {
         if (event.key === 'Enter' || event.key === ' ')
             event.stopPropagation();
     }, []);
-    // 那一截紧凑内容由三块拼成：路径（或摘要）、输入大小、增删两个数。**路径缺席时另两块照旧显示**——
-    // 原因见上面 `size` 那一段注释（`write` 的 `file_path` 在参数最末）。
-    const collapsedContent = summaryText === '' && size === null && totals === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [summaryText !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) }))] })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
-    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] })) : undefined;
+    // 路径缺席时，输入大小与增删数照旧显示；原因见上面 `size` 的四行注释
+    const collapsedContent = (summaryText !== '' || size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [summaryText !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable && ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), !linkAvailable && ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) }))] })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
+    const expandedContent = open && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })), hunks === null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] }));
     return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
 /**
@@ -3368,9 +2914,6 @@ function FileMutationRow(props) {
  *
  * 与内置 diff-card-model 只有一处不同：**不排除子调用**（原因见模块注释）。其余分支保持同序：
  * 未结算时只有参数可用；结算后优先用结果元数据里真实应用的 hunks，拿不到才退回参数。
- * @param block - 运行中或已结算的调用块。
- * @param args - 这一行的调用参数，已解析；准备态为 null。
- * @returns 要画的 hunks，或 null（这一行没有可画的改动）。
  */
 function diffHunks(block, args) {
     if (!('kind' in block)) {
@@ -3395,9 +2938,6 @@ function diffHunks(block, args) {
 }
 /**
  * 从调用参数派生改动：write 是整份内容，edit 是那一对替换。
- * @param name - 线上工具名。
- * @param args - 已解析的参数；解析不出来时为 null。
- * @returns 单个 hunk，或 null（参数不是这一行的形状）。
  */
 function intendedHunks(name, args) {
     if (args === null)
@@ -3427,9 +2967,6 @@ function intendedHunks(name, args) {
  * 口径（`diffTotals` 对一份全 `+` 的改动计数）恒等。edit 要等价的两个字段都收尾才画——行级匹配
  * 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），宁可不画，也不给一个会
  * 上下跳的数字。
- * @param name - 线上工具名。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 单个 hunk，或 null（阶段或字段还不成形状）。
  */
 function streamedHunks(name, view) {
     if (view === undefined)
@@ -3455,11 +2992,9 @@ function streamedHunks(name, view) {
 }
 /**
  * 读结果元数据里真实应用的 hunks。
- * @param meta - 结果元数据，未经校验。
- * @returns 校验过的 hunks、`empty`（元数据明确说没有改动），或 null（不可用）。
  */
 function appliedHunks(meta) {
-    if (typeof meta !== 'object' || meta === null || Array.isArray(meta))
+    if (!isRecord(meta))
         return null;
     const diffs = meta.diffs;
     if (!Array.isArray(diffs))
@@ -3468,7 +3003,7 @@ function appliedHunks(meta) {
         return 'empty';
     const hunks = [];
     for (const hunk of diffs) {
-        if (typeof hunk !== 'object' || hunk === null)
+        if (!isRecord(hunk))
             return null;
         const { path, oldText, newText } = hunk;
         if (typeof path !== 'string')
@@ -3481,21 +3016,21 @@ function appliedHunks(meta) {
     }
     return hunks;
 }
-/**
- * 派生整行的展示模型。
- * @param toolName - 线上工具名。
- * @param block - 运行中或已结算的调用块。
- * @param args - 这一行的调用参数，已解析；准备态为 null。
- * @param cwd - 会话工作区根。
- * @param home - 宿主账户主目录。
- * @returns 这一行的模型。
- */
+/** 调用块处在哪个展示状态。 */
+function rowStateOfToolCall(block) {
+    if (!('kind' in block))
+        return block.phase === 'preparing' ? 'preparing' : 'running';
+    if (block.error?.code === 'interrupted')
+        return 'stopped';
+    if (block.isError)
+        return 'error';
+    return 'ok';
+}
+/** 派生整行的展示模型。 */
 function rowModel(toolName, block, args, cwd, home) {
     const done = 'kind' in block;
     const head = callHead(block);
-    const state = !done
-        ? block.phase === 'preparing' ? 'preparing' : 'running'
-        : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok';
+    const rowState = rowStateOfToolCall(block);
     const path = argumentPath(block, args);
     const output = done ? resultText(block) || null : null;
     return {
@@ -3505,15 +3040,13 @@ function rowModel(toolName, block, args, cwd, home) {
         filePath: path,
         bodyRaw: head === null || head.argsRaw === '' ? null : head.argsRaw,
         output,
-        errorSummary: state === 'error' && output !== null ? firstLine(output) : null,
-        state,
+        errorSummary: rowState === 'error' && output !== null ? firstLine(output) : null,
+        state: rowState,
         kilobytes: contentKilobytes(block.args),
     };
 }
 /**
  * 把一次结算结果摊成展示文本：文本块原样，其余块转成 JSON。
- * @param node - 已结算的结果节点。
- * @returns 摊平后的文本（可能为空串）。
  */
 function resultText(node) {
     const parts = [];
@@ -3530,8 +3063,6 @@ function resultText(node) {
 }
 /**
  * 这一行的调用头：已结算的看结果节点带回的那一份，仍在跑的看它自己的参数。
- * @param block - 运行中或已结算的调用块。
- * @returns 调用头，或 null（参数还在流进来的准备态）。
  */
 function callHead(block) {
     if ('kind' in block)
@@ -3540,51 +3071,47 @@ function callHead(block) {
 }
 /**
  * 解析原始参数 JSON。
- * @param argsRaw - 参数原文。
- * @returns 参数对象，或 null（流式中途截断、或不是对象）。
  */
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 function parseArgs(argsRaw) {
-    let value;
+    let parsed;
     try {
-        value = JSON.parse(argsRaw);
+        parsed = JSON.parse(argsRaw);
     }
     catch {
         return null;
     }
-    if (typeof value !== 'object' || value === null || Array.isArray(value))
-        return null;
-    return value;
+    return isRecord(parsed) ? parsed : null;
 }
 /**
  * 按顺序取第一个非空字符串字段。
- * @param args - 解析后的参数。
- * @param keys - 候选字段名，按优先级排列。
- * @returns 命中的值，或 undefined。
  */
 function pickString(args, keys) {
     for (const key of keys) {
-        const value = args[key];
-        if (typeof value === 'string' && value !== '')
-            return value;
+        const fieldValue = args[key];
+        if (typeof fieldValue === 'string' && fieldValue !== '')
+            return fieldValue;
     }
     return undefined;
 }
 /**
  * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
- * @param block - 运行中或已结算的调用块。
- * @param args - 已解析的原始参数；解析不出来时为 null。
- * @returns 路径，或 undefined。
  */
 function argumentPath(block, args) {
-    return viewPath(block.args) ?? (args === null ? undefined : pickString(args, ['path', 'file_path']));
+    const streamedPath = viewPath(block.args);
+    if (streamedPath !== undefined)
+        return streamedPath;
+    if (args === null)
+        return undefined;
+    return pickString(args, ['path', 'file_path']);
 }
 /**
  * 路径的视图读法。
  *
  * 与内置的文件变更行同一条规则：字段收尾了才算数——准备态可能只到了半截——解码失败
  * （转义不完整）也当没有。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 路径，或 undefined。
  */
 function viewPath(view) {
     if (view === undefined)
@@ -3603,8 +3130,6 @@ function viewPath(view) {
  *
  * 与内置的文件变更行取同一个口径，所以同一个位置在两边显示同一个数：正在流进来的那一个字段按
  * 已收到的部分算，已经收完的按整段算。一个内容字段都还没出现时返回 null——行头不摆一个 0KB。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 向上取整的 KB 数，或 null。
  */
 function contentKilobytes(view) {
     if (view === undefined)
@@ -3614,9 +3139,14 @@ function contentKilobytes(view) {
         ? total + (view.stringLength(key, { step: KILOBYTE }) ?? 0)
         : total, 0);
     const remembered = countedKilobytes.get(view);
-    const next = open === undefined
-        ? CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
-        : Math.ceil((completed + (view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0)) / KILOBYTE);
+    let next;
+    if (open === undefined) {
+        next = CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null;
+    }
+    else {
+        const openLength = view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0;
+        next = Math.ceil((completed + openLength) / KILOBYTE);
+    }
     if (next === null)
         return remembered ?? null;
     // 解码一时读不出来时 `stringLength` 给 undefined，上面按 0 计——那会让这个数掉回来。参数只追加，
@@ -3638,9 +3168,6 @@ const countedKilobytes = new WeakMap();
  *
  * 流式期每一批都要问一次，所以记住上一次数到哪、数出多少行，只扫新来的后缀；视图被换成新的
  * 一份（字段收尾，或 `settle` 用权威文本替换）时记忆自然落空，整段重数一次。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @param key - 内容字段名。
- * @returns 行数。
  */
 function streamedLineCount(view, key) {
     let memory;
@@ -3653,12 +3180,12 @@ function streamedLineCount(view, key) {
         }
         remembered = memory.get(key);
     }
-    const text = view?.text(key);
+    const fieldText = view?.text(key);
     // 转义序列还在路上时这一字段解码不出来（`text` 给 undefined）。那不能读成「这一段是空的」——
     // 参数只追加，这个数本该只往上长，归零就是一次假的回落，所以保留上一次数过的结果。
-    if (text === undefined)
+    if (fieldText === undefined)
         return remembered?.lines ?? 0;
-    const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+    const body = fieldText.endsWith('\n') ? fieldText.slice(0, -1) : fieldText;
     if (body === '')
         return 0;
     let lines = remembered?.lines ?? 1;
@@ -3673,9 +3200,6 @@ function streamedLineCount(view, key) {
  *
  * 准备态（开关开着时）走 `streamedTotals`，只看参数视图。其余情形与内置同序：结算后优先用结果
  * 元数据里真实应用的 hunks，拿不到就用参数派生的那一份。
- * @param block - 运行中或已结算的调用块。
- * @param hunks - 已派生的改动。
- * @returns 增删两个数，或 null（这一行没有可画的改动）。
  */
 function rowTotals(block, hunks) {
     if (!('kind' in block) && block.phase === 'preparing' && liveDiffEnabled()) {
@@ -3699,9 +3223,6 @@ function rowTotals(block, hunks) {
  * 到达——模型先把 `old_string` 写完再写 `new_string` 时，那是一整段原文的时长（实测同一段参数流里 KB
  * 在 96 ms 就显示，行数要等 4.5–6.8 s）。那一位没到之前先报 0，到齐之前它只往上跳；等齐写法反而会在
  * 另一半到达时把已经数过的那一半按新进度重报一次，读数往回跳，与数字轮那一套相冲。
- * @param name - 线上工具名。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 增删两个数，或 null（两个内容字段都还没出现）。
  */
 function streamedTotals(name, view) {
     if (view === undefined)
@@ -3722,10 +3243,6 @@ function streamedTotals(name, view) {
 }
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
- * @param path - 工具参数里的路径。
- * @param cwd - 会话工作区根。
- * @param home - 宿主账户主目录。
- * @returns 缩短后的路径。
  */
 function shortenPath(path, cwd, home) {
     if (cwd !== undefined && cwd !== '' && path.startsWith(cwd)) {
@@ -3742,8 +3259,6 @@ function shortenPath(path, cwd, home) {
 }
 /**
  * 取一段文本的第一行。
- * @param text - 任意文本。
- * @returns 第一行。
  */
 function firstLine(text) {
     const lineBreakAt = text.indexOf('\n');
@@ -3751,35 +3266,28 @@ function firstLine(text) {
 }
 /**
  * 摘要那半截的类名：失败与中断各自带自己的状态色。
- * @param state - 行状态。
- * @returns 类名。
  */
-function summaryClassName(state) {
-    if (state === 'error')
+function summaryClassName(rowState) {
+    if (rowState === 'error')
         return file_mutation_styles_1.FILE_SUMMARY_CLASS + ' ' + file_mutation_styles_1.FILE_ERROR_CLASS;
-    if (state === 'stopped')
+    if (rowState === 'stopped')
         return file_mutation_styles_1.FILE_SUMMARY_CLASS + ' ' + file_mutation_styles_1.FILE_STOPPED_CLASS;
     return file_mutation_styles_1.FILE_SUMMARY_CLASS;
 }
 /**
  * 给读屏的状态文本：图标与扫光都不表达状态，这句话替它们说。
- * @param state - 行状态。
- * @param t - 文案座位。
- * @returns 状态文本，或 null（无需播报）。
  */
-function stateLabel(state, t) {
-    if (state === 'running')
+function stateLabel(rowState, t) {
+    if (rowState === 'running')
         return t('row.running');
-    if (state === 'error')
+    if (rowState === 'error')
         return t('row.failed');
-    if (state === 'stopped')
+    if (rowState === 'stopped')
         return t('row.stopped');
     return null;
 }
 /**
  * 组装 diff 卡片自己的 chrome 文案。
- * @param t - 文案座位。
- * @returns diff 卡片的 labels。
  */
 function diffBlockLabels(t) {
     return {
@@ -3802,16 +3310,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PACE_STEP_MS = void 0;
 exports.usePacedValue = usePacedValue;
 /**
- * 按节拍交出读数：流式期间最多每 `PACE_STEP_MS` 换一次，其余情形实时跟随。
+ * 按节拍交出读数：流式期间最多每 PACE_STEP_MS 换一次，其余情形实时跟随。
  *
- * 节拍只压「换数的频率」，不压真值——交给下游的仍是最新读数（只是晚到下一拍），所以一轮数字轮的动画
- * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
- * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
- *
- * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
- * 不会一跳一跳地补播中间值。
- *
- * @module dsh-chat-ux/chat/paced-value
+ * 节拍只压换数频率，不压真值；到点应用的是那一刻的最新读数，避免数字轮动画被下一批参数打断。
  */
 const react_1 = require("react");
 /**
@@ -3821,11 +3322,6 @@ const react_1 = require("react");
  * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。
  */
 exports.PACE_STEP_MS = 300;
-/**
- * @param target - 最新读数。
- * @param paced - 要不要按节拍走（流式期间）。
- * @returns 现在该显示的读数。
- */
 function usePacedValue(target, paced) {
     const [shown, setShown] = (0, react_1.useState)(target);
     const targetRef = (0, react_1.useRef)(target);
@@ -3877,14 +3373,10 @@ function usePacedValue(target, paced) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
 /**
- * 文件变更行自己的样式表。
+ * 文件变更行的样式。
  *
- * 这一行归 dsh-chat-ux：它在 `tool.call.toolview` 的 edit / write 座位上遮蔽了内置的文件变更行，
- * 所以内置 ToolRow.module.css 里那些规则要在这里重写一份——那套类名带构建期 hash，既拿不到、
- * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
- * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
- *
- * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
+ * 内置 ToolRow 的类名带构建期 hash，不能当接口；这里只补共享 DisclosureRow 没画的摘要、统计、
+ * 路径链接、IN/OUT 卡片和轨迹入口，尺寸与令牌逐条对齐。
  */
 const reel_styles_1 = require("../reel/reel-styles");
 /** 行根节点。 */
@@ -4172,25 +3664,10 @@ body {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installCallAppearFollow = installCallAppearFollow;
 /**
- * 工具行与思考行第一次出现在页面上时，把它们所在的滚动器交还给底部。
+ * 工具行与思考行第一次出现时，把所在滚动器补回底部。
  *
- * dsh 的跟随在**结构时刻**最容易掉队：一行新内容插进来、高度跳一截，它那套平滑滚动要重排一轮，
- * 而重排的那一段时间里内容还在长。实测一次 run_code 执行（2026-10-18，标准档，33 次结构行到达）：
- * 20 次位置本来就到底，11 次落后二十到三十三像素，2 次落后一百四十像素上下——后面那两次就是读者
- * 说的「思考跑到视野外面」。全部发生在过程组的组体里，主滚动框一次都没掉队。
- *
- * 为什么不扫描：浏览器没有「元素出现了」这种原生事件，DOM 变化只有 MutationObserver，而它就是扫描。
- * 这里换一条路——给这两族行挂一条 1 ms 的探针动画（见 follow-probe-styles.ts），animationstart 就是
- * 元素第一次被渲染时的一次性通知。没有观察者、没有定时器、没有轮询，流式期间一个回调都不进，只在
- * 这两族行出现的那一刻响一次。
- *
- * 同一帧里到达的几次用一次 requestAnimationFrame 合并：一次插入可能带出整棵子调用子树，父行与每个
- * 子行都会各响一次，而它们需要的是同一脚。
- *
- * 代价只有一处：补位要读一次 scrollHeight，那是强制布局。位置本来就到底时（上面那 20 次）实测
- * 0.00 ms——本帧的布局早已结算过；真要补的那几次是 0.5～2.0 ms。
- *
- * @module dsh-chat-ux/client/chat/follow/call-appeared
+ * 用 1ms 探针动画的 animationstart 当出现信号，不装观察器也不轮询；同一帧多次到达合并成一次 rAF。
+ * 读者开始滚动、卷帘门正在跑或已经到底时都不补。
  */
 const dom_contract_1 = require("../../dom-contract");
 const fold_glide_1 = require("../fold/fold-glide");
@@ -4204,7 +3681,6 @@ const MARK_EVENTS = ['wheel', 'keydown'];
 const PRESS_EVENTS = ['pointerdown', 'touchstart'];
 /**
  * 装上这一处：探针属性挂上，两个事件通道接上；返回卸下的把手。
- * @returns 摘掉属性、撤掉监听、并作废还没落地的那一帧的函数。
  */
 function installCallAppearFollow() {
     const root = typeof document === 'undefined' ? null : document.documentElement;
@@ -4304,58 +3780,12 @@ function installCallAppearFollow() {
     __registry["chat/fold/fold-glide.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 折叠时把下方内容推开，展开体自己像卷帘门一样拉下来。
+ * 折叠时压缩真身高度，让下方内容随布局让开。
  *
- * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（{open && children}），所以 CSS 拿不到可过渡的
- * 旧值——高度动画在聊天区做不到，纯 CSS 的路是死的。这一处在 DOM 之外接管，办法是**把点击拦下来**：
- * 捕获阶段 stopPropagation()，React 这一下收不到，真身留在原位、还是展开态，于是可以直接压它的
- * 高度，压到底再把点击原样交还。动真身意味着没有克隆体，也就没有克隆体那一串麻烦（继承链、坐标、
- * 滚动、节点上限）。
+ * 收起方向在捕获阶段拦下点击，压到终点后再重放，React 才卸掉展开体。只接管聊天流与任务清单；
+ * 过程组压组根而不是组体，避免 dsh 的组内跟随把内容滚走。
  *
- * 只有一条路：**压真身的高度**。高度是布局的一部分，压下去多少，下方内容就真的让开多少——读者看到
- * 的位移不是补出来的假象，是文档流本身。
- *
- *   展开方向  等 React 把展开体插进来之后动手——观察回调仍在绘制之前，此时把高度压回起点，再动画到
- *             全高。布局逐帧长出来，下方内容是真的被推开，不需要 FLIP。
- *   收起方向  拦点击，真身留在原地、还是展开态，于是能像展开方向那样把高度压回终点，压到了再放行，
- *             React 这才卸掉真身——而它此时已经不占空间，收起态那套接上来时不会跳。
- *
- * 压谁的高度分三族：
- *
- *   DisclosureRow 的行  压展开体自己。它是普通块级，没有内部滚动。
- *   过程组头            压**组根**，不压组体。组体自己带滚动条，而 dsh 的 use-process-scroll 观察的
- *                       正是它：压它会让 follow.toBottom 把内容平滑滚到底，门在眼前变成一列往上跑
- *                       的字。组根只是外面那层盒子，组体住在里面、尺寸一个像素都不变，跟随逻辑收不到
- *                       任何 ResizeObserver 通知；而组根的高度是布局的一部分，压下去下方内容照样真的
- *                       让开。
- *   任务清单头          也压面板根。面板体里那道 8px 的 gap 与上下 padding 都住在清单外面，压清单
- *                       本身会在终点留下一截落差；压根则把「清单一整块」连同它占的间距一起收起。
- *                       它不是聊天流，收起后也不用把滚动交还给聊天跟随。
- *   不参与              轮次头（那个「用时 X 秒」的按钮）与轮次触发通知：它们开合的是整轮内容（含过程
- *                       组与嵌套滚动），压不得，留 dsh 原本的瞬时开合反而最稳。
- *
- * 门只走看得见的那一段。高度必须从起点走到终点，布局才会真的让开，可高度动画的行程就是全高：八千像素
- * 的思考内容会在 200ms 里被一次性跑完，看起来是直接弹出。所以高度分两段跑，分界点就是 visibleReachOf
- * 量出来的可见段——读者看得见的那一段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间一口气走完。
- * 这样不管展开体是两百像素还是两万像素，读者眼前那道门的速度都一样，两段之间也是连续的动画而不是瞬间
- * 跳变。
- *
- * 快照只在**读者**点击时取，而且只取一个数：展开方向要的起点高度。流式追加与分页加载历史没有点击，
- * 因此不会有动画；本插件的自动开合派发的也是真正的 click、走的是同一条捕获路径，所以它另外被
- * isProgrammaticToggle() 认出来放过——那些场合内容本来就该自然生长。
- *
- * 门是一整扇，不是几扇。展开体常常是一列 flex（工具行的 `.bodyWrap`、文件变更行的展开体），高度被
- * 压着的时候 flex 会先去挤能缩的那个子元素——自带滚动的卡片（run_code 的代码卡片）自动最小高度是
- * 0，于是它先被挤没，不能缩的输出卡片占满门框：读者看到的是输出先拉出来、代码再从它上面长出来，
- * 收起时反过来，一扇门走成了两段。所以门在走的时候给子元素一律 `flex: none`（见
- * `fold-motion-styles.ts`），每一张卡片都按自己的自然高度排好，门框只负责裁。
- *
- * 门也不跟着主线程跳。高度动画在主线程上走，卡住多久它就停多久，而 WAAPI 按墙上时间算进度，卡完那一帧
- * 会一口气跳到「本该到的地方」。展开 run_code 时恰好有这么一下：代码卡片一露头就被
- * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
- * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
- *
- * @module dsh-chat-ux/client/chat/fold/fold-glide
+ * 高度动画按可见段分段；主线程卡顿时暂停推进，避免恢复后一帧跳完视口外那段。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ROLLING_ATTRIBUTE = void 0;
@@ -4419,10 +3849,7 @@ let foldBusyUntil = 0;
 /**
  * 卷帘门正在跑。
  *
- * 位置在这一段里归动画管：这中间要是有人把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来是抖。
- * 从前那个「跟随守护」就是照着它让路的，守护跟「token 淡入」一起删掉之后一度没有查询者；2026-10-18
- * 起「工具行跟随」（`follow/call-appeared.ts`）重新在补位之前问它一句。
- * @returns 上一次动画排到的时刻还没过时为真。
+ * 这一段时间里位置归动画管；工具行跟随在补位前会先问它，避免拽动正在变化的高度。
  */
 function isFoldGlideBusy() {
     return performance.now() < foldBusyUntil;
@@ -4433,7 +3860,6 @@ const markFoldBusy = () => {
 };
 /**
  * 装上折叠位移。只有读者点击引起的变化会补动画。
- * @returns 卸载函数。
  */
 function installFoldGlide() {
     if (typeof document === 'undefined' || document.body === null)
@@ -4451,8 +3877,6 @@ function installFoldGlide() {
      * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（max-height:
      * min(400px, 50vh)）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者看得见的
      * 地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
-     * @param element - 要量的真身。
-     * @returns 终点偏移，单位像素；为 0 时说明它整个在视口外。
      */
     const visibleReachOf = (element) => {
         const rect = element.getBoundingClientRect();
@@ -4494,8 +3918,6 @@ function installFoldGlide() {
      * 这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组头」**：
      * 组体里的每一个工具行、思考行都住在 [data-step-process] 里。只看 closest 的话，点一行工具调用
      * 会被当成展开整个过程组，那个组的组根就会代替那一行被压扁。
-     * @param control - 被点的开合控件。
-     * @returns 它控制的过程组体；不是组头时为 null。
      */
     const processBodyOf = (control) => {
         const controls = control.getAttribute('aria-controls');
@@ -4508,8 +3930,6 @@ function installFoldGlide() {
      * 读者此刻是不是贴着会话底部。
      *
      * 这一份从被点的控件往上找滚动容器——与 follow-tail.ts 那份同名判据的入口不同，判据相同。
-     * @param control - 被点的开合控件。
-     * @returns 滚动位置落在底部阈值之内时为真。
      */
     const controlAtBottom = (control) => {
         const scroller = control.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
@@ -4524,8 +3944,6 @@ function installFoldGlide() {
      * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
      * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
      * 读者在打字，不是在滚动。
-     * @param atBottom - 折叠开始那一刻读者是不是贴着底部。
-     * @returns 这一轮折叠的收尾凭证。
      */
     const watchFold = (atBottom) => {
         let moved = false;
@@ -4563,7 +3981,6 @@ function installFoldGlide() {
      * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里。
      *
      * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
-     * @param watch - 这一轮折叠的收尾凭证。
      */
     const handBackFollow = (watch) => {
         if (!watch.atBottom) {
@@ -4585,8 +4002,6 @@ function installFoldGlide() {
      * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
      * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
      * ROLL_MS。
-     * @param watch - 这一轮折叠的收尾凭证。
-     * @param roll - 展开方向正在走的那条动画；没有时为 null。
      */
     const settleAfterFold = (watch, roll = null) => {
         if (roll === null) {
@@ -4610,7 +4025,6 @@ function installFoldGlide() {
      * 动画管」的时间。
      *
      * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
-     * @param roll - 正在走的那条卷帘门动画。
      */
     const holdThroughStalls = (roll) => {
         let lastFrameAt = 0;
@@ -4647,9 +4061,6 @@ function installFoldGlide() {
      * 收起方向的高度动画带着 fill: 'forwards'，把真身锁在终点高度上。React 若还没收下这次点击，
      * cancel() 就会把高度整块还给 CSS——一次从终点弹回全高的跳变，足够把 dsh 的跟随甩出去。所以
      * 等到 DOM 那边真的收拢了才撤；等够几帧仍然没收拢，那说明这次点击确实没有折叠，只好撤回原样。
-     * @param settled - DOM 那边已经收拢了。
-     * @param done - 可以撤掉动画与内联样式了。
-     * @param attempt - 已经等了几帧。
      */
     const confirmCollapsed = (settled, done, attempt = 0) => {
         if (settled() || attempt >= SHUT_CONFIRM_FRAMES) {
@@ -4666,8 +4077,6 @@ function installFoldGlide() {
      *
      * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
      * 一起交回来。
-     * @param target - 要压的真身。
-     * @returns 把内联样式与标记还原到开工之前。
      */
     const beginHeightClip = (target) => {
         const previousOverflow = target.style.overflow;
@@ -4684,16 +4093,11 @@ function installFoldGlide() {
     /**
      * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
      *
-     * 只有高度这一道，但它分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
-     * 曾经在这里叠过一层按可见段走的裁剪，那是错的——裁剪只影响绘制，而高度已经先长出来了，两道进度
-     * 相同、行程不同，差值就是一片空白。
+     * 只有高度这一道，但分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
+     * 不能再叠按可见段走的裁剪；高度已经先长出来，两种进度行程不同，会露出空白。
      *
-     * rect 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成 border-box，
-     * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
-     * @param target - 要拉开的真身：展开体自己，或过程组的组根。
-     * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
-     * @param easing - 整扇门的时间曲线；任务清单用自己的，聊天流里的长内容仍走默认那条。
-     * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
+     * rect 是 border-box 高度，而 CSS 的 height 默认按 content-box 解释；不换成 border-box，
+     * 动画会多跑上下 padding，收尾时再缩回去。
      */
     const rollOpen = (target, from, easing = 'ease-out') => {
         markFoldBusy();
@@ -4725,7 +4129,6 @@ function installFoldGlide() {
      *
      * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
      * VISIBLE_SHARE 的时长卷上去。
-     * @param fold - 要压的真身、终点高度、以及「React 收拢了」的判据。
      */
     const rollShut = (fold) => {
         markFoldBusy();
@@ -4920,29 +4323,8 @@ function installFoldGlide() {
 /**
  * 把聊天区的滚动位置交还给 dsh 的跟随。
  *
- * dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉：那种滚动把它挂进 500 ms 的采样窗口
- * （窗口里 `onResize` 直接返回，内容怎么长都不跟随），结算时位置离底超过它的阈值就关。判据本身
- * 是**位置比较**，不是「谁在滚」——所以 dsh 自己的 `focus()`、浏览器的 clamp、以及任何程序化
- * 写入，都会被记成「读者移动了」。一段执行里最容易撞上这一格的就是那些结构时刻：思考行收起、
- * 工具行插入、过程组开合，它们同时制造一次位置变化和一段成片到达的内容。
- *
- * dsh 自己留了一个重开入口：跟随关掉时才渲染的那个「回到底部」按钮，`onClick` 里是
- * `reading.followTail()`——清掉采样窗口、重新点亮跟随、立即到底。这一处把两条路都用上：
- *
- *   钉到底   `scrollTop = scrollHeight`（浏览器自己 clamp 到地线）。只要真的产生了位移，dsh 的
- *            `onScroll` 就会走「读者到底」那一支——**它不检查跟随当前是开是关**，于是重亮跟随
- *            并清掉采样窗口。位置本来就在地线上时，这一下什么都不发生。
- *   点按钮   没有位移就没有滚动事件，钉到底于是成了空操作。**一段执行刚开头、内容还没长出滚动条
- *            时正是这一格**：地线是 0、位置也是 0，写多少都是 0。这一格只有按钮有效——它调的
- *            `followTail()` 无条件把跟随点亮，不需要任何位移。
- *
- * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
- * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
- *
- * **现在只剩折叠收尾在调它**：增强跟随与组体跟随（`follow-guard.ts`、`process-follow.ts`）已经
- * 连同「token 淡入」那一个开关一起删掉，这里的能力一个字没动——折叠收尾那一次交还照旧走这条路。
- *
- * @module dsh-chat-ux/client/chat/follow/follow-tail
+ * 先钉到底；没有产生滚动事件时再看五眼 following-tail 属性，仍关着才点 dsh 的「回到底部」。
+ * 折叠收尾调用它，调用方可用 stillWanted 在读者接管滚动后立刻作废。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_INTERVAL_MS = exports.FOLLOW_LOOK_ROUNDS = void 0;
@@ -4960,7 +4342,6 @@ function conversationScroller() {
 }
 /**
  * 确保会话重新跟上底部，并在必要时把 dsh 的跟随一起点亮。
- * @param ensure - 这一轮交还的边界；省略表示交给谁都不问，自己看完五眼。
  */
 function ensureFollowTail(ensure = {}) {
     const stillWanted = ensure.stillWanted ?? (() => true);
@@ -4985,7 +4366,7 @@ function ensureFollowTail(ensure = {}) {
         // 自己那个「回到底部」按钮。
         if (document.querySelector(dom_contract_1.FOLLOWING_TAIL_SELECTOR) === null) {
             // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
-            // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
+            // （从列到滚动框再到框架），按钮就挂在框架的下一个兄弟上。
             const column = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
             const root = column?.parentElement?.parentElement ?? null;
             const button = root?.nextElementSibling?.querySelector('button') ?? null;
@@ -5004,14 +4385,9 @@ function ensureFollowTail(ensure = {}) {
     __registry["chat/fold/programmatic-toggle.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 本插件自己按下的折叠切换的记账。
+ * 本插件自己按下折叠切换时的记账。
  *
- * 自动收起思考行、自动开合过程组派发的都是真正的 click——`HTMLElement.click()` 走的是同一条捕获
- * 路径，各自的「读者碰过就让他赢」守卫分不出它和读者那一下的区别。可这一次点击落在「思考刚停、
- * 正文刚开头」这样的位置上，静默它等于把读者正在读的那段正文的渐变整段掐掉，所以它必须被认出来
- * 并放过。两个自动开合模块共用这一个计数：谁都不该把对方的程序化点击记成读者的意图。
- *
- * @module dsh-chat-ux/client/chat/fold/programmatic-toggle
+ * 自动开合派发的也是真正的 click，计数让「读者碰过就让他赢」的守卫能放过这一下。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.beginProgrammaticToggle = beginProgrammaticToggle;
@@ -5029,7 +4405,6 @@ function endProgrammaticToggle() {
 }
 /**
  * 此刻是否有本插件自己的折叠切换正在进行。
- * @returns 计数大于零时为真。
  */
 function isProgrammaticToggle() {
     return depth > 0;
@@ -5041,26 +4416,13 @@ function isProgrammaticToggle() {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReaderScrollIntent = isReaderScrollIntent;
 /**
- * 读者接管滚动的意图。
+ * 读者接管滚动的意图判据。
  *
- * 判据只有一条：读者是不是自己动了手。它当年由三处共用（跟随守护让位、折叠收尾作废那次交还、
- * 组体跟随停止补齐），跟随那两块删掉之后只剩折叠收尾一处——但判据仍留在这里，不并回调用点：它认
- * 的那组滚动键与 dsh 自己的一致，与谁在调无关。
- *
- *   落在输入区不算  指针与按键落在 `[data-composer-seat]` 里，那是读者在打字，不是在接管滚动。
- *   滚动键才算按键  键盘有一半是打字与编辑，只有会滚动视口的那几个键与滚动有关——认的那一组
- *                   与 dsh 自己的一致。
- *
- * 监听哪些事件类型仍由各处自己定：三处认的集合不同（折叠那一处只认会带来显式位移的那几种，
- * 组体那一处还要 touchmove），那是各自的判断，不是这个契约的一部分。
- *
- * @module dsh-chat-ux/client/chat/follow/reader-intent
+ * 落在输入区里的指针和按键不算接管；键盘只认会滚动视口的键。事件类型由调用方决定。
  */
 const dom_contract_1 = require("../../dom-contract");
 /**
  * 一次事件是不是读者接管滚动的意图。
- * @param event - 页面上任意一处指针、触摸或按键事件。
- * @returns 落在输入区里、或是与滚动无关的按键时为假。
  */
 function isReaderScrollIntent(event) {
     if (event.target instanceof Element && event.target.closest(dom_contract_1.COMPOSER_SELECTOR) !== null)
@@ -5076,16 +4438,10 @@ function isReaderScrollIntent(event) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_PROBE_CSS = exports.APPEAR_PROBE_NAME = exports.APPEAR_ATTRIBUTE = void 0;
 /**
- * 「工具行出现了」这条探针：一条 1 ms 的动画，只为让 animationstart 响一次。
+ * 「工具行出现了」的探针样式。
  *
- * 两帧都写 opacity: 1，所以画面上什么都不变；是 1 ms 而不是 0，是因为零时长的动画根本不会开始、
- * 也就不会派发事件。
- *
- * 整条规则收在门控属性下（挂在 documentElement 上，见 call-appeared.ts）：开关关着时属性不在，
- * 这条规则一条都不命中。作用域再收一层到聊天列——聊天区以外的元素在样式匹配时被祖先过滤直接跳过，
- * 这是[性能风险](<文档/开发/性能风险.md>)里量过的那个差别；流式期间是增量重算，只对新节点匹配。
- *
- * @module dsh-chat-ux/client/chat/follow/follow-probe-styles
+ * 一条 1ms 且首尾透明度相同的动画，只为让 animationstart 响一次；零时长动画不会开始。
+ * 规则收在门控属性与聊天列作用域下，关闭时一次都不命中。
  */
 const dom_contract_1 = require("../../dom-contract");
 /** 门控属性：在，就说明这一处在工作。关掉时摘掉它，探针一次都不跑。 */
@@ -5112,30 +4468,12 @@ exports.FOLLOW_PROBE_CSS = `
     __registry["chat/fold/process-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 运行中的过程组默认展开，等这一段过程结束（最终正文该出来了）再收回去。
+ * 运行中的过程组默认展开，过程结束后再收起。
  *
- * dsh 把一轮里相邻的过程内容——思考、工具、命令、写文件——收进一个过程组，组的开合由它自己那个
- * 行内控件管。「简洁」与「标准」两档下组体一开始是收起的，读者得自己点开才看得见模型正在做什么。
- * 「详细」与「完全展开」两档不收纳组体（组体本来就全开着），本模块一概不动手——判据是组根上的
- * `data-group-expanded-mode`。
+ * 阶段看组头里的 data-shimmer，开合看组体的 hidden，非收纳档看组根上的
+ * data-group-expanded-mode。读者碰过的组在本阶段内不再自动切换。
  *
- * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂 `data-shimmer`
- * （2026-09 之前叫 `data-text-shimmer`，见 `dom-contract`）。判断组体开合看它自己的 `hidden`——dsh
- * 用可搜索的隐藏，收起时设 `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围
- * 的类名那样跟着每次构建变。组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
- *
- * 收纳与否也要自己判：新版把组头在「详细」与「完全展开」两档里也留在 DOM 里，只是裹进一个带
- * `hidden` 的壳，所以「找不到组头」不再等于「这一档没有可折叠的组」——认组根上的
- * `data-group-expanded-mode`。
- *
- * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
- * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
- *
- * 另有两处让路：dsh 的折叠动效正在驱动这一行时（`data-chat-motion`），以及读者把「收起时机」选成
- * 「下次发送时收起」时（`ui-chat.collapseTiming`），结束后的那一次收起都不归本模块——前者让官方的
- * 批量折叠走完，后者留给官方在下次发送时统一折叠。
- *
- * @module dsh-chat-ux/client/chat/fold/process-fold
+ * 官方折叠动效正在驱动某行时整块让路；「下次发送时收起」下，结束后的收起也留给官方。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installProcessFold = installProcessFold;
@@ -5167,8 +4505,6 @@ const SHIMMER_PIXELS_PER_CHARACTER = 8;
 const CLOSED = 'closed';
 /**
  * 给整页安装过程组的自动展开与收起。
- * @param deferCollapse - 读者是否把 dsh 的「收起时机」选成了「下次发送时收起」；现读，不缓存。
- * @returns disposer：断开 observer 并摘掉两个监听。
  */
 function installProcessFold(deferCollapse) {
     /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
@@ -5179,7 +4515,6 @@ function installProcessFold(deferCollapse) {
     let scanQueued = false;
     /**
      * 把给到的这些组拉到它们当前阶段该有的样子。
-     * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
      */
     const syncGroups = (groups) => {
         for (const group of groups) {
@@ -5209,23 +4544,20 @@ function installProcessFold(deferCollapse) {
             const detailed = separatorAt >= 0;
             group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed);
             group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'));
+            if (!detailed)
+                header.removeAttribute(LABEL_NAME_ATTRIBUTE);
             if (detailed) {
                 const label = headerText.slice(0, separatorAt);
-                // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
-                // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
-                // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
+                // 每个扫描帧都会走到这里，值没变就不要写：同值写入也会让 ::after 的 content 重新解析
                 if (header.getAttribute(LABEL_ATTRIBUTE) !== label)
                     header.setAttribute(LABEL_ATTRIBUTE, label);
                 if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label)
                     header.setAttribute(LABEL_NAME_ATTRIBUTE, label);
                 const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`;
-                // 这条路径每个扫描帧都会走到，值没变就别再写一次。
                 if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {
                     header.style.setProperty(LABEL_SPREAD_PROPERTY, spread);
                 }
             }
-            else
-                header.removeAttribute(LABEL_NAME_ATTRIBUTE);
             // 这个阶段里读者已经决定过这个组的开合，别碰它。
             if (touchedIn.get(group) === phase)
                 continue;
@@ -5344,20 +4676,10 @@ function installProcessFold(deferCollapse) {
     __registry["chat/fold/reasoning-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 模型还在思考时让思考行开着，思考一停就把它收回去。
+ * 思考进行时自动展开思考行，思考结束后再收起。
  *
- * dsh 发出来的思考行一律是收起的——它自己的 README 就是这么写的，而 `ReasoningRow` 用一个朴素的
- * `useState(false)` 把它固定在那儿。没有任何设置项暴露这件事，所以这一行自己的展开控件就是插件
- * 唯一能扳的杆。好在这根杆至少是稳定的：这一行带着 `data-variant="think"`、`data-state`（模型
- * 还在思考时是 `running`，停下来之后是 `ok`）和 `data-expanded`——都是语义属性，不像它们周围
- * 那些跟着 dsh 每次构建变化的带 hash 类名。
- *
- * 这一行仍然归读者所有。在行内点一下或按一下键，会记下当时所处的阶段，本模块在这个阶段之内不再
- * 动它：思考到一半把行折起来就让它折着，把已经停稳的行展开就让它开着。这个让位刻意按阶段算、
- * 而不是按行算——读者在模型还在思考时把行折起来又展开，并没有要求「等思考完了也一直开着」，所以
- * `ok` 到来时该收还是收。
- *
- * @module dsh-chat-ux/client/chat/fold/reasoning-fold
+ * 行仍归读者所有：读者在某阶段碰过它，本阶段内不再自动切换；阶段变化后规则重新接管。
+ * 只认 data-variant、data-state 与 data-expanded 这些语义属性。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installReasoningFold = installReasoningFold;
@@ -5365,7 +4687,6 @@ const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 /**
  * 给整页安装思考行展开。
- * @returns disposer：断开 observer 并摘掉两个监听。
  */
 function installReasoningFold() {
     /** 读者最后一次碰某一行时，那一行处在哪个阶段。 */
@@ -5379,7 +4700,6 @@ function installReasoningFold() {
      *
      * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
      * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
-     * @param rows - 这一批要收敛的行；其中可能已经有被摘掉的。
      */
     const syncRows = (rows) => {
         for (const row of rows) {
@@ -5492,44 +4812,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FLYING_ATTRIBUTE = void 0;
 exports.installSendFlight = installSendFlight;
 /**
- * 发送气泡的起飞。
+ * 发送气泡的起飞与落地。
  *
- * 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡（`[data-submission-echo]`），真实消息一到就把
- * 它换成正式的那一行。本机实测：回显只活 **159 ms**，而正式那一行要 **1 秒多**才到——动画挂在这两条
- * 节点上必死（挂回显，半路连节点都没了；等正式行，读者先看到一秒多的空档）。
+ * 提交时抓下输入卡片，等 dsh 的即发即显行出现后挂上替身并藏起真实行；落定时摘属性、移除替身。
+ * 起点抓不到、起终点跨屏或用户关闭开关时一次都不动手。
  *
- * 所以这里自己画一个替身：输入卡片原样浮起来一份，一边飞一边收成那条气泡。替身怎么搭、形变怎么
- * 算，全在 `send-morph.ts`；这个模块管什么时候起飞、飞向哪一行、什么时候落定：
- *
- *   抓起点    提交的捕获阶段把整张输入卡片抓下来（克隆、几何、外观），全都早于 React 清空草稿。
- *   认信号    回显行一挂上来就认——认它的是 MutationObserver，不是每帧轮询。
- *   立替身    替身挂到页面上、整段动画交给合成器；真实的那一行挂属性藏起来（保留布局盒，终点每帧都
- *             量得到）。动画先停在起手格，等一两帧让替身画得出来再起跑（见 `WARMUP_FRAMES`）。
- *   逐帧补    **这一帧里只有两件事**：终点跟着页面动了多少（dsh 滚到底、回显换正式行）补到替身的
- *             最外层上；形变段走完那一帧把壳归一（见 `send-morph.ts` 的 `compact`）。位置、形状、颜色、
- *             字的重排都在合成器上，dsh 解析响应占住主线程那几十毫秒时照样在走。
- *   落定      摘属性、扔掉替身——真实那一行本来就在终点上，交接不需要搬任何东西。
- *
- * 落点那一格也不是一开始就空出来的。默认设置下 dsh 在提交时就同步 `followTail('instant')`，
- * 聊天区会先整体上移；读者看到的就成了「落点已让好、气泡才起飞」。这里把新行插进来造成的
- * 那一截视觉位移先冻住（`send-reveal.ts` 给 `[data-chat-flow]` 加纯 `transform` 补偿），
- * 起飞后 3 ms 起由一段起飞时就建好的合成器动画放掉——平台段由这条帧循环吸收 dsh 后续的滚动；
- * **放完的时刻就是气泡落到落点的时刻**（`timeAtRise(1)` 反解），两条曲线同一条时间线、同一段
- * 起步延迟，所以读者看到的是「让开多少、气泡就贴过来多少」（2026-10-18 读者的口径）；替身本来
- * 就在读真实行的 rect，所以它自己会跟着让位上移，落定那一帧偏移正好是 0。
- *
- * 五条边界（前两条是实测踩出来的）：
- *
- *   同帧就得藏    用 MutationObserver 而不是每帧轮询找回显：它在本帧渲染**之前**回调，所以真实
- *                 那一行一帧都不会露出来。晚一帧的话读者会先看到一个正常气泡闪一下、随即被抹掉。
- *   认行不在帧里  「当场」不等于「每帧」。回显被正式那一行换掉，同一个 observer 会在本帧渲染之前
- *                 同步认出来；帧里再查一遍是白花的——长会话里光那两句全文档查询就够吃掉半帧。
- *   抓不到就不做    起点抓不到（快捷键、程序化提交）时这一次不动手，读者看到的还是 dsh 原来的样子。
- *   藏起来必须还    真实行被藏着的这会儿，读者看不见那条消息。所以除了正常落定，还有一条定时器
- *                 兜底：后台标签页里 rAF 会停，替身停了，属性不能一直挂着。
- *   只飞同一屏    起终点有一头已经在屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
- *
- * @module dsh-chat-ux/client/chat/send-flight/send-flight
+ * 真实行必须在本帧绘制前藏住；后台标签页 rAF 会停，所以另设兜底定时器保证消息一定被放出来。
  */
 const dom_contract_1 = require("../../dom-contract");
 const send_reveal_1 = require("./send-reveal");
@@ -5541,22 +4829,16 @@ const ORIGIN_TTL_MS = 1500;
 /**
  * 位移上限的兜底值：一屏比它窄时按它算（见 `sameScreen`）。
  *
- * 这里原来是一个固定的 900px 上限，宽屏上会误伤：dsh 的内容列宽封顶 920px，输入卡片又比列每边
- * 宽 16px，起终点的横向距离天生就压在 890 上下、贴着阈值走；纵向更随窗口高度一路涨——短对话里
- * 消息贴在列顶、输入框粘在底部，一屏拉开一千多像素是常态。两个方向都不该由屏幕多大来决定飞不飞。
+ * 聊天列的横向距离天生接近 900px，纵向又随窗口高度增长，不能用一个固定的像素上限判断要不要飞。
  */
 const FLIGHT_LIMIT_FLOOR_PX = 900;
 /** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
 const RESCUE_MARGIN_MS = 400;
 /**
- * 起播前先等几帧。
+ * 起播前先等几帧，让新子树完成第一次 raster。
  *
- * 替身是刚插进文档的新子树，第一次 raster 要跨一两个合成器帧；这期间合成器上的时间轴照走、屏幕上却
- * 一个像素都没有——读者第一眼看到的就是「已经飞到半路」（`ACROSS_OMEGA` 那段：五十毫秒就走掉七成）。
- * 等这两帧过去再放开动画，起手那一段就落在「画得出来」之后。
- *
- * 这两帧里读者看到的是静止的输入卡片——替身的起手格与真卡片逐点一致，所以看不出中间停顿过。
- * 想验证它是否起效，量「替身第一次出现在屏幕上那一帧的动画进度」，见 `文档/业务/发送动效.md` 的验收口径。
+ * 否则合成器时间轴照走、屏幕还没有像素，读者第一眼就会看到替身已经在半路。预热期间替身停在
+ * 与真卡片重合的起手格，看不出停顿。
  */
 const WARMUP_FRAMES = 2;
 /** 预热折算给让位的时长（毫秒）。按六十帧算，误差不到一帧，而让位前五十毫秒本来就不动。 */
@@ -5569,9 +4851,6 @@ const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-
 const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
 /**
  * 给整页装上发送气泡的起飞。
- * @param readEnabled - 现读开关；关着时一次都不动手。闸门放在抓起点那一步：开关关着的这段时间里，
- * 页面上连一次测量都不会发生，看到的完全是 dsh 原来的样子。
- * @returns 卸载入口：摘掉监听，收掉还在等的那一轮与正在飞的那一段（包括把藏着的消息放出来）。
  */
 function installSendFlight(readEnabled) {
     // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
@@ -5631,10 +4910,8 @@ function installSendFlight(readEnabled) {
      * 帧里四件事：吸收新的落点补偿、认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。
      * 认行交给上面那个 observer——它不是每帧都有新答案的事。
      *
-     * **位移与形状都不在这里写**：两条关键帧同一条时间轴（同一个 `FLIGHT_MS`、同一批 offset），dsh 解析
-     * 响应占住主线程那几十到一百多毫秒里它们照样一起在走，右边缘的等式（见 `ACROSS_OMEGA`）在整段里都
-     * 成立。这条路径上曾经栽过一次：位移在合成器上、形状留在主线程的 `clip-path` 里，主线程一卡，一整张
-     * 还没收窄的卡片就飞到了终点。
+     * **位移与形状都不在这里写**：两条关键帧同一条时间轴，dsh 占住主线程时它们照样一起走，右边缘
+     * 始终在起点和终点之间。若把形状留在主线程，卡顿时未收窄的卡片会先飞到终点。
      *
      * 帧里剩下的三件都是主线程的事：`reveal` 的平台段是一次样式写（释放段交给合成器）、
      * `compact` 是一次性的样式写、`followTarget` 读的是当前布局。
@@ -5865,8 +5142,6 @@ function findBubble(row) {
  *
  * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
  * 就是几千个节点。
- * @param records - observer 交来的这一批变化。
- * @returns 值得认一次行时为真。
  */
 function touchesUserRow(records) {
     for (const record of records) {
@@ -5903,93 +5178,25 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.captureRevealAnchor = captureRevealAnchor;
 exports.startReveal = startReveal;
 /**
- * 落点的让位：提交之后聊天区先定住一瞬，再在气泡上升的前两百来毫秒里让开，并在落定前收住。
+ * 提交后的落点让位：先在聊天列上冻结视觉位移，再让补偿随气泡上升的同一段弹簧释放。
  *
- * 读者在录屏里看到的是「落点已经让好了，气泡才起飞」。根因不在替身，而在 dsh：默认
- * `collapseTiming='completion'`，提交时 `useChatScroll` 的 ownInput 分支同步调
- * `followTail('instant')`，把 `scrollTop` 直接设到新 floor（`use-chat-scroll.ts` 第 80–84 行）。
- * 回显行在同一帧插入、内容高出「新行高度」，于是聊天区在替身出现之前就整体上移了。
- *
- * **这里只做视觉补偿，不碰 `scrollTop`。** 把 `scrollTop` 拉回去会被 dsh 归因成「读者自己
- * 滚上去了」：`ChatReading.onScroll` 会再 `followTail()` 拉回底部；就算绕过，500 ms 的采样会
- * 按 `nearBottom` 把 `followingTail` 判成 false——发送之后的流式内容不再跟随，还会写进会话的
- * 滚动记忆。补偿加在 `[data-chat-flow]` 上：它是一个纯 `transform`，不改布局、不改滚动状态，
- * dsh 完全不知道我们在做什么。
- *
- * **两段式，因为 dsh 的让位不是一次滚动。** 实测（视口 1536×863、注入 2000px 填充）：
- * 回显出现时 dsh 已经滚了 +86 px，之后 150 ms 左右又滚 +36 px。所以：
- *
- *   平台段（0 → `REVEAL_HOLD`）  补偿量取「此刻的 `scrollTop` 减提交前那一个」，**每帧 + 每次 scroll
- *                        事件**都现算一次，把期间所有滚动都压住：视觉完全冻结。scroll 事件在
- *                        rAF 之后、绘制之前派发，所以即使某一帧的 rAF 被长任务吞掉，滚动带来的
- *                        那一截也会在画出来之前被补上。
- *   释放段（平台末尾 → 收完）  从平台末尾起一段**起飞那一刻就建好**的 WAAPI 动画（`translateY(D) → 0`）。
- *                        曲线与气泡纵向那条弹簧**同源**——同一个函数、同一个角频率、同一段起步延迟，
- *                        阻尼比单独一套（`REVEAL_DAMPING`）。窗口收在气泡第一次到位那一刻，所以这一段
- *                        里没有回弹（见那条常量的注释）。整段都在合成器上，主线程被长任务占住时照样
- *                        准点、照样平滑。
- *                        **收到「气泡落到落点」那一刻**（`send-flight` 用 `timeAtRise(1)` 反解，
- *                        这一版约 185 ms）。曲线走的就是气泡那一条：同一段起步延迟、同一个角频率，
- *                        所以读起来是「让开多少、气泡就贴过来多少」——两者同一时刻到位。
- *                        2026-10-18 当天先试过收在「气泡底边越过输入框上沿」（那时约 84 ms，内容
- *                        先让好、气泡后落），读者说没有对接感，改回收在落定。
- *                        **改成「到点再由主线程建动画」会被一次长任务整段吞掉**：2026-10-18 实测到
- *                        80 ms 的 rAF 空洞，聊天区在 266 ms 一帧瞬移 117 px。
- *
- * **dsh 在释放途中再滚时照旧吸收**：把那一截加回补偿，从**此刻画着的那一格**续一段动画。
- * 续接要读一次样式、要主线程，所以卡顿期间滚进来的那一截只能让位稍快，读不成瞬移。
- *
- * **起点不能按时间取一半。** 位移不是匀速的（见 `REVEAL_HOLD`）：150 ms 那一刻气泡在视觉上
- * 已经飞完九成，读者看到的就是「气泡先落定，聊天区才动」。终点同理（见 `REVEAL_DONE`）。
- *
- * **替身的落点锁在「最终位置」，不跟着补偿走。** 真实行的 rect 带着补偿，所以 `followTarget`
- * 把补偿量减掉再补差：气泡从输入卡片起飞、一路飞向输入框上方那一格；让位开始时，聊天区内容在它
- * 下面滑上去。若让替身跟着补偿走，它会先落到「输入框下方」——那是提交前的位置，读者看到的就是
- * 气泡生成在聊天框下面（2026-10-18 实拍）。落定那一帧补偿归零，两者本来就重合。
- *
- * 代价与边界：
- * - 读者一动手（滚轮、触摸、滚动键、指针按下）就 `finish()`：让位立刻到位，随后读者的滚动
- *   从底部正常开始。正在释放中途被接管时，这一下是剩余补偿量的瞬移（窗口 ≤240 ms）。
- * - 不满足条件的提交一次都不动：读者不在底部（`FOLLOW_THRESHOLD_PX` 以内）、内容阶段不是
- *   `active`、列上挂着 dsh 的折叠动效、这次跟随是平滑的、补偿超过 `MAX_REVEAL_SHIFT_PX`、
- *   列比 `MAX_REVEAL_COLUMN_PX` 还高。任何一条都退回今天的行为。
- *
- * @module dsh-chat-ux/client/chat/send-flight/send-reveal
+ * 只改聊天列的 transform，不碰 scrollTop，否则 dsh 会把补偿认成读者滚动。
+ * 释放动画在起飞时一次建好；读者一接管滚动就立即收尾。
  */
 const dom_contract_1 = require("../../dom-contract");
 const reader_intent_1 = require("../follow/reader-intent");
 const send_morph_1 = require("./send-morph");
 /**
- * 起飞后多久开始让位（占飞行的比例）。**3 ms，就是一个平台。**
+ * 起飞后多久开始释放让位，占整段飞行的比例。0.01 约等于一个平台。
  *
- * 2026-10-18 按读者要求试过 `0`（「不用任何延迟」），当天回退：那一版看到的是内容**闪一下让开、
- * 又稍微闪回来、再继续走**。原因在续接——释放动画在起飞那一帧就已经在走，等 dsh 第二次滚进来
- * （实测 +36 px）时 `apply` 从「此刻画着的那一格」加增量重起一段（见 `releaseFrom`），动画已经
- * 离起点走了一段，这一截就被读成了内容多下移。当时的窗口只有九十来毫秒，留一格平台就足以让第二次
- * 滚动落在动画几乎没动的位置上，那一截吸收得干净。
- *
- * 平台本身不负责吸收滚动量（起飞那一刻已经整体冻住了，见 `hold`；之后每一截由 `apply` 补），
- * 它只决定释放晚起手多久。
- *
- * **窗口拉长之后这一格平台的保护变弱了。** 2026-10-18 把收尾从「底边越过输入框上沿」（约 93 ms）
- * 挪到「气泡落到落点」（约 185 ms）之后，dsh 那次 +36 px 的续滚落在窗口后段，不再落在动画起点
- * 附近——续接那一下从此刻画着的那一格加增量重起（见 `releaseFrom`），位置连续、只是曲线从头
- * 再走一遍。这一版没有出现 `REVEAL_HOLD = 0` 时那种「闪回来」的观感；若在真机上看到顿挫，先把
- * 收尾点从 `timeAtRise(1)` 往回挪到 `timeAtRise(0.85)` 再看。
- *
- * 不能按时间取一半：位移不是匀速的。横向那条 33 ms 就过半、135 ms 走完；纵向那条（`RISE_DELAY`
- * 起步、`RISE_OMEGA` 收尾）97 ms 过半、147 ms 过九成、223 ms 才落定。取 0.5 时气泡在视觉上
- * 已经飞完九成，读起来就是「气泡先落定，聊天区才动」（2026-10-18 读者截图）。
+ * 平台本身不吸收滚动；它把释放和 dsh 的第二次自动滚动错开。位移不是匀速的，不能按时间来取
+ * 「一半」，否则气泡视觉上快落定时聊天区才开始动。
  */
 const REVEAL_HOLD = 0.01;
 /**
- * 让位在飞行的哪个时间点收完（占飞行的比例）的兜底值。
+ * 让位收完时刻的兜底值，占整段飞行的比例。
  *
- * 实际值由调用方给：**气泡落到落点那一刻**（`send-flight` 用 `timeAtRise(1)` 反解，这一版约
- * 0.62）。算不出来时才用这个 0.3。
- *
- * **不能是 1**：整段末尾还剩形变收尾与气泡最后那点微回弹，让位拖到那里就成了「内容最后还在
- * 挪」；贴着气泡**第一次到位**才是两者同时接触。
+ * 调用方通常传气泡第一次到位的那一刻；不能拖到整段末尾，否则气泡已经停稳，内容还在动。
  */
 const REVEAL_DONE = 0.3;
 /** 补偿的硬上限（像素）：多行长消息、或读者离底不远但一次滚很多时，落点会被推得太深。 */
@@ -5997,37 +5204,19 @@ const MAX_REVEAL_SHIFT_PX = 200;
 /** 列比这还高就不动它：一个超大的合成层不值得为一次 300 ms 的让位买单。 */
 const MAX_REVEAL_COLUMN_PX = 20000;
 /**
- * 释放那一段的曲线：**就是气泡纵向那一条**——同一个 `springProgress`、同一个 `RISE_OMEGA`、
- * 同一段起步延迟（`RISE_DELAY`，见 `atRise`），只有阻尼比单独一套。前面那 15% 里气泡只横着走、
- * 一步都不上升，让位在那一段里也就不动——两边的进度在任意一帧都是同一个数，这才是「让开多少、
- * 气泡就贴过来多少」。
+ * 让位弹簧的阻尼比。曲线与气泡纵向那条同源，窗口收在气泡第一次到位时，所以这一段没有过冲。
  *
- * **窗口收在气泡第一次到位那一刻，所以这一段里没有过冲**：峰位 `π / ωd` 落在窗口之外，曲线在
- * 窗口内一路单调走到 0。阻尼比在这里只改窗口内的形状——取 0.7 比气泡那条 0.8 略快半个百分点，
- * 逐帧最多差 2%（一百来像素的行程上是两三像素，看不出来）。**要让两者严丝合缝就取 0.8**；0.65
- * 留给以后想看见回弹的时候，那时得把收尾点挪到 `timeAtRise(1)` 之后。
- *
- * 过冲量只由阻尼比定（`exp(-πζ/√(1-ζ²))`），**乘的是各自的行程**：气泡取 0.8 是 1.52%，而那七百来
- * 像素的纵向行程上是十来个像素、落定那一下看得见；让位的行程小得多（实测 +86 与 +36，上限
- * `MAX_REVEAL_SHIFT_PX`），1.52% 只剩一两个像素、等于没有，所以这里取 0.7（过冲 4.6%）：在让位的
- * 行程上大约五到十个像素，收尾那一下轻轻弹一下再落回来。**要更明显往 0.65 走（6.7%），要更收敛往
- * 0.8 走**（那就是气泡那一下）。
- *
- * **同源指的是默认值**：开发期在控制台覆盖那条 `dsh-chat-ux:send-flight` 里的 `riseOmega`／`riseDelay`
- * 只带动气泡那条纵向曲线，让位读的是 `RISE_OMEGA` 这个常量与它自己那一套，不会跟着变。
+ * 0.7 在让位行程上留下约五到十像素的回弹；取 0.8 会更贴气泡，但收尾几乎看不见。
  */
 const REVEAL_DAMPING = 0.7;
 /**
- * 弹簧采样的格数。**不跟窗口长短走**：续接时窗口会按剩余时间重算（见 `releaseFrom`），固定格数才能让
- * 每一次都画出同一条形状。过冲那一格另外补（见 `springOffsets`）。
+ * 弹簧采样的格数。续接时窗口会变，但格数固定，形状才稳定；过冲那一格另补。
  */
 const REVEAL_SAMPLES = 24;
 /** 读者接管滚动的意图事件；与 dsh 自己的 `READING_INTENTS` 是同一组。 */
 const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
 /**
  * 捕获阶段读一次滚动几何与阶段。读不到返回 null——不动手永远安全。
- * @param card - 输入卡片（`[data-composer-card]`）。
- * @returns 这段会话的让位锚点，或 null。
  */
 function captureRevealAnchor(card) {
     const scroller = card.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
@@ -6051,11 +5240,6 @@ function captureRevealAnchor(card) {
 }
 /**
  * 起飞那一刻开始冻结落点。必须在 `startMorph` 之后调：形变要量一大堆几何，先加补偿会污染它。
- * @param anchor - 捕获阶段留下的锚点。
- * @param until - 让位在飞行的哪个时间点收完（0 到 1）；调用方按「气泡底边越过输入框上沿」算。
- * @param delayMs - 气泡那边预热了几毫秒才起跑（见 `send-flight.ts` 的 `WARMUP_FRAMES`）。整条时间轴
- *   一起推后，让位与气泡才不会错开；那几毫秒落在平台里，画面仍然冻着。
- * @returns 让位句柄；不满足条件时为 null。
  */
 function startReveal(anchor, until = REVEAL_DONE, delayMs = 0) {
     if (!anchor.active || !anchor.atBottom || !anchor.calm)
@@ -6197,11 +5381,6 @@ function scrollFloor(scroller) {
  * `from` 与 `to` 不是时长：进度按**绝对时间**取气泡那条弹簧上的值（见 `atRise`），所以窗口拉长
  * 之后形状不变、只是摊开——两条曲线因此同步，而不是各自压缩到自己的窗口里跑完。续接时窗口从
  * 此刻起算（`from` 就是此刻的进度），曲线接在半路上，不会从起点重跑一遍。
- * @param travel - 平台这一刻的补偿量。
- * @param holdOffset - 平台结束在这段动画的哪个位置（0 到 1）；0 就是没有平台。
- * @param from - 这段动画的起点（占整段飞行的比例）。
- * @param to - 这段动画的终点（占整段飞行的比例），也就是 `startReveal` 的 `doneAt`。
- * @returns 从 `travel` 走到 0 的关键帧。
  */
 function springFrames(travel, holdOffset, from, to) {
     const start = (0, send_morph_1.springProgress)(atRise(from), REVEAL_DAMPING, send_morph_1.RISE_OMEGA);
@@ -6227,8 +5406,6 @@ function springFrames(travel, holdOffset, from, to) {
  *
  * 让位与气泡读的是同一条曲线的同一段——同一个 `springProgress`、同一个 `RISE_OMEGA`、同一段延迟，
  * 所以任意一帧上两者的进度都是同一个数（阻尼比各一套，那一点差别只落在收尾的过冲上）。
- * @param u - 绝对时间占比（0 到 1）。
- * @returns 弹簧上的占比；延迟段里恒为 0。
  */
 function atRise(u) {
     const shifted = (u - send_morph_1.RISE_DELAY) / (1 - send_morph_1.RISE_DELAY);
@@ -6237,11 +5414,8 @@ function atRise(u) {
 /**
  * 采样点：平台之后均分 `REVEAL_SAMPLES` 段，再把过冲峰值那一格单独补进去。
  *
- * 返回的就已经是**动画内的位置**（不是「平台之后的进度」）：位置与进度只能共用一个时间刻度，
- * 两套刻度会把曲线画成另一个形状——这是 2026-10-18 改长窗口时踩到过的。
- * @param holdOffset - 平台结束在这段动画的哪个位置。
- * @param from - 这段动画的起点（占整段飞行的比例）。
- * @param to - 这段动画的终点。
+ * 返回的就已经是**动画内的位置**，不是「平台之后的进度」：位置与进度共用一个时间刻度，
+ * 两套刻度会把曲线画成另一个形状。
  */
 function springOffsets(holdOffset, from, to) {
     const points = [];
@@ -6261,7 +5435,6 @@ function springOffsets(holdOffset, from, to) {
  *
  * 少了这一格，采样会把回弹削平——峰只占一小段，二十几格未必落得上它。这是**弹簧坐标**上的位置
  * （已经扣掉起步延迟），换算回窗口由 `springOffsets` 负责。
- * @returns 位置（0 到 1）；阻尼比不小于 1（不过冲）时为 0。
  */
 function peakOffset() {
     if (REVEAL_DAMPING >= 1)
@@ -6274,8 +5447,6 @@ function peakOffset() {
  *
  * 释放段是合成器动画，读不回「这一帧该有的值」以外的中间态；我们只用它把替身锁到最终落点，
  * 几十毫秒的采样误差看不见。
- * @param transform - `getComputedStyle(...).transform`。
- * @returns 纵向平移量（像素）；读不出来为 0。
  */
 function translateYOf(transform) {
     if (transform === 'none' || transform === '')
@@ -6299,48 +5470,12 @@ function translateYOf(transform) {
     __registry["chat/send-flight/send-morph.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 发送气泡的形变：从「一整张输入卡片」连续地长成「一条气泡」，整段在起飞那一刻算好、交给合成器。
+ * 发送气泡的形变：把输入卡片克隆、预先算好形状与文字层，再交给合成器从卡片收成气泡。
  *
- * 读者看到的是：提交的那一下，输入卡片原样浮起来一份——底色、圆角、描边与阴影、工具栏、草稿
- * 里的字一样不差；它一边飞，一边把多出来的东西收掉（工具栏两组各自贴着最近的那个角缩小、淡出，
- * 描边与阴影跟着形状缩、跟着淡），外形收成气泡，字跟着变窄的形状一行一行重新排，落地时正好就是
- * 那条真实的气泡。真实的输入框留在原地、已经清空，替身从它身上离开。
+ * 位移、形状、颜色和字层必须共用一条时间轴：任何一条单独跑快，卡顿时右边缘都会越出消息列。
+ * clip-path 与 background-color 上不了合成器；形状走壳的 scale，内容用反向 scale 抵消。
  *
- * **为什么全部预先算好。** 提交那一刻 dsh 的主线程很重（新会话从 hero 切到对话、空闲会话第一次
- * 挂消息，都是几十到一百多毫秒的长任务），这段动画要是有任何一件事留在主线程上，它就会在那里卡住。
- * 形状、位置、透明度都能交给合成器——**除了 `clip-path`**。那一条是实测否掉的：它单独放一段关键帧
- * 也一样上不了合成器，读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张还没收窄的
- * 卡片被平移出消息列。所以形状改走壳上的 `transform: scale`，内容再用一层互为倒数的 `scale` 抵回来
- * （见 `startMorph` 里的 `scaler`）。唯一绕不开布局的是「字跟着形状重新排」——但折行只在一串离散的
- * 宽度上变化，所以把它也提前做掉：
- *
- *   形状    一个壳，`scale` 从卡片尺寸收到气泡尺寸；壳里垫一层反向缩放，内容的视觉尺寸与位置一个像素
- *           都不变，变的只有 `overflow: hidden` 那个裁剪框。圆角不可合成，单独一层、留在主线程——
- *           它不参与右边缘。底色是壳里两层实色（卡片的、气泡的）靠透明度交叉淡换：`background-color`
- *           写进同一段关键帧时会掉回主线程（实测主线程一占住，形状与颜色一起定格），所以只用透明度。
- *   描边    壳的 `overflow: hidden` 会连元素自己的阴影一起裁掉，所以卡片的阴影与那一圈发丝描边挂在壳
- *           后面一个单独的「光晕」上：透明的盒子、原样的 box-shadow，跟着壳的外框缩放，一路淡掉。
- *   工具栏  卡片整张克隆下来（去掉底色与阴影，交给壳和光晕），工具栏左右两组各自贴着壳上最近的
- *           那个角走，边缩小边淡出——右边那组跟着右下角往里收，左边那组跟着底边往上收。
- *   字      起飞前先把「气泡的正文」在形变沿途的每一个宽度上排一遍，折行一样的归成一段，每段一层
- *           预先排好的字；时间到了哪一段就亮哪一层（`opacity` 的阶跃，合成器上切换）。多行时行高也
- *           要从输入框的 24 走到气泡的 22，行高按半像素分档，同样归进层里。第一段用的是输入框里那份
- *           草稿自己的克隆（引用、技能那些小块在输入框里另有样式），形变过半才换成气泡的写法。最后
- *           一层就是气泡自己的排版，交接时一个像素都不跳。
- *
- * 主线程上每帧只剩两件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行）写在最外层；形变段走完
- * 那一帧把壳归一（见 `startMorph` 里的 `compact`）。两件都在 `send-flight.ts` 的帧循环里。
- *
- * **替身凭什么长得像真卡片。** 五条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
- * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、**卡片那一层
- * 的面**（卡片自身与它两个伪元素的背景照抄那一刻算出来的值，见 `ComposerSurface`：玻璃的底就画在
- * 卡片的 `::before` 上，而模拟链一个 `data-*` 都不抄，只认规则的话整块卡面都会丢）、**克隆子树里每个
- * 元素的面**（同样照抄那一刻的值，起飞时跟替身现算的比一次、只把失配的写进去，见 `ElementSurface`），
- * 以及**祖先链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照
- * 着卡片的祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属
- * 性另有抄法，理由见 `snapshotComposer`。
- *
- * @module dsh-chat-ux/client/chat/send-flight/send-morph
+ * 替身靠克隆、计算样式、卡片与子树的绘制面、祖先链共同还原；祖先链只抄 class，不抄 data-*。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RISE_DELAY = exports.RISE_OMEGA = exports.FLIGHT_MS = void 0;
@@ -6351,53 +5486,16 @@ exports.startMorph = startMorph;
 exports.timeAtRise = timeAtRise;
 exports.springProgress = springProgress;
 /**
- * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
- * 后来固定下来：这条动效只留一个开关，多一个旋钮不值得。
+ * 整段飞行时长（毫秒）。只留开关，不开放时长。
  *
- * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
- * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
- * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
+ * 改它时同步重算 `文档/业务/发送动效.md` 的一帧对照表；兜底定时器按 FLIGHT_MS + RESCUE_MARGIN_MS 走。
  */
 exports.FLIGHT_MS = 350;
 /**
- * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
- * 推出来。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开——这是 PR #4 之前那套
- * 标定出来的轨迹，与纵向那条（`RISE_OMEGA`）的比值是 2.98 / 2.11 / 1.61 / 1.32 / 1.15。
+ * 位移与形变共用的角频率。
  *
- * **位移和形变必须同源**——同一条曲线、同一条时间轴。同源时右边缘是
- *
- *     right(u) = start.right + (end.right - start.right) × m(u)
- *
- * 无论哪一头冻住，它都只是这条曲线上的某个值，**恒在 `[start.right, end.right]` 里**。
- *
- * 这条等式今天由「两个 `transform` 关键帧 + 同一个 `FLIGHT_MS`」保证：形状（壳的 `scale`）与位移一起
- * 跑在合成器上，卡顿时一起停在同一格。**一旦给位移单独一条更快的曲线就出事**（曾经这么干过，回归成了
- * 读者报的「偶尔超出右侧聊天区」）：卡顿时位移跑在前面、形变还没收，右边缘甩出消息列。超出量
- *
- *     (W0 - W1) × (1 - m_冻结) − dx × (1 - across_当前)
- *
- * 卡在起手那几十毫秒时第一项接近满值。当时的抓帧实测：一整张还没收窄的卡片飞到了终点，右边缘顶到
- * 视口最右边（列右之外 59 px 以上）。**卡得越早、越久，甩得越远**——这正是「偶尔一点点、偶尔特别多」
- * 的来源。同一个理由还写在 `send-flight.ts` 的帧循环里：那里原来是「位移每帧由主线程写、跟着形状那条
- * 动画的 `currentTime` 走」；两条都上了合成器之后，依据换成了时间轴本身。
- *
- * 临界阻尼，不过冲：形状不该弹。
- *
- * **这个数同时定着「开局那几帧各自走多远」，取 7 是照这个量出来的。** 时间轴压进 `MORPH_END` 之后，
- * 弹簧的角频率相对那一段长度就偏大：取 16 时第一帧（提交后 16.7 ms 那一格）已经走掉 58.8%、第二帧
- * 90.4%——读者看到的是一上来就闪到半路；而提交那一刻 dsh 的主线程本来就重，首帧没提交出来，第一眼
- * 就是九成。取 7 之后那一串（每帧 16.7 ms）是 21.7 / 30.2 / 21.8 / 12.9 / 7.0 / 3.6 / 1.8 / 0.9（%），
- * 首帧丢了是五成二；想再小就往 6、5 走，代价见下一段。
- *
- * **再往下取要付两笔代价。** 一是收尾：形变在 135 ms 一刀定死，取到 4 时最后一格横向还剩 2%/帧（约 12 px）
- * 才归零，看得见一次顿。二是轨迹：横向拖得越久，「先横着离开输入卡片、再一路上升」就越像一条对角线
- * （当年 `ω = 7`、`MORPH_END = 0.7`、纵向又没有延迟的那一版整段方向角都在 -50° 上下，读者直接说
- * 「曲线像直线了」——同样是 7，差别全在后面那两项上）。
- *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 **2.84%**（`exp(-πζ/√(1-ζ²))`，只由阻尼比定、
- * 与 ω 无关），峰值落在 190 ms，之后一路落回目标——落定那一下的弹性就是它。
- *
- * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
+ * 两者必须同一条曲线、同一条时间轴，右边缘才始终落在起点和终点之间；单独调快位移会让未收窄的
+ * 卡片越出消息列。取 7 是为了压住首帧位移，同时避免形变收尾时出现可见顿挫。
  */
 const ACROSS_OMEGA = 7;
 /**
@@ -6406,32 +5504,19 @@ const ACROSS_OMEGA = 7;
  */
 const RISE_DAMPING = 0.8;
 /**
- * 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。
- *
- * **导出是为了让落点让位那条弹簧与它同源**：让位借的就是这条曲线的形状（同一个函数、同一个角频率），
- * 阻尼比与时间窗自己一套——见 `send-reveal.ts` 的 `REVEAL_DAMPING`。
+ * 纵向弹簧的角频率。落点让位复用它，只另配阻尼比和时间窗。
  */
 exports.RISE_OMEGA = 7.5;
 /**
- * 纵向起步的延迟（占整段的比例）：这一段里替身只横着走、一步都不上升。
+ * 纵向起步的延迟，占整段的比例。
  *
- * 横向那条放慢之后（见 `ACROSS_OMEGA`），前段的方向角本来会一直贴在 -40° ~ -64° 的斜线上，读者
- * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
- * 0.15 是四十五毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
- * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
- *
- * **导出是为了让落点让位与它同一时刻起步**：让位那条弹簧把窗口内的比例先换算到这段延迟之后
- * （见 `send-reveal.ts` 的 `atRise`），两者才读得出「气泡升多少、内容就让多少」。
+ * 延迟段只横移、不上升，接缝处弹簧速度为零；落点让位用同一延迟对齐两边进度。
  */
 exports.RISE_DELAY = 0.15;
 /**
- * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
- * 形变走的还是同一个弹簧，只是时间轴压到这一段的长度上。
+ * 形变收尾的位置，占整段的比例。
  *
- * 它曾经压在 0.45 是因为形变每帧由主线程写、必须早收；后来形变搬上合成器，一度放宽到 0.7。现在压回
- * 0.45，理由换了一条：形变越早收完，宽度就越早收到位，右边缘也就越早退进列内（算式见 `ACROSS_OMEGA`）。
- * 配上那一条曲线，二十毫秒走掉一成八、五十毫秒走掉五成八、百毫秒九成二，一百三十五毫秒就定形，剩下那
- * 一段只有上升与落定。
+ * 越早收完，宽度越早退进列内，右边缘越安全；剩下的时间只留给上升与落定。
  */
 const MORPH_END = 0.45;
 /** 上面那几条常量的合订本：`readTuning` 的兜底值，也是每段飞行默认用的那一套。 */
@@ -6500,7 +5585,7 @@ const MAX_TEXT_LAYERS = 14;
  *
  * **`font-size` 与 `line-height` 必须在。** dsh 给输入区定的字号挂在**祖先**的选择器上（hero 态一条、
  * 会话态一条），克隆一离开那条链，这两项就直接掉回 body 的 16px：实测逐路径对齐 37 对元素，有
- * **26 对字号对不上**（卡片 15px → 替身 16px，输入面 14px/24px → 16px/26px）。这一条不需要任何人
+ * **26 对字号对不上**（卡片 15px 对替身 16px，输入面 14px/24px 对 16px/26px）。这一条不需要任何人
  * 动样式，**每一段飞行都在发生**。
  *
  * 抄在外壳上不会夺走克隆里自己写死的字号：直接命中的规则赢过继承，所以只有那些**没写死**、本来
@@ -6618,9 +5703,6 @@ const MAX_ANCESTOR_LINKS = 24;
  *
  * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
  * `cloneNode`，放在读者按下回车的那一刻不会让它等。
- * @param input - 草稿的可编辑面。
- * @param card - 输入卡片。
- * @returns 抓到的快照；卡片量不到尺寸、或者草稿区不在卡片里时为 null。
  */
 function snapshotComposer(input, card) {
     const box = card.getBoundingClientRect();
@@ -6697,10 +5779,10 @@ function snapshotComposer(input, card) {
     // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
     //
     // 基准取**挂载点**，三种情形都对着验算过：
-    //   变量只定义在中间祖先上（挂载点上没有）→ 那边读出来是空串，两边不同，抄下来；不抄的话替身
-    //     上这个变量根本不存在，`var(--x)` 会掉进它的 fallback，而真卡片上它是有的。
-    //   挂载点与卡片取值相同 → 不抄，替身从挂载点继承到的就是同一个值。
-    //   中间祖先覆盖了挂载点的值、卡片沿用 → 两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
+    //   变量只定义在中间祖先上、挂载点没有：两边不同，抄下来
+    //     不抄的话替身拿不到这个变量，`var(--x)` 会掉进 fallback
+    //   挂载点与卡片取值相同：不抄，替身从挂载点继承到的就是同一个值
+    //   中间祖先覆盖挂载点、卡片沿用：两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
     //     那一份（覆盖值），替身拿到的与真卡片一致。
     // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
     const hostStyle = getComputedStyle(ghostHost());
@@ -6736,6 +5818,8 @@ function snapshotComposer(input, card) {
     }
     ancestors.reverse();
     const clone = card.cloneNode(true);
+    if (!(clone instanceof HTMLElement))
+        return null;
     scrub(clone);
     // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
     // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
@@ -6760,6 +5844,8 @@ function snapshotComposer(input, card) {
         ['box-shadow', 'none'],
     ]);
     const draft = clone.children[Array.from(card.children).indexOf(scroll)];
+    if (!(draft instanceof HTMLElement))
+        return null;
     // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
     // 工具栏会跟着往上跑。
     const scrollBox = scroll.getBoundingClientRect();
@@ -6804,10 +5890,6 @@ function alphaOf(color) {
 }
 /**
  * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
- * @param snapshot - 起飞前抓下来的输入卡片。
- * @param bubble - 终点那条气泡（此刻已经在布局里、被藏着）。
- * @param end - 气泡的视口矩形。
- * @returns 起好的形变；气泡量不到尺寸时为 null。
  */
 function startMorph(snapshot, bubble, end) {
     if (end.width === 0 || end.height === 0)
@@ -6898,8 +5980,8 @@ function startMorph(snapshot, bubble, end) {
     // Chromium 上也稳。所以起手那格与落定那格各画一层，中间靠上面那层的透明度淡过去——两层都是不
     // 透明的实色，按 α 叠正好就是两色的线性插值。
     //
-    // 绘制序（DOM 序就是绘制序，都是 `absolute`）：卡片背后那层底色 → 卡片自身 → `::before` 那层 →
-    // `::after` 那层 → 气泡色从透明淡到实。中间那三层都是**照抄卡片那一刻算出来的值**（见
+    // 绘制序按 DOM 序，依次是卡片背后的底色、卡片自身、`::before`、`::after`，最后是气泡色淡入
+    // 中间那三层都是**照抄卡片那一刻算出来的值**（见
     // `ComposerSurface`），所以画在卡片 `::before` 上的东西——玻璃的底与两片端色——跟着一起飞，
     // 不必认识它是什么。
     //
@@ -6957,8 +6039,7 @@ function startMorph(snapshot, bubble, end) {
     // 的「离 20×20 差多少」都比线性小一到两成——30 ms 冻到 90 ms 是 14.7 对 18.3，60 ms 冻到 90 ms
     // 给的是 13.4×20.4，垂直方向正好贴上气泡的圆弧。中段仍是圆角矩形（75% 圆度），不是胶囊。
     //
-    // 反过来把半径**压死**成一个恒定值（曾经试过收到的终值 20 px）会让卡顿椭圆变小四成，但离终点的
-    // 角更远，跳变更大：同一场景 7.5 变成 17.2。**「椭圆小」和「离终点近」不可兼得的，取后者。**
+    // 把半径压成一个恒定值会让卡顿椭圆更小，但离终点的角更远、跳变更大；这里优先保留终点形状。
     //
     // **两端都夹在短边的一半以内**：圆度不超过 1，半径就不会撞上浏览器那条「半径之和超过边长就等比
     // 缩小所有角」的静默规则——那条规则一接管，这条曲线说什么都不算了，极窄的气泡上还会连水平方向
@@ -7074,9 +6155,8 @@ function startMorph(snapshot, bubble, end) {
     // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
     // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
     // 左边，右边由宽度决定，两条边都单调。
-    // 纵向就是弹簧本身，**不补任何下限**（2026-10-18 读者定案）：过冲幅度 = 行程 × 1.52%，只由
-    // `RISE_DAMPING` 一个数决定。窄气泡、短行程弹得少，长行程弹得多——这是尺寸该有的差别，不是
-    // 要抹平的缺陷。这里曾经补过「至少 4 px / 8 px」的下限，那会让每一次飞行都弹同样一段。
+    // 纵向就是弹簧本身，**不补任何下限**：过冲幅度 = 行程 × 1.52%，只由 `RISE_DAMPING` 决定
+    // 窄气泡、短行程弹得少，长行程弹得多；补下限会让每次飞行都弹同样一段。
     const travel = run(mover, samples.map(sample => ({
         offset: sample.u,
         transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
@@ -7113,7 +6193,6 @@ function startMorph(snapshot, bubble, end) {
      * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
      * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
      * 起手那一格。
-     * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
      */
     const progress = () => {
         const raw = travel.currentTime;
@@ -7148,7 +6227,6 @@ function startMorph(snapshot, bubble, end) {
      *
      * 圆角在这之前已经是**视觉半径**（按那一格的可见短边算出来的，见 `textWindows` 之后那段）；归一
      * 之后壳的布局尺寸就是可见尺寸，同一把尺子，直接写回去即可。
-     * @param u - 这一刻的进度；还没走完形变段就什么都不做。
      */
     const compact = (u) => {
         if (normalized)
@@ -7191,8 +6269,8 @@ function startMorph(snapshot, bubble, end) {
             { borderRadius: final.radius + 'px' },
         ], { duration: CORNER_RECOVER_MS, easing: 'ease-out' });
     };
-    // 落定那格是气泡自己：不透明，把下面四层整个盖住。方向与从前相反（从前是卡面那层从 1 淡到 0），
-    // 因为卡面现在是照抄来的、可能半透明，压在气泡色上会偏色。
+    // 气泡色从透明淡到实，落定那格把下面四层整个盖住
+    // 卡面是照抄来的、可能半透明，压在气泡色上会偏色，所以必须由气泡色在上层淡入
     run(bubbleFill, between(0, tuning.morphEnd, sample => ({ opacity: String(sample.m) }), 2));
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
@@ -7303,8 +6381,6 @@ function ghostHost() {
  * 正中再掉回来。行内 + `!important` 是样式层级的顶格：级联顺序里作者声明的 `!important` 排在动画之上
  * （动画与过渡都在它下面）。也正因为这样，钉的时候要留意别把替身自己那几段动画驱动的属性一起钉死
  * ——`PAINT_PROPERTIES` 里因此没有 `opacity`。
- * @param element - 要钉的元素。
- * @param declarations - 属性名与值，按顺序写。
  */
 function pin(element, declarations) {
     for (const [name, value] of declarations)
@@ -7316,8 +6392,6 @@ function pin(element, declarations) {
  * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
  * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
  * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
- * @param bottomPadding - 气泡正文到底边的距离，字撑高外框时用。
- * @returns 按时间排好的段；第一段的内容由草稿克隆负责，这里只给它时间窗。
  */
 function textWindows(bubble, style, samples, finalLineHeight, bottomPadding) {
     const probeHost = document.createElement('div');
@@ -7431,9 +6505,6 @@ function textWindows(bubble, style, samples, finalLineHeight, bottomPadding) {
 }
 /**
  * 一层预先排好的正文：气泡里的内容原样克隆，排字属性从气泡上抄。
- * @param bubble - 终点那条气泡。
- * @param style - 它的计算样式。
- * @returns 还没定宽的字层。
  */
 function textLayer(bubble, style) {
     const layer = document.createElement('div');
@@ -7450,7 +6521,6 @@ function textLayer(bubble, style) {
 }
 /**
  * 一段只在 `[from, until)` 里亮着的透明度：两头是阶跃，合成器上切换。
- * @returns 关键帧；同一个 offset 出现两次，就是在那一刻跳变。
  */
 function stepOpacity(from, until) {
     const frames = [];
@@ -7485,8 +6555,6 @@ function morphProgress(u) {
 }
 /**
  * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
- * @param u - 时间占比，0 到 1。
- * @returns 位移进度；延迟段里恒为 0。
  */
 function riseProgress(u) {
     const shifted = (u - tuning.riseDelay) / (1 - tuning.riseDelay);
@@ -7499,8 +6567,6 @@ function riseProgress(u) {
  *
  * 让位要收在「气泡底边越过输入框上沿」那一刻，而那是一个**位移比例**、不是时间；纵向弹簧又不是
  * 匀速的，所以要反解一次。二分 24 次，误差压在一帧以下（0.06 的进度差在 60 fps 里就是两帧）。
- * @param progress - 纵向位移的比例（1 是落点）。
- * @returns 时间占比；进度不大于 0 时是 0。
  */
 function timeAtRise(progress) {
     if (!(progress > 0))
@@ -7521,10 +6587,6 @@ function timeAtRise(progress) {
  *
  * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
  * 就是它。`u` 超出 1 的部分由调用方夹住。
- * @param u - 时间占比，0 到 1。
- * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
- * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
- * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
  *
  * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
  * （见 `send-reveal.ts` 的 `springFrames`）。
@@ -7550,7 +6612,6 @@ function springProgress(u, damping, omega) {
  *
  * **只认说得通的值**：不是有限数、或越界（`morphEnd` 要在 0 与 1 之间、阻尼比夹在 0.05~1）就退回
  * 默认——一次笔误不该把动画钉死在半路。读不到 `localStorage`（隐私模式会直接抛）时同样退默认。
- * @returns 这一次要用的那一套参数。
  */
 function readTuning() {
     let raw = null;
@@ -7592,10 +6653,6 @@ function readTuning() {
  *
  * 壳的宽按 `sx` 收、高按 `sy` 收（详情见 `MORPH_END`：宽收得比高快），圆角会跟着被压成椭圆。CSS 的
  * `border-radius` 支持两个轴各写一个半径（`水平 / 垂直`），所以把缩放除回去，视觉上就还是正圆。
- * @param radius - 这一刻想要的视觉半径。
- * @param sx - 壳在横轴上的缩放。
- * @param sy - 壳在纵轴上的缩放。
- * @returns 给 `borderRadius` 用的值。
  */
 function cornerRadius(radius, sx, sy) {
     return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px';
@@ -7604,8 +6661,6 @@ function cornerRadius(radius, sx, sy) {
  * 一条 box-shadow 向外扩多少：取各层里最大的 `模糊半径 + 扩散半径`。颜色函数里的数字先剔掉。
  *
  * 光晕那一层要用它把阴影的外沿收回可见右边缘以内（见 `startMorph` 里 halo 的缩放）。
- * @param shadow - 计算样式里的 `box-shadow`。
- * @returns 像素数；读不出来当 0——阴影小一点，总比画到列外强。
  */
 function shadowSpread(shadow) {
     if (shadow === '' || shadow === 'none')
@@ -7627,9 +6682,6 @@ function shadowSpread(shadow) {
  * 抄的永远是**画出来的东西**，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），
  * 抄进去会和它打架。伪元素的定位几何也不在这份白名单里（元素那层根本用不上那几条），它由
  * `PSEUDO_PROPERTIES` 单独列上，理由见那里。
- * @param style - 这一层的计算样式。
- * @param properties - 抄哪些属性。
- * @returns 属性名与那一刻算出来的值。
  */
 function readDeclarations(style, properties) {
     return properties.map((name) => [name, style.getPropertyValue(name)]);
@@ -7638,10 +6690,6 @@ function readDeclarations(style, properties) {
  * 抄一个伪元素那一层。
  *
  * `content` 是 `none` 就是没有这个伪元素，给 null——替身那一层什么都不写，回落到本来的样子。
- * @param element - 带伪元素的元素。
- * @param pseudo - `'::before'` 或 `'::after'`。
- * @param properties - 抄哪些属性。
- * @returns 那一层的面；没有这个伪元素时为 null。
  */
 function readPseudoLayer(element, pseudo, properties) {
     const style = getComputedStyle(element, pseudo);
@@ -7654,8 +6702,6 @@ function readPseudoLayer(element, pseudo, properties) {
  *
  * 一路往上找第一个不透明的 `background-color`——多半是画布。到 `body` 都没找到就给 `transparent`：
  * 垫不出来就不垫，宁可不透，也不画一块来路不明的色。
- * @param card - 卡片。
- * @returns 一个颜色；找不到时是 `transparent`。
  */
 function behindColorOf(card) {
     for (let node = card.parentElement; node !== null; node = node.parentElement) {
@@ -7667,8 +6713,6 @@ function behindColorOf(card) {
 }
 /**
  * 把抄下来的一层「面」写到替身的某一片填充上。
- * @param element - 填充层。
- * @param declarations - 抄下来的属性；这一层不存在时为 null，那就什么都不写。
  */
 function paintSurface(element, declarations) {
     for (const [name, value] of declarations ?? [])
@@ -7694,17 +6738,10 @@ function colorParts(color) {
 /**
  * 发送气泡起飞时的样式。
  *
- * 两条规则。第一条：真实那一行在替身飞行期间藏着。用 `visibility` 而不是 `display`——藏起来的那一行
- * 必须**保留布局盒**，替身每一帧都要从它身上量终点在哪里。
+ * 真实行用 visibility 隐藏，保留布局盒供替身逐帧量终点；运行指示只给 min-height 与 overflow，
+ * 高度和行前 gap 的动画在 running-entry.ts 做。这一行没有淡入。
  *
- * 第二条：「深度求索中，用时 N 秒」那一行（鲸鱼尾巴 + 流光的运行指示）的**占位**，静态那一半。
- * 它只放两条常驻声明（min-height 与 overflow），把这一行从「flex item 的自动最小尺寸」里解放
- * 出来；高度与行前那道 gap 的动画在 running-entry.ts 里做。为什么 CSS 只能扫干净地、不能自己
- * 做这件事，见下面那道规则上方的注释。
- *
- * **没有淡入**（2026-10-18 读者点名去掉）：这一行的到达只靠长出来，不靠透明度，也没有位移。
- *
- * 属性名与 `send-flight.ts` 的 `FLYING_ATTRIBUTE`、以及 `index.tsx` 写门控属性的那两行必须一字不差。
+ * 属性名必须与 send-flight.ts、index.tsx 一字不差。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SEND_FLIGHT_CSS = exports.SEND_ON_ATTRIBUTE = void 0;
@@ -7739,40 +6776,10 @@ exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
     __registry["chat/send-flight/running-entry.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 「深度求索中，用时 N 秒」那一行的占位动画。
+ * 「深度求索中」那一行的零高入场。
  *
- * 它是 dsh 插在聊天列末尾的一行：插进 DOM 的那一帧若是满高，dsh 会立刻瞬时跟到底，气泡与它
- * 上面的内容一帧被顶上去（2026-10-18 读者实拍）。这里让它在插入的那一帧是零高、零 gap，之后
- * 180 ms 里一帧跟一帧长到自己的高度——dsh 的 ResizeObserver 每帧量到一个高一点的列，跟随就
- * 一帧跟一帧，那一下「顶」变成连续的上移。
- *
- * **为什么要动两个属性**：这一行是 flex 列（[data-chat-flow]）里的 flex item，占位由它自己的
- * height 与它行前那道 gap 一起决定。只做 height 会剩下 12 px 的瞬移，而 gap 那段 CSS 压不住
- * ——dsh 给这一行的 margin-top 来自一条特异性 0,7,0 的规则，@starting-style 里的起始值实测被
- * 丢弃。内联样式在级联里最高，所以两条都写内联。min-height 与 overflow 由样式表常驻（见
- * send-flight-styles.ts），这里不重复。
- *
- * **时序是这一处的全部要点**：选择器命中的时候是 React 插入之后的**微任务**里，早于这一帧的
- * 样式计算与布局——把两个属性写成零，这一帧 dsh 量到的就是零，它不滚；之后一帧长一点，它的
- * 跟随就一帧跟一帧。晚一步（等到 animationstart 或 rAF）这一帧已经按自然高度画过，就白做了。
- *
- * **但压成零还不够：起跑得再等两帧（见 `WARMUP_FRAMES`）。** 这一行的插入几乎总是落在提交那
- * 一记长任务里（实测 150 ms 量级，见 [性能风险](<文档/开发/性能风险.md>)），而 WAAPI 的时间轴
- * 在长任务里照走。动画若在微任务里就起跑，主线程一恢复，第一帧读到的已经是那一记长任务末尾的
- * 那一格——实测行高 **21.77 px**（自然高度 22）、dsh 一帧把整列顶上去 34 px，读者看到的就是
- * 「一下子把气泡和历史记录顶上出一段像素」。所以这里与 `send-flight.ts` 的替身同一套办法：
- * 先 `pause()` 在起手格，两拍 rAF 之后再 `play()`，起播后第一帧再核一次时间轴。
- * 预热这一两帧里它停在零高——读者看不见，dsh 的跟随也一步都不走。
- *
- * **这是唯一路径，不是回退**：2026-10-18 之前这里只在浏览器不认 interpolate-size 时才装，其余
- * 情形交给样式表里那条 @starting-style 过渡；实测那条 CSS 路径在 flex 列里一次都没生效
- * （overflow: clip 不解 flex item 的自动最小尺寸，插进去就是满高，height 过渡全程没动），已经
- * 删掉，只剩这一条。
- *
- * 与 dsh 的关系：不动它的 DOM、不动 scrollTop、不动它的跟随状态，只在插入的那一小段里借这一行
- * 自己的 height 与 margin-top 用一下，收尾把两个内联属性摘干净。
- *
- * @module dsh-chat-ux/client/chat/send-flight/running-entry
+ * 插入后的微任务里把 height 和 margin-top 压成零，再逐帧长回自然值，避免 dsh 的跟随把气泡
+ * 与历史一帧顶上去。先停在起手格，隔两拍再起跑，躲开提交那一记长任务。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installRunningEntry = installRunningEntry;
@@ -7804,7 +6811,6 @@ const WARMUP_MS = WARMUP_FRAMES * (1000 / 60);
 const ALIGN_TOLERANCE_MS = 24;
 /**
  * 装上占位动画。
- * @returns 卸载函数。
  */
 function installRunningEntry() {
     const grown = new WeakSet();
@@ -7826,8 +6832,6 @@ function installRunningEntry() {
 }
 /**
  * 把这一行的首帧高度与行前 gap 一起压成零，再动画回它们自己的值。
- * @param row - 刚插进来的那一行（可能不是 HTMLElement，直接跳过）。
- * @param grown - 已经处理过的元素；同一次出现只做一遍。
  */
 function growFromZero(row, grown) {
     if (!(row instanceof HTMLElement) || grown.has(row))
@@ -7909,25 +6913,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatUxConfigCard = ChatUxConfigCard;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 插件管理页上的插件配置卡片。
+ * 插件管理页上的配置卡片。
  *
- * dsh >= 0.1.6 会把一个 bundle 自己的配置渲染在 bundle 的页面上、`plugins.bundle.config` 座位里、
- * 按包名 keyed，位置在包描述和它下面那些行之间。标题、图标和面包屑由页面画；这个组件只是表单本身，
- * 也就是 `view: 'page'` 要的东西。
- *
- * 它是用页面自己的配置卡片所用的同一批零件搭出来的：开关是 `dsh-client-ui-primitives` 里共享的
- * `Switch`（dsh 设置页里那些开关都是它），光标那三档是同一个包里的 `SegmentedControl`，覆盖徽标
- * 是同一个包里的 `Tag`，字段节奏、控件几何和 `--dsw-*` 令牌来自官方插件配置页（见
- * `config-card-styles.ts`）。这里没有任何东西是从零设计的，因为一张夹在两张官方卡片中间的卡片
- * 不该看起来像来自别处。
- *
- * 开关与档位**即时写入**：点一下就存，和 dsh 自己的开关一样，没有「保存」那一步；写入在途时控件
- * 禁用，之后从 host 读回来的值才是「落地了」的权威——写入在设计上就会吞掉传输层与版本号的失败。
- *
- * 两个输入框（两条字体栈）多一道提交（回车或失焦才写）：它们要等读者把字打完，
- * 而每敲一个字符都是一次设置文档写入。打完之前那串字只活在这个组件里，不合法的那串一个字都不写。
- *
- * @module dsh-chat-ux/client/settings/settings-card
+ * 用与 dsh 设置页相同的 primitives 与设计令牌搭出开关行；开关和档位即时写入，并读回配置确认落地。
+ * locale 服务缺席时按浏览器语言显示。
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
@@ -8020,8 +7009,6 @@ const EN_COPY = {
 };
 /**
  * 渲染这个插件的配置：几个开关与光标动效的三档。
- * @param props - 绑定好的设置 scope、locale 服务，以及视图。
- * @returns 那个表单，或者页面要的一行摘要。
  */
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
@@ -8029,22 +7016,19 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
     }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
     const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language;
-    // dsh 的活跃语言优先，认得就跟着它——`zh-Hant` 这类子标签按主语言子标签归到中文。它缺席
-    // （没有 locale 服务）或拿不出内容时问浏览器语言；两条都认不出英文就用中文，中文在这里是
-    // 兜底，而不是「非英文即中文」的巧合。dsh 自己把认不出的语言落回英文，这一张卡片不跟它：
-    // 中文是这套文案的主要读者。
+    // dsh 的活跃语言优先，子标签按主语言归类；没有 locale 或取不到时问浏览器，仍认不出就用中文
     const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh';
     const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [failed, setFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
-    const autoFoldOn = storedAutoFold(snapshot.value);
-    const followOn = storedFollow(snapshot.value);
-    const sendOn = storedSendOn(snapshot.value);
-    const reelOn = storedHitReel(snapshot.value);
-    const pieOn = storedContextPie(snapshot.value);
-    const glassOn = storedGlass(snapshot.value);
-    const liveDiffOn = storedLiveDiff(snapshot.value);
+    const autoFoldOn = storedBoolean(snapshot.value, AUTO_FOLD_FIELD, settings_scope_1.DEFAULT_AUTO_FOLD);
+    const followOn = storedBoolean(snapshot.value, FOLLOW_FIELD, settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR);
+    const sendOn = storedBoolean(snapshot.value, SEND_FLIGHT_FIELD, settings_scope_1.DEFAULT_SEND_FLIGHT);
+    const reelOn = storedBoolean(snapshot.value, HIT_REEL_FIELD, settings_scope_1.DEFAULT_HIT_REEL);
+    const pieOn = storedBoolean(snapshot.value, CONTEXT_PIE_FIELD, settings_scope_1.DEFAULT_CONTEXT_PIE);
+    const glassOn = storedBoolean(snapshot.value, COMPOSER_GLASS_FIELD, settings_scope_1.DEFAULT_COMPOSER_GLASS);
+    const liveDiffOn = storedBoolean(snapshot.value, LIVE_DIFF_FIELD, settings_scope_1.DEFAULT_LIVE_DIFF);
     const caretMode = storedCaret(snapshot.value);
     const unavailable = snapshot.status === 'unavailable';
     const readOnly = snapshot.writable === false;
@@ -8063,105 +7047,74 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const writeField = async (field, next, readBack) => {
         setSaving(true);
         setFailed(false);
-        const accepted = await scope.set(field, next);
-        const landed = accepted && readBack(scope.getSnapshot().value) === next;
-        setFailed(!landed);
-        setSaving(false);
+        try {
+            const accepted = await scope.set(field, next);
+            const landed = accepted && readBack(scope.getSnapshot().value) === next;
+            setFailed(!landed);
+        }
+        catch {
+            setFailed(true);
+        }
+        finally {
+            setSaving(false);
+        }
     };
     /** 清掉用户层里的覆盖，让取值退回默认层。 */
     const reset = async (field) => {
         setSaving(true);
         setFailed(false);
-        await scope.unset(field);
-        const stillOverridden = userLayerHasField(scope.getSnapshot().user, field);
-        setFailed(stillOverridden);
-        setSaving(false);
+        try {
+            await scope.unset(field);
+            setFailed(userLayerHasField(scope.getSnapshot().user, field));
+        }
+        catch {
+            setFailed(true);
+        }
+        finally {
+            setSaving(false);
+        }
     };
-    /**
-     * 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架，几行开关共用。
-     */
+    /** 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架。 */
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendOn, disabled: controlsDisabled, label: copy.sendLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendOn) }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    /** 一行布尔开关；读回时沿用同一个字段和默认值。 */
+    const switchRow = (field, label, hint, checked, fallback) => rowChrome(field, label, hint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: checked, disabled: controlsDisabled, label: label, onChange: (next) => void writeField(field, next, section => storedBoolean(section, field, fallback)) })));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), switchRow(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, autoFoldOn, settings_scope_1.DEFAULT_AUTO_FOLD), switchRow(FOLLOW_FIELD, copy.followLabel, copy.followHint, followOn, settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), switchRow(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, sendOn, settings_scope_1.DEFAULT_SEND_FLIGHT), switchRow(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, reelOn, settings_scope_1.DEFAULT_HIT_REEL), switchRow(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, pieOn, settings_scope_1.DEFAULT_CONTEXT_PIE), switchRow(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, glassOn, settings_scope_1.DEFAULT_COMPOSER_GLASS), switchRow(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, liveDiffOn, settings_scope_1.DEFAULT_LIVE_DIFF), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
-/**
- * 「已覆盖」徽标与它旁边那个重置按钮，跟在开关行的标签后面。
- * @param copy - 当前语言的文案。
- * @param disabled - 写入在途、这一行不可用、或设置文档只读时锁住它。
- * @param onReset - 清掉用户层里的覆盖，让取值退回默认层。
- * @returns 那一小段 chrome。
- */
+/** 「已覆盖」徽标与重置按钮。 */
 function overrideBadges(copy, disabled, onReset) {
     return ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: disabled, onClick: onReset, children: copy.reset })] }));
 }
-/** 从 host 的值里读自动开合的开关。 */
-function storedAutoFold(value) {
-    return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
-}
-/** 从 host 的值里读工具行跟随的开关。 */
-function storedFollow(value) {
-    return value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
-}
-/** 从 host 的值里读聊天气泡动效的开关。 */
-function storedSendOn(value) {
-    return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
-}
-/** 从 host 的值里读命中率转轮的开关。 */
-function storedHitReel(value) {
-    return value?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL;
-}
-/** 从 host 的值里读准备态改动行数的开关。 */
-function storedLiveDiff(value) {
-    return value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
-}
-/** 从 host 的值里读上下文占用那枚饼的开关。 */
-function storedContextPie(value) {
-    return value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
-}
-/** 从 host 的值里读输入框那块玻璃的开关。 */
-function storedGlass(value) {
-    return value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+/** 从 host 的值里读一个布尔开关；字段缺席时用默认值。 */
+function storedBoolean(section, field, fallback) {
+    return section?.[field] ?? fallback;
 }
 /** 从 host 的值里读光标动效档位。 */
-function storedCaret(value) {
-    return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+function storedCaret(section) {
+    return section?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
 }
-/**
- * 只放行非空字符串。
- * @param value - 可能是 null、undefined 或空串的候选。
- * @returns 能用的那串字，或 undefined。
- */
-function nonEmpty(value) {
-    if (typeof value !== 'string' || value === '')
+/** 只放行非空字符串。 */
+function nonEmpty(candidate) {
+    if (typeof candidate !== 'string' || candidate === '')
         return undefined;
-    return value;
+    return candidate;
 }
 /**
  * 原始用户层里有没有这个字段。标记「已覆盖」看的是「在不在」，而不是值比不比得上默认值：
  * 一个恰好等于默认值的覆盖，仍然是覆盖。
- * @param user - 原始的用户分节，形状未知。
- * @param field - 要找的字段名。
- * @returns 用户层里点名了这个字段时为真。
  */
 function userLayerHasField(user, field) {
     if (typeof user !== 'object' || user === null)
         return false;
-    return field in user;
+    return Object.hasOwn(user, field);
 }
     };
 
     __registry["settings/config-card-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 插件配置卡片的样式。写法与插件管理页表达自己的方式一致：同一套设计令牌（`--dsw-*`）、
- * 同一套字段节奏、同一套控件几何——与 dsh 随附的插件配置页完全相同。一张夹在两张官方卡片
- * 之间的卡片应该读起来像这一页自己的一部分，而不是一个客人；何况这一页也没有可供借用的现成外壳。
+ * 插件配置卡片的样式。
  *
- * 开关本身不在这里画：它直接用平台提供的 `Switch`，也就是 dsh 设置页里那些开关用的同一个控件。
- * 这一份只负责把「标题 + 说明 + 控件」摆成官方开关行的样子（左侧一列文字，控件靠右）。
- *
- * 与聊天区样式表一样保持为纯文本，理由也相同：client bundle 是单文件自包含的，没有资源 URL。
- *
- * @module dsh-chat-ux/client/settings/config-card-styles
+ * 类名统一带插件前缀，颜色与节奏使用 dsh 的 --dsw-* 令牌，跟随主题切换。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARD_CSS = exports.CARD_CLASS = void 0;
@@ -8293,8 +7246,6 @@ const TRANSCRIPT_VIEW_FIELD = 'transcriptView';
 const TRANSCRIPT_VIEW_STANDARD = 'standard';
 /**
  * 补上这一次默认：表单就绪之前等着，就绪之后写一次就撒手。
- * @param forms - 客户端 context 上的 `configForms` 服务。
- * @returns 卸下订阅用的函数。
  */
 function applyTranscriptViewDefault(forms) {
     const form = forms.get(CHAT_SETTINGS_NAMESPACE);
@@ -8305,7 +7256,7 @@ function applyTranscriptViewDefault(forms) {
         if (!needsStandard(form.getSnapshot()))
             return;
         done = true;
-        void form.set(TRANSCRIPT_VIEW_FIELD, TRANSCRIPT_VIEW_STANDARD);
+        void form.set(TRANSCRIPT_VIEW_FIELD, TRANSCRIPT_VIEW_STANDARD).catch(() => undefined);
     };
     // 订阅之前先看一眼：共享表单常常比插件先到，那一次快照变化就不会再来了。
     check();
@@ -8313,8 +7264,6 @@ function applyTranscriptViewDefault(forms) {
 }
 /**
  * 这一刻该不该补。
- * @param snapshot - 共享表单的当前状态。
- * @returns 表单已就绪、可写，且用户层里没有显式档位时为真。
  */
 function needsStandard(snapshot) {
     if (snapshot.status !== 'ready')
@@ -8323,15 +7272,14 @@ function needsStandard(snapshot) {
         return false;
     return savedMode(snapshot.user) === undefined;
 }
-/**
- * 用户层里显式写下的档位。
- * @param user - 原始用户分节，形状未知。
- * @returns 显式写下的值；没写过、或写的是 `null` 时为空。
- */
+/** 用户层里显式写下的档位。 */
 function savedMode(user) {
-    if (typeof user !== 'object' || user === null)
+    if (!isRecord(user))
         return undefined;
     return user[TRANSCRIPT_VIEW_FIELD] ?? undefined;
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
     };
 
@@ -8464,23 +7412,10 @@ exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_MOTION_CSS = void 0;
 /**
- * 输入框插入符动效的样式。
+ * 插入符动效的样式。
  *
- * 三条规则：把原生插入符按下去，给挂那根的父元素补定位上下文，把自绘的那根画出来。前两条只认
- * `caret-motion.ts` 写上的标记——脚本半途没跑起来时一条规则都不命中，原生插入符还在。这是这套
- * 动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏。
- *
- * 需要压过的是 dsh 自己给每种面定的 caret-color：主输入框的 `.input`、作答框的 `.fieldInput`，
- * 都是一个类（0-1-0）。下面那两条是两个属性选择器（0-2-0）与「标签 + 属性」（0-1-1），都赢。
- *
- * 自绘的那根会落进别人的容器里当子元素，容器给子元素定的规则也会落到它身上——作答框的 `.field > *`
- * 就给每个子元素写了 grid-area、padding 与一整套字体。所以它自己的规则用两个同名属性选择器抬到
- * 0-2-0，并且把会改变盒子大小与位置的那几项全部显式写回去。
- *
- * 过渡的是 `transform` 而不是 `top`/`left`：VS Code 那边过渡的是布局属性，这里没有理由跟着付
- * 那份代价。80ms 与它同档，缓动也是它那个默认的 ease。
- *
- * @module dsh-chat-ux/client/chat/caret/caret-motion-styles
+ * 原生插入符的隐藏与自绘层的显示都由脚本先写标记再命中规则；脚本没跑起来时一条规则都不生效。
+ * 位移走 transform，不触发布局。
  */
 const caret_motion_1 = require("./caret-motion");
 /** 自绘插入符的宽度。VS Code 的 `cursorWidth` 默认是 0，渲染时按屏幕缩放落到 2px，同档。 */
@@ -8553,40 +7488,12 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLD_MOTION_CSS = void 0;
 /**
- * 折叠体的入场动画，以及卷帘门走的时候那扇门的排版。
+ * 折叠体入场与卷帘门期间的排版。
  *
- * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（`{open && children}`，见
- * ui-primitives/src/DisclosureRow.tsx），所以元素重新插入的那一帧是唯一能挂过渡的时机——
- * 用 `@starting-style` 给出起始值，展开体从 2px 上方淡入，而不是"啪"地出现。这一处覆盖
- * 聊天区里所有走 DisclosureRow 的行：工具卡片、思考行、系统提示、上下文注入、通用命令卡片，
- * 以及本插件自己接管的那两行文件变更。
+ * 展开体插入时用 @starting-style 做 2px 淡入；退场时元素同帧被移除，CSS 没有可过渡的旧值。
+ * 只认 data-disclosure-row 等语义属性，并排除聊天流之外与轮次头子树。
  *
- * 只动 opacity 与 translate，高度在插入瞬间就位。聊天区是单一滚动容器加滚动跟随，过程组体内部
- * 还有一层自己的 ResizeObserver 跟随，逐帧改写高度会让两边都去追一个移动的目标；分页锚点
- * 按元素位置记录，动画期间量到的位置也会漂。所以这里做的是"淡入"，不是"展开"。
- *
- * 收起方向的退场做不到：元素在同一帧就被移除，CSS 没有可过渡的旧值。要退场只能接管渲染。
- *
- * 选择器锚在 `data-disclosure-row` 上——那是 DisclosureRow 自己发的语义属性，不是带构建期
- * hash 的类名，所以不会随 dsh 发版失效。row 之后的所有兄弟就是展开体。
- *
- * 两处排除：
- *
- *   聊天区之外  `[data-disclosure-row]` 是全页共用的组件发出来的，文件预览、工作流面板那些地方
- *              也有，它们不该跟着聊天区的规则走，所以整条规则收在 `[data-chat-flow]` 里面。
- *   轮次头     dsh 在轮次结束时把这一轮的非最终正文都收进轮次头（那个「用时 X 秒」的按钮，
- *              `[data-turn-process]`）下面，展开它时那些过程成员是一起恢复可见的——它们内部的
- *              展开体全被当成「刚插入」，几十个一起从 2px 上方淡入，整块内容滑着出现，看着很不
- *              自然。过程成员由 dsh 自己发的 `data-turn-process-member` 标出来，整棵子树排除；
- *              轮次触发通知（`[data-turn-trigger]`）同理。
- *
- * 卷帘门那一条（`fold-glide.ts` 在门走的时候挂 `ROLLING_ATTRIBUTE`）：展开体常常是一列 flex，门框
- * 压着高度时 flex 会先把自带滚动的那张卡片挤没（它的自动最小高度是 0），于是 run_code 那种「代码
- * 卡片 + 输出卡片」的展开体会走成两段。门走的这两百毫秒里子元素一律 `flex: none`：每一张卡片都按
- * 自然高度排好，门框只负责裁。门停下来标记就撤，排版回到 dsh 原样——展开体的高度本来就是子元素
- * 自然高度之和，两种排法在终点上一个像素都不差。`!important` 是因为这两百毫秒里谁也不该改它。
- *
- * @module dsh-chat-ux/client/chat/fold/fold-motion-styles
+ * 卷帘门运行时子元素一律 flex: none，避免 flex 先挤扁自带滚动的卡片。
  */
 const dom_contract_1 = require("../../dom-contract");
 const fold_glide_1 = require("./fold-glide");

@@ -1,28 +1,10 @@
 /**
- * 运行中的过程组默认展开，等这一段过程结束（最终正文该出来了）再收回去。
+ * 运行中的过程组默认展开，过程结束后再收起。
  *
- * dsh 把一轮里相邻的过程内容——思考、工具、命令、写文件——收进一个过程组，组的开合由它自己那个
- * 行内控件管。「简洁」与「标准」两档下组体一开始是收起的，读者得自己点开才看得见模型正在做什么。
- * 「详细」与「完全展开」两档不收纳组体（组体本来就全开着），本模块一概不动手——判据是组根上的
- * `data-group-expanded-mode`。
+ * 阶段看组头里的 data-shimmer，开合看组体的 hidden，非收纳档看组根上的
+ * data-group-expanded-mode。读者碰过的组在本阶段内不再自动切换。
  *
- * 判断一个组处在哪个阶段，看的是组头里的 shimmer：dsh 只在过程段还没结束时给它挂 `data-shimmer`
- * （2026-09 之前叫 `data-text-shimmer`，见 `dom-contract`）。判断组体开合看它自己的 `hidden`——dsh
- * 用可搜索的隐藏，收起时设 `hidden="until-found"`，展开时整个摘掉。两个都是语义属性，不像它们周围
- * 的类名那样跟着每次构建变。组内的命令卡片也用 shimmer，所以阶段只在组头里查，不在整组里查。
- *
- * 收纳与否也要自己判：新版把组头在「详细」与「完全展开」两档里也留在 DOM 里，只是裹进一个带
- * `hidden` 的壳，所以「找不到组头」不再等于「这一档没有可折叠的组」——认组根上的
- * `data-group-expanded-mode`。
- *
- * 组仍然归读者所有：读者在某阶段里碰过某个组，本模块在这个阶段内不再动它。让位按阶段算——过程还
- * 在跑时读者把组折起来，说明他此刻不想看；这一段结束后收起本来也就没有意义了。
- *
- * 另有两处让路：dsh 的折叠动效正在驱动这一行时（`data-chat-motion`），以及读者把「收起时机」选成
- * 「下次发送时收起」时（`ui-chat.collapseTiming`），结束后的那一次收起都不归本模块——前者让官方的
- * 批量折叠走完，后者留给官方在下次发送时统一折叠。
- *
- * @module dsh-chat-ux/client/chat/fold/process-fold
+ * 官方折叠动效正在驱动某行时整块让路；「下次发送时收起」下，结束后的收起也留给官方。
  */
 
 import {CONVERSATION_SCROLL_SELECTOR, FOLLOW_THRESHOLD_PX, MOTION_ROW_SELECTOR, PROCESS_BODY_SELECTOR, PROCESS_EXPANDED_MODE_ATTRIBUTE, PROCESS_GROUP_SELECTOR, RUNNING_STATE, SHIMMER_SELECTOR} from '../../dom-contract'
@@ -63,8 +45,6 @@ const CLOSED = 'closed'
 
 /**
  * 给整页安装过程组的自动展开与收起。
- * @param deferCollapse - 读者是否把 dsh 的「收起时机」选成了「下次发送时收起」；现读，不缓存。
- * @returns disposer：断开 observer 并摘掉两个监听。
  */
 export function installProcessFold(deferCollapse: () => boolean): () => void {
     /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
@@ -76,7 +56,6 @@ export function installProcessFold(deferCollapse: () => boolean): () => void {
 
     /**
      * 把给到的这些组拉到它们当前阶段该有的样子。
-     * @param groups - 这一批要收敛的组；其中可能已经有被摘掉的。
      */
     const syncGroups = (groups: Iterable<HTMLElement>): void => {
         for (const group of groups) {
@@ -101,19 +80,17 @@ export function installProcessFold(deferCollapse: () => boolean): () => void {
             const detailed = separatorAt >= 0
             group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed)
             group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'))
+            if (!detailed) header.removeAttribute(LABEL_NAME_ATTRIBUTE)
             if (detailed) {
                 const label = headerText.slice(0, separatorAt)
-                // 和下面那条 spacing 一样：这条路径每个扫描帧都会走到，值没变就别写——同值写入也要让
-                // ::after 的 content 重新解析一遍。两个属性各守各的：非实时细节那一支只摘
-                // `LABEL_NAME_ATTRIBUTE`，两者可能一有一无。
+                // 每个扫描帧都会走到这里，值没变就不要写：同值写入也会让 ::after 的 content 重新解析
                 if (header.getAttribute(LABEL_ATTRIBUTE) !== label) header.setAttribute(LABEL_ATTRIBUTE, label)
                 if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label) header.setAttribute(LABEL_NAME_ATTRIBUTE, label)
                 const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`
-                // 这条路径每个扫描帧都会走到，值没变就别再写一次。
                 if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {
                     header.style.setProperty(LABEL_SPREAD_PROPERTY, spread)
                 }
-            } else header.removeAttribute(LABEL_NAME_ATTRIBUTE)
+            }
             // 这个阶段里读者已经决定过这个组的开合，别碰它。
             if (touchedIn.get(group) === phase) continue
             if (body.hasAttribute('hidden') === (phase === CLOSED)) continue

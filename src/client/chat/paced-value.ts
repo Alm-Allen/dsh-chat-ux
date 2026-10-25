@@ -1,14 +1,7 @@
 /**
- * 按节拍交出读数：流式期间最多每 `PACE_STEP_MS` 换一次，其余情形实时跟随。
+ * 按节拍交出读数：流式期间最多每 PACE_STEP_MS 换一次，其余情形实时跟随。
  *
- * 节拍只压「换数的频率」，不压真值——交给下游的仍是最新读数（只是晚到下一拍），所以一轮数字轮的动画
- * 不会被下一批参数打断，读者看到的每一次都是完整的一跳。这是有意的取舍：**优先让动画走完整，宁可读数
- * 滞后一拍**。过冲与位移只有 6px，一轮被打断就等于白动。
- *
- * 一拍都没到的那几批不是丢掉、是记住（最新读数一直写在 ref 里），到点应用的是那一刻的真值，所以陡增时
- * 不会一跳一跳地补播中间值。
- *
- * @module dsh-chat-ux/chat/paced-value
+ * 节拍只压换数频率，不压真值；到点应用的是那一刻的最新读数，避免数字轮动画被下一批参数打断。
  */
 import {useEffect, useRef, useState} from 'react'
 
@@ -20,11 +13,7 @@ import {useEffect, useRef, useState} from 'react'
  */
 export const PACE_STEP_MS = 300
 
-/**
- * @param target - 最新读数。
- * @param paced - 要不要按节拍走（流式期间）。
- * @returns 现在该显示的读数。
- */
+
 export function usePacedValue<T>(target: T, paced: boolean): T {
     const [shown, setShown] = useState(target)
     const targetRef = useRef(target)

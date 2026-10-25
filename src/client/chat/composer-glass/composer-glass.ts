@@ -1,17 +1,8 @@
 /**
- * 输入框那块玻璃的几何，外加卡片里几枚圆形按钮的认定：右下角那枚主操作按钮（发送 / 停止）、它旁边
- * 可能在的那枚独立停止圆，与左下角那枚加号（添加文件 / 调指令）。
+ * 输入框玻璃的几何与按钮标记。
  *
- * 玻璃只盖输入卡片那个矩形，而铺底的那一层（有会话内容时的座位）必须在卡片处让出一块洞来——CSS 挖不出
- * 「位置由某个子元素决定」的洞，所以这一处去量它：把卡片相对座位的上下边写进座位上的两个自定义属性，
- * 座位的两层背景拿它们让开那一段。
- *
- * 只在读者打开这个开关时安装（见 `index.tsx` 的 `syncGlass`）。要量的只有两个盒子，观察者也
- * 只有两个来源：座位与卡片各挂一个 `ResizeObserver`（卡片换行、加附件、上方卡片出现或消失，都会让
- * 这两个盒子的尺寸变），再加一个 `MutationObserver` 认座位出现与消失（切会话、进新会话页时整棵
- * 子树会重建）。
- *
- * @module dsh-chat-ux/client/chat/composer-glass/composer-glass
+ * 量出卡片相对座位的上下边，写进两个自定义属性；同时认主按钮、独立停止键与加号。
+ * 座位和卡片各挂一个 ResizeObserver，另用 MutationObserver 处理切换会话时的整棵重建。
  */
 import {
     GLASS_ADD_ATTRIBUTE, GLASS_BOTTOM_VARIABLE, GLASS_PRIMARY_ATTRIBUTE, GLASS_STOP_ATTRIBUTE,
@@ -34,7 +25,6 @@ const ADD_SELECTOR = 'button[aria-haspopup="listbox"]'
 /**
  * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
  *
- * @returns 卸下观察者、并把写过的属性都清干净的函数。
  */
 export function installComposerGlass(): () => void {
     const bound = new Set<HTMLElement>()
@@ -61,7 +51,9 @@ export function installComposerGlass(): () => void {
     }
 
     const resize = new ResizeObserver((entries) => {
-        for (const entry of entries) measure(entry.target as HTMLElement)
+        for (const entry of entries) {
+            if (entry.target instanceof HTMLElement) measure(entry.target)
+        }
     })
 
     /** 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次。 */
@@ -137,7 +129,6 @@ export function installComposerGlass(): () => void {
  * 不会因为这一处再被叫醒。反面是 dsh 哪天把独立那枚挪到别处、或给两枚换上不同的 class——那时它退回
  * dsh 原来的样子（与没有这一条时一样），不报错、也不牵连主按钮与玻璃。
  *
- * @param card - 输入卡片。
  */
 function markPrimary(card: HTMLElement): void {
     const buttons = card.querySelectorAll<HTMLButtonElement>('button')
@@ -152,9 +143,6 @@ function markPrimary(card: HTMLElement): void {
 /**
  * 主按钮旁边那枚独立的停止圆：紧邻它、且 className 与它逐字相同的那一个。
  *
- * @param buttons - 卡片里全部按钮，按文档序。
- * @param primary - 主按钮（最后一个）；认不出来时为 null。
- * @returns 要一并接管的那一枚；认不出来时为 null。
  */
 function independentStop(
     buttons: NodeListOf<HTMLButtonElement>,
@@ -170,9 +158,6 @@ function independentStop(
 /**
  * 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它（少一次属性写入）。
  *
- * @param button - 目标按钮。
- * @param attribute - 属性名。
- * @param on - 这一枚是不是当前要标记的那一枚。
  */
 function applyGlassMark(button: HTMLButtonElement, attribute: string, on: boolean): void {
     if (!on) {
@@ -187,7 +172,6 @@ function applyGlassMark(button: HTMLButtonElement, attribute: string, on: boolea
  *
  * 与主按钮同一个分寸：认不出就什么都不做（那枚按钮回到 dsh 原来的样子），不报错、也不牵连玻璃与
  * 主按钮——dsh 哪天把它换成别的口子（不再用 listbox），表现就只有这一处。
- * @param card - 输入卡片。
  */
 function markAdd(card: HTMLElement): void {
     const target = card.querySelector<HTMLElement>(ADD_SELECTOR)
@@ -200,8 +184,6 @@ function markAdd(card: HTMLElement): void {
 
 /**
  * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
- * @param node - 这次加上或去掉的节点。
- * @returns 它本身、或它的子树里有座位或卡片时为真。
  */
 function touchesGlass(node: Node): boolean {
     if (!(node instanceof Element)) return false

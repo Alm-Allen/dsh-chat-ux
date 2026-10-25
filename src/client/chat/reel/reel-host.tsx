@@ -1,20 +1,8 @@
 /**
  * 把数字轮挂进 dsh 自己渲染的那串读数旁边。
  *
- * 上下文占用那串百分比不是座位——dsh 在 ContextMeter 里直接渲染 `<span>26%</span>`，插件接不过来，
- * 所以这里不走座位：认到那一截之后挂一棵只属于自己的 React 树，渲染同一枚 `DigitReel`，两处的翻动
- * 必然同款。
- *
- * 挂的位置是那一截读数的**父级**（那颗按钮），不是读数自己里面——这一处唯一脆的地方就在这里。dsh 用
- * React 渲染 `<span>{reading}</span>`，读数一变 React 走 `setTextContent`：它在「首尾是同一个文本
- * 节点」时才只改 nodeValue，否则整段 `textContent =` 重设，**连带清掉我们塞进去的节点**。塞在读数里
- * 的写法因此每次读数更新都被抹掉一次（挂上、被抹、再挂），流式期间几乎看不见；更糟的是那一截的
- * `textContent` 会读成 `26%26%`，判据随即认不出读数，连饼也不再重画。挂在父级上没有这两回事：React
- * 只管它自己那两个子节点（图标与读数），我们这一个它不感知。
- *
- * 读数那一截留给读屏：视觉上由各处的让位规则收起，读出来还是那个读数。
- *
- * @module dsh-chat-ux/chat/reel/reel-host
+ * 读数不是座位，只能从 DOM 上认；轮子必须挂在读数的父级，不能塞进读数节点，否则 React 重设
+ * textContent 时会把它清掉。原读数保留给读屏。
  */
 import {createRoot} from 'react-dom/client'
 import type {Root} from 'react-dom/client'
@@ -31,10 +19,6 @@ const hosts = new WeakMap<Element, {root: Root; container: HTMLElement; text: st
  * 在读数那一截旁边放上（或更新）数字轮。
  *
  * 读数形状对不上就什么都不做：调用方照旧留着原文本。
- * @param host - 容器挂载的元素：读数那一截的父级，React 不管它的直接子节点。
- * @param reading - 读数那一截元素；只用来挂让位标记。
- * @param text - 当前读数，`26%` 这样。
- * @returns 这一帧接上了没有。
  */
 export function paintReel(host: HTMLElement, reading: HTMLElement, text: string): boolean {
     if (READING_PATTERN.exec(text) === null) return false
@@ -59,7 +43,6 @@ export function paintReel(host: HTMLElement, reading: HTMLElement, text: string)
 
 /**
  * 卸下这一处的数字轮：原文本回到原样。
- * @param reading - 读数那一截元素；让位标记挂在它上面，容器在它的父级里。
  */
 export function releaseReel(reading: HTMLElement): void {
     const host = reading.parentElement

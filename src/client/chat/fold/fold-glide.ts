@@ -1,56 +1,10 @@
 /**
- * 折叠时把下方内容推开，展开体自己像卷帘门一样拉下来。
+ * 折叠时压缩真身高度，让下方内容随布局让开。
  *
- * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（{open && children}），所以 CSS 拿不到可过渡的
- * 旧值——高度动画在聊天区做不到，纯 CSS 的路是死的。这一处在 DOM 之外接管，办法是**把点击拦下来**：
- * 捕获阶段 stopPropagation()，React 这一下收不到，真身留在原位、还是展开态，于是可以直接压它的
- * 高度，压到底再把点击原样交还。动真身意味着没有克隆体，也就没有克隆体那一串麻烦（继承链、坐标、
- * 滚动、节点上限）。
+ * 收起方向在捕获阶段拦下点击，压到终点后再重放，React 才卸掉展开体。只接管聊天流与任务清单；
+ * 过程组压组根而不是组体，避免 dsh 的组内跟随把内容滚走。
  *
- * 只有一条路：**压真身的高度**。高度是布局的一部分，压下去多少，下方内容就真的让开多少——读者看到
- * 的位移不是补出来的假象，是文档流本身。
- *
- *   展开方向  等 React 把展开体插进来之后动手——观察回调仍在绘制之前，此时把高度压回起点，再动画到
- *             全高。布局逐帧长出来，下方内容是真的被推开，不需要 FLIP。
- *   收起方向  拦点击，真身留在原地、还是展开态，于是能像展开方向那样把高度压回终点，压到了再放行，
- *             React 这才卸掉真身——而它此时已经不占空间，收起态那套接上来时不会跳。
- *
- * 压谁的高度分三族：
- *
- *   DisclosureRow 的行  压展开体自己。它是普通块级，没有内部滚动。
- *   过程组头            压**组根**，不压组体。组体自己带滚动条，而 dsh 的 use-process-scroll 观察的
- *                       正是它：压它会让 follow.toBottom 把内容平滑滚到底，门在眼前变成一列往上跑
- *                       的字。组根只是外面那层盒子，组体住在里面、尺寸一个像素都不变，跟随逻辑收不到
- *                       任何 ResizeObserver 通知；而组根的高度是布局的一部分，压下去下方内容照样真的
- *                       让开。
- *   任务清单头          也压面板根。面板体里那道 8px 的 gap 与上下 padding 都住在清单外面，压清单
- *                       本身会在终点留下一截落差；压根则把「清单一整块」连同它占的间距一起收起。
- *                       它不是聊天流，收起后也不用把滚动交还给聊天跟随。
- *   不参与              轮次头（那个「用时 X 秒」的按钮）与轮次触发通知：它们开合的是整轮内容（含过程
- *                       组与嵌套滚动），压不得，留 dsh 原本的瞬时开合反而最稳。
- *
- * 门只走看得见的那一段。高度必须从起点走到终点，布局才会真的让开，可高度动画的行程就是全高：八千像素
- * 的思考内容会在 200ms 里被一次性跑完，看起来是直接弹出。所以高度分两段跑，分界点就是 visibleReachOf
- * 量出来的可见段——读者看得见的那一段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间一口气走完。
- * 这样不管展开体是两百像素还是两万像素，读者眼前那道门的速度都一样，两段之间也是连续的动画而不是瞬间
- * 跳变。
- *
- * 快照只在**读者**点击时取，而且只取一个数：展开方向要的起点高度。流式追加与分页加载历史没有点击，
- * 因此不会有动画；本插件的自动开合派发的也是真正的 click、走的是同一条捕获路径，所以它另外被
- * isProgrammaticToggle() 认出来放过——那些场合内容本来就该自然生长。
- *
- * 门是一整扇，不是几扇。展开体常常是一列 flex（工具行的 `.bodyWrap`、文件变更行的展开体），高度被
- * 压着的时候 flex 会先去挤能缩的那个子元素——自带滚动的卡片（run_code 的代码卡片）自动最小高度是
- * 0，于是它先被挤没，不能缩的输出卡片占满门框：读者看到的是输出先拉出来、代码再从它上面长出来，
- * 收起时反过来，一扇门走成了两段。所以门在走的时候给子元素一律 `flex: none`（见
- * `fold-motion-styles.ts`），每一张卡片都按自己的自然高度排好，门框只负责裁。
- *
- * 门也不跟着主线程跳。高度动画在主线程上走，卡住多久它就停多久，而 WAAPI 按墙上时间算进度，卡完那一帧
- * 会一口气跳到「本该到的地方」。展开 run_code 时恰好有这么一下：代码卡片一露头就被
- * IntersectionObserver 叫去做语法高亮，那一次渲染实测占掉五十毫秒上下。所以卷帘门看着帧间隔，卡住的
- * 那一段不算进它的时间（见 holdThroughStalls）：门停一下，接着从读者上一眼看到的地方往下走。
- *
- * @module dsh-chat-ux/client/chat/fold/fold-glide
+ * 高度动画按可见段分段；主线程卡顿时暂停推进，避免恢复后一帧跳完视口外那段。
  */
 
 import {
@@ -181,10 +135,7 @@ let foldBusyUntil = 0
 /**
  * 卷帘门正在跑。
  *
- * 位置在这一段里归动画管：这中间要是有人把滚动位置拽到底，正被拉着的高度会跟它一起动，看起来是抖。
- * 从前那个「跟随守护」就是照着它让路的，守护跟「token 淡入」一起删掉之后一度没有查询者；2026-10-18
- * 起「工具行跟随」（`follow/call-appeared.ts`）重新在补位之前问它一句。
- * @returns 上一次动画排到的时刻还没过时为真。
+ * 这一段时间里位置归动画管；工具行跟随在补位前会先问它，避免拽动正在变化的高度。
  */
 export function isFoldGlideBusy(): boolean {
     return performance.now() < foldBusyUntil
@@ -197,7 +148,6 @@ const markFoldBusy = (): void => {
 
 /**
  * 装上折叠位移。只有读者点击引起的变化会补动画。
- * @returns 卸载函数。
  */
 export function installFoldGlide(): () => void {
     if (typeof document === 'undefined' || document.body === null) return () => {
@@ -217,8 +167,6 @@ export function installFoldGlide(): () => void {
      * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（max-height:
      * min(400px, 50vh)）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者看得见的
      * 地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
-     * @param element - 要量的真身。
-     * @returns 终点偏移，单位像素；为 0 时说明它整个在视口外。
      */
     const visibleReachOf = (element: HTMLElement): number => {
         const rect = element.getBoundingClientRect()
@@ -261,8 +209,6 @@ export function installFoldGlide(): () => void {
      * 这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组头」**：
      * 组体里的每一个工具行、思考行都住在 [data-step-process] 里。只看 closest 的话，点一行工具调用
      * 会被当成展开整个过程组，那个组的组根就会代替那一行被压扁。
-     * @param control - 被点的开合控件。
-     * @returns 它控制的过程组体；不是组头时为 null。
      */
     const processBodyOf = (control: HTMLElement): HTMLElement | null => {
         const controls = control.getAttribute('aria-controls')
@@ -275,8 +221,6 @@ export function installFoldGlide(): () => void {
      * 读者此刻是不是贴着会话底部。
      *
      * 这一份从被点的控件往上找滚动容器——与 follow-tail.ts 那份同名判据的入口不同，判据相同。
-     * @param control - 被点的开合控件。
-     * @returns 滚动位置落在底部阈值之内时为真。
      */
     const controlAtBottom = (control: HTMLElement): boolean => {
         const scroller = control.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
@@ -291,8 +235,6 @@ export function installFoldGlide(): () => void {
      * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
      * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
      * 读者在打字，不是在滚动。
-     * @param atBottom - 折叠开始那一刻读者是不是贴着底部。
-     * @returns 这一轮折叠的收尾凭证。
      */
     const watchFold = (atBottom: boolean): FoldWatch => {
         let moved = false
@@ -328,7 +270,6 @@ export function installFoldGlide(): () => void {
      * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里。
      *
      * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
-     * @param watch - 这一轮折叠的收尾凭证。
      */
     const handBackFollow = (watch: FoldWatch): void => {
         if (!watch.atBottom) {
@@ -351,8 +292,6 @@ export function installFoldGlide(): () => void {
      * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
      * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
      * ROLL_MS。
-     * @param watch - 这一轮折叠的收尾凭证。
-     * @param roll - 展开方向正在走的那条动画；没有时为 null。
      */
     const settleAfterFold = (watch: FoldWatch, roll: Animation | null = null): void => {
         if (roll === null) {
@@ -377,7 +316,6 @@ export function installFoldGlide(): () => void {
      * 动画管」的时间。
      *
      * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
-     * @param roll - 正在走的那条卷帘门动画。
      */
     const holdThroughStalls = (roll: Animation): void => {
         let lastFrameAt = 0
@@ -413,9 +351,6 @@ export function installFoldGlide(): () => void {
      * 收起方向的高度动画带着 fill: 'forwards'，把真身锁在终点高度上。React 若还没收下这次点击，
      * cancel() 就会把高度整块还给 CSS——一次从终点弹回全高的跳变，足够把 dsh 的跟随甩出去。所以
      * 等到 DOM 那边真的收拢了才撤；等够几帧仍然没收拢，那说明这次点击确实没有折叠，只好撤回原样。
-     * @param settled - DOM 那边已经收拢了。
-     * @param done - 可以撤掉动画与内联样式了。
-     * @param attempt - 已经等了几帧。
      */
     const confirmCollapsed = (settled: () => boolean, done: () => void, attempt = 0): void => {
         if (settled() || attempt >= SHUT_CONFIRM_FRAMES) {
@@ -433,8 +368,6 @@ export function installFoldGlide(): () => void {
      *
      * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
      * 一起交回来。
-     * @param target - 要压的真身。
-     * @returns 把内联样式与标记还原到开工之前。
      */
     const beginHeightClip = (target: HTMLElement): (() => void) => {
         const previousOverflow = target.style.overflow
@@ -452,16 +385,11 @@ export function installFoldGlide(): () => void {
     /**
      * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
      *
-     * 只有高度这一道，但它分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
-     * 曾经在这里叠过一层按可见段走的裁剪，那是错的——裁剪只影响绘制，而高度已经先长出来了，两道进度
-     * 相同、行程不同，差值就是一片空白。
+     * 只有高度这一道，但分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
+     * 不能再叠按可见段走的裁剪；高度已经先长出来，两种进度行程不同，会露出空白。
      *
-     * rect 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释——不换成 border-box，
-     * 动画就会多跑出上下 padding 那一段，收尾 cancel 时再缩回去，看起来像「内间距在动」。
-     * @param target - 要拉开的真身：展开体自己，或过程组的组根。
-     * @param from - 起点高度。展开体从 0 长起；组根从「组头那一段」长起，组体就藏在它下面。
-     * @param easing - 整扇门的时间曲线；任务清单用自己的，聊天流里的长内容仍走默认那条。
-     * @returns 那条动画，收尾要等它走完；这一次没起动画时为 null。
+     * rect 是 border-box 高度，而 CSS 的 height 默认按 content-box 解释；不换成 border-box，
+     * 动画会多跑上下 padding，收尾时再缩回去。
      */
     const rollOpen = (target: HTMLElement, from: number, easing = 'ease-out'): Animation | null => {
         markFoldBusy()
@@ -496,7 +424,6 @@ export function installFoldGlide(): () => void {
      *
      * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
      * VISIBLE_SHARE 的时长卷上去。
-     * @param fold - 要压的真身、终点高度、以及「React 收拢了」的判据。
      */
     const rollShut = (fold: HeightShut): void => {
         markFoldBusy()

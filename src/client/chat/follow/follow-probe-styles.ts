@@ -1,14 +1,8 @@
 /**
- * 「工具行出现了」这条探针：一条 1 ms 的动画，只为让 animationstart 响一次。
+ * 「工具行出现了」的探针样式。
  *
- * 两帧都写 opacity: 1，所以画面上什么都不变；是 1 ms 而不是 0，是因为零时长的动画根本不会开始、
- * 也就不会派发事件。
- *
- * 整条规则收在门控属性下（挂在 documentElement 上，见 call-appeared.ts）：开关关着时属性不在，
- * 这条规则一条都不命中。作用域再收一层到聊天列——聊天区以外的元素在样式匹配时被祖先过滤直接跳过，
- * 这是[性能风险](<文档/开发/性能风险.md>)里量过的那个差别；流式期间是增量重算，只对新节点匹配。
- *
- * @module dsh-chat-ux/client/chat/follow/follow-probe-styles
+ * 一条 1ms 且首尾透明度相同的动画，只为让 animationstart 响一次；零时长动画不会开始。
+ * 规则收在门控属性与聊天列作用域下，关闭时一次都不命中。
  */
 import {CALL_ROW_SELECTOR, CHAT_FLOW_SELECTOR, THINK_ROW_SELECTOR} from '../../dom-contract'
 

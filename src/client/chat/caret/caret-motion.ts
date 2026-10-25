@@ -1,49 +1,8 @@
 /**
- * 输入框的插入符动效：把浏览器画的那根换成自己画的，位移走过渡。
+ * 输入框插入符动效：用自绘插入符替代浏览器那根，移动时走过渡。
  *
- * 浏览器的插入符除了颜色和闪烁，没有任何可以动画的属性，所以「移动时有过渡」只有一条路：
- * 用 `caret-color: transparent` 把它按下去，自己画一根。接管的是输入区座位里的两种面：
- *
- *   富文本面  dsh 的主输入框（`[data-composer-input]`），contenteditable。坐标是浏览器给的：
- *             折叠 Range 量出来就是。
- *   纯文本面  输入区里的 textarea——提问卡片的作答框、排队消息的行内编辑框（子智能体跑着时追加
- *             的那几条就在这里改）。textarea 的选区不进 DOM，Range 量不到，只能搭一层镜像：
- *             把样式抄到一个看不见的 div 上，文本从插入符处断开，量断点那一截的矩形。
- *
- * 几条事实决定了它怎么写，都在真实 Chromium 里量过：
- *
- *   挂哪儿   自绘的那根挂在可编辑面的父元素上（主输入框是 dsh 的 `.grow`）。富文本面和它同在一个
- *            滚动内容里，输入框内部滚动时两者的视口坐标一起变、相对坐标恒定——所以滚动同步不需要
- *            任何监听。父元素不是定位上下文时（作答框的 `.field`、排队行都是 static），给它挂一个
- *            标记，样式表把它变成 `position: relative`：它们都没有绝对定位的后代，这一下不改任何
- *            布局。textarea 自己是滚动容器，自绘的那根挂不进去，所以它内部滚动时要跟着重量一次，
- *            滚出可视区的那一截也要自己裁掉。
- *   量得到   折叠 Range 在文本里、在装饰器两侧、在折行处都给得出精确到小数像素的矩形。镜像那一截
- *            带着插入符后面的全部文本：软换行按整词走，只放前半截的话，正在打的那个词会留在上一行。
- *   量不到   光标贴着 `<br>` 时 Chromium 给 `0×0` 零矩形，而空段落与软换行正是这条路的常客。
- *            这时量那个换行符自己——它的矩形永远只有一行，高度还正好是字高。量不出来（附近没有
- *            换行符）就把原生插入符还回去：宁可不动手，也不能让读者看不见光标。
- *   颜色     每一种面的原生插入符颜色不一样（主输入框与作答框是品牌蓝，排队编辑框跟字色走），
- *            所以接管那一刻先读它自己算出来的 caret-color，自绘的那根照着画。
- *
- * 什么时候动、什么时候不动，由 {@link CaretMotionMode} 的三档决定：
- *
- *   无论何时  动。与 VS Code 的 `on` 档同义：每一格都滑一下（代价是快速连打时插入符略微落后于
- *             新字符）。默认档。
- *   移动时    只在方向键、点击这类显式移动上放过渡，打字瞬时——VS Code 默认的 `explicit` 就是
- *             它。判据也一样：看这次挪窝是不是打字引起的。这里是听 `beforeinput`：它会先于
- *             `selectionchange` 到达，所以「这一帧有输入」比事后从位置上猜要准。
- *   关        根本不动手：不建自绘的那根、不给可编辑面写标记，浏览器自己的插入符一直在。这套动效
- *             唯一真正会伤人的失败方式是读者看不见光标（原生那根被按下去、自绘那根没画出来），
- *             所以「关」必须是彻底的——它同时是这条路的兜底。
- *   刚露头    不动。从藏到露的那一帧先把位置写好，下一帧才把过渡接回来，否则它要从上次停的地方
- *             滑过来。
- *   合成中    照常，还是这一根。合成期间的每一次更新照样发 selectionchange、选区照样是折叠的
- *             （用 CDP 往真页面里注过输入法合成，逐帧量过），所以自绘的这根跟得住。早先这里
- *             是反过来做的——合成期间把原生插入符还回去——结果是打字的时候读者看到的是另一套
- *             光标：粗细不一样、渲染不一样，而且它不会动。候选框由浏览器自己定位，与这里无关。
- *
- * @module dsh-chat-ux/client/chat/caret/caret-motion
+ * 富文本面用折叠 Range 测量；textarea 的选区不进 DOM，需要镜像层。测量失败时必须把原生插入符
+ * 还回去，原生透明而自绘未画出，是这套动效唯一会伤到读者的失效方式。
  */
 import {COMPOSER_INPUT_SELECTOR, COMPOSER_TEXTAREA_SELECTOR} from '../../dom-contract'
 
@@ -102,8 +61,6 @@ export interface CaretMotionHandle {
 
 /**
  * 给整页装上插入符动效。
- * @param read - 现读的档位。每一帧同步时读一次，所以运行期改档不必重新安装。
- * @returns 卸载入口与重同步入口。
  */
 export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHandle {
     /** 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项。 */
@@ -264,7 +221,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
      *
      * 内容盒的第一行开头就是光标该在的地方，但那一行有多高、字盒在行里怎么摆，得从别处问。
      * 探针每帧现建现删，而且**不碰 dsh 的任何容器**——往 `.grow` 里塞节点会惊动 React。
-     * @returns 视口里的左、上、高；量不出来给 null。
      */
     const emptyLineBox = (input: HTMLElement): CaretBox | null => {
         const body = document.body
@@ -297,7 +253,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
 
     /**
      * 富文本面上这一处折叠选区的视口矩形。
-     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
      */
     const measureRich = (input: HTMLElement, range: Range): CaretBox | null => {
         const rect = range.getBoundingClientRect()
@@ -336,7 +291,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
      * 右缘，也就是上一行的行尾——和原生那根在 End 之后画的位置一致。
      *
      * 镜像挂在 body 上、量完就摘，**不碰 dsh 的任何容器**。
-     * @returns 量不出来时为 null：调用方要把原生插入符还回去。
      */
     const measurePlain = (input: HTMLTextAreaElement, upstream: boolean): CaretBox | null => {
         const body = document.body
@@ -386,7 +340,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
     /**
      * 把一个视口矩形裁进 textarea 露出来的那一段。自绘的那根不在 textarea 里面，textarea 的裁剪管
      * 不到它：内部滚动时插入符滚出可视区，原生那根跟着消失，这一根也得自己消失。
-     * @returns 裁剩的矩形；整个被裁掉时为 null。
      */
     const clipToField = (input: HTMLTextAreaElement, box: CaretBox): CaretBox | null => {
         const inputRect = input.getBoundingClientRect()
@@ -456,7 +409,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
 
     /**
      * 把自绘的光标放到这个视口矩形上。
-     * @param paused - 这一帧不播位移过渡：刚露头，或者 `move` 档下的一次打字。
      */
     const draw = (layer: CaretLayer, box: CaretBox, paused: boolean): void => {
         // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量。
@@ -489,7 +441,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
 
     /**
      * 这一帧的光标归谁。
-     * @param typing - 这一帧里来过一次输入。
      */
     const sync = (typing: boolean): void => {
         const mode = read()
@@ -554,8 +505,12 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
         if (!target.hasAttribute(CARET_ATTRIBUTE)) adoptCaretColor(target, layer)
         // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写。
         const box = target instanceof HTMLTextAreaElement ? clipToField(target, measured) : measured
-        if (box === null) hide(layer)
-        else draw(layer, box, mode === 'move' && typing)
+        if (box === null) {
+            hide(layer)
+            target.setAttribute(CARET_ATTRIBUTE, '')
+            return
+        }
+        draw(layer, box, mode === 'move' && typing)
         target.setAttribute(CARET_ATTRIBUTE, '')
     }
 
@@ -596,8 +551,6 @@ export function installCaretMotion(read: () => CaretMotionMode): CaretMotionHand
 
 /**
  * 一个元素是不是本模块接管的可编辑面，是哪一种。
- * @param element - 通常是此刻拿着焦点的那个元素。
- * @returns `rich` 是主输入框，`plain` 是输入区里可编辑的 textarea，都不是时为 null。
  */
 function surfaceOf(element: HTMLElement): SurfaceKind | null {
     if (element.matches(COMPOSER_INPUT_SELECTOR)) return 'rich'

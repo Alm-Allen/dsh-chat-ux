@@ -1,18 +1,8 @@
 /**
- * 上下文占用那枚比例饼的样式。
+ * 上下文占用饼的样式。
  *
- * 这一处只管三件事：把原环留成占位（不塌格）、给出色阶、给出未占用那一角的底色。饼本身是浏览器
- * 半区画上去的——内联 SVG 作为那颗按钮的背景图，几何在 JS 里算。为什么不用伪元素 + conic-gradient
- * （那种写法不碰内联样式，本来更干净）：dsh 的主题把 corner-shape 全局设成 superellipse(1.5)
- * （连 :before/:after 一起），任何 border-radius: 50% 都画成圆角方块；而伪元素又只能从自定义属性里
- * 取值。改成自己画一张图，这两处一起绕开。
- *
- * 色阶与命中率同一套机制（见 `../ramp`）：六个色标、每 4 个点一个锚点，锚点之间由浏览器的
- * `color-mix(in oklch, …)` 插值；**20% 之前一律绿、40% 起一律红**。色只写在这一份样式表里读数那一
- * 截的 `color` 上，浏览器半区把它读出来涂进 SVG——读到的必须是求值后的真实颜色，所以这一处的色值
- * 不能写成 `var()` 串。
- *
- * @module dsh-chat-ux/client/chat/context-meter/context-meter-styles
+ * 这里只给原环留占位、定义色阶与未占用底色；饼本身由 JS 画成内联 SVG 背景图。
+ * 色值必须保持字面值，JS 会从计算样式里读出求值后的颜色。
  */
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, RAMP_SPAN_HIGH, RAMP_SPAN_LOW} from '../ramp'
 import {REEL_TAKEOVER_ATTRIBUTE} from '../reel/reel-styles'

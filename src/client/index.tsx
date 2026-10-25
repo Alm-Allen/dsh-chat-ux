@@ -1,16 +1,7 @@
 /**
- * dsh-chat-ux —— 浏览器半区。
+ * dsh-chat-ux 的浏览器半区。
  *
- * DSH 通过 `exports["./client"]` 加载这个模块。产物由 `tsc -p tsconfig.client.json` 加上
- * `scripts/wrap-client.cjs` 生成，后者把 CommonJS 产物包成客户端模块加载器要求的那个单文件
- * `window.__ModuleLoader__.load({...})` bundle。
- *
- * 读者看得见的一切都归这一半：聊天区样式表、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、输入框插入符的位移过渡、提交后气泡的起飞、输入框那块玻璃、轨迹视图里
- * 收掉输入区、网页端「工作步骤展示」的默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
- * 上改的值就是这样到达效果里的，不用刷新。
- *
- * @module dsh-chat-ux/client
+ * 这里注入聊天区样式，并按共享配置表单装、卸各项效果；具体机制归各模块，入口只负责生命周期与开关。
  */
 import type {Context as ClientContext} from '@deepseek-ai/cordis'
 import {installCaretMotion} from './chat/caret/caret-motion'
@@ -49,25 +40,23 @@ export const inject: string[] = ['slots', 'configForms']
 
 /**
  * 浏览器侧入口。
- * @param ctx - 客户端根 context。
  */
 export function apply(ctx: ClientContext): void {
+    // Cordis 的 Context 类型不声明本插件动态取到的服务，在入口边界收窄一次
     const services = ctx as unknown as ClientServices
 
     ctx.effect(() => {
         const style = document.createElement('style')
         style.id = STYLE_ID
         style.dataset.plugin = 'dsh-chat-ux'
-        // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场、字体接管。
-        // 那几份 CSS 由 `styles.ts` 的 `ALL_CSS` 拼起来，这里不再逐个模块地认。
+        // 一张样式表承载浏览器这侧的全部规则；各模块的 CSS 由 ALL_CSS 拼好，入口不再逐个安装。
         style.textContent = ALL_CSS
         document.head.appendChild(style)
         return () => style.remove()
     }, 'dsh-chat-ux: chat-area stylesheet')
 
-    // 这一份镜像在每一轮效果里现读，所以插件管理页上改完不必重新安装任何东西，也不会丢掉正在跑的
-    // 定时器。平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。这个值仍叫 scope：
-    // 插件管理页给这个座位的 owner props 里已经有一个 `form`，注入面再用同名就会撞上去。
+    // 配置每轮现场读取，插件页保存后不必重装效果
+    // 共享表单按 Host 条目 id 取；这里叫 scope，避免和座位 owner props 的 form 撞名
     const scope = services.configForms.get<ChatUxSection>(SETTINGS_NAMESPACE)
     // 官方的「收起时机」：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，过程组
     // 结束后的那一次收起归官方，见 process-fold 的让路。这里只现读，不订阅——过程组的每一次扫描都会读它。
@@ -76,23 +65,22 @@ export function apply(ctx: ClientContext): void {
         chatSettings.getSnapshot().value?.collapseTiming === 'next-input'
     const settings: ChatUxSettings = {
         autoFold: DEFAULT_AUTO_FOLD,
-        caret: DEFAULT_CARET_MOTION,
-        sendOn: DEFAULT_SEND_FLIGHT,
-        pie: DEFAULT_CONTEXT_PIE,
-        glass: DEFAULT_COMPOSER_GLASS,
-        liveDiff: DEFAULT_LIVE_DIFF,
-        followOn: DEFAULT_FOLLOW_ON_APPEAR,
+        caretMotion: DEFAULT_CARET_MOTION,
+        sendFlightOn: DEFAULT_SEND_FLIGHT,
+        contextPieOn: DEFAULT_CONTEXT_PIE,
+        composerGlassOn: DEFAULT_COMPOSER_GLASS,
+        liveDiffOn: DEFAULT_LIVE_DIFF,
+        followOnAppear: DEFAULT_FOLLOW_ON_APPEAR,
     }
 
-    // 插入符动效与字体两项不是「每一轮现读」，而是常驻的 DOM 状态：配置一改就得重落一次（卡片上保存完
-    // 不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口。
-    const caret = installCaretMotion(() => settings.caret)
+    // 插入符动效是常驻 DOM 状态：配置一改就得重落，卸载时要把写过的标记撤干净
+    const caret = installCaretMotion(() => settings.caretMotion)
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
     // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
     // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
     let pieDispose: (() => void) | null = null
     const syncPie = (): void => {
-        if (!settings.pie) {
+        if (!settings.contextPieOn) {
             pieDispose?.()
             pieDispose = null
             return
@@ -121,7 +109,7 @@ export function apply(ctx: ClientContext): void {
     // 关掉时两样一起撤——观察者不跑，属性也摘掉，页面上一次都不动手。
     let glassDispose: (() => void) | null = null
     const syncGlass = (): void => {
-        if (!settings.glass) {
+        if (!settings.composerGlassOn) {
             glassDispose?.()
             glassDispose = null
             document.body.removeAttribute(GLASS_ATTRIBUTE)
@@ -137,7 +125,7 @@ export function apply(ctx: ClientContext): void {
     // （flex item 的自动最小尺寸，以及 dsh 那条 gap 规则的特异性），原因见那两个文件。
     let runningEntryDispose: (() => void) | null = null
     const syncSendGate = (): void => {
-        if (!settings.sendOn) {
+        if (!settings.sendFlightOn) {
             document.body.removeAttribute(SEND_ON_ATTRIBUTE)
             runningEntryDispose?.()
             runningEntryDispose = null
@@ -152,7 +140,7 @@ export function apply(ctx: ClientContext): void {
     // 探针规则一条都不命中。
     let followDispose: (() => void) | null = null
     const syncFollow = (): void => {
-        if (!settings.followOn) {
+        if (!settings.followOnAppear) {
             followDispose?.()
             followDispose = null
             return
@@ -161,14 +149,14 @@ export function apply(ctx: ClientContext): void {
         followDispose = installCallAppearFollow()
     }
     const syncSettings = (): void => {
-        const value = scope.getSnapshot().value
-        settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
-        settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
-        settings.sendOn = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
-        settings.pie = value?.contextPie ?? DEFAULT_CONTEXT_PIE
-        settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
-        settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
-        settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
+        const savedSection = scope.getSnapshot().value
+        settings.autoFold = savedSection?.autoFold ?? DEFAULT_AUTO_FOLD
+        settings.caretMotion = savedSection?.caretMotion ?? DEFAULT_CARET_MOTION
+        settings.sendFlightOn = savedSection?.sendFlight ?? DEFAULT_SEND_FLIGHT
+        settings.contextPieOn = savedSection?.contextPie ?? DEFAULT_CONTEXT_PIE
+        settings.composerGlassOn = savedSection?.composerGlass ?? DEFAULT_COMPOSER_GLASS
+        settings.liveDiffOn = savedSection?.liveDiff ?? DEFAULT_LIVE_DIFF
+        settings.followOnAppear = savedSection?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
         syncSendGate()
         syncGlass()
         caret.resync()
@@ -201,7 +189,7 @@ export function apply(ctx: ClientContext): void {
     // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
     // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
     ctx.effect(
-        () => installSendFlight(() => settings.sendOn),
+        () => installSendFlight(() => settings.sendFlightOn),
         'dsh-chat-ux: send flight',
     )
     // 门控属性跟着同一个开关走，插件卸下时摘干净——页面上一次都不留。
@@ -248,7 +236,7 @@ export function apply(ctx: ClientContext): void {
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
     // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
     // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认开着）。
-    installFileMutationRow(services.slots, () => settings.liveDiff)
+    installFileMutationRow(services.slots, () => settings.liveDiffOn)
 
     // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
     // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
@@ -295,22 +283,15 @@ export function apply(ctx: ClientContext): void {
     })
 }
 
-/** 这一半读到的配置，镜像在一份可变对象里：发送动效与文件变更行由各自的模块现读，其余几项都由 `syncSettings` 重落。 */
+/** 这一半读到的配置；发送动效与文件变更行在渲染期现读，其余几项由 `syncSettings` 重落。 */
 interface ChatUxSettings {
-    /** 思考行与过程组是否自己开合；改一次就得重落一次。 */
     autoFold: boolean
-    /** 插入符动效的档位。 */
-    caret: CaretMotionMode
-    /** 聊天气泡动效开着没有，每一段起手前现读。 */
-    sendOn: boolean
-    /** 上下文占用那圈环是否换成一枚实心饼；改一次就得重落一次（装或卸）。 */
-    pie: boolean
-    /** 输入框那块玻璃开着没有；它是 body 上的一层常驻状态，改一次就得重落一次。 */
-    glass: boolean
-    /** 文件变更行的 `+n -m` 是否在准备态就长出来；那一行在渲染期现读它。 */
-    liveDiff: boolean
-    /** 工具调用与思考行出现时是否补一次底；改一次就得重落一次（装或卸）。 */
-    followOn: boolean
+    caretMotion: CaretMotionMode
+    sendFlightOn: boolean
+    contextPieOn: boolean
+    composerGlassOn: boolean
+    liveDiffOn: boolean
+    followOnAppear: boolean
 }
 
 /** dsh 那份 `ui-chat` 表单里这一处只读一个字段。 */

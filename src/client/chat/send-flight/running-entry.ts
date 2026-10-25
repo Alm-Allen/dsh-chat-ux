@@ -1,38 +1,8 @@
 /**
- * 「深度求索中，用时 N 秒」那一行的占位动画。
+ * 「深度求索中」那一行的零高入场。
  *
- * 它是 dsh 插在聊天列末尾的一行：插进 DOM 的那一帧若是满高，dsh 会立刻瞬时跟到底，气泡与它
- * 上面的内容一帧被顶上去（2026-10-18 读者实拍）。这里让它在插入的那一帧是零高、零 gap，之后
- * 180 ms 里一帧跟一帧长到自己的高度——dsh 的 ResizeObserver 每帧量到一个高一点的列，跟随就
- * 一帧跟一帧，那一下「顶」变成连续的上移。
- *
- * **为什么要动两个属性**：这一行是 flex 列（[data-chat-flow]）里的 flex item，占位由它自己的
- * height 与它行前那道 gap 一起决定。只做 height 会剩下 12 px 的瞬移，而 gap 那段 CSS 压不住
- * ——dsh 给这一行的 margin-top 来自一条特异性 0,7,0 的规则，@starting-style 里的起始值实测被
- * 丢弃。内联样式在级联里最高，所以两条都写内联。min-height 与 overflow 由样式表常驻（见
- * send-flight-styles.ts），这里不重复。
- *
- * **时序是这一处的全部要点**：选择器命中的时候是 React 插入之后的**微任务**里，早于这一帧的
- * 样式计算与布局——把两个属性写成零，这一帧 dsh 量到的就是零，它不滚；之后一帧长一点，它的
- * 跟随就一帧跟一帧。晚一步（等到 animationstart 或 rAF）这一帧已经按自然高度画过，就白做了。
- *
- * **但压成零还不够：起跑得再等两帧（见 `WARMUP_FRAMES`）。** 这一行的插入几乎总是落在提交那
- * 一记长任务里（实测 150 ms 量级，见 [性能风险](<文档/开发/性能风险.md>)），而 WAAPI 的时间轴
- * 在长任务里照走。动画若在微任务里就起跑，主线程一恢复，第一帧读到的已经是那一记长任务末尾的
- * 那一格——实测行高 **21.77 px**（自然高度 22）、dsh 一帧把整列顶上去 34 px，读者看到的就是
- * 「一下子把气泡和历史记录顶上出一段像素」。所以这里与 `send-flight.ts` 的替身同一套办法：
- * 先 `pause()` 在起手格，两拍 rAF 之后再 `play()`，起播后第一帧再核一次时间轴。
- * 预热这一两帧里它停在零高——读者看不见，dsh 的跟随也一步都不走。
- *
- * **这是唯一路径，不是回退**：2026-10-18 之前这里只在浏览器不认 interpolate-size 时才装，其余
- * 情形交给样式表里那条 @starting-style 过渡；实测那条 CSS 路径在 flex 列里一次都没生效
- * （overflow: clip 不解 flex item 的自动最小尺寸，插进去就是满高，height 过渡全程没动），已经
- * 删掉，只剩这一条。
- *
- * 与 dsh 的关系：不动它的 DOM、不动 scrollTop、不动它的跟随状态，只在插入的那一小段里借这一行
- * 自己的 height 与 margin-top 用一下，收尾把两个内联属性摘干净。
- *
- * @module dsh-chat-ux/client/chat/send-flight/running-entry
+ * 插入后的微任务里把 height 和 margin-top 压成零，再逐帧长回自然值，避免 dsh 的跟随把气泡
+ * 与历史一帧顶上去。先停在起手格，隔两拍再起跑，躲开提交那一记长任务。
  */
 
 /** 那一行自己。与样式表里的选择器必须一字不差。 */
@@ -70,7 +40,6 @@ const ALIGN_TOLERANCE_MS = 24
 
 /**
  * 装上占位动画。
- * @returns 卸载函数。
  */
 export function installRunningEntry(): () => void {
     const grown = new WeakSet<Element>()
@@ -91,8 +60,6 @@ export function installRunningEntry(): () => void {
 
 /**
  * 把这一行的首帧高度与行前 gap 一起压成零，再动画回它们自己的值。
- * @param row - 刚插进来的那一行（可能不是 HTMLElement，直接跳过）。
- * @param grown - 已经处理过的元素；同一次出现只做一遍。
  */
 function growFromZero(row: Element, grown: WeakSet<Element>): void {
     if (!(row instanceof HTMLElement) || grown.has(row)) return

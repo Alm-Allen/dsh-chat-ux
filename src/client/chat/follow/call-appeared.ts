@@ -1,23 +1,8 @@
 /**
- * 工具行与思考行第一次出现在页面上时，把它们所在的滚动器交还给底部。
+ * 工具行与思考行第一次出现时，把所在滚动器补回底部。
  *
- * dsh 的跟随在**结构时刻**最容易掉队：一行新内容插进来、高度跳一截，它那套平滑滚动要重排一轮，
- * 而重排的那一段时间里内容还在长。实测一次 run_code 执行（2026-10-18，标准档，33 次结构行到达）：
- * 20 次位置本来就到底，11 次落后二十到三十三像素，2 次落后一百四十像素上下——后面那两次就是读者
- * 说的「思考跑到视野外面」。全部发生在过程组的组体里，主滚动框一次都没掉队。
- *
- * 为什么不扫描：浏览器没有「元素出现了」这种原生事件，DOM 变化只有 MutationObserver，而它就是扫描。
- * 这里换一条路——给这两族行挂一条 1 ms 的探针动画（见 follow-probe-styles.ts），animationstart 就是
- * 元素第一次被渲染时的一次性通知。没有观察者、没有定时器、没有轮询，流式期间一个回调都不进，只在
- * 这两族行出现的那一刻响一次。
- *
- * 同一帧里到达的几次用一次 requestAnimationFrame 合并：一次插入可能带出整棵子调用子树，父行与每个
- * 子行都会各响一次，而它们需要的是同一脚。
- *
- * 代价只有一处：补位要读一次 scrollHeight，那是强制布局。位置本来就到底时（上面那 20 次）实测
- * 0.00 ms——本帧的布局早已结算过；真要补的那几次是 0.5～2.0 ms。
- *
- * @module dsh-chat-ux/client/chat/follow/call-appeared
+ * 用 1ms 探针动画的 animationstart 当出现信号，不装观察器也不轮询；同一帧多次到达合并成一次 rAF。
+ * 读者开始滚动、卷帘门正在跑或已经到底时都不补。
  */
 import {CONVERSATION_SCROLL_SELECTOR, PROCESS_BODY_SELECTOR} from '../../dom-contract'
 import {isFoldGlideBusy} from '../fold/fold-glide'
@@ -35,7 +20,6 @@ const PRESS_EVENTS = ['pointerdown', 'touchstart'] as const
 
 /**
  * 装上这一处：探针属性挂上，两个事件通道接上；返回卸下的把手。
- * @returns 摘掉属性、撤掉监听、并作废还没落地的那一帧的函数。
  */
 export function installCallAppearFollow(): () => void {
     const root = typeof document === 'undefined' ? null : document.documentElement

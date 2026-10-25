@@ -1,21 +1,8 @@
 /**
- * 输入框插入符动效的样式。
+ * 插入符动效的样式。
  *
- * 三条规则：把原生插入符按下去，给挂那根的父元素补定位上下文，把自绘的那根画出来。前两条只认
- * `caret-motion.ts` 写上的标记——脚本半途没跑起来时一条规则都不命中，原生插入符还在。这是这套
- * 动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏。
- *
- * 需要压过的是 dsh 自己给每种面定的 caret-color：主输入框的 `.input`、作答框的 `.fieldInput`，
- * 都是一个类（0-1-0）。下面那两条是两个属性选择器（0-2-0）与「标签 + 属性」（0-1-1），都赢。
- *
- * 自绘的那根会落进别人的容器里当子元素，容器给子元素定的规则也会落到它身上——作答框的 `.field > *`
- * 就给每个子元素写了 grid-area、padding 与一整套字体。所以它自己的规则用两个同名属性选择器抬到
- * 0-2-0，并且把会改变盒子大小与位置的那几项全部显式写回去。
- *
- * 过渡的是 `transform` 而不是 `top`/`left`：VS Code 那边过渡的是布局属性，这里没有理由跟着付
- * 那份代价。80ms 与它同档，缓动也是它那个默认的 ease。
- *
- * @module dsh-chat-ux/client/chat/caret/caret-motion-styles
+ * 原生插入符的隐藏与自绘层的显示都由脚本先写标记再命中规则；脚本没跑起来时一条规则都不生效。
+ * 位移走 transform，不触发布局。
  */
 import {
     CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,

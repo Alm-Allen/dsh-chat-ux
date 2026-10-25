@@ -1,17 +1,8 @@
 /**
- * DSH 客户端模块加载器从它冻结的基座模块表（`PLATFORM_MODULES`）里提供的平台模块，
- * 在这里做环境声明。加载器交给插件 bundle 的 `require` 绑定在那张表上，所以这些模块
- * 是运行时解析的，本项目刻意不安装它们。
+ * DSH 客户端模块加载器从冻结基座模块表提供的平台模块声明。
  *
- * 那张表只有九个键：react、react/jsx-runtime、react-dom、react-dom/client、
- * @deepseek-ai/cordis、dsh-client-store、dsh-client-ui-slots、
- * dsh-client-ui-primitives、dsh-client-ui-dockkit。表外的一切都拿不到——`clsx`、
- * `@deepseek-ai/dsh-client-ui-tool`（内置工具行住在那儿，但它的 client 入口只导出
- * 插件本身与类型，不导出组件）、各种 util 包都一样——所以这一侧凡是需要它们的形状，
- * 都在本文件或调用点就地声明。
- *
- * 只声明本插件真正用到的东西，而且只声明到调用点需要的宽度：目的是让编译器对这里发出的
- * 调用保持诚实，而不是复述平台自己的类型。
+ * 这些包由模块加载器在运行时解析，项目刻意不安装。表外依赖拿不到，所以这里只声明本插件用到的
+ * 最窄形状，让编译器对调用点保持诚实。
  */
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
@@ -19,9 +10,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
     /**
      * 一个只读胶囊徽标。
-     * @param props.tone - 用哪套配色；`neutral` 是低饱和的那套。
-     * @param props.className - 额外的类名，用于布局定位。
-     * @param props.children - 徽标文字，由渲染它的地方拥有。
      */
     export function Tag(props: {
         tone?: 'outline' | 'solid' | 'neutral' | 'quiet' | 'success' | 'info' | 'warning' | 'danger'
@@ -31,11 +19,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
     /**
      * 两态开关，dsh 自己的开关就是它——配置卡片用它，外观与设置页里那些开关是同一套。
-     * @param props.checked - 当前状态；控件完全受控。
-     * @param props.onChange - 点击要求切到的那个状态。
-     * @param props.label - 可访问名，由渲染它的地方拥有（必填）。
-     * @param props.disabled - 是否拒绝输入；写入在途时也要置上。
-     * @param props.className - 额外的类名，用于布局定位。
      */
     export function Switch(props: {
         checked: boolean
@@ -55,13 +38,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
     /**
      * 两段以上的分段控件，带一个滑动指示器——把一张卡片在几档之间切换，光标动效那三档就是它。
-     * @param props.id - 基础 id：每一段是 `<id>-<value>`，并指向面板 `<id>-<value>-panel`。
-     * @param props.value - 当前选中项的值；控件完全受控。
-     * @param props.options - 按显示顺序排列的段，至少两段。
-     * @param props.onChange - 点击或走位键要求切到的值，不会是当前已经选中的那个。
-     * @param props.label - tablist 的可访问名（必填）。
-     * @param props.disabled - 是否锁住每一段，写入在途时也要置上。
-     * @param props.className - 额外的类名，用于布局定位。
      */
     export function SegmentedControl<Value extends string>(props: {
         id: string
@@ -147,8 +123,6 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
 
     /**
      * 数一遍要展示的增删行数——行尾那个 `+n -m` 就是它。
-     * @param diffs - 要统计的 hunks。
-     * @returns 增删行数。
      */
     export function diffTotals(diffs: DiffHunk[]): { added: number; removed: number }
 
@@ -180,7 +154,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
         margin: number
     }
 
-    /** @returns 夹进视口之后的固定定位；还没量出来时是 null。 */
+
     export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProperties | null
 
     /** 点到锚点与面板之外时关掉。 */
@@ -199,7 +173,6 @@ declare module 'react-dom/client' {
     export interface Root {
         /**
          * 换一份节点上去。
-         * @param children - 新的节点。
          */
         render(children: ReactNode): void
 
@@ -210,8 +183,6 @@ declare module 'react-dom/client' {
     /**
      * 把一棵 React 树挂到容器里：上下文占用那串百分比不是座位（那是 dsh 自己渲染的文本），数字轮
      * 只能挂进它里面。
-     * @param container - 挂到哪儿。
-     * @returns 那棵树。
      */
     export function createRoot(container: Element | DocumentFragment): Root
 }
@@ -221,9 +192,6 @@ declare module 'react-dom' {
 
     /**
      * 把一段节点挂到别的容器下：明细面板要脱开输入框那一层的布局去定位。
-     * @param children - 要挂上去的节点。
-     * @param container - 挂到哪儿。
-     * @returns 挂上去的节点。
      */
     export function createPortal(children: ReactNode, container: Element | DocumentFragment): ReactElement
 }

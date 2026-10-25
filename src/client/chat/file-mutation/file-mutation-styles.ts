@@ -1,12 +1,8 @@
 /**
- * 文件变更行自己的样式表。
+ * 文件变更行的样式。
  *
- * 这一行归 dsh-chat-ux：它在 `tool.call.toolview` 的 edit / write 座位上遮蔽了内置的文件变更行，
- * 所以内置 ToolRow.module.css 里那些规则要在这里重写一份——那套类名带构建期 hash，既拿不到、
- * 也不能当接口。尺寸、令牌与节奏逐条对齐：行高与 leading 由共享的 DisclosureRow 承担，这里只补
- * 它没画的那几样（分隔点、摘要、行尾统计、路径链接、IN/OUT 卡片、轨迹入口）。
- *
- * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-styles
+ * 内置 ToolRow 的类名带构建期 hash，不能当接口；这里只补共享 DisclosureRow 没画的摘要、统计、
+ * 路径链接、IN/OUT 卡片和轨迹入口，尺寸与令牌逐条对齐。
  */
 import {REEL_TEXT_CLASS} from '../reel/reel-styles'
 

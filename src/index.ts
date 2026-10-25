@@ -1,13 +1,7 @@
 /**
- * dsh-chat-ux —— 后端。
+ * dsh-chat-ux 的 host 半区。
  *
- * 聊天区本身由前端渲染（见 `src/client/`），DSH 之所以从 `exports["./client"]` 加载它，
- * 是因为这个包声明了 `dsh.client`。这一半做两件事：
- *
- * 这一行存在。设置服务把 `Config` 里标了 `.volatile()` 的字段投影成表单，值由前端通过自己的
- * config form 读写，host 侧不看这些值——它们的消费者全在浏览器里。
- *
- * @module dsh-chat-ux
+ * 这里只声明插件名与 volatile 配置 schema：设置服务据此在插件页投影表单，字段值由浏览器半区读写。
  */
 import type {Volatile} from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
@@ -21,95 +15,36 @@ export const name = 'dsh-chat-ux'
  */
 export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
 
-/**
- * 自动开合默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：思考行与过程组自己开合是这个插件的主效果之一。关掉时两块都整块不装，读者自己点开收起
- * 照常——卷帘门过渡仍留给手动点击。
- */
+// ⚠️ 以下默认值与浏览器半区的 client/settings-scope.ts 一一对应，改一处必须同步另一处
 export const DEFAULT_AUTO_FOLD = true
 
-/**
- * 插入符动效的档位。前端 `client/caret-motion.ts` 里有同一组字面量，改一处就要改另一处。
- *
- * - `off` —— 不动手，用浏览器自己的插入符。
- * - `move` —— 只在方向键、点击这类显式移动上放过渡，打字瞬时。
- * - `typing` —— 打字也放过渡。
- */
+/** 插入符动效档位；前端 `client/caret-motion.ts` 有同一组字面量。 */
 export type CaretMotionMode = 'off' | 'move' | 'typing'
 
-/** 插入符动效的默认档位：凡是会挪窝的都给过渡。 */
+/** 插入符动效默认档位。 */
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
 
-/**
- * 聊天气泡动效默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：这一段已经调定，卡片上不再标 beta。关着时页面上一次都不动手，看到的就是 dsh 原来的样子。
- */
 export const DEFAULT_SEND_FLIGHT = true
 
-/**
- * 命中率转轮默认是否生效。前端有一份同样的常量（`client/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
- */
 export const DEFAULT_HIT_REEL = true
 
-/**
- * 上下文占用那枚饼默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
- * 改一处就要改另一处。
- *
- * 默认开着：dsh 画的那圈环换成一枚按占用取色的实心饼，已占用那一角沿折线切开、推开一点。关掉时这一处
- * 整块不装——页面上一次都不动手，看到的就是 dsh 原来的环。
- */
 export const DEFAULT_CONTEXT_PIE = true
 
-/**
- * 输入框那块玻璃默认是否生效。前端有一份同样的常量（`client/settings/settings-scope.ts`），
- * 改一处就要改另一处。
- *
- * 默认开着：它就是读者要的那一层磨砂——整块输入座位半透明、背后模糊。关掉后前端不往 body 上挂
- * 属性，那一整张规则表一条都不命中，看到的就是 dsh 原来的样子。
- */
 export const DEFAULT_COMPOSER_GLASS = true
 
-/**
- * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。前端有一份同样的常量
- * （`client/settings/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标）。它只在**直接调用**的 write / edit
- * 上有意义——run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐，那些行看到的仍是
- * 接管之前的样子。
- */
 export const DEFAULT_LIVE_DIFF = true
 
-/**
- * 工具调用与思考行第一次出现时是否把滚动位置补到底。前端有一份同样的常量
- * （`client/settings/settings-scope.ts`），改一处就要改另一处。
- *
- * 默认开着：dsh 自己的跟随在结构时刻会掉队——实测一次 run_code 执行里有两回落后到一百四十像素
- * 上下，正好把新出现的思考推出视野。关掉时前端不挂那个门控属性，探针一条都不命中。
- */
 export const DEFAULT_FOLLOW_ON_APPEAR = true
 
-// 这个插件拥有的配置字段。
+// 这个插件拥有的配置字段；时长等行为参数留在浏览器半区，不进入设置 schema。
 export interface Config {
-    // 思考行与过程组是否自己开合。关掉时两块都整块不装，读者自己点开收起照常。
     autoFold: Volatile<boolean>
-    // 插入符动效的档位。
     caretMotion: Volatile<CaretMotionMode>
-    // 提交之后气泡是否从输入框起飞，默认开着。整段时长不是一个设置项，
-    // 固定在前端 `client/send-morph.ts` 的 `FLIGHT_MS` 上——这里没有对应字段。
     sendFlight: Volatile<boolean>
-    // 命中率读数变化时，变了的那一位是否原地弹到新值。关掉时数字直接换掉。
     hitReel: Volatile<boolean>
-    // 上下文占用那圈环是否换成一枚实心饼（已占用那一角沿折线切开、推开一点）。关掉时这一处整块不装。
     contextPie: Volatile<boolean>
-    // 输入框那块玻璃是否生效。它在前端只是一层 DOM 状态（body 上的属性），关掉时整张规则表不命中。
     composerGlass: Volatile<boolean>
-    // 文件变更行的 `+n -m` 是否在准备态就显示、并跟着流式内容增长。默认开着。
     liveDiff: Volatile<boolean>
-    // 工具调用与思考行第一次出现时是否把滚动位置补到底。默认开着。
     followOnAppear: Volatile<boolean>
 }
 
@@ -128,10 +63,6 @@ export const Config = Schema.object({
     followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
 })
 
-/**
- * host 侧入口。
- * @param ctx - host 根 context。
- */
 export function apply(): void {
     console.log('[dsh-chat-ux] host half loaded')
 }

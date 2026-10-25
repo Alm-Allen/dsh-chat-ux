@@ -1,73 +1,18 @@
 /**
- * 这个半区消费的那一小片配置表单传输层。
+ * 浏览器半区使用的配置表单传输契约。
  *
- * 浏览器半区通过 `ctx.configForms.get(entryId)` 拿到 host 侧 `dsh-chat-ux` 这一行的共享表单。
- * 这里的形状是 `@deepseek-ai/dsh-client-ui-settings` 契约的本地复述，而不是 import：client
- * bundle 必须保持单文件自包含，平台包由模块加载器在运行时解析，不参与编译。
- *
- * @module dsh-chat-ux/client/settings/settings-scope
+ * 这是平台契约的本地复述：client bundle 必须单文件自包含，平台包由运行时解析，不参与编译。
  */
 import type {CaretMotionMode} from '../chat/caret/caret-motion'
 
-/**
- * 自动开合默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：思考行与过程组自己开合是这个插件的主效果之一。
- */
+// ⚠️ 以下默认值与 host 的 src/index.ts 一一对应，改一处必须同步另一处
 export const DEFAULT_AUTO_FOLD = true
-
-/**
- * 插入符动效的默认档位。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认是「打字也动」：要的是「凡是会挪窝的都给过渡」。
- */
 export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
-
-/**
- * 聊天气泡动效默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着，理由与那一处相同：这一段已经调定，卡片上不再标 beta。
- */
 export const DEFAULT_SEND_FLIGHT = true
-
-/**
- * 命中率转轮默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：读数只在每次模型结算时才变，转轮一天也转不了几次。
- */
 export const DEFAULT_HIT_REEL = true
-
-/**
- * 上下文占用那枚饼默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：把 dsh 那圈环换成一枚按占用取色的实心饼（已占用那一角切开、推出去）。关掉时这一处整块
- * 不装，页面上一次都不动手。
- */
 export const DEFAULT_CONTEXT_PIE = true
-
-/**
- * 输入框那块玻璃默认是否生效。host 侧 `src/index.ts` 里有一份同样的常量，改一处就要改另一处。
- *
- * 默认开着：它就是读者要的那一层磨砂。关掉后 body 上不挂属性，那一整张规则表一条都不命中。
- */
 export const DEFAULT_COMPOSER_GLASS = true
-
-/**
- * 文件变更行的 `+n -m` 是否在准备态就跟着参数流长出来。host 侧 `src/index.ts` 里有一份同样的
- * 常量，改一处就要改另一处。
- *
- * 默认开着：这一段在 2026-10-11 调定（去掉卡片上的 beta 标），它只对**直接调用**的 write / edit
- * 有意义。
- */
 export const DEFAULT_LIVE_DIFF = true
-
-/**
- * 工具调用与思考行第一次出现时是否把滚动位置补到底。host 侧 `src/index.ts` 里有一份同样的常量，
- * 改一处就要改另一处。
- *
- * 默认开着：它是把「结构时刻掉队」补回来的唯一一处——dsh 自己的平滑滚动撞上内容跳变就追不回来，
- * 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好是一屏里新出现的那几行。
- */
 export const DEFAULT_FOLLOW_ON_APPEAR = true
 
 /** host 解析出来的、本插件占用的那个条目。 */
@@ -119,10 +64,10 @@ export interface ConfigForm<T = ChatUxSection> {
 
     subscribe(listener: () => void): () => void
 
-    /** @param field - 条目内的字段名。 @returns host 是否接受这次写入。 */
+
     set(field: string, value: unknown): Promise<boolean>
 
-    /** @param field - 条目内的字段名。 @returns host 是否接受这次清除。 */
+
     unset(field: string): Promise<boolean>
 }
 

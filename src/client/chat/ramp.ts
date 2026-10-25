@@ -1,12 +1,7 @@
 /**
  * 无极色阶的公共部分：把读数落成「段标记 + 段内位置」。
  *
- * 色值不在这里——它们留在各自的样式表里（命中率那六个色标、上下文占用那六个色标），这一侧只算
- * 「落在哪一段、段内位置多少」，锚点之间的插值交给 CSS 的 `color-mix(in oklch, …)`。两处共用它，
- * 是因为要的是同一件事：在一个区间里连续取色，而两头各自恒定——命中率到 99.0 就绿、占用到 40 就红，
- * 都不必等到满。
- *
- * @module dsh-chat-ux/chat/ramp
+ * 色值留在各自样式表里，这里只算落在哪一段、段内位置多少，锚点之间交给 color-mix(in oklch, …)。
  */
 
 /** 段标记与段内位置写在这两个名字上：样式表按段标记选段，按位置算色。 */
@@ -63,22 +58,19 @@ export interface RampPosition {
  *
  * `stops` 是色标在读数轴上的位置（升序、至少两个），个数与样式表里那组色标一一对应。落在第一个
  * 之前（`'low'`）或最后一个之后（`'high'`）时只给段标记：那两段的两端是同一个色，插值走不出别的颜色。
- * @param value - 显示值（读者看到的那一份读数）。
- * @param stops - 色标位置，升序。
- * @returns 段标记与段内位置。
  */
-export function rampPosition(value: number, stops: readonly number[]): RampPosition {
-    const floor = stops[0] ?? value
-    const top = stops[stops.length - 1] ?? value
-    if (value < floor) return {span: RAMP_SPAN_LOW, mix: '0%'}
-    if (value >= top) return {span: RAMP_SPAN_HIGH, mix: '0%'}
+export function rampPosition(displayValue: number, stops: readonly number[]): RampPosition {
+    const floor = stops[0] ?? displayValue
+    const top = stops[stops.length - 1] ?? displayValue
+    if (displayValue < floor) return {span: RAMP_SPAN_LOW, mix: '0%'}
+    if (displayValue >= top) return {span: RAMP_SPAN_HIGH, mix: '0%'}
     let segment = 0
     for (let index = 1; index < stops.length - 1; index += 1) {
         const stop = stops[index]
-        if (stop !== undefined && value >= stop) segment = index
+        if (stop !== undefined && displayValue >= stop) segment = index
     }
     const from = stops[segment] ?? floor
     const to = stops[segment + 1] ?? top
     // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM。
-    return {span: String(segment), mix: (Math.round((value - from) / (to - from) * 1000) / 10) + '%'}
+    return {span: String(segment), mix: (Math.round((displayValue - from) / (to - from) * 1000) / 10) + '%'}
 }

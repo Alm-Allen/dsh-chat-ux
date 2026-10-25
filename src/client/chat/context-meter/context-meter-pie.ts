@@ -1,45 +1,10 @@
 /**
- * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取无极色阶，并沿一条**折点在圆心**的
- * 折线切一刀——两段各是一条半径，把圆分成两块，已占用那一块沿角平分线**推出去**一段（缺口就是它原来
- * 的位置）。
+ * 输入框下方的上下文占用饼。
  *
- * **只有这一种画法**：折线切开之后那一块一定推出去。曾经还有一支「只留切口、两块都留在原位」的画法，
- * 读者得在插件页上二选一——那个选择删掉了：多一种画法并不能让这枚饼说得更清楚。插件页上现在只剩一个
- * 开关，语义是「要不要这枚饼」；关掉时这一处整块不装（装与卸都在客户端入口的 `syncPie` 里）。
+ * 用内联 SVG 背景图替代 dsh 的环：已占用扇形沿圆心折线切开并推出，缝宽固定；颜色取样式表算出的
+ * 当前档位。它不是座位，只能按坞与按钮的语义结构认出目标，认不出时什么都不改。
  *
- * 推出去时**缝宽恒定**，而且不由「推开多远」挣出来：洞口按那一块再向外一圈缝来挖（见 `pushImage`），
- * 于是缝环绕那一块的整条边界、处处一样宽，推开多远只决定那一块离开原位多少、盘面让出多少直径。
- *
- * 为什么不能拿位移去挣那道缝：两块相邻的两条边界互相平行，间距就是位移在边界法向上的投影，而法向与
- * 角平分线的夹角正是半个扇形角——位移一钉死，缝宽就跟着扇形角走（20px 的饼上能从 0.7px 漂到 2.6px）；
- * 反过来按 sin 反推位移，缝宽是恒定了，盘面却要跟着涨缩。这两条都试过，痕迹记在 `文档/业务/上下文占用饼.md`。
- *
- * dsh 没给这个圆任何语义属性，也没把它做成座位——它是 InputBar 里直接渲染的一个 span（那一行
- * 是 activity 为空时的 ContextMeter），插件接不过来，所以只能从结构上认它：草稿坞的直接子元素
- * 里，那个既不带 data-composer-stat（统计胶囊才带）、又装着一枚 aria-haspopup="dialog" 按钮与
- * 一个 svg 的 span。
- *
- * 坞那一层自 dsh 0.2.1-alpha.1 起带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；
- * 2026-10-17 起不再认更早那两代（0.2.0-rc.2 及以前没有这个属性）。
- *
- * 画法与直觉那条路不同：饼是内联 SVG 作为按钮的背景图，不是伪元素加 conic-gradient。两个原因都
- * 在 dsh 这一侧——它的主题把 corner-shape 全局设成 superellipse(1.5)（选择器里连 :before/:after
- * 一起），于是 border-radius: 50% 画出来是圆角方块而不是圆；伪元素又只能从自定义属性里取值，
- * 几何算不出来。自己画一张图两处一起绕开：SVG 里的圆永远是圆，扇形角度与切口都由这里算。
- *
- * 扩张那一下为什么是逐帧重画、不是 CSS 过渡：背景图是一整张 data URL 的 SVG，换图插不了值；SVG
- * 的 d 能插值，但这一条 path 的大弧标记在 50% 处会从 0 跳到 1，插到一半会翻面；conic-gradient 能靠
- * CSS 过渡，可它在 20px 这个尺寸上的硬边有锯齿，而且换掉它就要把「读数同色」与「先让位再读色」这两
- * 处已经踩平的坑重做一遍。所以留着背景图，动画由 rAF 推读数、每帧重画一张图——一次变化十二帧上下，
- * 每帧只是拼一个字符串加一次样式写入。
- *
- * 颜色仍归样式表：这里只把**求值后的颜色**读出来涂进图里（`color-mix` 的结果），色标与插值都写在
- * context-meter-styles。读数那一串百分比由 reel-host 挂上同一枚数字轮——它同样不是座位，所以那一侧
- * 挂的是一棵自己的 React 树。段标记与段内位置走 `../ramp`，与命中率共用同一套机制。
- *
- * 判据失效时的表现是「什么都不变」：认不出就不动手，不会把别的元素改花。
- *
- * @module dsh-chat-ux/client/chat/context-meter/context-meter-pie
+ * 扩张用 rAF 逐帧重画背景图；换图不能插值，而 path 的大弧标记在 50% 会翻面。
  */
 import {COMPOSER_DOCK_SELECTOR} from '../../dom-contract'
 import {rampPosition, RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE} from '../ramp'
@@ -65,10 +30,7 @@ const CONTEXT_STOPS = [20, 24, 28, 32, 36, 40]
 /**
  * 饼的边长：16px。
  *
- * 原来那圈环的外轮廓只有 13px（半径 6.5），那个尺寸上圆弧与那道切口都认不出来，所以先做到 20px——那
- * 正好是这颗按钮那一行的行高；随后一路收到 18px、16px：比原来那枚 14px 的图标大一圈就够，饼越大越
- * 压着这一行、看着突兀。16px 上下都还在那一行的行高以内；左右各借 1px（左面是按钮的内边距，右面是
- * 图标与读数之间那 6px 的间隔），离读数还剩 5px。
+ * 比 dsh 原来的 14px 图标大一圈，仍在按钮行高以内；左右各借 1px 后，离读数还剩 5px。
  */
 export const PIE_SIZE = 16
 
@@ -86,9 +48,7 @@ const SLICE_GAP = 1.2
 /**
  * 那一块沿角平分线推开多远，像素。
  *
- * 缝不靠它挣（见上），它只影响两件事：那一块离开原位多远，以及盘面还剩多少直径
- * （`PIE_SIZE - 位移`，位移越大盘面越小）。2.6px 是权衡后的取值——端出去的观感明显，盘面还剩 13.4px
- * （与原来那圈环的外轮廓同量级；实心饼比同直径的环看得清，所以还立得住。饼再往下缩，这一格要跟着收）。
+ * 缝不靠位移挣；位移只决定离开原位的距离和盘面剩下的直径。2.6px 让端出去的观感明显，盘面仍有 13.4px。
  */
 const SLICE_LIFT = 2.6
 
@@ -143,11 +103,8 @@ interface PaintedPie {
 const paintedPies = new WeakMap<Element, PaintedPie>()
 
 
-
-
 /**
  * 装上这一处。
- * @returns 卸下这一处：断开观察，并把写过的标记、属性、数字轮与内联样式撤干净。
  */
 export function installContextMeterPie(): () => void {
     let dock: Element | null = null
@@ -158,7 +115,6 @@ export function installContextMeterPie(): () => void {
      *
      * 坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话
      * 把它换掉时重认。真正的形状判据在 paint 里，认不出就什么都不做。
-     * @returns 候选元素；页面上还没有输入框时是空的。
      */
     const candidates = (): readonly Element[] => {
         if (dock !== null && dock.isConnected) return Array.from(dock.children)
@@ -199,11 +155,6 @@ export function installContextMeterPie(): () => void {
  * 「洞口比那一块大一圈」给出，见 `pushImage`。
  *
  * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
- * @param percent - 已占用的百分比。
- * @param tone - 已占用那一块的颜色。
- * @param rest - 剩下那一块的颜色。
- * @param shape - 缝宽与位移；不带时用默认的那一套。
- * @returns 可以直接当 background-image 用的 url()。
  */
 export function pieImage(percent: number, tone: string, rest: string, shape?: PieShape): string {
     // 两头都单独走：满值时那道缝会与盘面的边界重合、而且「切了一刀还占满」本就说不通；空值时该画的
@@ -225,12 +176,6 @@ export function pieImage(percent: number, tone: string, rest: string, shape?: Pi
  *
  * 盘面的半径由位移定（`(PIE_SIZE - lift) / 2`），整幅图的外接尺寸恒为 `PIE_SIZE`，推开的那一侧不会被
  * 这一格的容器裁掉；圆心仍沿角平分线的反面退半个 lift，整幅图这才落在容器正中。
- * @param occupied - 已占用的角度，度。
- * @param tone - 已占用那一块的颜色。
- * @param rest - 剩下那一块的颜色。
- * @param seam - 缝宽，像素。
- * @param lift - 那一块沿角平分线推开多远，像素。
- * @returns url()。
  */
 function pushImage(occupied: number, tone: string, rest: string, seam: number, lift: number): string {
     const direction = occupied / 2
@@ -253,9 +198,6 @@ function pushImage(occupied: number, tone: string, rest: string, seam: number, l
  *
  * 描边以 path 为中心向两侧各扩半个缝宽（`stroke-width` 是 `2 × seam`）：外侧那一半是缝，内侧那一半
  * 落在那一块自己的地界里，挖掉也不影响。拐角用 round，顶点那一头因此是一段圆角的缝，与两条直边同宽。
- * @param slice - 那一条扇形的 path。
- * @param seam - 缝宽，像素。
- * @returns mask 元素的文本。
  */
 function sliceGapMask(slice: string, seam: number): string {
     return '<mask id="' + SLICE_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
@@ -271,10 +213,6 @@ function sliceGapMask(slice: string, seam: number): string {
  * 一整圈：两段半圆拼起来。
  *
  * 不能只用一段弧——起点与终点重合时，那段弧按 SVG 的规矩会被整段忽略，画出来什么都没有。
- * @param cx - 圆心横坐标。
- * @param cy - 圆心纵坐标。
- * @param radius - 半径。
- * @returns SVG path 的 d。
  */
 function discPath(cx: number, cy: number, radius: number): string {
     const x = round2(cx)
@@ -290,12 +228,6 @@ function discPath(cx: number, cy: number, radius: number): string {
  *
  * 盘面与那一块都用它、用同一组角度与半径，差别只有顶点落在哪：盘面从容器正中那颗圆心起，推出去的
  * 那一块从挪开 lift 的那一点起。
- * @param cx - 顶点的横坐标。
- * @param cy - 顶点的纵坐标。
- * @param radius - 半径。
- * @param from - 起始角度，度；0 是 12 点。
- * @param to - 结束角度，度，顺时针。
- * @returns SVG path 的 d。
  */
 function sectorPath(cx: number, cy: number, radius: number, from: number, to: number): string {
     const x = round2(cx)
@@ -318,8 +250,6 @@ function rad(degrees: number): number {
 
 /**
  * 把一段图元包成一张可以直接当背景图的 SVG。
- * @param body - 图元。
- * @returns url()。
  */
 function inlineSvg(body: string): string {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + PIE_SIZE + ' ' + PIE_SIZE + '">'
@@ -334,7 +264,6 @@ function round2(value: number): number {
 
 /**
  * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
- * @param root - 候选元素；认不出来就什么都不做。
  */
 function paint(root: HTMLSpanElement): void {
     const trigger = root.querySelector(TRIGGER_SELECTOR)
@@ -374,10 +303,6 @@ function paint(root: HTMLSpanElement): void {
  *
  * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 `color` 就是这一档的颜色。读不到底色就
  * 什么都不画——那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
- * @param trigger - 那颗按钮。
- * @param target - 这一档已占用的百分比。
- * @param reading - 读数那一截；它的 `color` 就是扇形色。
- * @returns 这一帧接上了没有；没接上时调用方不该让原环让位。
  */
 function paintPie(trigger: HTMLElement, target: number, reading: HTMLElement): boolean {
     // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
@@ -434,8 +359,6 @@ function paintImage(trigger: HTMLElement, percent: number, tone: string, rest: s
  *
  * 缓动是收尾那一种（与数字轮那条 CSS 曲线同一档）。JS 里没有现成的三次贝塞尔求值，为一条曲线搬进来
  * 一个求解器不值——220ms 上两者的差别看不出来。
- * @param trigger - 那颗按钮。
- * @param now - 这一帧的时刻。
  */
 function advance(trigger: HTMLElement, now: number): void {
     const record = paintedPies.get(trigger)

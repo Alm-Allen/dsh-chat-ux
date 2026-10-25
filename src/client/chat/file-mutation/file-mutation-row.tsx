@@ -1,48 +1,10 @@
 /**
- * run_code 内部的 write / edit 子调用行。
+ * run_code 内部 write 与 edit 子调用的文件变更行。
  *
- * 内置的文件变更行只给**根调用**画 diff 卡片，行尾那个 `+96 -0` 因此只出现在直接调用的
- * write/edit 上；从 run_code 的程序里派发出去的子调用拿不到它。原因不在渲染层，而在
- * `ui-tool` 的 diff-card-model：它第一行就写着
- * `if (block.parentCallId !== undefined) return null`。那行是 a4c296f9fe
- * （"refactor(client): derive tool cards from raw events"）留下的等价补丁——重构前卡片读的是
- * 事件里的 `callView` / `resultView`，而 PTC 子调用的事件（`tool/ptc-dispatch`）只带
- * name / arguments / content，从来不带那两个 view，所以子调用本来就画不出卡片；重构改成从原始
- * 参数重算之后，参数派生对子调用**也会成功**，于是那行检查把行为钉回原样。
+ * 内置行只给根调用画 diff；这里遮蔽 edit 与 write 两个 keyed 座位，用同一份参数派生改动。
+ * 准备态直接读参数视图，所以 +n -m 会随参数流增长；结算后优先使用结果元数据里的 hunks。
  *
- * 本插件要的正是被钉掉的那一半，所以这里自己写一份派生，唯一的差别就是不放行那行检查。
- *
- * 除此之外这一行还多给准备态一次：内置要等参数 JSON 收齐（`parsedToolCall` 在 preparing 直接返回
- * null），所以流式期间那两个数一直不出现；这里在准备态改读 dsh 的参数视图（`block.args`），write
- * 的内容一出现就有 `+n -0`，并随流式增长；edit 那一对字段**各自到、各自开始数**，不等另一半——等齐
- * 才画的话，行数要等参数里靠后的那个字段，实测滞后 4.5–6.8 s（见 `streamedTotals`）。
- *
- * 这一段默认开着（插件管理页上的「实时改动行数」）：关掉时这一行回到接管之前的样子——准备态不画
- * 那两个数，派发后只看参数 JSON。
- *
- * 代价说得明白些：子调用不持久化 `presentationMeta`，所以结算之后拿不到"实际应用了什么"，
- * 只能拿参数说话——write 的参数就是整份内容（确定），edit 的参数就是那一对替换（`replace_all`
- * 或写入失败时可能与实际不符）。
- *
- * 参数那一侧不再自己校验沙箱升级字段。dsh 在 0.2.1-alpha.1 里把这道校验从客户端删掉了
- * （c74f39b4dc），理由是它取决于会话沙箱模式、只有 Host 知道，而被拒的调用本来就会以错误结果
- * 结算；客户端自己猜只会误杀合法行（Bash 就接受「与当前模式相同的模式 + 空 justification」）。
- * 所以这一行与内置同序：只看路径与字段类型。
- *
- * 行尾那两个数走数字轮（`../reel/digit-reel`）：读数一变，**变了的那一位**原地弹到新值，与命中率、
- * 上下文占用同款；流式那两态（`preparing` / `running`）只改两处——时长短一档，并且**按节拍换数**。
- * 行数跟着换行走，那两态每一两百毫秒就跳一次，500 ms 那一档下旧数字还没退完就被下一跳换掉，读数会
- * 糊在一起；所以宁让读数滞后一拍，也要让每一轮动画走完整（见 `usePacedTotals` 与 `cadence`）。外部仍
- * 套着 TextShimmer——运行态整行扫光照旧——而它在活动期间会把这份复合子节点另渲染一棵惰性副本（平台
- * 契约里那是给纯展示子节点准备的）。两份从同一帧挂载、值同源，动画因此同步，代价只是动画期间那一位
- * 的透明度叠了一层。
- *
- * 遮蔽的是 keyed 座位：keyed 座位按 priority 升序取最低的那个渲染，同一 priority 上二次注册会
- * 抛错，内置那两行是默认的 0，所以这里用 -1。内置 ToolRow 的组件与 CSS Modules 类名都不在
- * 冻结的基座模块表里，拿不到，所以这一行是照着它的样子重画的（`DisclosureRow` 等 primitives
- * 是共享的，行 chrome 本身仍由它们承担）。
- *
- * @module dsh-chat-ux/client/chat/file-mutation/file-mutation-row
+ * 子调用没有 presentationMeta，结算后只能按参数展示；edit 在 replace_all 或失败时可能与实际不同。
  */
 import {useCallback, useMemo} from 'react'
 import type {KeyboardEvent, MouseEvent, ReactElement} from 'react'
@@ -112,8 +74,6 @@ export interface SlotsService {
 
 /**
  * 在 edit / write 两个座位上遮蔽内置的文件变更行。
- * @param slots - 客户端座位注册表。
- * @param liveDiff - 准备态那两个数开着没有；渲染期现读，所以卡片上一改就跟着变。
  */
 export function installFileMutationRow(slots: SlotsService, liveDiff: () => boolean): void {
     liveDiffEnabled = liveDiff
@@ -130,13 +90,11 @@ export function installFileMutationRow(slots: SlotsService, liveDiff: () => bool
 
 /**
  * 渲染一次 write / edit 调用：折叠态是标题、路径与 `+n -m`，展开态是 diff 卡片。
- * @param props - owner 载荷与文案座位。
- * @returns 这一行。
  */
 export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const {t, toolName, cwd, home, openFile, inspect, useDisclosure} = props
     const {expanded, toggle} = useDisclosure()
-    // dsh 0.2.1-alpha.1 起每个阶段都带 `args` 视图；准备态的读数直接读它，不再有旧版那个前缀订阅口。
+    // 每个阶段都带 `args` 视图；准备态的读数直接读它
     const block = props.block
     const args = useMemo(() => {
         const head = callHead(block)
@@ -151,29 +109,18 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const rawTotals = useMemo(() => rowTotals(block, hunks), [block, hunks])
     // 老虎机常开，只是流式那两态换一档更短的弹动。
     const cadence = running ? 'fast' as const : undefined
-    // 两个工具都走节拍（2026-10-11 晚些改回来）：读者要的是**每一轮动画走完整**，宁可读数滞后一拍。
-    //
-    // 早先只给 `edit` 上节拍、`write` 逐批跟随——那是为了让写入的数字尽早长（当时它确实几乎到终态才
-    // 出现）。可那个毛病的主因是**路径后置**（`write` 把 `file_path` 排在最后一个字符，见下面 `size` 那
-    // 一段），那一处已经修掉了；现在内容一到就显示数字，逐批跟随只会让 220 ms 的动画每 48 ms 被下一批
-    // 参数打断，读数看着像**硬切**——同一个行尾，编辑在跳、写入在闪，那曾是几处读数里唯一不一致的一处。
+    // 两个工具都走节拍：每一轮数字轮动画要走完整，宁可读数滞后一拍
+    // 逐批跟随会让 220 ms 的动画每 48 ms 被下一批参数打断
     const totals = usePacedValue(rawTotals, running)
     // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
     const expandable = model.state !== 'preparing'
         && (hunks !== null || model.output !== null || model.bodyRaw !== null)
     const open = expanded && expandable
     const summaryText = model.errorSummary ?? model.summary
-    // 输入大小只要读得到就显示——**不再要求路径已经有了**。
-    //
-    // 内置的 `summarySuffix` 是「有路径才显示」，照抄它会踩到一个很具体的坑：模型给 `write` 生成的参数
-    // 顺序是 `content` 在前、`file_path` 在**最后一个字符**（2026-10-11 量了 30 次真实 write：content 在
-    // 第 1 批，file_path 在第 1041 批、即整段参数流的 100%），而 `edit` 反过来是 `file_path` 在最前
-    // （0%）。于是同样的规则下：写入的整段内容流式期间那两个数都被挡掉、只在末尾一起冒出来（读者看到的
-    // 就是这个），编辑却从头就在长。
-    //
-    // 没有路径时它直接跟在描述后面（那个分隔点只在有描述时渲染，所以不会留下一个孤立的点）。
-    // 输入大小自己拼，不借 dsh 那句 `tool.preparing.content`（「正在准备内容 5KB」）——准备态那一行
-    // 本来就只有这一个读数，前面那句把行头撑长一倍，读者要看的就是这个数。
+    // 输入大小只要读得到就显示，不要求路径已经到达
+    // write 的 `file_path` 常常排在参数流最末，等路径会让整段准备态都没有读数
+    // 没有路径时输入大小直接跟在描述后面，分隔点只在有描述时渲染
+    // 不借用 dsh 的 `tool.preparing.content`：准备态这一行只需要这个数，前面再加一句会把行头撑长
     const size = model.kilobytes === null ? null : model.kilobytes + 'KB'
     const status = stateLabel(model.state, t)
     // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
@@ -190,22 +137,22 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
         if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
     }, [])
 
-    // 那一截紧凑内容由三块拼成：路径（或摘要）、输入大小、增删两个数。**路径缺席时另两块照旧显示**——
-    // 原因见上面 `size` 那一段注释（`write` 的 `file_path` 在参数最末）。
-    const collapsedContent = summaryText === '' && size === null && totals === null ? null : (
+    // 路径缺席时，输入大小与增删数照旧显示；原因见上面 `size` 的四行注释
+    const collapsedContent = (summaryText !== '' || size !== null || totals !== null) && (
         <>
             {/* 那个分隔点是「标题 · 路径」之间的一颗点：没有路径时它不该单独出现。 */}
             {summaryText !== '' && (
                 <>
                     <span className={FILE_SEP_CLASS} aria-hidden/>
-                    {linkAvailable ? (
+                    {linkAvailable && (
                         <button type="button" className={FILE_LINK_CLASS} onClick={openFileClick} onKeyDown={linkKeyDown}>
                             <TextShimmer active={running}>{summaryText}</TextShimmer>
                         </button>
-                    ) : (
+                    )}
+                    {!linkAvailable && (
                         <span className={summaryClassName(model.state)}>
-          <TextShimmer active={running}>{summaryText}</TextShimmer>
-        </span>
+                            <TextShimmer active={running}>{summaryText}</TextShimmer>
+                        </span>
                     )}
                 </>
             )}
@@ -243,11 +190,12 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
         </>
     )
 
-    const expandedContent = open ? (
+    const expandedContent = open && (
         <div className={FILE_BODY_CLASS}>
-            {hunks !== null ? (
+            {hunks !== null && (
                 <DiffBlock diffs={hunks} labels={labels} maxLines={CHAT_DIFF_MAX_LINES} className={FILE_DIFF_CLASS}/>
-            ) : (
+            )}
+            {hunks === null && (
                 <div className={FILE_IO_CLASS}>
                     {model.bodyRaw !== null && (
                         <div className={FILE_IO_SECTION_CLASS}>
@@ -262,8 +210,8 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                         <div className={FILE_IO_SECTION_CLASS}>
                             <span className={FILE_IO_LABEL_CLASS}>{t('row.output')}</span>
                             <span className={FILE_IO_TEXT_CLASS} data-error={model.state === 'error' || undefined}>
-                {model.output}
-              </span>
+                                {model.output}
+                            </span>
                         </div>
                     )}
                 </div>
@@ -275,7 +223,7 @@ export function FileMutationRow(props: FileMutationRowProps): ReactElement {
                 </button>
             )}
         </div>
-    ) : undefined
+    )
 
     return (
         <div className={FILE_ROW_CLASS} data-variant={model.variant} data-tool={toolName} data-state={model.state}>
@@ -398,9 +346,6 @@ interface RowModel {
  *
  * 与内置 diff-card-model 只有一处不同：**不排除子调用**（原因见模块注释）。其余分支保持同序：
  * 未结算时只有参数可用；结算后优先用结果元数据里真实应用的 hunks，拿不到才退回参数。
- * @param block - 运行中或已结算的调用块。
- * @param args - 这一行的调用参数，已解析；准备态为 null。
- * @returns 要画的 hunks，或 null（这一行没有可画的改动）。
  */
 function diffHunks(block: ToolCallBlock, args: Record<string, unknown> | null): DiffHunk[] | null {
     if (!('kind' in block)) {
@@ -421,9 +366,6 @@ function diffHunks(block: ToolCallBlock, args: Record<string, unknown> | null): 
 
 /**
  * 从调用参数派生改动：write 是整份内容，edit 是那一对替换。
- * @param name - 线上工具名。
- * @param args - 已解析的参数；解析不出来时为 null。
- * @returns 单个 hunk，或 null（参数不是这一行的形状）。
  */
 function intendedHunks(name: string, args: Record<string, unknown> | null): DiffHunk[] | null {
     if (args === null) return null
@@ -449,9 +391,6 @@ function intendedHunks(name: string, args: Record<string, unknown> | null): Diff
  * 口径（`diffTotals` 对一份全 `+` 的改动计数）恒等。edit 要等价的两个字段都收尾才画——行级匹配
  * 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），宁可不画，也不给一个会
  * 上下跳的数字。
- * @param name - 线上工具名。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 单个 hunk，或 null（阶段或字段还不成形状）。
  */
 function streamedHunks(name: string, view: ToolArgs | undefined): DiffHunk[] | null {
     if (view === undefined) return null
@@ -472,18 +411,16 @@ function streamedHunks(name: string, view: ToolArgs | undefined): DiffHunk[] | n
 
 /**
  * 读结果元数据里真实应用的 hunks。
- * @param meta - 结果元数据，未经校验。
- * @returns 校验过的 hunks、`empty`（元数据明确说没有改动），或 null（不可用）。
  */
 function appliedHunks(meta: unknown): DiffHunk[] | 'empty' | null {
-    if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return null
-    const diffs = (meta as Record<string, unknown>).diffs
+    if (!isRecord(meta)) return null
+    const diffs = meta.diffs
     if (!Array.isArray(diffs)) return null
     if (diffs.length === 0) return 'empty'
     const hunks: DiffHunk[] = []
     for (const hunk of diffs) {
-        if (typeof hunk !== 'object' || hunk === null) return null
-        const {path, oldText, newText} = hunk as Record<string, unknown>
+        if (!isRecord(hunk)) return null
+        const {path, oldText, newText} = hunk
         if (typeof path !== 'string') return null
         if (oldText !== null && typeof oldText !== 'string') return null
         if (typeof newText !== 'string') return null
@@ -492,15 +429,15 @@ function appliedHunks(meta: unknown): DiffHunk[] | 'empty' | null {
     return hunks
 }
 
-/**
- * 派生整行的展示模型。
- * @param toolName - 线上工具名。
- * @param block - 运行中或已结算的调用块。
- * @param args - 这一行的调用参数，已解析；准备态为 null。
- * @param cwd - 会话工作区根。
- * @param home - 宿主账户主目录。
- * @returns 这一行的模型。
- */
+/** 调用块处在哪个展示状态。 */
+function rowStateOfToolCall(block: ToolCallBlock): RowState {
+    if (!('kind' in block)) return block.phase === 'preparing' ? 'preparing' : 'running'
+    if (block.error?.code === 'interrupted') return 'stopped'
+    if (block.isError) return 'error'
+    return 'ok'
+}
+
+/** 派生整行的展示模型。 */
 function rowModel(
     toolName: string,
     block: ToolCallBlock,
@@ -510,9 +447,7 @@ function rowModel(
 ): RowModel {
     const done = 'kind' in block
     const head = callHead(block)
-    const state: RowState = !done
-        ? block.phase === 'preparing' ? 'preparing' : 'running'
-        : block.error?.code === 'interrupted' ? 'stopped' : block.isError ? 'error' : 'ok'
+    const rowState = rowStateOfToolCall(block)
     const path = argumentPath(block, args)
     const output = done ? resultText(block) || null : null
     return {
@@ -522,16 +457,14 @@ function rowModel(
         filePath: path,
         bodyRaw: head === null || head.argsRaw === '' ? null : head.argsRaw,
         output,
-        errorSummary: state === 'error' && output !== null ? firstLine(output) : null,
-        state,
+        errorSummary: rowState === 'error' && output !== null ? firstLine(output) : null,
+        state: rowState,
         kilobytes: contentKilobytes(block.args),
     }
 }
 
 /**
  * 把一次结算结果摊成展示文本：文本块原样，其余块转成 JSON。
- * @param node - 已结算的结果节点。
- * @returns 摊平后的文本（可能为空串）。
  */
 function resultText(node: ToolResultNode): string {
     const parts: string[] = []
@@ -548,8 +481,6 @@ function resultText(node: ToolResultNode): string {
 
 /**
  * 这一行的调用头：已结算的看结果节点带回的那一份，仍在跑的看它自己的参数。
- * @param block - 运行中或已结算的调用块。
- * @returns 调用头，或 null（参数还在流进来的准备态）。
  */
 function callHead(block: ToolCallBlock): ToolCallHead | null {
     if ('kind' in block) return block.call
@@ -558,42 +489,40 @@ function callHead(block: ToolCallBlock): ToolCallHead | null {
 
 /**
  * 解析原始参数 JSON。
- * @param argsRaw - 参数原文。
- * @returns 参数对象，或 null（流式中途截断、或不是对象）。
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function parseArgs(argsRaw: string): Record<string, unknown> | null {
-    let value: unknown
+    let parsed: unknown
     try {
-        value = JSON.parse(argsRaw)
+        parsed = JSON.parse(argsRaw)
     } catch {
         return null
     }
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-    return value as Record<string, unknown>
+    return isRecord(parsed) ? parsed : null
 }
 
 /**
  * 按顺序取第一个非空字符串字段。
- * @param args - 解析后的参数。
- * @param keys - 候选字段名，按优先级排列。
- * @returns 命中的值，或 undefined。
  */
 function pickString(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
     for (const key of keys) {
-        const value = args[key]
-        if (typeof value === 'string' && value !== '') return value
+        const fieldValue = args[key]
+        if (typeof fieldValue === 'string' && fieldValue !== '') return fieldValue
     }
     return undefined
 }
 
 /**
  * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
- * @param block - 运行中或已结算的调用块。
- * @param args - 已解析的原始参数；解析不出来时为 null。
- * @returns 路径，或 undefined。
  */
 function argumentPath(block: ToolCallBlock, args: Record<string, unknown> | null): string | undefined {
-    return viewPath(block.args) ?? (args === null ? undefined : pickString(args, ['path', 'file_path']))
+    const streamedPath = viewPath(block.args)
+    if (streamedPath !== undefined) return streamedPath
+    if (args === null) return undefined
+    return pickString(args, ['path', 'file_path'])
 }
 
 /**
@@ -601,8 +530,6 @@ function argumentPath(block: ToolCallBlock, args: Record<string, unknown> | null
  *
  * 与内置的文件变更行同一条规则：字段收尾了才算数——准备态可能只到了半截——解码失败
  * （转义不完整）也当没有。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 路径，或 undefined。
  */
 function viewPath(view: ToolArgs | undefined): string | undefined {
     if (view === undefined) return undefined
@@ -619,8 +546,6 @@ function viewPath(view: ToolArgs | undefined): string | undefined {
  *
  * 与内置的文件变更行取同一个口径，所以同一个位置在两边显示同一个数：正在流进来的那一个字段按
  * 已收到的部分算，已经收完的按整段算。一个内容字段都还没出现时返回 null——行头不摆一个 0KB。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 向上取整的 KB 数，或 null。
  */
 function contentKilobytes(view: ToolArgs | undefined): number | null {
     if (view === undefined) return null
@@ -629,9 +554,13 @@ function contentKilobytes(view: ToolArgs | undefined): number | null {
         ? total + (view.stringLength(key, {step: KILOBYTE}) ?? 0)
         : total, 0)
     const remembered = countedKilobytes.get(view)
-    const next = open === undefined
-        ? CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
-        : Math.ceil((completed + (view.stringLength(open, {step: KILOBYTE, offset: completed}) ?? 0)) / KILOBYTE)
+    let next: number | null
+    if (open === undefined) {
+        next = CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null
+    } else {
+        const openLength = view.stringLength(open, {step: KILOBYTE, offset: completed}) ?? 0
+        next = Math.ceil((completed + openLength) / KILOBYTE)
+    }
     if (next === null) return remembered ?? null
     // 解码一时读不出来时 `stringLength` 给 undefined，上面按 0 计——那会让这个数掉回来。参数只追加，
     // 它本该只往上长，所以拿上一次的数兜底、取两者的较大值。
@@ -655,9 +584,6 @@ const countedKilobytes = new WeakMap<object, number>()
  *
  * 流式期每一批都要问一次，所以记住上一次数到哪、数出多少行，只扫新来的后缀；视图被换成新的
  * 一份（字段收尾，或 `settle` 用权威文本替换）时记忆自然落空，整段重数一次。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @param key - 内容字段名。
- * @returns 行数。
  */
 function streamedLineCount(view: ToolArgs | undefined, key: string): number {
     let memory: Map<string, {length: number, lines: number}> | undefined
@@ -670,11 +596,11 @@ function streamedLineCount(view: ToolArgs | undefined, key: string): number {
         }
         remembered = memory.get(key)
     }
-    const text = view?.text(key)
+    const fieldText = view?.text(key)
     // 转义序列还在路上时这一字段解码不出来（`text` 给 undefined）。那不能读成「这一段是空的」——
     // 参数只追加，这个数本该只往上长，归零就是一次假的回落，所以保留上一次数过的结果。
-    if (text === undefined) return remembered?.lines ?? 0
-    const body = text.endsWith('\n') ? text.slice(0, -1) : text
+    if (fieldText === undefined) return remembered?.lines ?? 0
+    const body = fieldText.endsWith('\n') ? fieldText.slice(0, -1) : fieldText
     if (body === '') return 0
     let lines = remembered?.lines ?? 1
     for (let at = remembered?.length ?? 0; at < body.length; at++) if (body[at] === '\n') lines++
@@ -687,9 +613,6 @@ function streamedLineCount(view: ToolArgs | undefined, key: string): number {
  *
  * 准备态（开关开着时）走 `streamedTotals`，只看参数视图。其余情形与内置同序：结算后优先用结果
  * 元数据里真实应用的 hunks，拿不到就用参数派生的那一份。
- * @param block - 运行中或已结算的调用块。
- * @param hunks - 已派生的改动。
- * @returns 增删两个数，或 null（这一行没有可画的改动）。
  */
 function rowTotals(block: ToolCallBlock, hunks: DiffHunk[] | null): {added: number, removed: number} | null {
     if (!('kind' in block) && block.phase === 'preparing' && liveDiffEnabled()) {
@@ -713,9 +636,6 @@ function rowTotals(block: ToolCallBlock, hunks: DiffHunk[] | null): {added: numb
  * 到达——模型先把 `old_string` 写完再写 `new_string` 时，那是一整段原文的时长（实测同一段参数流里 KB
  * 在 96 ms 就显示，行数要等 4.5–6.8 s）。那一位没到之前先报 0，到齐之前它只往上跳；等齐写法反而会在
  * 另一半到达时把已经数过的那一半按新进度重报一次，读数往回跳，与数字轮那一套相冲。
- * @param name - 线上工具名。
- * @param view - 参数视图；旧版 dsh 没有它。
- * @returns 增删两个数，或 null（两个内容字段都还没出现）。
  */
 function streamedTotals(name: string, view: ToolArgs | undefined): {added: number, removed: number} | null {
     if (view === undefined) return null
@@ -734,10 +654,6 @@ function streamedTotals(name: string, view: ToolArgs | undefined): {added: numbe
 
 /**
  * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
- * @param path - 工具参数里的路径。
- * @param cwd - 会话工作区根。
- * @param home - 宿主账户主目录。
- * @returns 缩短后的路径。
  */
 function shortenPath(path: string, cwd: string | undefined, home: string | undefined): string {
     if (cwd !== undefined && cwd !== '' && path.startsWith(cwd)) {
@@ -753,8 +669,6 @@ function shortenPath(path: string, cwd: string | undefined, home: string | undef
 
 /**
  * 取一段文本的第一行。
- * @param text - 任意文本。
- * @returns 第一行。
  */
 function firstLine(text: string): string {
     const lineBreakAt = text.indexOf('\n')
@@ -763,32 +677,25 @@ function firstLine(text: string): string {
 
 /**
  * 摘要那半截的类名：失败与中断各自带自己的状态色。
- * @param state - 行状态。
- * @returns 类名。
  */
-function summaryClassName(state: RowState): string {
-    if (state === 'error') return FILE_SUMMARY_CLASS + ' ' + FILE_ERROR_CLASS
-    if (state === 'stopped') return FILE_SUMMARY_CLASS + ' ' + FILE_STOPPED_CLASS
+function summaryClassName(rowState: RowState): string {
+    if (rowState === 'error') return FILE_SUMMARY_CLASS + ' ' + FILE_ERROR_CLASS
+    if (rowState === 'stopped') return FILE_SUMMARY_CLASS + ' ' + FILE_STOPPED_CLASS
     return FILE_SUMMARY_CLASS
 }
 
 /**
  * 给读屏的状态文本：图标与扫光都不表达状态，这句话替它们说。
- * @param state - 行状态。
- * @param t - 文案座位。
- * @returns 状态文本，或 null（无需播报）。
  */
-function stateLabel(state: RowState, t: Translate): string | null {
-    if (state === 'running') return t('row.running')
-    if (state === 'error') return t('row.failed')
-    if (state === 'stopped') return t('row.stopped')
+function stateLabel(rowState: RowState, t: Translate): string | null {
+    if (rowState === 'running') return t('row.running')
+    if (rowState === 'error') return t('row.failed')
+    if (rowState === 'stopped') return t('row.stopped')
     return null
 }
 
 /**
  * 组装 diff 卡片自己的 chrome 文案。
- * @param t - 文案座位。
- * @returns diff 卡片的 labels。
  */
 function diffBlockLabels(t: Translate): DiffBlockLabels {
     return {

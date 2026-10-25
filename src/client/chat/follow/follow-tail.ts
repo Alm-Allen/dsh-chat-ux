@@ -1,29 +1,8 @@
 /**
  * 把聊天区的滚动位置交还给 dsh 的跟随。
  *
- * dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉：那种滚动把它挂进 500 ms 的采样窗口
- * （窗口里 `onResize` 直接返回，内容怎么长都不跟随），结算时位置离底超过它的阈值就关。判据本身
- * 是**位置比较**，不是「谁在滚」——所以 dsh 自己的 `focus()`、浏览器的 clamp、以及任何程序化
- * 写入，都会被记成「读者移动了」。一段执行里最容易撞上这一格的就是那些结构时刻：思考行收起、
- * 工具行插入、过程组开合，它们同时制造一次位置变化和一段成片到达的内容。
- *
- * dsh 自己留了一个重开入口：跟随关掉时才渲染的那个「回到底部」按钮，`onClick` 里是
- * `reading.followTail()`——清掉采样窗口、重新点亮跟随、立即到底。这一处把两条路都用上：
- *
- *   钉到底   `scrollTop = scrollHeight`（浏览器自己 clamp 到地线）。只要真的产生了位移，dsh 的
- *            `onScroll` 就会走「读者到底」那一支——**它不检查跟随当前是开是关**，于是重亮跟随
- *            并清掉采样窗口。位置本来就在地线上时，这一下什么都不发生。
- *   点按钮   没有位移就没有滚动事件，钉到底于是成了空操作。**一段执行刚开头、内容还没长出滚动条
- *            时正是这一格**：地线是 0、位置也是 0，写多少都是 0。这一格只有按钮有效——它调的
- *            `followTail()` 无条件把跟随点亮，不需要任何位移。
- *
- * 所以顺序是先钉底、再看几眼属性、属性没回来才点按钮。看几眼是必要的：dsh 关掉跟随常常比触发它
- * 的事件晚一步，它得等采样结算；五眼正好盖过它那五百毫秒的窗口。
- *
- * **现在只剩折叠收尾在调它**：增强跟随与组体跟随（`follow-guard.ts`、`process-follow.ts`）已经
- * 连同「token 淡入」那一个开关一起删掉，这里的能力一个字没动——折叠收尾那一次交还照旧走这条路。
- *
- * @module dsh-chat-ux/client/chat/follow/follow-tail
+ * 先钉到底；没有产生滚动事件时再看五眼 following-tail 属性，仍关着才点 dsh 的「回到底部」。
+ * 折叠收尾调用它，调用方可用 stillWanted 在读者接管滚动后立刻作废。
  */
 
 import {CHAT_FLOW_SELECTOR, CONVERSATION_SCROLL_SELECTOR, FOLLOWING_TAIL_SELECTOR} from '../../dom-contract'
@@ -59,7 +38,6 @@ function conversationScroller(): HTMLElement | null {
 
 /**
  * 确保会话重新跟上底部，并在必要时把 dsh 的跟随一起点亮。
- * @param ensure - 这一轮交还的边界；省略表示交给谁都不问，自己看完五眼。
  */
 export function ensureFollowTail(ensure: FollowEnsure = {}): void {
     const stillWanted = ensure.stillWanted ?? ((): boolean => true)
@@ -84,7 +62,7 @@ export function ensureFollowTail(ensure: FollowEnsure = {}): void {
         // 自己那个「回到底部」按钮。
         if (document.querySelector(FOLLOWING_TAIL_SELECTOR) === null) {
             // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
-            // （列 → 滚动框 → 框架），按钮就挂在框架的下一个兄弟上。
+            // （从列到滚动框再到框架），按钮就挂在框架的下一个兄弟上。
             const column = document.querySelector<HTMLElement>(CHAT_FLOW_SELECTOR)
             const root = column?.parentElement?.parentElement ?? null
             const button = root?.nextElementSibling?.querySelector<HTMLElement>('button') ?? null

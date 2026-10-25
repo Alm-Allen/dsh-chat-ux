@@ -1,97 +1,24 @@
 /**
- * 发送气泡的形变：从「一整张输入卡片」连续地长成「一条气泡」，整段在起飞那一刻算好、交给合成器。
+ * 发送气泡的形变：把输入卡片克隆、预先算好形状与文字层，再交给合成器从卡片收成气泡。
  *
- * 读者看到的是：提交的那一下，输入卡片原样浮起来一份——底色、圆角、描边与阴影、工具栏、草稿
- * 里的字一样不差；它一边飞，一边把多出来的东西收掉（工具栏两组各自贴着最近的那个角缩小、淡出，
- * 描边与阴影跟着形状缩、跟着淡），外形收成气泡，字跟着变窄的形状一行一行重新排，落地时正好就是
- * 那条真实的气泡。真实的输入框留在原地、已经清空，替身从它身上离开。
+ * 位移、形状、颜色和字层必须共用一条时间轴：任何一条单独跑快，卡顿时右边缘都会越出消息列。
+ * clip-path 与 background-color 上不了合成器；形状走壳的 scale，内容用反向 scale 抵消。
  *
- * **为什么全部预先算好。** 提交那一刻 dsh 的主线程很重（新会话从 hero 切到对话、空闲会话第一次
- * 挂消息，都是几十到一百多毫秒的长任务），这段动画要是有任何一件事留在主线程上，它就会在那里卡住。
- * 形状、位置、透明度都能交给合成器——**除了 `clip-path`**。那一条是实测否掉的：它单独放一段关键帧
- * 也一样上不了合成器，读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张还没收窄的
- * 卡片被平移出消息列。所以形状改走壳上的 `transform: scale`，内容再用一层互为倒数的 `scale` 抵回来
- * （见 `startMorph` 里的 `scaler`）。唯一绕不开布局的是「字跟着形状重新排」——但折行只在一串离散的
- * 宽度上变化，所以把它也提前做掉：
- *
- *   形状    一个壳，`scale` 从卡片尺寸收到气泡尺寸；壳里垫一层反向缩放，内容的视觉尺寸与位置一个像素
- *           都不变，变的只有 `overflow: hidden` 那个裁剪框。圆角不可合成，单独一层、留在主线程——
- *           它不参与右边缘。底色是壳里两层实色（卡片的、气泡的）靠透明度交叉淡换：`background-color`
- *           写进同一段关键帧时会掉回主线程（实测主线程一占住，形状与颜色一起定格），所以只用透明度。
- *   描边    壳的 `overflow: hidden` 会连元素自己的阴影一起裁掉，所以卡片的阴影与那一圈发丝描边挂在壳
- *           后面一个单独的「光晕」上：透明的盒子、原样的 box-shadow，跟着壳的外框缩放，一路淡掉。
- *   工具栏  卡片整张克隆下来（去掉底色与阴影，交给壳和光晕），工具栏左右两组各自贴着壳上最近的
- *           那个角走，边缩小边淡出——右边那组跟着右下角往里收，左边那组跟着底边往上收。
- *   字      起飞前先把「气泡的正文」在形变沿途的每一个宽度上排一遍，折行一样的归成一段，每段一层
- *           预先排好的字；时间到了哪一段就亮哪一层（`opacity` 的阶跃，合成器上切换）。多行时行高也
- *           要从输入框的 24 走到气泡的 22，行高按半像素分档，同样归进层里。第一段用的是输入框里那份
- *           草稿自己的克隆（引用、技能那些小块在输入框里另有样式），形变过半才换成气泡的写法。最后
- *           一层就是气泡自己的排版，交接时一个像素都不跳。
- *
- * 主线程上每帧只剩两件事：终点跟着页面动了多少（dsh 滚到底、回显换正式行）写在最外层；形变段走完
- * 那一帧把壳归一（见 `startMorph` 里的 `compact`）。两件都在 `send-flight.ts` 的帧循环里。
- *
- * **替身凭什么长得像真卡片。** 五条路一起走：DOM 结构（class 一个不删，dsh 的样式是 CSS Modules，
- * 认 class 就有样式）、起飞前现读的计算样式（底色、圆角、阴影这些不进 class 的属性）、**卡片那一层
- * 的面**（卡片自身与它两个伪元素的背景照抄那一刻算出来的值，见 `ComposerSurface`：玻璃的底就画在
- * 卡片的 `::before` 上，而模拟链一个 `data-*` 都不抄，只认规则的话整块卡面都会丢）、**克隆子树里每个
- * 元素的面**（同样照抄那一刻的值，起飞时跟替身现算的比一次、只把失配的写进去，见 `ElementSurface`），
- * 以及**祖先链**——克隆一旦离开原来的父链，`.hero .input` 这类后代选择器就全不匹配了，所以起飞时照
- * 着卡片的祖先再套一条 `display: contents` 的链回去（见 `startMorph`）。自定义属性与那十几个继承属
- * 性另有抄法，理由见 `snapshotComposer`。
- *
- * @module dsh-chat-ux/client/chat/send-flight/send-morph
+ * 替身靠克隆、计算样式、卡片与子树的绘制面、祖先链共同还原；祖先链只抄 class，不抄 data-*。
  */
 
 /**
- * 起飞那一整段的时长（毫秒）。**不是一个设置项**——它曾经是卡片上的 `sendFlightMs`（80–1200 ms 可调），
- * 后来固定下来：这条动效只留一个开关，多一个旋钮不值得。
+ * 整段飞行时长（毫秒）。只留开关，不开放时长。
  *
- * **开发期要微调就是改这一个数**，改完 `npm run build`、刷新页面（Ctrl+F5）。
- * 注意 `文档/业务/发送动效.md` 里那张一帧对照表是按这个数算的，改了这个数那张表的时刻要跟着重算；
- * 兜底定时器按 `FLIGHT_MS + RESCUE_MARGIN_MS` 走，不用另改。
+ * 改它时同步重算 `文档/业务/发送动效.md` 的一帧对照表；兜底定时器按 FLIGHT_MS + RESCUE_MARGIN_MS 走。
  */
 export const FLIGHT_MS = 350
 
 /**
- * 位移与形变共用的角频率。**一整段里只有一个进度 `m`**：横向位置、外框宽度、内容区、行高全都由它
- * 推出来。读者看到的是先横着离开输入卡片、再一路上升，两件事在时间上分开——这是 PR #4 之前那套
- * 标定出来的轨迹，与纵向那条（`RISE_OMEGA`）的比值是 2.98 / 2.11 / 1.61 / 1.32 / 1.15。
+ * 位移与形变共用的角频率。
  *
- * **位移和形变必须同源**——同一条曲线、同一条时间轴。同源时右边缘是
- *
- *     right(u) = start.right + (end.right - start.right) × m(u)
- *
- * 无论哪一头冻住，它都只是这条曲线上的某个值，**恒在 `[start.right, end.right]` 里**。
- *
- * 这条等式今天由「两个 `transform` 关键帧 + 同一个 `FLIGHT_MS`」保证：形状（壳的 `scale`）与位移一起
- * 跑在合成器上，卡顿时一起停在同一格。**一旦给位移单独一条更快的曲线就出事**（曾经这么干过，回归成了
- * 读者报的「偶尔超出右侧聊天区」）：卡顿时位移跑在前面、形变还没收，右边缘甩出消息列。超出量
- *
- *     (W0 - W1) × (1 - m_冻结) − dx × (1 - across_当前)
- *
- * 卡在起手那几十毫秒时第一项接近满值。当时的抓帧实测：一整张还没收窄的卡片飞到了终点，右边缘顶到
- * 视口最右边（列右之外 59 px 以上）。**卡得越早、越久，甩得越远**——这正是「偶尔一点点、偶尔特别多」
- * 的来源。同一个理由还写在 `send-flight.ts` 的帧循环里：那里原来是「位移每帧由主线程写、跟着形状那条
- * 动画的 `currentTime` 走」；两条都上了合成器之后，依据换成了时间轴本身。
- *
- * 临界阻尼，不过冲：形状不该弹。
- *
- * **这个数同时定着「开局那几帧各自走多远」，取 7 是照这个量出来的。** 时间轴压进 `MORPH_END` 之后，
- * 弹簧的角频率相对那一段长度就偏大：取 16 时第一帧（提交后 16.7 ms 那一格）已经走掉 58.8%、第二帧
- * 90.4%——读者看到的是一上来就闪到半路；而提交那一刻 dsh 的主线程本来就重，首帧没提交出来，第一眼
- * 就是九成。取 7 之后那一串（每帧 16.7 ms）是 21.7 / 30.2 / 21.8 / 12.9 / 7.0 / 3.6 / 1.8 / 0.9（%），
- * 首帧丢了是五成二；想再小就往 6、5 走，代价见下一段。
- *
- * **再往下取要付两笔代价。** 一是收尾：形变在 135 ms 一刀定死，取到 4 时最后一格横向还剩 2%/帧（约 12 px）
- * 才归零，看得见一次顿。二是轨迹：横向拖得越久，「先横着离开输入卡片、再一路上升」就越像一条对角线
- * （当年 `ω = 7`、`MORPH_END = 0.7`、纵向又没有延迟的那一版整段方向角都在 -50° 上下，读者直接说
- * 「曲线像直线了」——同样是 7，差别全在后面那两项上）。
- *
- * **纵向压在整段上，并且刻意欠阻尼**：走到头冲过去约 **2.84%**（`exp(-πζ/√(1-ζ²))`，只由阻尼比定、
- * 与 ω 无关），峰值落在 190 ms，之后一路落回目标——落定那一下的弹性就是它。
- *
- * 这几个数**不开放给读者调**（逐帧对照见 `文档/业务/发送动效.md`）。
+ * 两者必须同一条曲线、同一条时间轴，右边缘才始终落在起点和终点之间；单独调快位移会让未收窄的
+ * 卡片越出消息列。取 7 是为了压住首帧位移，同时避免形变收尾时出现可见顿挫。
  */
 const ACROSS_OMEGA = 7
 
@@ -102,34 +29,21 @@ const ACROSS_OMEGA = 7
 const RISE_DAMPING = 0.8
 
 /**
- * 纵向弹簧的角频率，与整段时长同一把尺子：越大收得越早、回冲越靠前。
- *
- * **导出是为了让落点让位那条弹簧与它同源**：让位借的就是这条曲线的形状（同一个函数、同一个角频率），
- * 阻尼比与时间窗自己一套——见 `send-reveal.ts` 的 `REVEAL_DAMPING`。
+ * 纵向弹簧的角频率。落点让位复用它，只另配阻尼比和时间窗。
  */
 export const RISE_OMEGA = 7.5
 
 /**
- * 纵向起步的延迟（占整段的比例）：这一段里替身只横着走、一步都不上升。
+ * 纵向起步的延迟，占整段的比例。
  *
- * 横向那条放慢之后（见 `ACROSS_OMEGA`），前段的方向角本来会一直贴在 -40° ~ -64° 的斜线上，读者
- * 报的是「像一条直线飞过去」。把上升压到这之后，轨迹回到「先横着离开输入卡片、再一路升起来」：
- * 0.15 是四十五毫秒，那一段里横向走掉六成八（约 420 px），方向角恒为 0°（纯水平），之后才折向上。
- * 延迟段里弹簧还没起步，而弹簧起手的速度本来就是零，所以接缝处没有速度突变。
- *
- * **导出是为了让落点让位与它同一时刻起步**：让位那条弹簧把窗口内的比例先换算到这段延迟之后
- * （见 `send-reveal.ts` 的 `atRise`），两者才读得出「气泡升多少、内容就让多少」。
+ * 延迟段只横移、不上升，接缝处弹簧速度为零；落点让位用同一延迟对齐两边进度。
  */
 export const RISE_DELAY = 0.15
 
 /**
- * 形变收尾的位置（占整段的比例）。**它同时是「形变比横向快多少」的那个倍数**（见 `ACROSS_OMEGA`）：
- * 形变走的还是同一个弹簧，只是时间轴压到这一段的长度上。
+ * 形变收尾的位置，占整段的比例。
  *
- * 它曾经压在 0.45 是因为形变每帧由主线程写、必须早收；后来形变搬上合成器，一度放宽到 0.7。现在压回
- * 0.45，理由换了一条：形变越早收完，宽度就越早收到位，右边缘也就越早退进列内（算式见 `ACROSS_OMEGA`）。
- * 配上那一条曲线，二十毫秒走掉一成八、五十毫秒走掉五成八、百毫秒九成二，一百三十五毫秒就定形，剩下那
- * 一段只有上升与落定。
+ * 越早收完，宽度越早退进列内，右边缘越安全；剩下的时间只留给上升与落定。
  */
 const MORPH_END = 0.45
 
@@ -317,7 +231,7 @@ interface ChromePiece {
  * **`data-*` 一个都不抄，这一条是量出来的。** 链的用途只有「让后代选择器的祖先条件命中」，而
  * `data-*` 同时是**别人手里的状态把手**：页面代码用 `document.querySelector('[data-phase="hero"]')`
  * 这类**全局**查询读它判阶段。链上抄的是**快照那一刻**的值，而卡片的阶段会在提交后的几十毫秒内
- * 翻转（hero → settling → active）——那个过期的假节点留在文档里，别人的状态机就一直读到 hero。
+ * 翻转（hero、settling、active）——那个过期的假节点留在文档里，别人的状态机就一直读到 hero。
  *
  * 实测（同页装着 Claude 皮肤、新会话提交一条，原始数据 `.probe/compat/hero-phase.json`）：链上带
  * `data-phase="hero"` 时，真输入卡片被抬到 `y=526`、**停住替身在场的整整 300 ms**（`FLIGHT_MS`），
@@ -379,7 +293,7 @@ export interface Morph {
  *
  * **`font-size` 与 `line-height` 必须在。** dsh 给输入区定的字号挂在**祖先**的选择器上（hero 态一条、
  * 会话态一条），克隆一离开那条链，这两项就直接掉回 body 的 16px：实测逐路径对齐 37 对元素，有
- * **26 对字号对不上**（卡片 15px → 替身 16px，输入面 14px/24px → 16px/26px）。这一条不需要任何人
+ * **26 对字号对不上**（卡片 15px 对替身 16px，输入面 14px/24px 对 16px/26px）。这一条不需要任何人
  * 动样式，**每一段飞行都在发生**。
  *
  * 抄在外壳上不会夺走克隆里自己写死的字号：直接命中的规则赢过继承，所以只有那些**没写死**、本来
@@ -507,9 +421,6 @@ const MAX_ANCESTOR_LINKS = 24
  *
  * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
  * `cloneNode`，放在读者按下回车的那一刻不会让它等。
- * @param input - 草稿的可编辑面。
- * @param card - 输入卡片。
- * @returns 抓到的快照；卡片量不到尺寸、或者草稿区不在卡片里时为 null。
  */
 export function snapshotComposer(input: HTMLElement, card: HTMLElement): ComposerSnapshot | null {
     const box = card.getBoundingClientRect()
@@ -583,10 +494,10 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
     //
     // 基准取**挂载点**，三种情形都对着验算过：
-    //   变量只定义在中间祖先上（挂载点上没有）→ 那边读出来是空串，两边不同，抄下来；不抄的话替身
-    //     上这个变量根本不存在，`var(--x)` 会掉进它的 fallback，而真卡片上它是有的。
-    //   挂载点与卡片取值相同 → 不抄，替身从挂载点继承到的就是同一个值。
-    //   中间祖先覆盖了挂载点的值、卡片沿用 → 两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
+    //   变量只定义在中间祖先上、挂载点没有：两边不同，抄下来
+    //     不抄的话替身拿不到这个变量，`var(--x)` 会掉进 fallback
+    //   挂载点与卡片取值相同：不抄，替身从挂载点继承到的就是同一个值
+    //   中间祖先覆盖挂载点、卡片沿用：两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
     //     那一份（覆盖值），替身拿到的与真卡片一致。
     // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
     const hostStyle = getComputedStyle(ghostHost())
@@ -620,7 +531,8 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     }
     ancestors.reverse()
 
-    const clone = card.cloneNode(true) as HTMLElement
+    const clone = card.cloneNode(true)
+    if (!(clone instanceof HTMLElement)) return null
     scrub(clone)
     // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
     // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
@@ -644,7 +556,8 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
         ['background', 'transparent'],
         ['box-shadow', 'none'],
     ])
-    const draft = clone.children[Array.from(card.children).indexOf(scroll)] as HTMLElement
+    const draft = clone.children[Array.from(card.children).indexOf(scroll)]
+    if (!(draft instanceof HTMLElement)) return null
     // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
     // 工具栏会跟着往上跑。
     const scrollBox = scroll.getBoundingClientRect()
@@ -689,10 +602,6 @@ export function alphaOf(color: string): number {
 
 /**
  * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
- * @param snapshot - 起飞前抓下来的输入卡片。
- * @param bubble - 终点那条气泡（此刻已经在布局里、被藏着）。
- * @param end - 气泡的视口矩形。
- * @returns 起好的形变；气泡量不到尺寸时为 null。
  */
 export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end: DOMRect): Morph | null {
     if (end.width === 0 || end.height === 0) return null
@@ -784,8 +693,8 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // Chromium 上也稳。所以起手那格与落定那格各画一层，中间靠上面那层的透明度淡过去——两层都是不
     // 透明的实色，按 α 叠正好就是两色的线性插值。
     //
-    // 绘制序（DOM 序就是绘制序，都是 `absolute`）：卡片背后那层底色 → 卡片自身 → `::before` 那层 →
-    // `::after` 那层 → 气泡色从透明淡到实。中间那三层都是**照抄卡片那一刻算出来的值**（见
+    // 绘制序按 DOM 序，依次是卡片背后的底色、卡片自身、`::before`、`::after`，最后是气泡色淡入
+    // 中间那三层都是**照抄卡片那一刻算出来的值**（见
     // `ComposerSurface`），所以画在卡片 `::before` 上的东西——玻璃的底与两片端色——跟着一起飞，
     // 不必认识它是什么。
     //
@@ -843,8 +752,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 的「离 20×20 差多少」都比线性小一到两成——30 ms 冻到 90 ms 是 14.7 对 18.3，60 ms 冻到 90 ms
     // 给的是 13.4×20.4，垂直方向正好贴上气泡的圆弧。中段仍是圆角矩形（75% 圆度），不是胶囊。
     //
-    // 反过来把半径**压死**成一个恒定值（曾经试过收到的终值 20 px）会让卡顿椭圆变小四成，但离终点的
-    // 角更远，跳变更大：同一场景 7.5 变成 17.2。**「椭圆小」和「离终点近」不可兼得的，取后者。**
+    // 把半径压成一个恒定值会让卡顿椭圆更小，但离终点的角更远、跳变更大；这里优先保留终点形状。
     //
     // **两端都夹在短边的一半以内**：圆度不超过 1，半径就不会撞上浏览器那条「半径之和超过边长就等比
     // 缩小所有角」的静默规则——那条规则一接管，这条曲线说什么都不算了，极窄的气泡上还会连水平方向
@@ -954,9 +862,8 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
     // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
     // 左边，右边由宽度决定，两条边都单调。
-    // 纵向就是弹簧本身，**不补任何下限**（2026-10-18 读者定案）：过冲幅度 = 行程 × 1.52%，只由
-    // `RISE_DAMPING` 一个数决定。窄气泡、短行程弹得少，长行程弹得多——这是尺寸该有的差别，不是
-    // 要抹平的缺陷。这里曾经补过「至少 4 px / 8 px」的下限，那会让每一次飞行都弹同样一段。
+    // 纵向就是弹簧本身，**不补任何下限**：过冲幅度 = 行程 × 1.52%，只由 `RISE_DAMPING` 决定
+    // 窄气泡、短行程弹得少，长行程弹得多；补下限会让每次飞行都弹同样一段。
     const travel = run(mover, samples.map(sample => ({
         offset: sample.u,
         transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
@@ -994,7 +901,6 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
      * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
      * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
      * 起手那一格。
-     * @returns 进度；动画读不出时间时为 0（停在起手不动，比飞出去强）。
      */
     const progress = (): number => {
         const raw = travel.currentTime
@@ -1028,7 +934,6 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
      *
      * 圆角在这之前已经是**视觉半径**（按那一格的可见短边算出来的，见 `textWindows` 之后那段）；归一
      * 之后壳的布局尺寸就是可见尺寸，同一把尺子，直接写回去即可。
-     * @param u - 这一刻的进度；还没走完形变段就什么都不做。
      */
     const compact = (u: number): void => {
         if (normalized) return
@@ -1066,8 +971,8 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
             {borderRadius: final.radius + 'px'},
         ], {duration: CORNER_RECOVER_MS, easing: 'ease-out'})
     }
-    // 落定那格是气泡自己：不透明，把下面四层整个盖住。方向与从前相反（从前是卡面那层从 1 淡到 0），
-    // 因为卡面现在是照抄来的、可能半透明，压在气泡色上会偏色。
+    // 气泡色从透明淡到实，落定那格把下面四层整个盖住
+    // 卡面是照抄来的、可能半透明，压在气泡色上会偏色，所以必须由气泡色在上层淡入
     run(bubbleFill, between(0, tuning.morphEnd, sample => ({opacity: String(sample.m)}), 2))
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
@@ -1175,8 +1080,6 @@ function ghostHost(): HTMLElement {
  * 正中再掉回来。行内 + `!important` 是样式层级的顶格：级联顺序里作者声明的 `!important` 排在动画之上
  * （动画与过渡都在它下面）。也正因为这样，钉的时候要留意别把替身自己那几段动画驱动的属性一起钉死
  * ——`PAINT_PROPERTIES` 里因此没有 `opacity`。
- * @param element - 要钉的元素。
- * @param declarations - 属性名与值，按顺序写。
  */
 function pin(element: HTMLElement, declarations: readonly (readonly [string, string])[]): void {
     for (const [name, value] of declarations) element.style.setProperty(name, value, 'important')
@@ -1218,8 +1121,6 @@ interface TextWindow {
  * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
  * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
  * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
- * @param bottomPadding - 气泡正文到底边的距离，字撑高外框时用。
- * @returns 按时间排好的段；第一段的内容由草稿克隆负责，这里只给它时间窗。
  */
 function textWindows(
     bubble: HTMLElement,
@@ -1332,9 +1233,6 @@ function textWindows(
 
 /**
  * 一层预先排好的正文：气泡里的内容原样克隆，排字属性从气泡上抄。
- * @param bubble - 终点那条气泡。
- * @param style - 它的计算样式。
- * @returns 还没定宽的字层。
  */
 function textLayer(bubble: HTMLElement, style: CSSStyleDeclaration): HTMLElement {
     const layer = document.createElement('div')
@@ -1350,7 +1248,6 @@ function textLayer(bubble: HTMLElement, style: CSSStyleDeclaration): HTMLElement
 
 /**
  * 一段只在 `[from, until)` 里亮着的透明度：两头是阶跃，合成器上切换。
- * @returns 关键帧；同一个 offset 出现两次，就是在那一刻跳变。
  */
 function stepOpacity(from: number, until: number): Keyframe[] {
     const frames: Keyframe[] = []
@@ -1383,8 +1280,6 @@ function morphProgress(u: number): number {
 
 /**
  * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
- * @param u - 时间占比，0 到 1。
- * @returns 位移进度；延迟段里恒为 0。
  */
 function riseProgress(u: number): number {
     const shifted = (u - tuning.riseDelay) / (1 - tuning.riseDelay)
@@ -1397,8 +1292,6 @@ function riseProgress(u: number): number {
  *
  * 让位要收在「气泡底边越过输入框上沿」那一刻，而那是一个**位移比例**、不是时间；纵向弹簧又不是
  * 匀速的，所以要反解一次。二分 24 次，误差压在一帧以下（0.06 的进度差在 60 fps 里就是两帧）。
- * @param progress - 纵向位移的比例（1 是落点）。
- * @returns 时间占比；进度不大于 0 时是 0。
  */
 export function timeAtRise(progress: number): number {
     if (!(progress > 0)) return 0
@@ -1417,10 +1310,6 @@ export function timeAtRise(progress: number): number {
  *
  * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
  * 就是它。`u` 超出 1 的部分由调用方夹住。
- * @param u - 时间占比，0 到 1。
- * @param damping - 阻尼比；1 是临界阻尼，不会过冲。
- * @param omega - 角频率，与 `u` 同一把尺子：越大收得越早。
- * @returns 位移进度；阻尼比小于 1 时可能略大于 1。
  *
  * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
  * （见 `send-reveal.ts` 的 `springFrames`）。
@@ -1446,7 +1335,6 @@ export function springProgress(u: number, damping: number, omega: number): numbe
  *
  * **只认说得通的值**：不是有限数、或越界（`morphEnd` 要在 0 与 1 之间、阻尼比夹在 0.05~1）就退回
  * 默认——一次笔误不该把动画钉死在半路。读不到 `localStorage`（隐私模式会直接抛）时同样退默认。
- * @returns 这一次要用的那一套参数。
  */
 function readTuning(): FlightTuning {
     let raw: string | null = null
@@ -1485,10 +1373,6 @@ function readTuning(): FlightTuning {
  *
  * 壳的宽按 `sx` 收、高按 `sy` 收（详情见 `MORPH_END`：宽收得比高快），圆角会跟着被压成椭圆。CSS 的
  * `border-radius` 支持两个轴各写一个半径（`水平 / 垂直`），所以把缩放除回去，视觉上就还是正圆。
- * @param radius - 这一刻想要的视觉半径。
- * @param sx - 壳在横轴上的缩放。
- * @param sy - 壳在纵轴上的缩放。
- * @returns 给 `borderRadius` 用的值。
  */
 function cornerRadius(radius: number, sx: number, sy: number): string {
     return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px'
@@ -1498,8 +1382,6 @@ function cornerRadius(radius: number, sx: number, sy: number): string {
  * 一条 box-shadow 向外扩多少：取各层里最大的 `模糊半径 + 扩散半径`。颜色函数里的数字先剔掉。
  *
  * 光晕那一层要用它把阴影的外沿收回可见右边缘以内（见 `startMorph` 里 halo 的缩放）。
- * @param shadow - 计算样式里的 `box-shadow`。
- * @returns 像素数；读不出来当 0——阴影小一点，总比画到列外强。
  */
 function shadowSpread(shadow: string): number {
     if (shadow === '' || shadow === 'none') return 0
@@ -1520,9 +1402,6 @@ function shadowSpread(shadow: string): number {
  * 抄的永远是**画出来的东西**，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），
  * 抄进去会和它打架。伪元素的定位几何也不在这份白名单里（元素那层根本用不上那几条），它由
  * `PSEUDO_PROPERTIES` 单独列上，理由见那里。
- * @param style - 这一层的计算样式。
- * @param properties - 抄哪些属性。
- * @returns 属性名与那一刻算出来的值。
  */
 function readDeclarations(style: CSSStyleDeclaration, properties: readonly string[]): readonly LookDeclaration[] {
     return properties.map((name): LookDeclaration => [name, style.getPropertyValue(name)])
@@ -1532,10 +1411,6 @@ function readDeclarations(style: CSSStyleDeclaration, properties: readonly strin
  * 抄一个伪元素那一层。
  *
  * `content` 是 `none` 就是没有这个伪元素，给 null——替身那一层什么都不写，回落到本来的样子。
- * @param element - 带伪元素的元素。
- * @param pseudo - `'::before'` 或 `'::after'`。
- * @param properties - 抄哪些属性。
- * @returns 那一层的面；没有这个伪元素时为 null。
  */
 function readPseudoLayer(element: HTMLElement, pseudo: '::before' | '::after', properties: readonly string[]): readonly LookDeclaration[] | null {
     const style = getComputedStyle(element, pseudo)
@@ -1548,8 +1423,6 @@ function readPseudoLayer(element: HTMLElement, pseudo: '::before' | '::after', p
  *
  * 一路往上找第一个不透明的 `background-color`——多半是画布。到 `body` 都没找到就给 `transparent`：
  * 垫不出来就不垫，宁可不透，也不画一块来路不明的色。
- * @param card - 卡片。
- * @returns 一个颜色；找不到时是 `transparent`。
  */
 function behindColorOf(card: HTMLElement): string {
     for (let node = card.parentElement; node !== null; node = node.parentElement) {
@@ -1561,8 +1434,6 @@ function behindColorOf(card: HTMLElement): string {
 
 /**
  * 把抄下来的一层「面」写到替身的某一片填充上。
- * @param element - 填充层。
- * @param declarations - 抄下来的属性；这一层不存在时为 null，那就什么都不写。
  */
 function paintSurface(element: HTMLElement, declarations: readonly LookDeclaration[] | null): void {
     for (const [name, value] of declarations ?? []) element.style.setProperty(name, value)

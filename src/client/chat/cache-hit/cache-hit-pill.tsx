@@ -1,19 +1,8 @@
 /**
- * 输入框下方那枚「缓存命中」胶囊。
+ * 输入框下方的缓存命中胶囊。
  *
- * dsh 在 `conversation.composer.dock` 上发两个座位条目（`activity` order 0、`usage` order 1），
- * 同一个 id 与同一个 order 上按 priority 取最低的那个渲染，内置那两个是默认的 0。这里用 -1 遮蔽
- * 掉 `usage` 重画一份：命中率恒取一位小数，并按 90%~99% 的无极色阶取色——低于 90% 一律红，90.0 起
- * 由红经橙黄、黄、黄绿、浅绿走到 99.0 的深绿，**99.0 及以后都是深绿**，不必等到 100.0；判据用的是
- * 显示值本身（读者看到 98.0 就该是 98.0 的颜色）。色标与插值都在样式表里，这里只算「落在哪一段、
- * 段内位置多少」，再把这两个值写到「缓存命中 + 读数」那一组上——所以那个名字与读数同色；详细档里
- * 的 token 总量与中间那个分隔点在那一组之外，留在胶囊自己的文字色上。简洁档只留这一组，详细档另加
- * 总量与点开的明细，明细里的命中率走同一个小数口径。
- *
- * 内置那两套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以这一枚是照着它的样子
- * 重画的；弹窗的定位与「点外面就关」复用 primitives 里那两个共享钩子，行为与内置一致。
- *
- * @module dsh-chat-ux/client/chat/cache-hit/cache-hit-pill
+ * 以更低的 priority 遮蔽 dsh 的 usage 座位：命中率恒一位小数，按 90% 到 99% 的色阶取色。
+ * 内置类名不可用，所以按座位契约重画；弹窗定位与外部点击复用 primitives。
  */
 import {useEffect, useRef, useState, useSyncExternalStore} from 'react'
 import type {CSSProperties, MutableRefObject, ReactElement} from 'react'
@@ -114,8 +103,6 @@ export interface CacheHitPillProps {
  *
  * 档位读的是 dsh 自己那份 `ui-chat` 表单，而不是本插件的配置：简洁档只留命中率读数，详细档另加
  * 总量与明细，跟着读者在设置页里的选择走。
- * @param slots - 客户端座位注册表。
- * @param configForms - 共享配置表单的提供者。
  */
 export function installCacheHitPill(slots: SlotsService, configForms: ConfigFormsReader): void {
     slots.inject('conversation.composer.dock', () => {
@@ -140,8 +127,6 @@ export function installCacheHitPill(slots: SlotsService, configForms: ConfigForm
 
 /**
  * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
- * @param props - 投影读取座位与文案座位。
- * @returns 胶囊；这一场没有计过账时是 null，与内置同一条闸门。
  */
 export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElement | null {
     const usage = useProjection('tokenUsage')
@@ -164,11 +149,13 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     const hitLabel = t('message.turnUsage.cacheHit')
     // 「缓存命中」这几个字与它后面那串读数是一组，色阶就挂在这一组上（见样式表），名字与读数因此同色。
     // 数字轮那一截自己不带颜色，从这一组继承。
+    // 自定义属性不在 React 的 CSSProperties 键里，只能在这里收窄一次
+    const toneStyle = hit === null ? undefined : {[RAMP_POSITION_VAR]: hit.tone.mix} as CSSProperties
     const reading = hit === null ? null : (
         <span
             className={CACHE_HIT_READING_CLASS}
             {...{[RAMP_SPAN_ATTRIBUTE]: hit.tone.span}}
-            style={{[RAMP_POSITION_VAR]: hit.tone.mix} as CSSProperties}
+            style={toneStyle}
         >
             {hitLabel}{' '}
             <DigitReel text={hit.text} rolling={rolling} spoken/>
@@ -262,9 +249,6 @@ interface HitReading {
 
 /**
  * 命中率读数，恒一位小数。
- * @param cacheReadTokens - 从缓存读到的输入。
- * @param billedInputTokens - 三个输入计费桶之和。
- * @returns 文本与色阶位置；没有计过价的输入时是 null。
  */
 function hitReading(cacheReadTokens: number, billedInputTokens: number): HitReading | null {
     const percent = formatHitPercent(cacheReadTokens, billedInputTokens)
@@ -277,9 +261,6 @@ function hitReading(cacheReadTokens: number, billedInputTokens: number): HitRead
  *
  * 先把千分之一的整数单位算出来再落成文本，躲开浮点误差在 x.x5 上翻面。部分命中不许读成满命中：
  * 舍进 100.0 但没有全中的压回 99.9。
- * @param cacheReadTokens - 从缓存读到的输入。
- * @param billedInputTokens - 三个输入计费桶之和。
- * @returns `97.3` 这样的文本；没有计过价的输入时是 null。
  */
 function formatHitPercent(cacheReadTokens: number, billedInputTokens: number): string | null {
     if (billedInputTokens === 0) return null
@@ -297,29 +278,23 @@ function billedInputTokens(usage: TokenUsageProjection): number {
 
 /**
  * 紧凑的 token 计数：517 / 12.2K / 517K / 1.2M，与 dsh 的 formatTokens 同规则。
- * @param value - token 数。
- * @param t - chat 文案座位。
- * @returns 显示文本。
  */
-function formatTokens(value: number, t: Translate): string {
-    if (value < THOUSAND) return String(value)
-    if (value < MILLION) return t('number.thousand', {value: scaledCount(value / THOUSAND)})
-    return t('number.million', {value: scaledCount(value / MILLION)})
+function formatTokens(tokenCount: number, t: Translate): string {
+    if (tokenCount < THOUSAND) return String(tokenCount)
+    if (tokenCount < MILLION) return t('number.thousand', {value: scaledCount(tokenCount / THOUSAND)})
+    return t('number.million', {value: scaledCount(tokenCount / MILLION)})
 }
 
 /** 进位之后的缩放数：过百取整，否则留一位小数。 */
-function scaledCount(value: number): string {
-    return value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10)
+function scaledCount(scaledValue: number): string {
+    return scaledValue >= 100 ? String(Math.round(scaledValue)) : String(Math.round(scaledValue * 10) / 10)
 }
 
 /**
  * 精确 token 计数，带 chat 命名空间的千分位。
- * @param value - token 数。
- * @param t - chat 文案座位。
- * @returns 分组后的数字文本。
  */
-function formatExactTokens(value: number, t: Translate): string {
-    const digits = String(value)
+function formatExactTokens(tokenCount: number, t: Translate): string {
+    const digits = String(tokenCount)
     const groups: string[] = []
     for (let end = digits.length; end > 0; end -= GROUP_SIZE) {
         groups.unshift(digits.slice(Math.max(0, end - GROUP_SIZE), end))
@@ -328,8 +303,8 @@ function formatExactTokens(value: number, t: Translate): string {
 }
 
 /** 明细里的一行：精确计数加 chat 自己的计数单位。 */
-function exactCount(value: number, t: Translate): string {
-    return t('message.turnUsage.count', {count: formatExactTokens(value, t)})
+function exactCount(tokenCount: number, t: Translate): string {
+    return t('message.turnUsage.count', {count: formatExactTokens(tokenCount, t)})
 }
 
 /** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
@@ -345,10 +320,6 @@ function useHitReel(): boolean {
 /**
  * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也
  * 关——后者走捕获阶段，让键盘激活旁边那个胶囊时这一颗先关掉，而不是两张面板叠在一起。
- * @param open - 面板是否开着。
- * @param setOpen - 开合状态。
- * @param rootRef - 触发点。
- * @param panelRef - 面板。
  */
 function useEscapeAndOutsideClick(
     open: boolean,
@@ -385,18 +356,16 @@ interface UsageSettingsSection {
 
 /** 一份共享表单里的某个字段，镜像到模块级：值一变就叫订阅者。 */
 interface SettingMirror<T, S> {
-    /** @param listener - 值变化时要叫的回调。 @returns 撤下这次订阅。 */
+
     subscribe(listener: () => void): () => void
 
-    /** @returns 当前值。 */
+
     read(): T
 
     /**
      * 把一份共享表单接上这一份镜像。
      *
      * 没有这一份表单时（别的部署不向这个客户端暴露它）保持默认值，而不是整枚胶囊不挂。
-     * @param form - 共享表单。
-     * @returns 撤下这次订阅。
      */
     adopt(form: ConfigForm<S> | undefined): () => void
 }
@@ -405,9 +374,6 @@ interface SettingMirror<T, S> {
  * 造一份模块级镜像。
  *
  * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里。
- * @param initial - 表单缺席时的取值。
- * @param pick - 从表单的取值里挑出这个字段。
- * @returns 那一份镜像。
  */
 function createSettingMirror<T, S>(initial: T, pick: (section: S | undefined) => T): SettingMirror<T, S> {
     let current = initial

@@ -1,16 +1,7 @@
 /**
- * dsh-chat-ux —— 浏览器半区。
+ * dsh-chat-ux 的浏览器半区。
  *
- * DSH 通过 `exports["./client"]` 加载这个模块。产物由 `tsc -p tsconfig.client.json` 加上
- * `scripts/wrap-client.cjs` 生成，后者把 CommonJS 产物包成客户端模块加载器要求的那个单文件
- * `window.__ModuleLoader__.load({...})` bundle。
- *
- * 读者看得见的一切都归这一半：聊天区样式表、思考行的自动展开与收起、过程组的自动
- * 开合、折叠过渡、输入框插入符的位移过渡、提交后气泡的起飞、输入框那块玻璃、轨迹视图里
- * 收掉输入区、网页端「工作步骤展示」的默认档位，以及插件管理页渲染的配置卡片。它还读 `dsh-chat-ux` 这一行的共享 config form——这一页
- * 上改的值就是这样到达效果里的，不用刷新。
- *
- * @module dsh-chat-ux/client
+ * 这里注入聊天区样式，并按共享配置表单装、卸各项效果；具体机制归各模块，入口只负责生命周期与开关。
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis';
 /**
@@ -24,6 +15,5 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis';
 export declare const inject: string[];
 /**
  * 浏览器侧入口。
- * @param ctx - 客户端根 context。
  */
 export declare function apply(ctx: ClientContext): void;
