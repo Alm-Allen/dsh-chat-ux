@@ -249,7 +249,8 @@ function apply(ctx) {
     // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
     // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
     // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
-    // 聊天区与输入区上方的任务清单都归这一处；它是常驻效果，没有配置开关。
+    // 只归聊天区：任务清单（输入区上方）2026-10-25 起不再接管——压它的高度等于每帧改座位尺寸，
+    // dsh 的座位观察者会把整棵聊天流标脏、跟随也会每帧滚到底。它是常驻效果，没有配置开关。
     ctx.effect(() => (0, fold_glide_1.installFoldGlide)(), 'dsh-chat-ux: fold glide');
     // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
     // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
@@ -3782,7 +3783,7 @@ function installCallAppearFollow() {
 /**
  * 折叠时压缩真身高度，让下方内容随布局让开。
  *
- * 收起方向在捕获阶段拦下点击，压到终点后再重放，React 才卸掉展开体。只接管聊天流与任务清单；
+ * 收起方向在捕获阶段拦下点击，压到终点后再重放，React 才卸掉展开体。只接管聊天区；
  * 过程组压组根而不是组体，避免 dsh 的组内跟随把内容滚走。
  *
  * 高度动画按可见段分段；主线程卡顿时暂停推进，避免恢复后一帧跳完视口外那段。
@@ -3798,11 +3799,6 @@ const reader_intent_1 = require("../follow/reader-intent");
 /** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
 const ROLL_MS = 200;
 /**
- * 任务清单这一扇门单独用的曲线。它不像聊天流里那些长内容需要按可见段分两段跑：面板最多
- * 两百来像素，一条曲线走完这 200ms 就够，收尾也不会出现视口外那一截。
- */
-const TODO_PANEL_EASING = 'cubic-bezier(.25, .1, .25, 1)';
-/**
  * 可见段占整个卷帘门时长的多少；剩下那一小段留给视口外的那一截高度。
  *
  * 不能不留：门的分段就以「读者看得见的那一段」为界，收尾那一下若是瞬间跳变，下方内容会跟着瞬移。
@@ -3810,10 +3806,8 @@ const TODO_PANEL_EASING = 'cubic-bezier(.25, .1, .25, 1)';
 const VISIBLE_SHARE = 0.9;
 /** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
 const INTENT_TTL_MS = 500;
-/** 其余可开合的控件（过程组头、任务清单头等）。 */
+/** 其余可开合的控件（主要是过程组头）。 */
 const TOGGLE_SELECTOR = '[aria-expanded]';
-/** 输入区上方的任务清单面板；它是聊天流之外唯一接管的卸载式折叠体。 */
-const TODO_PANEL_SELECTOR = '[data-testid="todo-panel"]';
 /** 弹出层控件（菜单、对话框、列表）。它们开的不是折叠体，本模块整块跳过。 */
 const POPUP_SELECTOR = '[aria-haspopup]';
 /** 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知——它们开合的是整轮内容。 */
@@ -4099,7 +4093,7 @@ function installFoldGlide() {
      * rect 是 border-box 高度，而 CSS 的 height 默认按 content-box 解释；不换成 border-box，
      * 动画会多跑上下 padding，收尾时再缩回去。
      */
-    const rollOpen = (target, from, easing = 'ease-out') => {
+    const rollOpen = (target, from) => {
         markFoldBusy();
         const height = target.getBoundingClientRect().height;
         if (height <= from)
@@ -4112,7 +4106,7 @@ function installFoldGlide() {
                 { height: String(from) + 'px', offset: 0, easing: 'ease-out' },
                 { height: String(travel) + 'px', offset: VISIBLE_SHARE, easing: 'linear' },
                 { height: String(height) + 'px', offset: 1 },
-            ], { duration: ROLL_MS, easing });
+            ], { duration: ROLL_MS, easing: 'ease-out' });
         holdThroughStalls(growing);
         growing.onfinish = () => {
             growing.cancel();
@@ -4151,7 +4145,7 @@ function installFoldGlide() {
                 { height: String(height) + 'px', offset: 0, easing: 'linear' },
                 { height: String(travel) + 'px', offset: 1 - VISIBLE_SHARE, easing: 'ease-out' },
                 { height: String(fold.floor) + 'px', offset: 1 },
-            ], { duration: ROLL_MS, easing: fold.easing, fill: 'forwards' });
+            ], { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' });
         holdThroughStalls(shrinking);
         shrinking.onfinish = () => {
             window.clearTimeout(release);
@@ -4184,17 +4178,6 @@ function installFoldGlide() {
             settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight));
             return;
         }
-        // 任务清单：面板根从点击那一刻的收起高度长到插进清单后的全高。清单在收起态被整个卸掉，
-        // 拿它自己的高度做门会在终点留下 gap 与 padding 那一截；压根则连这些一起收。
-        if (current.todoPanel !== null) {
-            const todoPanel = current.todoPanel;
-            if (expandedBodyOf(current.control) === null) {
-                watch.stop();
-                return;
-            }
-            settleAfterFold(watch, rollOpen(todoPanel, current.collapsedHeight, TODO_PANEL_EASING));
-            return;
-        }
         const body = expandedBodyOf(current.control);
         if (body === null) {
             watch.stop();
@@ -4217,11 +4200,9 @@ function installFoldGlide() {
         // 第二次点击会被吞掉，那一组就再也轮不到切换了。
         if ((0, programmatic_toggle_1.isProgrammaticToggle)() && target.closest(dom_contract_1.THINK_ROW_SELECTOR) === null)
             return;
-        // 只接管聊天区与任务清单。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行——
+        // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行——
         // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
-        // 任务清单在输入区上方，不随聊天流滚动，但它的清单同样是卸载式开合，归卷帘门这一条路。
-        const todoPanel = target.closest(TODO_PANEL_SELECTOR);
-        if (target.closest(dom_contract_1.CHAT_FLOW_SELECTOR) === null && todoPanel === null)
+        if (target.closest(dom_contract_1.CHAT_FLOW_SELECTOR) === null)
             return;
         // 弹出层开的不是折叠体：菜单与对话框不该带动聊天流。
         if (target.closest(POPUP_SELECTOR) !== null)
@@ -4250,9 +4231,7 @@ function installFoldGlide() {
         const groupBody = processBodyOf(control);
         const groupRoot = groupBody?.parentElement?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
         const body = groupBody ?? expandedBodyOf(control);
-        const foldRoot = todoPanel ?? groupRoot;
-        // 任务清单在输入区里，不为聊天区的滚动收尾负责；它在自己的面板里开合。
-        const followAtBottom = todoPanel === null && controlAtBottom(control);
+        const followAtBottom = controlAtBottom(control);
         // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。起点高度要在这一边量——此刻根节点
         // 正是收起态，那就是门要拉出来的那一段。
         if (body === null || body.hasAttribute('hidden')) {
@@ -4260,8 +4239,7 @@ function installFoldGlide() {
                 control,
                 groupBody,
                 groupRoot,
-                todoPanel,
-                collapsedHeight: foldRoot?.getBoundingClientRect().height ?? 0,
+                collapsedHeight: groupRoot?.getBoundingClientRect().height ?? 0,
                 watch: watchFold(followAtBottom),
                 takenAt: Date.now(),
             };
@@ -4278,30 +4256,16 @@ function installFoldGlide() {
             ? () => groupBody.hasAttribute('hidden')
             : () => !body.isConnected;
         let floor = 0;
-        if (todoPanel !== null) {
-            // 收起后的面板高度 = 当前全高 − 清单自身高度 − 清单与上方头之间的 gap − 清单外边距。
-            // 不能把清单摘出布局去量：scrollHeight 会瞬间缩短，浏览器把已经贴底的 scrollTop 夹到
-            // 新底部；等清单放回来，滚过的这一段也不会自己回来。读者看到的就是面板还在展开态，
-            // 聊天区却已经闪到最终底部。
-            const listStyle = window.getComputedStyle(body);
-            const margins = (Number.parseFloat(listStyle.marginTop) || 0)
-                + (Number.parseFloat(listStyle.marginBottom) || 0);
-            const rowGap = body.parentElement === null
-                ? 0
-                : Number.parseFloat(window.getComputedStyle(body.parentElement).rowGap) || 0;
-            floor = Math.max(0, todoPanel.getBoundingClientRect().height - body.getBoundingClientRect().height - margins - rowGap);
-        }
-        else if (groupRoot !== null) {
+        if (groupRoot !== null) {
             // 组根停在组头那一段：组体收起来之后，组根本来的高度就是这么多。
             floor = Math.max(0, groupRoot.getBoundingClientRect().height - body.getBoundingClientRect().height);
         }
         rollShut({
-            target: foldRoot ?? body,
+            target: groupRoot ?? body,
             floor,
             collapsed,
             control,
             watch,
-            easing: todoPanel === null ? 'ease-out' : TODO_PANEL_EASING,
         });
     };
     const observer = new MutationObserver(flush);
