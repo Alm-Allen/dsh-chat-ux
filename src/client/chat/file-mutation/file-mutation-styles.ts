@@ -1,65 +1,48 @@
 /**
- * 文件变更行的样式。
+ * 文件变更行自己的样式表。
  *
- * 内置 ToolRow 的类名带构建期 hash，不能当接口；这里只补共享 DisclosureRow 没画的摘要、统计、
- * 路径链接、IN/OUT 卡片和轨迹入口，尺寸与令牌逐条对齐。
+ * 这一行在 tool.call.toolview 的 edit 与 write 座位上遮蔽了内置的文件变更行，所以内置 ToolRow.module.css
+ * 那些规则要在这里重写一份：那套类名带构建期 hash，既拿不到也不能当接口
+ *
+ * 尺寸与节奏逐条对齐，行高和 leading 由共享的 DisclosureRow 承担，这里只补它没画的那几样
  */
-import {REEL_TEXT_CLASS} from '../reel/reel-styles'
+import {REEL_TEXT_CLASS} from "../reel/reel-styles"
 
-/** 行根节点。 */
-export const FILE_ROW_CLASS = 'dsh-chat-ux-file-root'
-/** DisclosureRow 的 row 元素：悬停提亮的挂点。 */
-export const FILE_ROW_LINE_CLASS = 'dsh-chat-ux-file-row'
-/** 图标槽。 */
-export const FILE_LEADING_CLASS = 'dsh-chat-ux-file-leading'
-/** 开合 chevron。 */
-export const FILE_CHEVRON_CLASS = 'dsh-chat-ux-file-chevron'
-/** 标题（`编辑` / `写入`）。 */
-export const FILE_TITLE_CLASS = 'dsh-chat-ux-file-title'
-/** 标题与摘要之间的那个点。 */
-export const FILE_SEP_CLASS = 'dsh-chat-ux-file-sep'
-/** 摘要文本。 */
-export const FILE_SUMMARY_CLASS = 'dsh-chat-ux-file-summary'
-/** 摘要上的失败色。 */
-export const FILE_ERROR_CLASS = 'dsh-chat-ux-file-error'
-/** 摘要上的中断色。 */
-export const FILE_STOPPED_CLASS = 'dsh-chat-ux-file-stopped'
-/** 可点的文件路径。 */
-export const FILE_LINK_CLASS = 'dsh-chat-ux-file-link'
-/** 行尾那一小截统计的容器。 */
-export const FILE_SUFFIX_CLASS = 'dsh-chat-ux-file-suffix'
-/** 统计数字共用的字级。 */
-export const FILE_STAT_CLASS = 'dsh-chat-ux-file-stat'
-/** 新增数（绿色）。 */
-export const FILE_ADD_CLASS = 'dsh-chat-ux-file-add'
-/** 删除数（红色）。 */
-export const FILE_DEL_CLASS = 'dsh-chat-ux-file-del'
-/** 展开体容器。 */
-export const FILE_BODY_CLASS = 'dsh-chat-ux-file-body'
-/** 展开体里的 diff 卡片。 */
-export const FILE_DIFF_CLASS = 'dsh-chat-ux-file-diff'
-/** 展开体里的 IN/OUT 卡片。 */
-export const FILE_IO_CLASS = 'dsh-chat-ux-file-io'
-/** IN/OUT 卡片的一节。 */
-export const FILE_IO_SECTION_CLASS = 'dsh-chat-ux-file-io-section'
-/** IN/OUT 之间的发丝线。 */
-export const FILE_IO_DIVIDER_CLASS = 'dsh-chat-ux-file-io-divider'
-/** IN / OUT 两个侧标。 */
-export const FILE_IO_LABEL_CLASS = 'dsh-chat-ux-file-io-label'
-/** IN / OUT 的正文。 */
-export const FILE_IO_TEXT_CLASS = 'dsh-chat-ux-file-io-text'
-/** 轨迹入口那颗小胶囊。 */
-export const FILE_INSPECT_CLASS = 'dsh-chat-ux-file-inspect'
-/** 只给读屏看的运行态标签。 */
-export const FILE_HIDDEN_CLASS = 'dsh-chat-ux-file-hidden'
+// 行 chrome：分别交给 DisclosureRow 的对应 prop，悬停提亮挂在它渲染的那一行上
+export const FILE_ROW_CLASS = "dsh-chat-ux-file-root"
+export const FILE_ROW_LINE_CLASS = "dsh-chat-ux-file-row"
+export const FILE_LEADING_CLASS = "dsh-chat-ux-file-leading"
+export const FILE_CHEVRON_CLASS = "dsh-chat-ux-file-chevron"
+export const FILE_TITLE_CLASS = "dsh-chat-ux-file-title"
 
-/** 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。 */
+// 折叠态：标题与摘要之间的点、摘要、行尾那一小截统计
+export const FILE_SEP_CLASS = "dsh-chat-ux-file-sep"
+export const FILE_SUMMARY_CLASS = "dsh-chat-ux-file-summary"
+export const FILE_ERROR_CLASS = "dsh-chat-ux-file-error"
+export const FILE_STOPPED_CLASS = "dsh-chat-ux-file-stopped"
+export const FILE_LINK_CLASS = "dsh-chat-ux-file-link"
+export const FILE_SUFFIX_CLASS = "dsh-chat-ux-file-suffix"
+export const FILE_STAT_CLASS = "dsh-chat-ux-file-stat"
+export const FILE_ADD_CLASS = "dsh-chat-ux-file-add"
+export const FILE_DEL_CLASS = "dsh-chat-ux-file-del"
+
+// 展开体：diff 卡片、IN/OUT 卡片与轨迹入口
+export const FILE_BODY_CLASS = "dsh-chat-ux-file-body"
+export const FILE_DIFF_CLASS = "dsh-chat-ux-file-diff"
+export const FILE_IO_CLASS = "dsh-chat-ux-file-io"
+export const FILE_IO_SECTION_CLASS = "dsh-chat-ux-file-io-section"
+export const FILE_IO_DIVIDER_CLASS = "dsh-chat-ux-file-io-divider"
+export const FILE_IO_LABEL_CLASS = "dsh-chat-ux-file-io-label"
+export const FILE_IO_TEXT_CLASS = "dsh-chat-ux-file-io-text"
+export const FILE_INSPECT_CLASS = "dsh-chat-ux-file-inspect"
+
+// 只给读屏看的运行态标签：状态本身只靠图标与扫光表达
+export const FILE_HIDDEN_CLASS = "dsh-chat-ux-file-hidden"
+
 export const FILE_MUTATION_CSS = `
-/* 增删色：引用 dsh 自己为"文件改动标记"准备的那一对令牌，而不是 diff 卡片正文用的
-   state-success/error-primary。理由是这两处要的东西不同：正文那对里绿色只有一种取值
-   （深浅两套都是 rgb(34,197,94)），在浅色画布上做 11px 的小字偏亮；marker 这一对天生
-   分了两套——浅色 rgb(1,162,65) / rgb(186,39,35)，深色 rgb(65,201,119) / rgb(250,66,62)，
-   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份即可。 */
+/* 增删色取 dsh 为文件改动标记准备的那一对令牌，而不是 diff 正文用的 state-success/error-primary：
+   正文那对的绿只有一种取值，11px 的小字压在浅色画布上偏亮；marker 这一对深浅各有一套，
+   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份 */
 body {
   --dsh-chat-ux-diff-added: var(--dsw-alias-file-diff-added-marker);
   --dsh-chat-ux-diff-deleted: var(--dsw-alias-file-diff-deleted-marker);
@@ -83,7 +66,6 @@ body {
   transition: color 100ms ease;
 }
 
-/* 2x2 的点：标题与摘要之间那道轻分隔。 */
 .${FILE_SEP_CLASS} {
   flex: none;
   width: 2px;
@@ -105,8 +87,8 @@ body {
   transition: color 100ms ease;
 }
 
-/* 行尾那一小截：挤在摘要的省略号之外，所以自己带一份同款字级。两个数字之间留一道
-   固定的缝——比空格宽，免得 "+12" 和 "-3" 挨成一个数。 */
+/* 行尾那一小截挤在摘要的省略号之外，所以自己带一份同款字级；两个数字之间留一道固定的缝，
+   比空格宽，免得 "+12" 和 "-3" 挨成一个数 */
 .${FILE_SUFFIX_CLASS} {
   flex: none;
   display: inline-flex;
@@ -116,7 +98,6 @@ body {
   white-space: nowrap;
 }
 
-/* 数字本身：等宽字体、比路径小两号，再用半像素把基线推回行框正中。 */
 .${FILE_STAT_CLASS} {
   font-family: var(--ds-font-family-code);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
@@ -124,14 +105,9 @@ body {
   transform: translateY(0.5px);
 }
 
-/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
-
-   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
-   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
-      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
-      表达式。
-
-   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
+/* 行尾那两个数是数字滚动（见 ../reel/digit-reel），字号与槽高都按这一行的口径重写：reel 自带的是
+   次级文字减一号、20px 的行盒，这一行是减两号、24px + delta，半行距差多少基线就偏多少（实测 2px，
+   数字会浮到与旁边那个 3KB 不在一条线上）。选择器比 reel 那一份多两层，所以不靠 ALL_CSS 里的先后取胜 */
 .${FILE_SUFFIX_CLASS} .${FILE_STAT_CLASS} .${REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
@@ -145,14 +121,14 @@ body {
   color: var(--dsh-chat-ux-diff-deleted);
 }
 
-/* 悬停整行提亮，但行尾那两个数字不跟——它们是这一行的结论，颜色本身就是信息，
-   跟着变成正文色就等于把结论擦掉。 */
+/* 悬停整行提亮，但行尾那两个数字不跟：它们是这一行的结论，颜色本身就是信息，
+   跟着变成正文色就等于把结论擦掉 */
 .${FILE_ROW_LINE_CLASS}:hover .${FILE_TITLE_CLASS},
 .${FILE_ROW_LINE_CLASS}:hover .${FILE_SUMMARY_CLASS}:not(.${FILE_ERROR_CLASS}):not(.${FILE_STOPPED_CLASS}) {
   color: var(--dsw-alias-label-primary);
 }
 
-/* 文件路径：同字级，点状下划线说明它可点。收缩到文字宽度，行内剩下的空白仍然属于开合目标。 */
+/* 文件路径：点状下划线说明它可点，收缩到文字宽度，行内剩下的空白仍然属于开合目标 */
 .${FILE_LINK_CLASS} {
   flex: 0 1 auto;
   min-width: 0;
@@ -195,13 +171,13 @@ body {
   flex-direction: column;
 }
 
-/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进，行与行之间也共用同一份节奏。 */
+/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进与行间节奏 */
 .${FILE_DIFF_CLASS},
 .${FILE_IO_CLASS} {
   margin: 4px 0 4px 4px;
 }
 
-/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线。 */
+/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线 */
 .${FILE_IO_CLASS} {
   display: flex;
   flex-direction: column;
@@ -245,7 +221,7 @@ body {
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉。 */
+/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉 */
 .${FILE_INSPECT_CLASS} {
   display: inline-flex;
   align-self: flex-start;
@@ -275,7 +251,7 @@ body {
   color: var(--dsw-alias-label-primary);
 }
 
-/* 运行态只靠图标与扫光表达，所以状态本身要有一条给读屏的文本。 */
+/* 裁到 1px：只给读屏，视觉上不占位 */
 .${FILE_HIDDEN_CLASS} {
   position: absolute;
   width: 1px;
