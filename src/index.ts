@@ -1,69 +1,80 @@
 /**
- * dsh-chat-ux 的 host 半区。
+ * dsh-chat-ux 的 host 侧。
  *
- * 这里只声明插件名与 volatile 配置 schema：设置服务据此在插件页投影表单，字段值由浏览器半区读写。
+ * 聊天区由前端渲染（见 client/），DSH 从 exports["./client"] 加载它，因为包声明了 dsh.client。
+ * 这一半只做两件事：把插件名报给加载器，把设置服务要投影的字段声明清楚
  */
-import type {Volatile} from '@deepseek-ai/cordis'
-import Schema from '@deepseek-ai/schemastery'
+import type {Volatile} from "@deepseek-ai/cordis"
+import Schema from "@deepseek-ai/schemastery"
 
-// 报给加载器的插件名；同时也是这一行在 profile 里的条目 id。
-export const name = 'dsh-chat-ux'
+// 报给加载器的插件名，也是这个条目在 profile 里的 id
+export const name = "dsh-chat-ux"
 
-/**
- * 前端绑定 config form 用的那个字符串。设置服务按 **profile 条目 id** 标识一份表单，而这个 id 就是
- * 上面那个插件名，所以前后端必须一字不差地拼出它。
- */
-export const SETTINGS_NAMESPACE = 'dsh-chat-ux'
+// 前端绑定 config form 用的字符串。设置服务按 profile 条目 id 标识一份表单，那个 id 就是上面的插件名，
+// 所以前后端必须拼出同一个字符串
+export const SETTINGS_NAMESPACE = "dsh-chat-ux"
 
-// ⚠️ 以下默认值与浏览器半区的 client/settings-scope.ts 一一对应，改一处必须同步另一处
+// 下面每个默认值在前端 client/settings/settings-scope.ts 里都有一份，改一处就要改另一处
+
+// 思考行与过程组自己开合。默认开着：这两块自己开合是本插件的主要效果，关掉时两块都整块不装，
+// 读者自己点开收起照常，高度过渡仍留给手动点击
 export const DEFAULT_AUTO_FOLD = true
 
-/** 插入符动效档位；前端 `client/caret-motion.ts` 有同一组字面量。 */
-export type CaretMotionMode = 'off' | 'move' | 'typing'
+// 插入符动效的档位。off 不动手，用浏览器自己的插入符；move 只给方向键与点击这类显式移动放过渡，
+// 打字瞬时；typing 连打字也放过渡
+export type CaretMotionMode = "off" | "move" | "typing"
 
-/** 插入符动效默认档位。 */
-export const DEFAULT_CARET_MOTION: CaretMotionMode = 'typing'
+// 插入符动效的默认档位：凡是会挪位置的都给过渡
+export const DEFAULT_CARET_MOTION: CaretMotionMode = "typing"
 
-export const DEFAULT_SEND_FLIGHT = true
-
+// 命中率读数变化时，变了的那一位原地滚到新值。默认开着：读数只在每次模型结算时才变，一天也滚不了几次
 export const DEFAULT_HIT_REEL = true
 
+// 上下文占用那圈环换成按占用取色的实心饼图，已占用那一角沿折线切开、推开一点。默认开着，
+// 关掉时这一处整块不装，看到的就是 dsh 原来的环
 export const DEFAULT_CONTEXT_PIE = true
 
+// 输入框整块半透明、背后模糊。默认开着，关掉时前端不往 body 上挂属性，那一整张规则表一条都不命中
 export const DEFAULT_COMPOSER_GLASS = true
 
+// 文件变更行的 +n -m 在准备态就跟着参数流长出来。默认开着。
+// 它只在直接调用的 write 与 edit 上有意义：run_code 里派发的子调用没有准备态，参数由程序在运行时一次给齐
 export const DEFAULT_LIVE_DIFF = true
 
+// 工具调用与思考行第一次出现时把滚动位置补到底。默认开着：dsh 自己的跟随在结构时刻会掉队，
+// 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好把新出现的思考推出视野
 export const DEFAULT_FOLLOW_ON_APPEAR = true
 
-// 这个插件拥有的配置字段；时长等行为参数留在浏览器半区，不进入设置 schema。
+// 这个插件拥有的配置字段
 export interface Config {
-    autoFold: Volatile<boolean>
-    caretMotion: Volatile<CaretMotionMode>
-    sendFlight: Volatile<boolean>
-    hitReel: Volatile<boolean>
-    contextPie: Volatile<boolean>
-    composerGlass: Volatile<boolean>
-    liveDiff: Volatile<boolean>
-    followOnAppear: Volatile<boolean>
+	// 思考行与过程组是否自己开合。关掉时两块都整块不装
+	autoFold: Volatile<boolean>
+	// 插入符动效的档位
+	caretMotion: Volatile<CaretMotionMode>
+	// 命中率读数变化时，变了的那一位是否原地滚到新值。关掉时数字直接换掉
+	hitReel: Volatile<boolean>
+	// 上下文占用那圈环是否换成实心饼图
+	contextPie: Volatile<boolean>
+	// 输入框是否半透明并模糊背后。它在前端只是一层 DOM 状态（body 上的属性）
+	composerGlass: Volatile<boolean>
+	// 文件变更行的 +n -m 是否在准备态就显示，并跟着流式内容增长
+	liveDiff: Volatile<boolean>
+	// 工具调用与思考行第一次出现时是否把滚动位置补到底
+	followOnAppear: Volatile<boolean>
 }
 
-/**
- * 这一行的配置 schema。`.volatile()` 是设置表单的前提：设置服务只投影标了它的字段，也只会为带
- * volatile 字段的条目暴露一份表单，插件管理页正是靠这一点才认得这个条目。
- */
+// 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
 export const Config = Schema.object({
-    autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
-    caretMotion: Schema.union(['off', 'move', 'typing'] as const).default(DEFAULT_CARET_MOTION).volatile(),
-    sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
-    hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
-    contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
-    composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
-    liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
-    followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
+	autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
+	caretMotion: Schema.union(["off", "move", "typing"] as const).default(DEFAULT_CARET_MOTION).volatile(),
+	hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),
+	contextPie: Schema.boolean().default(DEFAULT_CONTEXT_PIE).volatile(),
+	composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
+	liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
+	followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
 })
 
+// host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写
 export function apply(): void {
-    console.log('[dsh-chat-ux] host half loaded')
+	console.log("[dsh-chat-ux] host 侧已加载")
 }
-

@@ -55,61 +55,57 @@ const call_appeared_1 = require("./chat/follow/call-appeared");
 const fold_glide_1 = require("./chat/fold/fold-glide");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
-const send_flight_1 = require("./chat/send-flight/send-flight");
-const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
-const running_entry_1 = require("./chat/send-flight/running-entry");
 const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
 const transcript_default_1 = require("./settings/transcript-default");
 const styles_1 = require("./styles");
 /**
- * 必须的客户端服务：`slots` 承载插件管理页那个座位，`configForms` 提供这个插件的配置表单。
- * 后者由 `@deepseek-ai/dsh-client-ui-settings` 提供，而它自己声明了 `remote` 与 `remote.settings`，
- * 所以这一半不用再直接依赖那两个服务。
+ * 必须的客户端服务：slots 承载插件管理页那个座位，configForms 提供这个插件的配置表单。
+ * 后者由 @deepseek-ai/dsh-client-ui-settings 提供，而它自己声明了 remote 与 remote.settings，
+ * 所以这一半不用再直接依赖那两个服务
  *
- * locale 服务刻意不在其中：卡片通过 `ctx.reflect` 读它，而没有 locale 插件时 `reflect` 返回
- * undefined、不会抛错，所以没有它的部署照样能得到一张能用的卡片。
+ * locale 服务刻意不在其中：卡片通过 ctx.reflect 读它，而没有 locale 插件时 reflect 返回 undefined、不抛错，
+ * 所以没有它的部署照样能得到一张能用的卡片
  */
-exports.inject = ['slots', 'configForms'];
-/**
- * 浏览器侧入口。
- */
+exports.inject = ["slots", "configForms"];
+// 浏览器侧入口
 function apply(ctx) {
-    // Cordis 的 Context 类型不声明本插件动态取到的服务，在入口边界收窄一次
     const services = ctx;
     ctx.effect(() => {
-        const style = document.createElement('style');
+        const style = document.createElement("style");
         style.id = styles_1.STYLE_ID;
-        style.dataset.plugin = 'dsh-chat-ux';
-        // 一张样式表承载浏览器这侧的全部规则；各模块的 CSS 由 ALL_CSS 拼好，入口不再逐个安装。
+        style.dataset.plugin = "dsh-chat-ux";
+        // 一张样式表承载浏览器这侧的全部内容：聊天区规则、配置卡片、文件变更行、折叠体入场、字体接管。
+        // 那几份 CSS 由 styles.ts 的 ALL_CSS 拼起来，这里不再逐个模块地认
         style.textContent = styles_1.ALL_CSS;
         document.head.appendChild(style);
         return () => style.remove();
-    }, 'dsh-chat-ux: chat-area stylesheet');
-    // 配置每轮现场读取，插件页保存后不必重装效果
-    // 共享表单按 Host 条目 id 取；这里叫 scope，避免和座位 owner props 的 form 撞名
+    }, "dsh-chat-ux: chat-area stylesheet");
+    // 这一份镜像在每一轮效果里现读，所以插件管理页上改完不必重新安装任何东西，也不会丢掉正在跑的定时器。
+    // 平台把原来的 settings scope 换成了按 Host 条目 id 取的共享表单。
+    // 这个值仍叫 scope：插件管理页给这个座位的 owner props 里已经有一个 form，注入面再用同名就会撞上去
     const scope = services.configForms.get(SETTINGS_NAMESPACE);
-    // 官方的「收起时机」：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，过程组
-    // 结束后的那一次收起归官方，见 process-fold 的让路。这里只现读，不订阅——过程组的每一次扫描都会读它。
+    // 官方的收起时机：默认「完成时收起」，不改变本插件行为；读者选「下次发送时收起」时，
+    // 过程组结束后的那一次收起归官方，见 process-fold 的让开。这里只现读，不订阅，过程组的每一次扫描都会读它
     const chatSettings = services.configForms.get(CHAT_SETTINGS_NAMESPACE);
-    const defersCollapse = () => chatSettings.getSnapshot().value?.collapseTiming === 'next-input';
+    const defersCollapse = () => chatSettings.getSnapshot().value?.collapseTiming === "next-input";
     const settings = {
         autoFold: settings_scope_1.DEFAULT_AUTO_FOLD,
-        caretMotion: settings_scope_1.DEFAULT_CARET_MOTION,
-        sendFlightOn: settings_scope_1.DEFAULT_SEND_FLIGHT,
-        contextPieOn: settings_scope_1.DEFAULT_CONTEXT_PIE,
-        composerGlassOn: settings_scope_1.DEFAULT_COMPOSER_GLASS,
-        liveDiffOn: settings_scope_1.DEFAULT_LIVE_DIFF,
-        followOnAppear: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
+        caret: settings_scope_1.DEFAULT_CARET_MOTION,
+        pie: settings_scope_1.DEFAULT_CONTEXT_PIE,
+        glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
+        liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
+        followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
     };
-    // 插入符动效是常驻 DOM 状态：配置一改就得重落，卸载时要把写过的标记撤干净
-    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caretMotion);
-    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那
-    // 一个），接不过来，所以从 DOM 上认它——只写读数与档位，形状与颜色由样式表接。开关关掉时整块卸
-    // 下：写过的属性、内联样式与数字轮一起撤干净，读者看到的是 dsh 原来那圈环。
+    // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
+    // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
+    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
+    // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那一个），
+    // 接不过来，所以从 DOM 上认它，只写读数与档位，形状与颜色由样式表接。
+    // 开关关掉时整块卸下：写过的属性、内联样式与数字滚动一起撤干净，读者看到的是 dsh 原来那圈环
     let pieDispose = null;
     const syncPie = () => {
-        if (!settings.contextPieOn) {
+        if (!settings.pie) {
             pieDispose?.();
             pieDispose = null;
             return;
@@ -118,8 +114,8 @@ function apply(ctx) {
             return;
         pieDispose = (0, context_meter_pie_1.installContextMeterPie)();
     };
-    // 自动开合是「装了才有」的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
-    // 设置一改就得重落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口。
+    // 自动开合是装了才有的两块（思考行、过程组）：开关关掉时两块都卸下，页面上一次都不动手。
+    // 设置一改就得重新落，所以那一次的卸载函数由这里拿着，syncSettings 是唯一的入口
     let autoFoldDispose = null;
     const syncAutoFold = () => {
         if (!settings.autoFold) {
@@ -136,44 +132,24 @@ function apply(ctx) {
             disposeProcess();
         };
     };
-    // 输入框那块玻璃：属性在，样式表里那一整块才命中；量卡片位置的那个观察者也只有这时候才装。
-    // 关掉时两样一起撤——观察者不跑，属性也摘掉，页面上一次都不动手。
+    // 输入框玻璃：属性在，样式表里那一整块才命中，量卡片位置的那个观察者也只有这时候才装。
+    // 关掉时两样一起撤，观察者不跑，属性也摘掉
     let glassDispose = null;
     const syncGlass = () => {
-        if (!settings.composerGlassOn) {
+        if (!settings.glass) {
             glassDispose?.();
             glassDispose = null;
             document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
             return;
         }
-        document.body.setAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE, '');
+        document.body.setAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE, "");
         if (glassDispose !== null)
             return;
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
-    // 「深度求索中」那一行（鲸鱼尾巴 + 流光）的入场：属性在，样式表里那两条静态声明才命中。它是
-    // 为让位配套的——没有让位时那一行凭空出现本来就看不出突变，所以这个开关一关就整条撤掉。
-    // 高度与行前那道 gap 的动画由 running-entry 在插入后的微任务里做：那一处 CSS 压不住
-    // （flex item 的自动最小尺寸，以及 dsh 那条 gap 规则的特异性），原因见那两个文件。
-    let runningEntryDispose = null;
-    const syncSendGate = () => {
-        if (!settings.sendFlightOn) {
-            document.body.removeAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE);
-            runningEntryDispose?.();
-            runningEntryDispose = null;
-            return;
-        }
-        document.body.setAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE, '');
-        if (runningEntryDispose !== null)
-            return;
-        runningEntryDispose = (0, running_entry_1.installRunningEntry)();
-    };
-    // 工具调用与思考行第一次出现时补一次底。它只挂一个门控属性与一个 document 级的
-    // animationstart 监听——没有观察者、没有定时器，流式期间一个回调都不进。关掉时两样一起撤，
-    // 探针规则一条都不命中。
     let followDispose = null;
     const syncFollow = () => {
-        if (!settings.followOnAppear) {
+        if (!settings.followOn) {
             followDispose?.();
             followDispose = null;
             return;
@@ -183,15 +159,13 @@ function apply(ctx) {
         followDispose = (0, call_appeared_1.installCallAppearFollow)();
     };
     const syncSettings = () => {
-        const savedSection = scope.getSnapshot().value;
-        settings.autoFold = savedSection?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
-        settings.caretMotion = savedSection?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
-        settings.sendFlightOn = savedSection?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
-        settings.contextPieOn = savedSection?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
-        settings.composerGlassOn = savedSection?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
-        settings.liveDiffOn = savedSection?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
-        settings.followOnAppear = savedSection?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
-        syncSendGate();
+        const value = scope.getSnapshot().value;
+        settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
+        settings.caret = value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+        settings.pie = value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
+        settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+        settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
+        settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         syncGlass();
         caret.resync();
         syncPie();
@@ -199,8 +173,8 @@ function apply(ctx) {
         syncFollow();
     };
     syncSettings();
-    ctx.effect(() => scope.subscribe(syncSettings), 'dsh-chat-ux: settings mirror');
-    ctx.effect(() => caret.dispose, 'dsh-chat-ux: caret motion');
+    ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror");
+    ctx.effect(() => caret.dispose, "dsh-chat-ux: caret motion");
     ctx.effect(() => {
         syncGlass();
         return () => {
@@ -208,58 +182,40 @@ function apply(ctx) {
             glassDispose = null;
             document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
         };
-    }, 'dsh-chat-ux: composer glass');
-    // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组
-    // 行为是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」——读者选过
-    // 之后一次都不再动手。
-    ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), 'dsh-chat-ux: work details default');
-    // 提交之后 dsh 会立刻挂一条「即发即显」的回显气泡，外观与真实消息一模一样。这一处给它补上从
-    // 输入框收成那条气泡的那一段：起点（整张输入卡片）在清空草稿之前抓，终点由 dsh 自己那条气泡决定。
-    // 这一项默认开着，所以每一段起手前先读一次开关——关着时它连起点都不量。整段时长
-    // 不是一个设置项，它是 send-morph 里的 FLIGHT_MS。
-    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendFlightOn), 'dsh-chat-ux: send flight');
-    // 门控属性跟着同一个开关走，插件卸下时摘干净——页面上一次都不留。
-    ctx.effect(() => {
-        syncSendGate();
-        return () => {
-            document.body.removeAttribute(send_flight_styles_1.SEND_ON_ATTRIBUTE);
-            runningEntryDispose?.();
-            runningEntryDispose = null;
-        };
-    }, 'dsh-chat-ux: running entry');
+    }, "dsh-chat-ux: composer glass");
+    // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
+    // 是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」；读者选过之后一次都不再动手
+    ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), "dsh-chat-ux: work details default");
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
-    // 「简洁」与「标准」两档下，运行中的过程组体初始也是收起的。两处都让它们在过程还在跑时开着、
-    // 这一段结束再收回去（模块里写明了「按阶段让位」，读者自己动过手的不被覆盖）。装与卸都在
-    // syncAutoFold 里，读者在卡片上关掉就一起停。
+    // 简洁与标准两档下，运行中的过程组体初始也是收起的。两处都在过程还在跑时开着、这一段结束再收回去
+    // （模块里写明了按阶段让开，读者自己动过手的不被覆盖）。装与卸都在 syncAutoFold 里
     ctx.effect(() => {
         syncAutoFold();
         return () => {
             autoFoldDispose?.();
             autoFoldDispose = null;
         };
-    }, 'dsh-chat-ux: auto fold');
-    // 这一块自己管门控属性与监听，所以这里只负责按开关装、卸；卸的时候两样一起撤干净。
+    }, "dsh-chat-ux: auto fold");
+    // 这一块自己管门控属性与监听，所以这里只负责按开关装卸，卸的时候两样一起撤干净
     ctx.effect(() => {
         syncFollow();
         return () => {
             followDispose?.();
             followDispose = null;
         };
-    }, 'dsh-chat-ux: follow on appear');
-    // 折叠时下方内容直接瞬移，读者看不出「推开」这件事。展开体自己是卸掉的，CSS 没有可过渡的
-    // 旧值，所以这一处从 DOM 之外接管：动真身的高度，让布局逐帧长出来、逐帧收回去——收起方向靠
-    // 拦下那次点击把真身留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响。
-    // 只归聊天区：任务清单（输入区上方）2026-10-25 起不再接管——压它的高度等于每帧改座位尺寸，
-    // dsh 的座位观察者会把整棵聊天流标脏、跟随也会每帧滚到底。它是常驻效果，没有配置开关。
-    ctx.effect(() => (0, fold_glide_1.installFoldGlide)(), 'dsh-chat-ux: fold glide');
-    // 内置的文件变更行只给**根调用**画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
-    // 所以 run_code 的程序里派发出去的 write / edit 拿不到行尾那截 `+n -m`。这一处用 -1 的遮蔽
-    // 等级在 edit / write 两个座位上接管那一行——keyed 座位按 priority 升序取最低的那个渲染，
-    // 内置那两行是默认的 0。第二项是准备态那两个数的开关（默认开着）。
-    (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiffOn);
-    // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同
-    // 一个 id 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的
-    // 那一枚；档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁 / 详细」照旧生效。
+    }, "dsh-chat-ux: follow on appear");
+    // 折叠时下方内容直接瞬移，读者看不出推开这件事。展开体自己是卸掉的，CSS 没有可过渡的旧值，
+    // 所以这一处从 DOM 之外接管：动真实高度，让布局逐帧长出来、逐帧收回去，收起方向靠拦下那次点击
+    // 把展开体留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响
+    ctx.effect(() => (0, fold_glide_1.installFoldGlide)(), "dsh-chat-ux: fold glide");
+    // 内置的文件变更行只给根调用画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
+    // 所以 run_code 的程序里派发出去的 write 与 edit 拿不到行尾那截 +n -m。这一处用 -1 的遮挡等级
+    // 在 edit 与 write 两个座位上接管那一行：keyed 座位按 priority 升序取最低的那个渲染，内置那两行是默认的 0。
+    // 第二项是准备态那两个数的开关（默认开着）
+    (0, file_mutation_row_1.installFileMutationRow)(services.slots, () => settings.liveDiff);
+    // 输入框下方那枚「缓存命中」胶囊也归这一处：dsh 内置的那一枚只到整数，也没有档位色。这里用同一个 id
+    // 与 order、更低的 priority 接管它（内置是默认的 0），换成恒取一位小数、按四档取色的那一枚；
+    // 档位读的是 dsh 自己那份 ui-chat 表单，读者的「简洁」与「详细」照旧生效
     (0, cache_hit_pill_1.installCacheHitPill)(services.slots, services.configForms);
     ctx.effect(() => {
         syncPie();
@@ -267,34 +223,33 @@ function apply(ctx) {
             pieDispose?.();
             pieDispose = null;
         };
-    }, 'dsh-chat-ux: context meter pie');
-    // 插件管理页把 `plugins.bundle.config` 声明成它自己 `main` 注册的子项，所以那一页在的时候
-    // 这个座位就在。`inject` 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply
-    // 执行时的原因。
-    services.slots.inject('plugins.bundle.config', () => services.slots.register({
-        name: 'plugins.bundle.config',
+    }, "dsh-chat-ux: context meter pie");
+    // 插件管理页把 plugins.bundle.config 声明成它自己 main 注册的子项，所以那一页在的时候这个座位就在。
+    // inject 会等那个声明而不是抛错，这也正是注册写在回调里、而不是写在 apply 执行时的原因
+    services.slots.inject("plugins.bundle.config", () => services.slots.register({
+        name: "plugins.bundle.config",
         key: PACKAGE_NAME,
         inject: () => {
-            const locale = services.reflect.get('locale');
+            const locale = services.reflect.get("locale");
             return { scope, locale: locale == null ? undefined : locale };
         },
     }, settings_card_1.ChatUxConfigCard));
-    // 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台
-    // 就知道浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来。
+    // 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台就知道
+    // 浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来
     const boot = window.__DSH_BOOT__;
-    console.log('[dsh-chat-ux] client half loaded', {
-        rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? 'unknown',
+    console.log("[dsh-chat-ux] client 侧已加载", {
+        rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? "unknown",
     });
 }
-/** dsh 的聊天设置条目 id；「工作步骤展示」与「收起时机」都住在它里面。 */
-const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
+// dsh 的聊天设置条目 id；工作步骤展示与收起时机都住在它里面
+const CHAT_SETTINGS_NAMESPACE = "ui-chat";
 /**
- * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 `plugins.bundle.config` 按 **bundle** 的包名
- * 索引，而不是按设置命名空间，所以下面两个字符串都需要，且不能混为一谈。
+ * 这个包的 npm 名。自 dsh 0.1.6 起，插件管理页把 plugins.bundle.config 按 bundle 的包名索引，
+ * 而不是按设置命名空间，所以下面两个字符串都需要，且不能混为一谈
  */
-const PACKAGE_NAME = '@alm-allen/dsh-chat-ux';
-/** 配置条目 id；设置服务按它标识一份表单。 */
-const SETTINGS_NAMESPACE = 'dsh-chat-ux';
+const PACKAGE_NAME = "@alm-allen/dsh-chat-ux";
+// 配置条目 id；设置服务按它标识一份表单
+const SETTINGS_NAMESPACE = "dsh-chat-ux";
     };
 
     __registry["chat/caret/caret-motion.js"] = function (module, exports, require) {
@@ -303,150 +258,132 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_COLOR_PROPERTY = exports.CARET_HOST_ATTRIBUTE = exports.CARET_VISIBLE_ATTRIBUTE = exports.CARET_LAYER_ATTRIBUTE = exports.CARET_ATTRIBUTE = exports.CARET_BLINK_NAME = void 0;
 exports.installCaretMotion = installCaretMotion;
 /**
- * 输入框插入符动效：用自绘插入符替代浏览器那根，移动时走过渡。
+ * 输入框的插入符动效：按掉浏览器画的那根，自己画一根，位移走过渡
  *
- * 富文本面用折叠 Range 测量；textarea 的选区不进 DOM，需要镜像层。测量失败时必须把原生插入符
- * 还回去，原生透明而自绘未画出，是这套动效唯一会伤到读者的失效方式。
+ * 浏览器不给插入符任何可动画的属性，接管只有 caret-color: transparent 加自绘这一条路
+ * 接管两种面：contenteditable 的主输入框用折叠 Range 直接量，textarea 的选区不进 DOM，靠一层镜像量
+ * 自绘的那根挂在可编辑面的父元素上，父元素不是定位上下文时补一个标记，由样式表补 position: relative
+ * ⚠️ 原生被按下去、自绘没画出来就是读者看不见光标，所以量不出来一律退回原生，绝不维持现状
  */
 const dom_contract_1 = require("../../dom-contract");
-/** 闪烁动画的名字。`caret-motion-styles.ts` 用它拼 keyframes，两处必须一字不差。 */
-exports.CARET_BLINK_NAME = 'dsh-chat-ux-caret-blink';
-/** 挂在可编辑面上的标记：有它，原生插入符才让位。规则在 `caret-motion-styles.ts`。 */
-exports.CARET_ATTRIBUTE = 'data-chat-ux-caret';
-/** 自绘插入符自己。 */
-exports.CARET_LAYER_ATTRIBUTE = 'data-chat-ux-caret-layer';
-/** 自绘插入符此刻可见。 */
-exports.CARET_VISIBLE_ATTRIBUTE = 'data-chat-ux-caret-visible';
-/** 命令 chip 被选中的标记：dsh 这时候不画原生插入符。 */
-const CHIP_SELECTED_ATTRIBUTE = 'data-composer-chip-selected';
-/** 挂在不是定位上下文的父元素上：样式表见到它就补一条 `position: relative`。 */
-exports.CARET_HOST_ATTRIBUTE = 'data-chat-ux-caret-host';
-/** 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来。 */
-exports.CARET_COLOR_PROPERTY = '--dsh-chat-ux-caret-color';
-/** 聚焦之后隔多久补看一次。切会话时，聚焦与「选区就绪」之间隔着几帧。 */
+// 闪烁动画的名字。caret-motion-styles.ts 用它拼 keyframes，两处必须一字不差
+exports.CARET_BLINK_NAME = "dsh-chat-ux-caret-blink";
+// 挂在可编辑面上的标记：有它原生插入符才被按掉，规则在 caret-motion-styles.ts
+exports.CARET_ATTRIBUTE = "data-chat-ux-caret";
+// 自绘插入符那根上的标记，样式表按它画
+exports.CARET_LAYER_ATTRIBUTE = "data-chat-ux-caret-layer";
+// 只在真画出一根之后才写，样式表按它把 visibility 打开
+exports.CARET_VISIBLE_ATTRIBUTE = "data-chat-ux-caret-visible";
+// 命令 chip 被选中的标记：dsh 这时把原生插入符按掉了，自绘的那根也要跟着藏
+const CHIP_SELECTED_ATTRIBUTE = "data-composer-chip-selected";
+// 挂在不是定位上下文的父元素上：样式表见到它就补一条 position: relative
+exports.CARET_HOST_ATTRIBUTE = "data-chat-ux-caret-host";
+// 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来
+exports.CARET_COLOR_PROPERTY = "--dsh-chat-ux-caret-color";
+// 聚焦之后隔多久补看一次。切会话时，聚焦与选区就绪之间隔着几帧
 const FOCUS_SETTLE_MS = 120;
-/**
- * 镜像层要从 textarea 上抄的样式：凡是影响字形宽度与折行位置的都在这里。少抄一条，镜像里的折行
- * 就和 textarea 里的对不上，插入符会落在别的行上。
- */
-const MIRRORED_PROPERTIES = [
-    'direction', 'font-family', 'font-size', 'font-size-adjust', 'font-stretch', 'font-style',
-    'font-variant', 'font-weight', 'font-feature-settings', 'font-variation-settings', 'font-kerning',
-    'letter-spacing', 'word-spacing', 'line-height', 'text-align', 'text-indent', 'text-transform',
-    'tab-size', 'white-space', 'word-break', 'overflow-wrap', 'hyphens',
-    'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+// 镜像层要从 textarea 上抄的样式：影响字形宽度与折行位置的都在这里
+// 少抄一条，镜像里的折行就和 textarea 里的对不上，插入符会落到别的行上
+const MIRRORED_PROPERTY_LIST = [
+    "direction", "font-family", "font-size", "font-size-adjust", "font-stretch", "font-style",
+    "font-variant", "font-weight", "font-feature-settings", "font-variation-settings", "font-kerning",
+    "letter-spacing", "word-spacing", "line-height", "text-align", "text-indent", "text-transform",
+    "tab-size", "white-space", "word-break", "overflow-wrap", "hyphens",
+    "padding-top", "padding-right", "padding-bottom", "padding-left",
 ];
-/**
- * 给整页装上插入符动效。
- */
-function installCaretMotion(read) {
-    /** 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项。 */
-    const layers = new Map();
-    /** 一次同步已经排在下一帧。 */
-    let queued = false;
-    /** 已经排出去的那一帧；0 表示没有。卸载时要能把它连同回调一起取消。 */
+// 给整页装上插入符动效。档位在每次同步时现读，所以运行期改档不必重新安装
+function installCaretMotion(readMotionMode) {
+    // 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项
+    const caretLayerMap = new Map();
+    // 一次同步已经排在下一帧
+    let syncQueued = false;
+    // 已经排出去的那一帧；0 表示没有。卸载时要能把它连同回调一起取消
     let frameHandle = 0;
-    /**
-     * 卸载之后一律不做。
-     *
-     * 帧回调与 `syncAfterFocusChange` 里那两个定时器都可能还在路上：让它们跑完，`sync` 会重建
-     * 自绘的那根、重新挂上观察者，而原生插入符的让位标记已经在卸载时摘掉了——读者看到的是
-     * 「原生被按下去了、自绘的又不在」，也就是没有光标。
-     */
+    // 卸载之后一律不做
+    // 帧回调与聚焦定时器都可能还在路上：让它们跑完会重建出那根、重新挂上观察者，
+    // 而按掉原生插入符的标记已经在卸载时摘掉了，那一瞬读者没有光标
     let disposed = false;
-    /** 这一帧里来过一次输入。`move` 档靠它把打字和显式移动分开。 */
-    let typed = false;
-    /**
-     * 上一次挪动插入符的是 End 键。
-     *
-     * 软换行处的同一个偏移有两个位置：上一行的行尾与下一行的行首。textarea 不交出「偏向哪一边」，
-     * 而 Chromium 在 End 之后画在行尾、其余时候（打字、方向键、Home）画在行首——所以记住这一下。
-     */
+    // 这一帧里来过一次输入。move 档靠它把打字和显式移动分开
+    let typedThisFrame = false;
+    // 上一次移动插入符的是 End 键
+    // 软换行处的同一个偏移有两个位置：上一行行尾与下一行行首。textarea 不交出偏向哪一边，
+    // 而 Chromium 在 End 之后画在行尾、其余时候画在行首，所以记住这一下
     let endKeyed = false;
-    const queue = () => {
-        if (disposed || queued)
+    // 排一帧同步。同一帧里来多少次触发都只跑一次
+    const queueSync = () => {
+        if (disposed || syncQueued)
             return;
-        queued = true;
+        syncQueued = true;
         frameHandle = requestAnimationFrame(() => {
             frameHandle = 0;
-            queued = false;
+            syncQueued = false;
             if (disposed)
                 return;
-            const typing = typed;
-            typed = false;
+            const typing = typedThisFrame;
+            typedThisFrame = false;
             sync(typing);
         });
     };
     const markTyped = () => {
-        typed = true;
+        typedThisFrame = true;
         endKeyed = false;
     };
-    /** 记下这一次挪窝是不是 End（带 Shift 的是在选字，没有插入符可画）。 */
+    // 记下这一次移动插入符的是不是 End（带 Shift 的是在选字，没有插入符可画）
     const noteKey = (event) => {
-        if (event.key === 'Shift' || event.key === 'Control' || event.key === 'Meta' || event.key === 'Alt')
+        if (event.key === "Shift" || event.key === "Control" || event.key === "Meta" || event.key === "Alt")
             return;
-        endKeyed = event.key === 'End' && !event.shiftKey;
+        endKeyed = event.key === "End" && !event.shiftKey;
     };
-    /** 指针落下去的位置由浏览器自己定，不再沿用上一次 End 的偏向。 */
+    // 指针按下去的位置由浏览器自己定，不再沿用上一次 End 的偏向
     const clearEndKey = () => {
         endKeyed = false;
     };
-    /**
-     * 纯文本面自己滚了一下：自绘的那根不在它里面，不会跟着走，得重量。
-     *
-     * scroll 不冒泡，所以这是捕获阶段的监听，页面上每一次滚动都会路过这里——只认已经接管的面。
-     */
+    // 纯文本面自己滚了一下：自绘的那根不在它里面，不会跟着走，得重新量一次
+    // scroll 不冒泡，所以这是捕获阶段的监听，页面上每一次滚动都会路过这里，只认已经接管的面
     const followPlainScroll = (event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLTextAreaElement) || !layers.has(target))
+        const scrolledElement = event.target;
+        if (!(scrolledElement instanceof HTMLTextAreaElement) || !caretLayerMap.has(scrolledElement))
             return;
-        queue();
+        queueSync();
     };
-    /**
-     * 可编辑面的内容、可编辑性或者身份变了。
-     *
-     * `selectionchange` 覆盖不了这些静默变化：清空草稿如果没顺带动选区，浏览器一个事件都不发；
-     * 切会话时 Lexical 还在绑 editor，`contenteditable` 会短暂变成 false，浏览器随即把焦点收走，
-     * 等它变回来又是一个事件都没有。这里补上那个缺口。纯文本面不走这条：它的内容不在 DOM 里。
-     */
+    // 可编辑面的内容、可编辑性或者身份变了
+    // selectionchange 覆盖不了这些静默变化：清空草稿如果没顺带动选区，浏览器一个事件都不发；
+    // 切会话时 Lexical 还在绑 editor，contenteditable 会短暂变成 false，浏览器随即把焦点收走，
+    // 等它变回来又是一个事件都没有。纯文本面不走这条：它的内容不在 DOM 里
     const contentObserver = new MutationObserver(() => {
-        if (read() === 'off')
+        if (readMotionMode() === "off")
             return;
-        queue();
+        queueSync();
     });
-    /** 盯住一个富文本面。同一个面盯多次是幂等的，选项以最后一次为准。 */
+    // 盯住一个富文本面。同一个面盯多次是幂等的，选项以最后一次为准
     const observeComposer = (input) => {
         contentObserver.observe(input, {
             childList: true,
             subtree: true,
             characterData: true,
             attributes: true,
-            attributeFilter: ['contenteditable', 'data-composer-input', CHIP_SELECTED_ATTRIBUTE],
+            attributeFilter: ["contenteditable", "data-composer-input", CHIP_SELECTED_ATTRIBUTE],
         });
     };
-    /** 焦点在这个面上，却还没有自绘的那根——切会话留下的空窗就是它。 */
+    // 焦点在这个面上，却还没有自绘的那根——切会话留下的空窗就是它
     const needsTakeover = () => {
-        const active = document.activeElement;
-        if (!(active instanceof HTMLElement) || surfaceOf(active) === null)
+        const activeElement = document.activeElement;
+        if (!(activeElement instanceof HTMLElement) || surfaceOf(activeElement) === null)
             return false;
-        return !active.hasAttribute(exports.CARET_ATTRIBUTE);
+        return !activeElement.hasAttribute(exports.CARET_ATTRIBUTE);
     };
-    /**
-     * 焦点换了之后再补看一次。
-     *
-     * 切会话时「焦点离开旧的」和「焦点落到新的」之间隔着几帧，中间不会有任何事件——浏览器迁移
-     * 选区是静默的，有时连 focusin 都等不到（新元素刚建出来、editor 还没绑上）。两个方向都接，
-     * 因为不知道哪一边才是这条路上最后一声。只在还没接管时才补，已经画好的那根不去打扰它，
-     * 否则闪烁会被重新起拍。
-     */
+    // 焦点换了之后再补看一次
+    // 切会话时焦点离开旧的与落到新的之间隔着几帧，中间不会有任何事件：浏览器迁移选区是静默的，
+    // 有时连 focusin 都等不到（新元素刚建出来、editor 还没绑上）。两个方向都接，因为不知道哪一边才是最后一声
+    // 只在还没接管时才补，已经画好的那根不去打扰，否则闪烁会从头开始
     const syncAfterFocusChange = () => {
-        queue();
+        queueSync();
         window.setTimeout(() => {
             if (needsTakeover())
-                queue();
+                queueSync();
         }, FOCUS_SETTLE_MS);
     };
-    /** 一个节点在它父节点里的下标；不是亲生的给 -1。 */
+    // 一个节点在它父节点里的下标；不是亲生的给 -1
     const childIndex = (parent, child) => {
         let index = 0;
         for (let node = parent.firstChild; node !== null; node = node.nextSibling) {
@@ -456,13 +393,9 @@ function installCaretMotion(read) {
         }
         return -1;
     };
-    /**
-     * 光标贴着的那个换行符。
-     *
-     * 量的是 `<br>` 自己，不是它所在的段落：段落可以有很多行，换行符的矩形却永远只有一行，高度还
-     * 正好是字高。零矩形只发生在换行符旁边，所以这里找不到换行符就等于量不出来——调用方要把原生
-     * 插入符还回去，不能拿一个猜出来的位置充数。
-     */
+    // 光标贴着的那个换行符
+    // 量的是 br 元素自己，不是它所在的段落：换行符的矩形永远只有一行，高度还正好是字高
+    // 零矩形只发生在换行符旁边，所以这里找不到换行符就等于量不出来，调用方要把原生插入符还回去
     const nearestBreak = (range) => {
         const container = range.startContainer;
         const offset = range.startOffset;
@@ -495,56 +428,50 @@ function installCaretMotion(read) {
             return { lineBreak: previous, before: false };
         return null;
     };
-    /**
-     * 输入框被清到连段落都没有时（切会话之后就是这样，DOM 是个空壳），量一根藏在页面角落里的
-     * 同款 `<br>`。
-     *
-     * 内容盒的第一行开头就是光标该在的地方，但那一行有多高、字盒在行里怎么摆，得从别处问。
-     * 探针每帧现建现删，而且**不碰 dsh 的任何容器**——往 `.grow` 里塞节点会惊动 React。
-     */
+    // 输入框被清到连段落都没有时（切会话之后就是这样，DOM 是个空壳），量一根藏在页面角落里的同款 br
+    // 内容盒的第一行开头就是光标该在的地方，但那一行有多高、字盒在行里怎么摆，得从别处问
+    // 临时建出来的那个 div 每帧现建现删，不碰 dsh 的任何容器：往 .grow 里塞节点会惊动 React
+    // 量不出来给 null，调用方退回原生插入符
     const emptyLineBox = (input) => {
         const body = document.body;
         if (body === null)
             return null;
         const style = getComputedStyle(input);
-        const probe = document.createElement('div');
-        probe.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none';
-        probe.style.padding = style.padding;
-        probe.style.whiteSpace = 'pre-wrap';
-        probe.style.fontFamily = style.fontFamily;
-        probe.style.fontSize = style.fontSize;
-        probe.style.fontWeight = style.fontWeight;
-        probe.style.fontStyle = style.fontStyle;
-        probe.style.lineHeight = style.lineHeight;
-        probe.appendChild(document.createElement('br'));
-        body.appendChild(probe);
-        const probeRect = probe.getBoundingClientRect();
-        const breakElement = probe.firstElementChild;
+        const measureBox = document.createElement("div");
+        measureBox.style.cssText = "position:fixed;top:0;left:0;visibility:hidden;pointer-events:none";
+        measureBox.style.padding = style.padding;
+        measureBox.style.whiteSpace = "pre-wrap";
+        measureBox.style.fontFamily = style.fontFamily;
+        measureBox.style.fontSize = style.fontSize;
+        measureBox.style.fontWeight = style.fontWeight;
+        measureBox.style.fontStyle = style.fontStyle;
+        measureBox.style.lineHeight = style.lineHeight;
+        measureBox.appendChild(document.createElement("br"));
+        body.appendChild(measureBox);
+        const measureRect = measureBox.getBoundingClientRect();
+        const breakElement = measureBox.firstElementChild;
         const breakRect = breakElement === null ? null : breakElement.getBoundingClientRect();
-        probe.remove();
+        measureBox.remove();
         if (breakRect === null)
             return null;
-        // 探针的 padding 与输入框一致，所以这两个差值就是「内容盒起头」到「字盒起头」的距离。
+        // 临时那个 div 的 padding 与输入框一致，所以这两个差值就是内容盒起头到字盒起头的距离
         const inputRect = input.getBoundingClientRect();
         return {
-            left: inputRect.left + (breakRect.left - probeRect.left),
-            top: inputRect.top + (breakRect.top - probeRect.top),
+            left: inputRect.left + (breakRect.left - measureRect.left),
+            top: inputRect.top + (breakRect.top - measureRect.top),
             height: breakRect.height,
         };
     };
-    /**
-     * 富文本面上这一处折叠选区的视口矩形。
-     */
+    // 富文本面上这一处折叠选区的视口矩形。量不出来给 null，调用方要把原生插入符还回去
     const measureRich = (input, range) => {
         const rect = range.getBoundingClientRect();
         if (rect.height > 0)
             return { left: rect.left, top: rect.top, height: rect.height };
-        // 零矩形：光标贴着换行符——空段落（`<p><br></p>`）与软换行都是这条路的常客。量那个换行符
-        // 自己，不要量它所在的段落：段落可以是很多行，换行符的矩形却永远只有一行，高度还是字高。
+        // 零矩形：光标贴着换行符——空段落（<p><br></p>）与软换行都是这条路的常客
         const anchor = nearestBreak(range);
         if (anchor === null) {
-            // 输入框里连一个换行符都没有：没有东西可量，但内容盒的第一行开头就是光标的位置。
-            // 里面有东西却找不到换行符，那是别的形状，不猜，把原生插入符还回去。
+            // 输入框里连一个换行符都没有：没有东西可量，但内容盒的第一行开头就是光标的位置
+            // 里面有东西却找不到换行符，那是别的形状，不猜，把原生插入符还回去
             if (input.firstChild !== null)
                 return null;
             return emptyLineBox(input);
@@ -552,7 +479,7 @@ function installCaretMotion(read) {
         const breakRect = anchor.lineBreak.getBoundingClientRect();
         if (anchor.before)
             return { left: breakRect.left, top: breakRect.top, height: breakRect.height };
-        // 换行符之后是下一行的行首：横向退到段落的内容左边界，纵向走一行。
+        // 换行符之后是下一行的行首：横向退到段落的内容左边界，纵向走一行
         const block = anchor.lineBreak.parentElement;
         if (block === null)
             return null;
@@ -563,70 +490,62 @@ function installCaretMotion(read) {
             height: breakRect.height,
         };
     };
-    /**
-     * 纯文本面上插入符的视口矩形，靠一层镜像量出来。
-     *
-     * 镜像是一个看不见的 div：样式从 textarea 上抄，宽度取它的内容区（刨掉滚动条），文本在插入符处
-     * 断开——前半截是裸文本，后半截整个包进一个 span。span 第一段行盒的左上角就是插入符。后半截
-     * 必须整段带上：软换行按整词走，只放前半截的话，正在打的那个词会留在上一行。后半截是空的
-     * （插入符在末尾）时放一个零宽空格占位，末尾那个换行符之后的空行才有行盒可量。
-     *
-     * 软换行处的偏移在镜像里天然落在下一行行首；`upstream` 为真（上一下是 End）时改量它前一个字符的
-     * 右缘，也就是上一行的行尾——和原生那根在 End 之后画的位置一致。
-     *
-     * 镜像挂在 body 上、量完就摘，**不碰 dsh 的任何容器**。
-     */
+    // 纯文本面上插入符的视口矩形，靠一层镜像量出来。镜像是个看不见的 div，挂在 body 上、量完就摘
+    // 样式从 textarea 上抄，文本在插入符处断开，后半截整个包进一个 span，它的第一段行盒就是插入符
+    // 后半截必须整段带上：软换行按整词走，只放前半截的话正在打的那个词会留在上一行
+    // upstream 为真（上一下是 End）时改量前一个字符的右缘，与原生在 End 之后的位置一致
+    // 量不出来给 null，调用方要把原生插入符还回去
     const measurePlain = (input, upstream) => {
         const body = document.body;
         if (body === null)
             return null;
         const style = getComputedStyle(input);
-        const mirror = document.createElement('div');
-        mirror.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;'
-            + 'margin:0;border:0;box-sizing:content-box;height:auto;overflow:hidden';
-        for (const name of MIRRORED_PROPERTIES)
+        const mirror = document.createElement("div");
+        mirror.style.cssText = "position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;"
+            + "margin:0;border:0;box-sizing:content-box;height:auto;overflow:hidden";
+        for (const name of MIRRORED_PROPERTY_LIST)
             mirror.style.setProperty(name, style.getPropertyValue(name));
         const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
-        mirror.style.width = String(Math.max(0, input.clientWidth - (Number.isFinite(paddingX) ? paddingX : 0))) + 'px';
-        // 调用方只在选区折叠时才来，起点终点是同一处。
+        mirror.style.width = String(Math.max(0, input.clientWidth - (Number.isFinite(paddingX) ? paddingX : 0))) + "px";
+        // 调用方只在选区折叠时才来，起点终点是同一处
         const caretAt = input.selectionEnd;
-        const marker = document.createElement('span');
+        const marker = document.createElement("span");
         mirror.textContent = input.value.slice(0, caretAt);
-        marker.textContent = input.value.slice(caretAt) || '\u200b';
+        // 后半截为空（插入符在末尾）时补一个零宽空格：末尾换行符之后的空行才有行盒可量
+        marker.textContent = input.value.slice(caretAt) || "\u200b";
         mirror.appendChild(marker);
         body.appendChild(mirror);
         const mirrorRect = mirror.getBoundingClientRect();
-        let spot = marker.getClientRects()[0];
-        let edge = spot?.left;
+        let markerRect = marker.getClientRects()[0];
+        let caretLeft = markerRect?.left;
         const before = mirror.firstChild;
-        if (upstream && spot !== undefined && before instanceof Text && caretAt > 0 && input.value[caretAt - 1] !== '\n') {
+        if (upstream && markerRect !== undefined && before instanceof Text && caretAt > 0 && input.value[caretAt - 1] !== "\n") {
             const previous = document.createRange();
             previous.setStart(before, caretAt - 1);
             previous.setEnd(before, caretAt);
             const rects = previous.getClientRects();
             const last = rects[rects.length - 1];
-            // 前一个字符落在更上面的一行，才说明这里是软换行。
-            if (last !== undefined && last.top < spot.top - 1) {
-                spot = last;
-                edge = last.right;
+            // 前一个字符落在更上面的一行，才说明这里是软换行
+            if (last !== undefined && last.top < markerRect.top - 1) {
+                markerRect = last;
+                caretLeft = last.right;
             }
         }
         mirror.remove();
-        if (spot === undefined || edge === undefined)
+        if (markerRect === undefined || caretLeft === undefined)
             return null;
-        // 镜像没有边框，padding 与 textarea 一致，所以这两个差值就是插入符在 textarea 内边距盒里的
-        // 位置；再扣掉 textarea 自己滚走的那一段。
+        // 镜像没有边框，padding 与 textarea 一致，所以这两个差值就是插入符在 textarea 内边距盒里的位置；
+        // 再扣掉 textarea 自己滚走的那一段
         const inputRect = input.getBoundingClientRect();
         return {
-            left: inputRect.left + input.clientLeft + (edge - mirrorRect.left) - input.scrollLeft,
-            top: inputRect.top + input.clientTop + (spot.top - mirrorRect.top) - input.scrollTop,
-            height: spot.height,
+            left: inputRect.left + input.clientLeft + (caretLeft - mirrorRect.left) - input.scrollLeft,
+            top: inputRect.top + input.clientTop + (markerRect.top - mirrorRect.top) - input.scrollTop,
+            height: markerRect.height,
         };
     };
-    /**
-     * 把一个视口矩形裁进 textarea 露出来的那一段。自绘的那根不在 textarea 里面，textarea 的裁剪管
-     * 不到它：内部滚动时插入符滚出可视区，原生那根跟着消失，这一根也得自己消失。
-     */
+    // 把一个视口矩形裁进 textarea 露出来的那一段
+    // 自绘的那根不在 textarea 里面，它的裁剪管不到这根：内部滚动时插入符滚出可视区，
+    // 原生那根跟着消失，这一根也得自己消失。整个被裁掉给 null
     const clipToField = (input, box) => {
         const inputRect = input.getBoundingClientRect();
         const clipTop = inputRect.top + input.clientTop;
@@ -637,222 +556,220 @@ function installCaretMotion(read) {
             return null;
         return { left: box.left, top, height: bottom - top };
     };
+    // 藏起来，那根留在原地：下次再出现不必重建
     const hide = (layer) => {
         layer.caret.removeAttribute(exports.CARET_VISIBLE_ATTRIBUTE);
         layer.visible = false;
     };
-    /** 把一个面的自绘状态整个撤掉：那一根、让位标记、以及替它补过的定位上下文。 */
+    // 把一个面的自绘状态整个撤掉：那一根、按掉标记、以及替它补过的定位上下文
     const release = (input, layer) => {
         layer.caret.remove();
         input.removeAttribute(exports.CARET_ATTRIBUTE);
         if (layer.markedHost)
             layer.host.removeAttribute(exports.CARET_HOST_ATTRIBUTE);
     };
-    /** 这个可编辑面上的自绘插入符；没有就建一根。 */
+    // 这个可编辑面上的自绘插入符；没有就建一根
     const layerFor = (input) => {
         const host = input.parentElement;
         if (host === null)
             return null;
-        const known = layers.get(input);
-        if (known !== undefined && known.host === host) {
-            // React 重渲染会把挂上去的那根一起摘掉，重新挂回去，并当作刚露头重新就位。
-            if (known.caret.isConnected)
-                return known;
-            host.appendChild(known.caret);
-            known.visible = false;
-            return known;
+        const existingLayer = caretLayerMap.get(input);
+        if (existingLayer !== undefined && existingLayer.host === host) {
+            // React 重渲染会把挂上去的那根一起摘掉，重新挂回去，并当作刚出现重新就位
+            if (existingLayer.caret.isConnected)
+                return existingLayer;
+            host.appendChild(existingLayer.caret);
+            existingLayer.visible = false;
+            return existingLayer;
         }
-        // 父元素换了人：旧的那一份整个撤掉，按新的父元素重建。
-        if (known !== undefined) {
-            release(input, known);
-            layers.delete(input);
+        // 父元素换了人：旧的那一份整个撤掉，按新的父元素重建
+        if (existingLayer !== undefined) {
+            release(input, existingLayer);
+            caretLayerMap.delete(input);
         }
-        // 自绘的那根按容器的内边距盒定位，容器必须是定位上下文。不是的话补一个标记，由样式表把它
-        // 变成 relative——作答框的 `.field` 与排队行都是这样。`display: contents` 的容器自己没有盒子，
-        // 补了也没用：宁可不动手，让原生插入符留在原地。
+        // 自绘的那根按容器的内边距盒定位，容器必须是定位上下文。不是的话补一个标记，由样式表把它变成 relative
+        // 作答框的 .field 与排队行都是这样。display: contents 的容器自己没有盒子，补了也没用：
+        // 宁可不动手，让原生插入符留在原地
         const hostStyle = getComputedStyle(host);
-        if (hostStyle.display === 'contents')
+        if (hostStyle.display === "contents")
             return null;
-        const markedHost = hostStyle.position === 'static';
+        const markedHost = hostStyle.position === "static";
         if (markedHost)
-            host.setAttribute(exports.CARET_HOST_ATTRIBUTE, '');
-        const caret = document.createElement('div');
-        caret.setAttribute(exports.CARET_LAYER_ATTRIBUTE, '');
+            host.setAttribute(exports.CARET_HOST_ATTRIBUTE, "");
+        const caret = document.createElement("div");
+        caret.setAttribute(exports.CARET_LAYER_ATTRIBUTE, "");
         host.appendChild(caret);
         if (input.isContentEditable)
             observeComposer(input);
         const layer = { caret, visible: false, host, markedHost };
-        layers.set(input, layer);
+        caretLayerMap.set(input, layer);
         return layer;
     };
-    /**
-     * 接管那一刻读下原生插入符的颜色，自绘的那根照着画。
-     *
-     * 只在让位标记还没写上时读得到：写上之后算出来的就是 transparent 了。`auto` 的意思是跟字色走。
-     */
+    // 接管那一刻读下原生插入符的颜色，自绘的那根照着画
+    // 只在按掉标记还没写上时读得到：写上之后算出来的就是 transparent 了。auto 的意思是跟字色走
     const adoptCaretColor = (input, layer) => {
         const style = getComputedStyle(input);
-        const color = style.caretColor === 'auto' ? style.color : style.caretColor;
+        const color = style.caretColor === "auto" ? style.color : style.caretColor;
         layer.caret.style.setProperty(exports.CARET_COLOR_PROPERTY, color);
     };
-    /**
-     * 把自绘的光标放到这个视口矩形上。
-     */
+    // 把自绘的光标放到这个视口矩形上
+    // paused 为真时这一帧不播位移过渡：刚出现，或者 move 档下的一次打字
     const draw = (layer, box, paused) => {
-        // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量。
+        // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量
         const hostRect = layer.host.getBoundingClientRect();
-        // 对齐到整像素。原生插入符就落在像素网格上，而落在分数位置的矩形会被抗锯齿抹开一圈灰边，
-        // 看起来和它不是一套。代价是位置最多偏半像素，看不出来。
+        // 对齐到整像素。原生插入符就落在像素网格上，落在分数位置的矩形会被抗锯齿抹开一圈灰边，
+        // 看起来和它不是一套。代价是位置最多偏半像素，看不出来
         const left = Math.round(box.left - hostRect.left - layer.host.clientLeft + layer.host.scrollLeft);
         const top = Math.round(box.top - hostRect.top - layer.host.clientTop + layer.host.scrollTop);
-        // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来。
+        // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来
         const fresh = !layer.visible;
         const instant = fresh || paused;
         if (instant)
-            layer.caret.style.transitionProperty = 'none';
-        layer.caret.style.transform = 'translate(' + left + 'px, ' + top + 'px)';
-        layer.caret.style.height = box.height + 'px';
-        if (instant)
+            layer.caret.style.transitionProperty = "none";
+        layer.caret.style.transform = "translate(" + left + "px, " + top + "px)";
+        layer.caret.style.height = box.height + "px";
+        if (instant) {
             requestAnimationFrame(() => {
-                layer.caret.style.transitionProperty = '';
+                layer.caret.style.transitionProperty = "";
             });
+        }
         if (fresh) {
             layer.visible = true;
-            layer.caret.setAttribute(exports.CARET_VISIBLE_ATTRIBUTE, '');
+            layer.caret.setAttribute(exports.CARET_VISIBLE_ATTRIBUTE, "");
         }
-        // 每挪一次都让闪烁重新起拍：否则赶上「灭」的那半周期，读者会以为光标没跟上来。
-        // 只认闪烁那一条。`getAnimations()` 里也有正在跑的位移过渡（它自己就是被这个方法读到的），
-        // 把那条也拉回起点的话，连续打字就变成一格一格地卡——光标永远落在上一格的插值位置上。
+        // 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
+        // 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
+        // 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
         for (const animation of layer.caret.getAnimations()) {
             if (animation instanceof CSSAnimation && animation.animationName === exports.CARET_BLINK_NAME)
                 animation.currentTime = 0;
         }
     };
-    /**
-     * 这一帧的光标归谁。
-     */
+    // 这一帧的光标归谁。typing 表示这一帧里来过一次输入
     const sync = (typing) => {
-        const mode = read();
-        // 「关」是彻底的：自绘的那根和让位标记一起撤掉，原生插入符回来。留着它们只会让读者看不见光标。
-        if (mode === 'off') {
-            for (const [input, layer] of layers)
+        const mode = readMotionMode();
+        // 关是彻底的：自绘的那根和按掉标记一起撤掉，原生插入符回来。留着它们只会让读者看不见光标
+        if (mode === "off") {
+            for (const [input, layer] of caretLayerMap)
                 release(input, layer);
-            layers.clear();
+            caretLayerMap.clear();
             return;
         }
         const selection = document.getSelection();
-        const active = document.activeElement;
-        const kind = active instanceof HTMLElement ? surfaceOf(active) : null;
-        // 焦点落在富文本面上就先盯住它，哪怕此刻还不可编辑：切会话时 contenteditable 会短暂
-        // 变成 false，等它变回来的时候，只有盯着属性才等得到那一下。
-        if (kind === 'rich' && active instanceof HTMLElement)
-            observeComposer(active);
-        // 光标只出现在**正拿着焦点**的那个可编辑面上：hero 态的输入框没有可编辑面，多会话时也
-        // 只有一个面拿着焦点。选了字（合成中选中候选词也算）时不该有它。
-        let target = null;
-        let range = null;
-        if (kind === 'rich' && active instanceof HTMLElement && active.isContentEditable
+        const activeElement = document.activeElement;
+        const focusedElement = activeElement instanceof HTMLElement ? activeElement : null;
+        const surfaceKind = focusedElement === null ? null : surfaceOf(focusedElement);
+        // 焦点落在富文本面上就先盯住它，哪怕此刻还不可编辑：contenteditable 短暂变 false 时，
+        // 只有盯着属性才等得到它变回来那一下
+        if (surfaceKind === "rich" && focusedElement !== null)
+            observeComposer(focusedElement);
+        // 光标只出现在正拿着焦点的那个可编辑面上：hero 态的输入框没有可编辑面，多会话时也只有一个面拿着焦点
+        // 选了字（合成中选中候选词也算）时不该有它
+        let caretSurface = null;
+        let caretRange = null;
+        if (surfaceKind === "rich" && focusedElement !== null && focusedElement.isContentEditable
             && selection !== null && selection.isCollapsed && selection.rangeCount > 0) {
-            const candidate = selection.getRangeAt(0);
-            if (active.contains(candidate.startContainer)) {
-                target = active;
-                range = candidate;
+            const candidateRange = selection.getRangeAt(0);
+            if (focusedElement.contains(candidateRange.startContainer)) {
+                caretSurface = focusedElement;
+                caretRange = candidateRange;
             }
         }
-        if (kind === 'plain' && active instanceof HTMLTextAreaElement && active.selectionStart === active.selectionEnd) {
-            target = active;
+        if (surfaceKind === "plain" && focusedElement instanceof HTMLTextAreaElement
+            && focusedElement.selectionStart === focusedElement.selectionEnd)
+            caretSurface = focusedElement;
+        // 命令 chip 被选中时，dsh 把原生插入符按掉了：那一下不是光标，自绘的那根也藏起来
+        if (caretSurface !== null && caretSurface.hasAttribute(CHIP_SELECTED_ATTRIBUTE)) {
+            caretSurface = null;
+            caretRange = null;
         }
-        // 命令 chip 被选中时，dsh 把原生插入符按掉了：那一下不是光标，自绘的那根也藏起来。
-        if (target !== null && target.hasAttribute(CHIP_SELECTED_ATTRIBUTE)) {
-            target = null;
-            range = null;
-        }
-        for (const [input, layer] of layers) {
-            // 切会话会把整个输入区换掉，提问卡片答完、排队行存完也会整块卸掉，跟着它走的那根一并撤掉。
+        for (const [input, layer] of caretLayerMap) {
+            // 切会话会把整个输入区换掉，提问卡片答完、排队行存完也会整块卸掉，跟着它走的那根一并撤掉
             if (!input.isConnected) {
                 release(input, layer);
-                layers.delete(input);
+                caretLayerMap.delete(input);
                 continue;
             }
-            if (input === target)
+            if (input === caretSurface)
                 continue;
-            // 光标不归它，或者干脆没有光标：自绘的那根藏起来，原生插入符还回去。让位标记只在
-            // 「此刻真的有一根自绘的光标」时才存在，其余任何时候撤掉它都是安全的。
+            // 光标不归它，或者干脆没有光标：自绘的那根藏起来，原生插入符还回去
+            // 按掉标记只在真的有一根自绘的光标时才存在，其余任何时候撤掉它都是安全的
             hide(layer);
             input.removeAttribute(exports.CARET_ATTRIBUTE);
         }
-        if (target === null)
+        if (caretSurface === null)
             return;
-        const layer = layerFor(target);
+        const layer = layerFor(caretSurface);
         if (layer === null)
             return;
-        const measured = target instanceof HTMLTextAreaElement
-            ? measurePlain(target, endKeyed)
-            : range === null ? null : measureRich(target, range);
-        // 让位标记只在真正画出一根之后才写。画不出来时把原生插入符还回去——「原生已透明、自绘没画」
-        // 是这套动效唯一真正会伤到读者的失效方式，任何一次测量失败都必须退回原点，而不是维持现状。
+        let measured = null;
+        if (caretSurface instanceof HTMLTextAreaElement)
+            measured = measurePlain(caretSurface, endKeyed);
+        else if (caretRange !== null)
+            measured = measureRich(caretSurface, caretRange);
+        // 按掉标记只在真正画出一根之后才写。画不出来时把原生插入符还回去——
+        // 原生已透明、自绘没画是这套动效唯一真正会伤到读者的失效方式，任何一次测量失败都必须退回原点
         if (measured === null) {
-            target.removeAttribute(exports.CARET_ATTRIBUTE);
+            caretSurface.removeAttribute(exports.CARET_ATTRIBUTE);
             hide(layer);
             return;
         }
-        if (!target.hasAttribute(exports.CARET_ATTRIBUTE))
-            adoptCaretColor(target, layer);
-        // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写。
-        const box = target instanceof HTMLTextAreaElement ? clipToField(target, measured) : measured;
-        if (box === null) {
+        if (!caretSurface.hasAttribute(exports.CARET_ATTRIBUTE))
+            adoptCaretColor(caretSurface, layer);
+        // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写
+        let caretBox = measured;
+        if (caretSurface instanceof HTMLTextAreaElement)
+            caretBox = clipToField(caretSurface, measured);
+        if (caretBox === null)
             hide(layer);
-            target.setAttribute(exports.CARET_ATTRIBUTE, '');
-            return;
-        }
-        draw(layer, box, mode === 'move' && typing);
-        target.setAttribute(exports.CARET_ATTRIBUTE, '');
+        else
+            draw(layer, caretBox, mode === "move" && typing);
+        caretSurface.setAttribute(exports.CARET_ATTRIBUTE, "");
     };
-    document.addEventListener('selectionchange', queue);
-    document.addEventListener('focusin', syncAfterFocusChange);
-    document.addEventListener('focusout', syncAfterFocusChange);
-    // `move` 档的判据。它先于 `selectionchange` 到达，所以这一帧的挪窝算不算打字，读它比猜位置准。
-    document.addEventListener('beforeinput', markTyped);
-    // 软换行处偏向哪一边的判据：上一下是不是 End。捕获阶段听，免得被谁拦在半路。
-    document.addEventListener('keydown', noteKey, true);
-    document.addEventListener('pointerdown', clearEndKey, true);
-    document.addEventListener('scroll', followPlainScroll, { capture: true, passive: true });
-    window.addEventListener('resize', queue);
-    // 自带的那两份字体是后到的，折行随之变化，光标要重新量一次。
-    document.fonts.addEventListener('loadingdone', queue);
+    document.addEventListener("selectionchange", queueSync);
+    document.addEventListener("focusin", syncAfterFocusChange);
+    document.addEventListener("focusout", syncAfterFocusChange);
+    // move 档的判据。beforeinput 先于 selectionchange 到达，所以这一帧的移动算不算打字，读它比事后从位置上猜准
+    // 输入法合成期间照样发 selectionchange、选区照样折叠（往真页面里注过合成，逐帧量过），所以这里不为合成单独分支
+    document.addEventListener("beforeinput", markTyped);
+    // 软换行处偏向哪一边的判据：上一下是不是 End。捕获阶段听，免得被谁拦在半路
+    document.addEventListener("keydown", noteKey, true);
+    document.addEventListener("pointerdown", clearEndKey, true);
+    document.addEventListener("scroll", followPlainScroll, { capture: true, passive: true });
+    window.addEventListener("resize", queueSync);
+    // 自带的那两份字体是后到的，折行随之变化，光标要重新量一次
+    document.fonts.addEventListener("loadingdone", queueSync);
     return {
-        resync: queue,
+        resync: queueSync,
         dispose: () => {
             disposed = true;
             if (frameHandle !== 0)
                 cancelAnimationFrame(frameHandle);
             frameHandle = 0;
-            document.removeEventListener('selectionchange', queue);
-            document.removeEventListener('focusin', syncAfterFocusChange);
-            document.removeEventListener('focusout', syncAfterFocusChange);
-            document.removeEventListener('beforeinput', markTyped);
-            document.removeEventListener('keydown', noteKey, true);
-            document.removeEventListener('pointerdown', clearEndKey, true);
-            document.removeEventListener('scroll', followPlainScroll, true);
-            window.removeEventListener('resize', queue);
-            document.fonts.removeEventListener('loadingdone', queue);
+            document.removeEventListener("selectionchange", queueSync);
+            document.removeEventListener("focusin", syncAfterFocusChange);
+            document.removeEventListener("focusout", syncAfterFocusChange);
+            document.removeEventListener("beforeinput", markTyped);
+            document.removeEventListener("keydown", noteKey, true);
+            document.removeEventListener("pointerdown", clearEndKey, true);
+            document.removeEventListener("scroll", followPlainScroll, true);
+            window.removeEventListener("resize", queueSync);
+            document.fonts.removeEventListener("loadingdone", queueSync);
             contentObserver.disconnect();
-            for (const [input, layer] of layers)
+            for (const [input, layer] of caretLayerMap)
                 release(input, layer);
-            layers.clear();
+            caretLayerMap.clear();
         },
     };
 }
-/**
- * 一个元素是不是本模块接管的可编辑面，是哪一种。
- */
+// 一个元素是不是本模块接管的可编辑面，是哪一种
+// rich 是主输入框，plain 是输入区里可编辑的 textarea，都不是给 null
 function surfaceOf(element) {
     if (element.matches(dom_contract_1.COMPOSER_INPUT_SELECTOR))
-        return 'rich';
-    if (element instanceof HTMLTextAreaElement && element.matches(dom_contract_1.COMPOSER_TEXTAREA_SELECTOR)) {
-        return element.disabled || element.readOnly ? null : 'plain';
-    }
-    return null;
+        return "rich";
+    if (!(element instanceof HTMLTextAreaElement) || !element.matches(dom_contract_1.COMPOSER_TEXTAREA_SELECTOR))
+        return null;
+    return element.disabled || element.readOnly ? null : "plain";
 }
     };
 
@@ -861,123 +778,85 @@ function surfaceOf(element) {
 /**
  * dsh 聊天区的 DOM 契约。
  *
- * 只认 dsh 的语义属性，不认带构建期 hash 的 class 名；两个以上模块共用的选择器都收在这里。
+ * 这里全是 dsh 自己发出的语义属性。它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版而坏，
+ * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.ACTIVE_CONTENT_PHASE = exports.CONTENT_PHASE_SELECTOR = exports.CONTENT_PHASE_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
-/** 聊天列。 */
-exports.CHAT_FLOW_SELECTOR = '[data-chat-flow]';
-/** 每一行思考行；它的阶段看 `data-state`。 */
-exports.THINK_ROW_SELECTOR = '[data-variant="think"]';
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+// 聊天列
+exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
+// 每一行思考行；它的阶段看 data-state
+exports.THINK_ROW_SELECTOR = `[data-variant="think"]`;
 /**
- * 每一次工具调用的包装层——根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
- *
- * 它与思考行是「结构时刻」的两个锚点：它们第一次被渲染时，dsh 的跟随最容易掉队（见
- * follow/call-appeared.ts）。
+ * 每一次工具调用的包装层：根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
+ * 它与思考行是结构时刻的两个锚点，它们第一次渲染时 dsh 的跟随最容易掉队
  */
-exports.CALL_ROW_SELECTOR = '[data-chat-call-id]';
-/** 模型还在思考、过程还在跑时的阶段值。 */
-exports.RUNNING_STATE = 'running';
+exports.CALL_ROW_SELECTOR = "[data-chat-call-id]";
+// 模型还在思考、过程还在跑时的阶段值
+exports.RUNNING_STATE = "running";
 /**
- * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
- *
- * 2026-09 起这个属性就叫 `data-shimmer`；插件自 2026-10-17 起不再认旧名 `data-text-shimmer`。
+ * TextShimmer 正在扫光的元素：它在，就说明这一段内容还在动。
+ * 2026-09 起这个属性叫 data-shimmer，2026-10-17 起不再认旧名 data-text-shimmer
  */
-exports.SHIMMER_SELECTOR = '[data-shimmer]';
-/** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
-exports.CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]';
+exports.SHIMMER_SELECTOR = "[data-shimmer]";
+// 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
+exports.CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]";
 /**
  * 跟随开着时 dsh 挂在聊天框架上的语义属性；它没了，就说明跟随已经被关掉。
- *
- * 属性名与选择器两种形式各有人用（前者喂 `attributeFilter`，后者查页面），所以两个都写在这里：
- * 各自就地拼字符串的话，改一处就会漏一处。
+ * 属性名与选择器两种形式各有人用：前者喂 attributeFilter，后者查页面，两个都写在这里
  */
-exports.FOLLOWING_TAIL_ATTRIBUTE = 'data-chat-following-tail';
-/** 同一个契约的选择器形式。 */
-exports.FOLLOWING_TAIL_SELECTOR = '[' + exports.FOLLOWING_TAIL_ATTRIBUTE + ']';
+exports.FOLLOWING_TAIL_ATTRIBUTE = "data-chat-following-tail";
+// 同一个契约的选择器形式
+exports.FOLLOWING_TAIL_SELECTOR = "[" + exports.FOLLOWING_TAIL_ATTRIBUTE + "]";
 /**
- * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
- *
- * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：尺寸一变就瞬时滚到底。
+ * 读者离底部多近才算贴着底部，取 dsh 自己的 FOLLOW_THRESHOLD + 1。
+ * 那条线以内，dsh 把内容增长当成跟着尾巴走：尺寸一变就瞬时滚到底
  */
 exports.FOLLOW_THRESHOLD_PX = 25;
-/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
-exports.COMPOSER_SELECTOR = '[data-composer-seat]';
-/** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位，发送气泡按它取起点。 */
-exports.COMPOSER_INPUT_SELECTOR = '[data-composer-input]';
+// 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动
+exports.COMPOSER_SELECTOR = "[data-composer-seat]";
+// 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
+exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
 /**
- * 输入区里的纯文本框：提问卡片的作答框（`[data-question-key]` 下），以及排队消息的行内编辑框
- * （`[data-queue-dock]` 下，子智能体跑着时追加的那几条就在这里改）。两者都是 textarea，都住在
- * 输入区座位里，主会话与侧栏里的子智能体会话都一样。
+ * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
+ * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样
  */
-exports.COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea';
+exports.COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea";
 /**
  * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
- *
- * 它是 dsh 0.2.1-alpha.1 起才有的——0.2.0-rc.2 及更早的坞只有类名（带构建期 hash，认不得），
- * 那一版里统计是**一枚**胶囊（带下面那个属性），比例圆是它的兄弟。
+ * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
  */
-exports.COMPOSER_DOCK_SELECTOR = '[data-composer-dock]';
-/** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
-exports.COMPOSER_CARD_SELECTOR = '[data-composer-card]';
+exports.COMPOSER_DOCK_SELECTOR = "[data-composer-dock]";
+// 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致
+exports.SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+// dsh 给每一个过程组放的属性
+exports.PROCESS_GROUP_SELECTOR = "[data-step-process]";
 /**
- * 提交之后 dsh 立刻挂上来的那条「即发即显」回显行；发送气泡的落点就是它。
- *
- * 排队的那一条落在队列坞里、也带这个属性，所以要飞的那条必须连同聊天列一起认（见 `send-flight.ts`）。
+ * 过程组根上的档位标记：在，就说明这一档不收纳组体（详细与完全展开两档）。
+ * 这两档里组头仍在 DOM，只是被 dsh 裹进一个带 hidden 的壳，所以判档位只能靠它，不能靠找不到组头
  */
-exports.SUBMISSION_ECHO_SELECTOR = '[data-submission-echo]';
-/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
-exports.SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
-/** dsh 给每一个过程组放的属性。 */
-exports.PROCESS_GROUP_SELECTOR = '[data-step-process]';
+exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode";
 /**
- * 过程组根上：在，就说明这一档不收纳组体（「详细」与「完全展开」两档）。
- *
- * 这两档里组头**仍在 DOM**，只是被 dsh 裹进一个带 `hidden` 的壳，所以判档位只能靠它，
- * 不能再靠「找不到组头」。
+ * dsh 的折叠动效正在驱动这一行：collapse 是收起中，reveal 是展开中。
+ * 官方批量折叠与展开期间，插件的过程组自动开合与高度动画都要让开：同一行上叠两套高度动画只会互相打架。
+ * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
  */
-exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode';
+exports.MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`;
+// 过程组体；收起时带 hidden
+exports.PROCESS_BODY_SELECTOR = "[data-step-process-body]";
+// 过程组体里的内容层；组体滚的就是它
+exports.PROCESS_CONTENT_SELECTOR = "[data-step-process-content]";
 /**
- * dsh 的折叠动效正在驱动这一行：`collapse` 是收起中、`reveal` 是展开中。
- *
- * 官方批量折叠/展开期间，插件的过程组自动开合与卷帘门都应让路——同一行上叠两套高度动画只会互相
- * 打架。列上的作用域标记（`data-chat-motion=""`）不算，只认这两个值。
+ * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
+ * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
  */
-exports.MOTION_ROW_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]';
-/**
- * 会话内容的阶段（`hero` / `settling` / `active`），挂在会话内容根上。
- *
- * 发送动效只在 `active` 这一档里做「落点让位」：hero 与 settling 各有自己的一整套布局切换，
- * 往里插一脚只会打架。
- */
-exports.CONTENT_PHASE_ATTRIBUTE = 'data-content-phase';
-exports.CONTENT_PHASE_SELECTOR = '[' + exports.CONTENT_PHASE_ATTRIBUTE + ']';
-exports.ACTIVE_CONTENT_PHASE = 'active';
-/**
- * 列上的折叠动效作用域标记（`data-chat-motion=""`）；行上的同名字符串另带阶段值。
- *
- * 它在列上时，说明 dsh 正在跑一段批量折叠/展开的高度动画——那一会儿的行高与滚动都在变，
- * 想动聊天区的人应当让路。
- */
-exports.MOTION_ATTRIBUTE = 'data-chat-motion';
-/** 过程组体；收起时带 `hidden`。 */
-exports.PROCESS_BODY_SELECTOR = '[data-step-process-body]';
-/** 过程组体里的内容层；组体滚的就是它。 */
-exports.PROCESS_CONTENT_SELECTOR = '[data-step-process-content]';
-/**
- * DisclosureRow 的**被点那一行**。展开体是它的兄弟——0.2.1-alpha.2 起改成外层 header 的兄弟。
- *
- * 谁取展开体，就得同时认下面那个 header：只认这一个的话，alpha.2 上取到的是空槽位，
- * 于是「不报错、只是不动了」。
- */
-exports.DISCLOSURE_ROW_SELECTOR = '[data-disclosure-row]';
+exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
 /**
  * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
- *
- * 它把被点行与 `headerAccessory` 槽位一起裹住，展开体因此从「行的兄弟」变成「它的兄弟」；
- * 旧版没有这一层（`closest` 返回 null），两处取展开体的地方都按「有就用、没有就退回行自己」。
+ * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
+ * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
  */
-exports.DISCLOSURE_HEADER_SELECTOR = '[data-disclosure-header]';
+exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
     };
 
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
@@ -987,10 +866,14 @@ exports.installCacheHitPill = installCacheHitPill;
 exports.CacheHitPill = CacheHitPill;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 输入框下方的缓存命中胶囊。
+ * 输入框下方那枚「缓存命中」胶囊
  *
- * 以更低的 priority 遮蔽 dsh 的 usage 座位：命中率恒一位小数，按 90% 到 99% 的色阶取色。
- * 内置类名不可用，所以按座位契约重画；弹窗定位与外部点击复用 primitives。
+ * 遮蔽 dsh 在 conversation.composer.dock 上 id 为 usage 的那个座位重画一份：命中率恒取一位小数，
+ * 按 90% 到 99% 的色阶取色，99.0 及以后一律深绿，判据用显示值本身。色标与插值在 cache-hit-styles，
+ * 段标记与段内位置走 ../ramp
+ *
+ * 内置那一套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以照着它的样子重画；
+ * 弹窗定位与「点外面就关」复用 primitives 那两个共享钩子，行为与内置一致
  */
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
@@ -999,48 +882,47 @@ const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
 const ramp_1 = require("../ramp");
 const digit_reel_1 = require("../reel/digit-reel");
-/** 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值。 */
+// 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值
 const PANEL_GAP = 8;
-/** 面板与视口边缘留的余量，与内置的 stat 弹窗同值。 */
+// 面板与视口边缘留的余量，与内置的 stat 弹窗同值
 const PANEL_MARGIN = 12;
-/** 还没量出位置的那一帧：先按隐藏布局画出来，让夹取量到真实尺寸。 */
-const MEASURE_STYLE = { visibility: 'hidden', left: 0, top: 0 };
-/** 没有读到 host 分节时的档位，与 dsh 自己的默认值一致。 */
-const DEFAULT_PERFORMANCE_USAGE = 'detailed';
-/** dsh 那份「性能与用量」表单的条目 id。 */
-const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
-/** 本插件自己那一份表单的条目 id：转轮开关就在它上面。 */
-const PLUGIN_SETTINGS_NAMESPACE = 'dsh-chat-ux';
-/** 一位小数：千分之一是这条口径的最小单位。 */
+// 还没量出位置的那一帧：先按隐藏布局画出来，定位夹取才量得到真实尺寸
+const MEASURE_STYLE = { visibility: "hidden", left: 0, top: 0 };
+// 没读到 host 分节时的档位，与 dsh 自己的默认值一致
+const DEFAULT_PERFORMANCE_USAGE = "detailed";
+// dsh 那份「性能与用量」表单的条目 id
+const CHAT_SETTINGS_NAMESPACE = "ui-chat";
+// 本插件自己那一份表单的条目 id：数字滚动的开关在它上面
+const PLUGIN_SETTINGS_NAMESPACE = "dsh-chat-ux";
+// 一位小数：先算到千分之一，再落成文本
 const PERCENT_UNITS_PER_TENTH = 1000;
-/** 部分命中的上限：读作 100.0% 之前必须真的全中。 */
+// 部分命中的上限：读作 100.0% 之前必须真的全中
 const PERCENT_UNITS_CAP = 999;
-/** token 计数的两个进位点，与 dsh 的 formatTokens 同规则。 */
+// token 计数的两个进位点，与 dsh 的 formatTokens 同规则
 const THOUSAND = 1_000;
 const MILLION = 1_000_000;
-/** 每三位一组，做精确计数的千分位。 */
+// 每三位一组，做精确计数的千分位
 const GROUP_SIZE = 3;
-/** 这一枚在 chat 命名空间里读文案。 */
-const CHAT_LOCALE_NAMESPACE = 'chat';
-/** 这个座位的 id 与顺序，与内置那一枚一模一样：遮蔽靠的是更低的 priority。 */
-const USAGE_STAT_ID = 'usage';
+// 这一枚在 chat 命名空间里读文案
+const CHAT_LOCALE_NAMESPACE = "chat";
+// 座位 id 与顺序跟内置那一枚一模一样，遮蔽只靠更低的 priority
+const USAGE_STAT_ID = "usage";
 const USAGE_STAT_ORDER = 1;
-/** 遮蔽内置那一枚：同一个 id 与 order 上，priority 最低的那个渲染，内置是 0。 */
+// 同一个 id 与 order 上 priority 最低的那个渲染，内置是 0
 const USAGE_STAT_PRIORITY = -1;
-/** 命中率那六个色标在显示值上的位置，与样式表里那几段一一对应；末一个落在 99.0，之后一律深绿。 */
+// 命中率那六个色标在显示值上的位置，与样式表里那几段一一对应；末一个落在 99.0，之后一律深绿
 const HIT_TONE_STOPS = [90, 92, 94, 96, 98, 99];
 /**
- * 遮蔽 `conversation.composer.dock` 上的 `usage` 座位，换成自带一位小数与四档取色的那一枚。
+ * 遮蔽 conversation.composer.dock 上的 usage 座位，换成自带一位小数与档位色的那一枚
  *
- * 档位读的是 dsh 自己那份 `ui-chat` 表单，而不是本插件的配置：简洁档只留命中率读数，详细档另加
- * 总量与明细，跟着读者在设置页里的选择走。
+ * 档位读的是 dsh 自己那份 ui-chat 表单，而不是本插件的配置：简洁档只留命中率读数，详细档另加总量与明细
  */
 function installCacheHitPill(slots, configForms) {
-    slots.inject('conversation.composer.dock', () => {
+    slots.inject("conversation.composer.dock", () => {
         const releaseUsageMode = usageModeMirror.adopt(configForms.get(CHAT_SETTINGS_NAMESPACE));
         const releaseHitReel = hitReelMirror.adopt(configForms.get(PLUGIN_SETTINGS_NAMESPACE));
         const releaseSeat = slots.register({
-            name: 'conversation.composer.dock',
+            name: "conversation.composer.dock",
             id: USAGE_STAT_ID,
             order: USAGE_STAT_ORDER,
             priority: USAGE_STAT_PRIORITY,
@@ -1054,119 +936,86 @@ function installCacheHitPill(slots, configForms) {
     });
 }
 /**
- * 渲染这一枚：简洁档是静态读数，详细档是能点开明细的按钮。
+ * 简洁档是静态读数，详细档是能点开明细的按钮
+ * 这一场没有计过账时返回 null，与内置那条闸门一致
  */
 function CacheHitPill({ useProjection, t }) {
-    const usage = useProjection('tokenUsage');
-    const mode = useUsageMode();
-    const rolling = useHitReel();
+    const tokenUsage = useProjection("tokenUsage");
+    const usageMode = (0, react_1.useSyncExternalStore)(usageModeMirror.subscribe, usageModeMirror.read);
+    const rolling = (0, react_1.useSyncExternalStore)(hitReelMirror.subscribe, hitReelMirror.read);
     const [open, setOpen] = (0, react_1.useState)(false);
     const rootRef = (0, react_1.useRef)(null);
     const panelRef = (0, react_1.useRef)(null);
-    const pos = (0, dsh_client_ui_primitives_1.useAnchoredPosition)({
-        open, anchorRef: rootRef, panelRef, side: 'top', gap: PANEL_GAP, margin: PANEL_MARGIN,
+    const panelStyle = (0, dsh_client_ui_primitives_1.useAnchoredPosition)({
+        open, anchorRef: rootRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN,
     });
     (0, dsh_client_ui_primitives_1.useDismissOnOutsidePointer)(rootRef, open, setOpen, panelRef);
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
-    if (usage === undefined)
+    if (tokenUsage === undefined)
         return null;
-    const billedInput = billedInputTokens(usage);
-    if (billedInput === 0 && usage.outputTokens === 0)
+    // 三个互不重叠的输入计费桶之和：命中率与满量都按它算
+    const billedInput = tokenUsage.uncachedInputTokens + tokenUsage.cacheReadTokens + tokenUsage.cacheWriteTokens;
+    if (billedInput === 0 && tokenUsage.outputTokens === 0)
         return null;
-    const hit = hitReading(usage.cacheReadTokens, billedInput);
+    const hit = hitReading(tokenUsage.cacheReadTokens, billedInput);
     const icon = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconDatabaseOutlineRegular, {});
-    const hitLabel = t('message.turnUsage.cacheHit');
-    // 「缓存命中」这几个字与它后面那串读数是一组，色阶就挂在这一组上（见样式表），名字与读数因此同色。
-    // 数字轮那一截自己不带颜色，从这一组继承。
-    // 自定义属性不在 React 的 CSSProperties 键里，只能在这里收窄一次
-    const toneStyle = hit === null ? undefined : { [ramp_1.RAMP_POSITION_VAR]: hit.tone.mix };
-    const reading = hit === null ? null : ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_READING_CLASS, [ramp_1.RAMP_SPAN_ATTRIBUTE]: hit.tone.span, style: toneStyle, children: [hitLabel, ' ', (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, rolling: rolling, spoken: true })] }));
-    if (mode === 'compact') {
+    const hitLabel = t("message.turnUsage.cacheHit");
+    // 「缓存命中」这几个字与后面那串读数是一组，色阶就挂在这一组上，名字与读数因此同色
+    // 数字滚动那一截自己不带颜色，从这一组继承
+    const reading = hit === null ? null : ((0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_READING_CLASS, [ramp_1.RAMP_SPAN_ATTRIBUTE]: hit.tone.span, style: { [ramp_1.RAMP_POSITION_VAR]: hit.tone.mix }, children: [hitLabel, " ", (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: hit.text, rolling: rolling, spoken: true })] }));
+    if (usageMode === "compact") {
         if (reading === null)
             return null;
         return ((0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, children: [icon, (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: reading })] }) }));
     }
-    const total = billedInput + usage.outputTokens;
-    const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) });
-    const title = t('stats.dialog.usageTitle');
-    const summary = hit === null ? totalText : totalText + ' · ' + hitLabel + ' ' + hit.text;
-    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => { setOpen(!open); }, children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, reading !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), reading] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: pos ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.input') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheRead') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheReadTokens, t) }), usage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.cacheWrite') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t('message.turnUsage.output') }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(usage.outputTokens, t) })] })] }), document.body)] }));
+    const total = billedInput + tokenUsage.outputTokens;
+    const totalText = t("message.turnUsage.count", { count: formatTokens(total, t) });
+    const title = t("stats.dialog.usageTitle");
+    const summary = hit === null ? totalText : totalText + " · " + hitLabel + " " + hit.text;
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => setOpen(!open), children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, reading !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), reading] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: panelStyle ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.input") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheRead") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheReadTokens, t) }), tokenUsage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheWrite") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.output") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.outputTokens, t) })] })] }), document.body)] }));
 }
-/**
- * 命中率读数，恒一位小数。
- */
+// 命中率读数：恒一位小数，同时给出色阶位置；没有计过价的输入时是 null
 function hitReading(cacheReadTokens, billedInputTokens) {
-    const percent = formatHitPercent(cacheReadTokens, billedInputTokens);
-    if (percent === null)
-        return null;
-    return { text: percent + '%', tone: (0, ramp_1.rampPosition)(Number(percent), HIT_TONE_STOPS) };
-}
-/**
- * 命中率文本，恒一位小数。
- *
- * 先把千分之一的整数单位算出来再落成文本，躲开浮点误差在 x.x5 上翻面。部分命中不许读成满命中：
- * 舍进 100.0 但没有全中的压回 99.9。
- */
-function formatHitPercent(cacheReadTokens, billedInputTokens) {
     if (billedInputTokens === 0)
         return null;
+    // 先算千分之一的整数单位再落成文本，躲开浮点误差在 x.x5 上翻面
     const units = Math.round(cacheReadTokens * PERCENT_UNITS_PER_TENTH / billedInputTokens);
-    const capped = cacheReadTokens < billedInputTokens && units > PERCENT_UNITS_CAP
-        ? PERCENT_UNITS_CAP
-        : units;
-    return (capped / 10).toFixed(1);
+    // 部分命中不许读成满命中：舍进 100.0 但没有全中的压回 99.9
+    const capped = cacheReadTokens < billedInputTokens && units > PERCENT_UNITS_CAP ? PERCENT_UNITS_CAP : units;
+    const percent = capped / 10;
+    return { text: percent.toFixed(1) + "%", tone: (0, ramp_1.rampPosition)(percent, HIT_TONE_STOPS) };
 }
-/** 三个互不重叠的输入计费桶之和。 */
-function billedInputTokens(usage) {
-    return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+// 紧凑的 token 计数：517 / 12.2K / 517K / 1.2M，与 dsh 的 formatTokens 同规则
+function formatTokens(value, t) {
+    if (value < THOUSAND)
+        return String(value);
+    if (value < MILLION)
+        return t("number.thousand", { value: scaledCount(value / THOUSAND) });
+    return t("number.million", { value: scaledCount(value / MILLION) });
 }
-/**
- * 紧凑的 token 计数：517 / 12.2K / 517K / 1.2M，与 dsh 的 formatTokens 同规则。
- */
-function formatTokens(tokenCount, t) {
-    if (tokenCount < THOUSAND)
-        return String(tokenCount);
-    if (tokenCount < MILLION)
-        return t('number.thousand', { value: scaledCount(tokenCount / THOUSAND) });
-    return t('number.million', { value: scaledCount(tokenCount / MILLION) });
+// 进位之后的缩放数：过百取整，否则留一位小数
+function scaledCount(value) {
+    return value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
 }
-/** 进位之后的缩放数：过百取整，否则留一位小数。 */
-function scaledCount(scaledValue) {
-    return scaledValue >= 100 ? String(Math.round(scaledValue)) : String(Math.round(scaledValue * 10) / 10);
-}
-/**
- * 精确 token 计数，带 chat 命名空间的千分位。
- */
-function formatExactTokens(tokenCount, t) {
-    const digits = String(tokenCount);
+// 明细里的一行：精确计数，每三位一组，分隔符走 chat 自己的文案
+function exactCount(value, t) {
+    const digits = String(value);
     const groups = [];
     for (let end = digits.length; end > 0; end -= GROUP_SIZE) {
         groups.unshift(digits.slice(Math.max(0, end - GROUP_SIZE), end));
     }
-    return groups.join(t('number.groupSeparator'));
-}
-/** 明细里的一行：精确计数加 chat 自己的计数单位。 */
-function exactCount(tokenCount, t) {
-    return t('message.turnUsage.count', { count: formatExactTokens(tokenCount, t) });
-}
-/** 档位：订阅 dsh 那份 `ui-chat` 表单里的取值。 */
-function useUsageMode() {
-    return (0, react_1.useSyncExternalStore)(usageModeMirror.subscribe, usageModeMirror.read);
-}
-/** 转轮开着没有：订阅本插件那份表单里的取值。 */
-function useHitReel() {
-    return (0, react_1.useSyncExternalStore)(hitReelMirror.subscribe, hitReelMirror.read);
+    return t("message.turnUsage.count", { count: groups.join(t("number.groupSeparator")) });
 }
 /**
- * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也
- * 关——后者走捕获阶段，让键盘激活旁边那个胶囊时这一颗先关掉，而不是两张面板叠在一起。
+ * 明细面板的键盘与外部点击关闭，与内置的 stat 弹窗同一条规则：Escape 关，点到触发点与面板之外也关
+ * 后者走捕获阶段，键盘激活旁边那个胶囊时这一颗先关掉，而不是两张面板叠在一起
  */
 function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
     (0, react_1.useEffect)(() => {
         if (!open)
             return;
         const onKeyDown = (event) => {
-            if (event.key === 'Escape')
+            if (event.key === "Escape")
                 setOpen(false);
         };
         const onClick = (event) => {
@@ -1176,18 +1025,18 @@ function useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef) {
                 setOpen(false);
             }
         };
-        document.addEventListener('keydown', onKeyDown);
-        document.addEventListener('click', onClick, true);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("click", onClick, true);
         return () => {
-            document.removeEventListener('keydown', onKeyDown);
-            document.removeEventListener('click', onClick, true);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("click", onClick, true);
         };
     }, [open, setOpen, rootRef, panelRef]);
 }
 /**
- * 造一份模块级镜像。
+ * 造一份模块级镜像
  *
- * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里。
+ * 这个座位只有一处安装，读者在设置页改完不必重新安装任何东西，所以取值与订阅都收在模块级这一份里
  */
 function createSettingMirror(initial, pick) {
     let current = initial;
@@ -1202,9 +1051,8 @@ function createSettingMirror(initial, pick) {
         },
         adopt: (form) => {
             if (form === undefined)
-                return () => {
-                };
-            const adopt = () => {
+                return () => { };
+            const pullFromForm = () => {
                 const next = pick(form.getSnapshot().value);
                 if (next === current)
                     return;
@@ -1212,88 +1060,89 @@ function createSettingMirror(initial, pick) {
                 for (const listener of listeners)
                     listener();
             };
-            const unsubscribe = form.subscribe(adopt);
-            adopt();
+            const unsubscribe = form.subscribe(pullFromForm);
+            pullFromForm();
             return unsubscribe;
         },
     };
 }
-/** 档位的镜像。 */
+// 档位的镜像
 const usageModeMirror = createSettingMirror(DEFAULT_PERFORMANCE_USAGE, section => section?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE);
-/** 命中率转轮的镜像。 */
+// 命中率数字滚动那个开关的镜像
 const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, section => section?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL);
     };
 
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
-// ⚠️ 以下默认值与 host 的 src/index.ts 一一对应，改一处必须同步另一处
+exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+// 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
+// 思考行与过程组自己开合，这是本插件的主要效果
 exports.DEFAULT_AUTO_FOLD = true;
-exports.DEFAULT_CARET_MOTION = 'typing';
-exports.DEFAULT_SEND_FLIGHT = true;
+// 凡是会挪位置的地方都给过渡
+exports.DEFAULT_CARET_MOTION = "typing";
+// 读数只在每次模型结算时才变，一天也滚不了几次
 exports.DEFAULT_HIT_REEL = true;
+// 关掉时这一处整块不装，看到的是 dsh 原来那圈环
 exports.DEFAULT_CONTEXT_PIE = true;
+// 关掉时前端不往 body 上挂属性，那一整张规则表一条都不命中
 exports.DEFAULT_COMPOSER_GLASS = true;
+// 只对直接调用的 write 与 edit 有意义：run_code 里派发的子调用没有准备态
 exports.DEFAULT_LIVE_DIFF = true;
+// dsh 自己的跟随在结构时刻会掉队，实测一次 run_code 执行里落后到一百四十像素上下，正好把新出现的行推出视野
 exports.DEFAULT_FOLLOW_ON_APPEAR = true;
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CACHE_HIT_CSS = exports.CACHE_HIT_SHADOWED_ATTRIBUTE = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
+exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE_CLASS = exports.CACHE_HIT_TITLE_VALUE_CLASS = exports.CACHE_HIT_TITLE_LABEL_CLASS = exports.CACHE_HIT_TITLE_CLASS = exports.CACHE_HIT_PANEL_CLASS = exports.CACHE_HIT_SEP_CLASS = exports.CACHE_HIT_READING_CLASS = exports.CACHE_HIT_LABEL_CLASS = exports.CACHE_HIT_PILL_CLASS = exports.CACHE_HIT_ANCHOR_CLASS = void 0;
 /**
- * 缓存命中胶囊的样式。
+ * 缓存命中胶囊自己的样式表
  *
- * 这里遮蔽 dsh 的 usage 座位，所以内置胶囊与弹窗的皮肤要重画一份；数字轮与色阶的公共规则分别在
- * ../reel/reel-styles 和 ../ramp。
+ * 这一处遮蔽了 dsh 在 conversation.composer.dock 上 id 为 usage 的那个座位，内置的胶囊皮肤与弹窗皮肤
+ * 都带构建期 hash、既拿不到也不能当接口，所以在这里重写一份：尺寸、令牌与节奏逐条对齐，只有命中率那一处
+ * 是新的（90% 到 99% 的色阶，涂在「缓存命中 + 读数」那一组上，名字与读数同色）
+ *
+ * 数字滚动的类名与规则在 ../reel/reel-styles，两处共用；色阶的段标记与位置也不在这里，在 ../ramp
  */
 const ramp_1 = require("../ramp");
-/** 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己。 */
-exports.CACHE_HIT_ANCHOR_CLASS = 'dsh-chat-ux-hit-anchor';
-/** 胶囊本体。静态读数是 `span`，能展开明细的是 `button`。 */
-exports.CACHE_HIT_PILL_CLASS = 'dsh-chat-ux-hit-pill';
-/** 胶囊里的文本容器。 */
-exports.CACHE_HIT_LABEL_CLASS = 'dsh-chat-ux-hit-label';
+// 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己
+exports.CACHE_HIT_ANCHOR_CLASS = "dsh-chat-ux-hit-anchor";
+// 胶囊本体：静态读数是 span，能展开明细的是 button
+exports.CACHE_HIT_PILL_CLASS = "dsh-chat-ux-hit-pill";
+// 胶囊里的文本容器
+exports.CACHE_HIT_LABEL_CLASS = "dsh-chat-ux-hit-label";
 /**
- * 「缓存命中」这几个字与紧随其后的那串读数：命中率色阶就挂在这一组上，所以那个名字与读数同色。
+ * 「缓存命中」这几个字与紧随其后的那串读数：命中率色阶挂在这一组上，所以那个名字与读数同色
  *
- * 详细档里 token 总量与中间那个分隔点**不在**这一组里，它们留在胶囊自己的文字色上；数字轮那一截
- * 自己不带颜色，从这一组继承。
+ * 详细档里 token 总量与中间那个分隔点不在这一组里，它们留在胶囊自己的文字色上
  */
-exports.CACHE_HIT_READING_CLASS = 'dsh-chat-ux-hit-reading';
-/** token 总量与命中率之间的那个点。 */
-exports.CACHE_HIT_SEP_CLASS = 'dsh-chat-ux-hit-sep';
-/** 弹窗面板。 */
-exports.CACHE_HIT_PANEL_CLASS = 'dsh-chat-ux-hit-panel';
-/** 弹窗标题行：左边图标加标题，右边精确总量。 */
-exports.CACHE_HIT_TITLE_CLASS = 'dsh-chat-ux-hit-title';
-/** 标题左侧那一半。 */
-exports.CACHE_HIT_TITLE_LABEL_CLASS = 'dsh-chat-ux-hit-title-label';
-/** 标题右侧那个精确总量。 */
-exports.CACHE_HIT_TITLE_VALUE_CLASS = 'dsh-chat-ux-hit-title-value';
-/** 标题下那条发丝线。 */
-exports.CACHE_HIT_RULE_CLASS = 'dsh-chat-ux-hit-rule';
-/** 明细的 dt/dd 栅格。 */
-exports.CACHE_HIT_DETAILS_CLASS = 'dsh-chat-ux-hit-details';
+exports.CACHE_HIT_READING_CLASS = "dsh-chat-ux-hit-reading";
+// token 总量与命中率之间的那个点
+exports.CACHE_HIT_SEP_CLASS = "dsh-chat-ux-hit-sep";
+// 弹窗面板
+exports.CACHE_HIT_PANEL_CLASS = "dsh-chat-ux-hit-panel";
+// 弹窗标题行：左边图标加标题，右边精确总量
+exports.CACHE_HIT_TITLE_CLASS = "dsh-chat-ux-hit-title";
+// 标题左侧那一半
+exports.CACHE_HIT_TITLE_LABEL_CLASS = "dsh-chat-ux-hit-title-label";
+// 标题右侧那个精确总量
+exports.CACHE_HIT_TITLE_VALUE_CLASS = "dsh-chat-ux-hit-title-value";
+// 标题下那条发丝线
+exports.CACHE_HIT_RULE_CLASS = "dsh-chat-ux-hit-rule";
+// 明细的 dt/dd 栅格
+exports.CACHE_HIT_DETAILS_CLASS = "dsh-chat-ux-hit-details";
 /**
- * 老版坞（dsh 0.2.0-rc.2 及更早）里 dsh 自己那一枚用量胶囊上的收起标记。
+ * 整张样式表，由浏览器半区在安装时拼进那张 <style>
  *
- * 那一版只有一个 `stats` 座位条目，按 id 遮蔽不了座位，插件这一枚只会与内置那一枚并列。所以由
- * `legacy-usage-pill` 在 DOM 上把内置那一枚收起来——收起只是 `display: none`，属性一撤它就回来。
- */
-exports.CACHE_HIT_SHADOWED_ATTRIBUTE = 'data-chat-ux-shadowed-stat';
-/**
- * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
- *
- * 色阶的六个色标：90.0 红、92.0 橙黄、94.0 黄、96.0 黄绿、98.0 浅绿、99.0 深绿。低于 90.0 一律红；
- * **99.0 及以后一律深绿**——读者不必等到 100.0 才看见绿。六个都从 `../ramp` 那组共用的色调里取，
- * 锚点之间的颜色由浏览器在 OKLCH 里自己插出来（`color-mix(in oklch, …)`）：浏览器半区只给「落在哪
- * 一段、段内位置多少」，一个色值都不碰，所以主题一切它自动跟着重算。
+ * 色阶六个色标：90.0 红、92.0 橙黄、94.0 黄、96.0 黄绿、98.0 浅绿、99.0 深绿。低于 90.0 一律红，
+ * 99.0 及以后一律深绿，读者不必等到 100.0 才看见绿。六个都从 ../ramp 那组共用的色调里取，锚点之间由
+ * 浏览器在 OKLCH 里插值（color-mix(in oklch, …)）：浏览器半区只给「落在哪一段、段内位置多少」，
+ * 一个色值都不碰，主题一切自动跟着重算
  */
 exports.CACHE_HIT_CSS = `
-/* 座位根：尺寸对齐内置胶囊的 anchor，只包住胶囊本身。 */
+/* 座位根：尺寸对齐内置胶囊的 anchor，只包住胶囊本身 */
 .${exports.CACHE_HIT_ANCHOR_CLASS} {
   display: inline-flex;
   min-width: 0;
@@ -1309,7 +1158,7 @@ exports.CACHE_HIT_CSS = `
   max-width: 100%;
   padding: 1px 8px;
   border: none;
-  /* 与 dsh 0.2.1-rc.1 起统计控件的小圆角一致（统计胶囊从 999px 改成了这个令牌）。 */
+  /* 与 dsh 0.2.1-rc.1 起统计控件的小圆角一致（统计胶囊从 999px 改成了这个令牌） */
   border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
@@ -1325,7 +1174,7 @@ exports.CACHE_HIT_CSS = `
   flex: none;
 }
 
-/* 只有能点开明细的 button 形才邀请交互；静态读数保持三级文字色。 */
+/* 只有能点开明细的 button 形才邀请交互；静态读数保持三级文字色 */
 button.${exports.CACHE_HIT_PILL_CLASS} {
   cursor: pointer;
 }
@@ -1348,14 +1197,13 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
 }
 
 /* 色阶挂在「缓存命中 + 读数」这一组上：那几个字与读数同色。同一行里的 token 总量与那个分隔点不在
-   这一组里，仍留在胶囊自己的三级文字色上；这一组自带颜色，所以胶囊 hover 时它不跟着变，色阶一路
-   看得见。
+   这一组里，仍留在胶囊自己的三级文字色上；这一组自带颜色，所以胶囊 hover 时它不跟着变
 
-   颜色分两步走：下面这几条段规则把这一组的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是
-   引用那组共用的色调，主题不同解析出来的就不同，所以这几条与主题无关），这一侧只写一个段内位置。
-   这一处敢套两层 var()，是因为读这些色值的只有浏览器自己——没有任何 JS 去 getComputedStyle。 */
+   颜色分两步走：下面这几条段规则把这一组的两个端点挂在 --dsh-chat-ux-hit-from/to 上（端点只是引用
+   那组共用的色调，主题不同解析出来的就不同），这一侧只写一个段内位置。敢套两层 var()，是因为读这些
+   色值的只有浏览器自己，没有 JS 去 getComputedStyle */
 
-/* 低于 90%：两端都是红，所以插值恒等于红，不另开一档颜色。 */
+/* 低于 90%：两端都是红，插值恒等于红，不另开一档颜色 */
 .${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-red);
 }
@@ -1385,19 +1233,19 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   --dsh-chat-ux-hit-to: var(--dsh-chat-ux-tone-green);
 }
 
-/* 99.0 及以后：不必等到 100.0，两端都是深绿。 */
+/* 99.0 及以后：不必等到 100.0，两端都是深绿 */
 .${exports.CACHE_HIT_READING_CLASS}[${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
   --dsh-chat-ux-hit-from: var(--dsh-chat-ux-tone-green);
 }
 
 /* 撑不起 color-mix 的浏览器停在段起点色上：退成六档取色，读数、布局与翻动一个都不受影响。
-   段标记也没写上时退回胶囊自己的文字色，而不是变成看不出的一团。 */
+   段标记也没写上时退回胶囊自己的文字色，而不是变成看不出的一团 */
 .${exports.CACHE_HIT_READING_CLASS} {
   color: var(--dsh-chat-ux-hit-from, currentColor);
 }
 
 /* 括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入「未知的
-   函数形式」而恒为假，整块规则静默跳过——与 styles.ts 里那道流光同一个坑。 */
+   函数形式」而恒为假，整块规则静默跳过，与 styles.ts 里那道流光同一个坑 */
 @supports (color: color-mix(in oklch, red, blue 50%)) {
   .${exports.CACHE_HIT_READING_CLASS} {
     color: color-mix(
@@ -1408,7 +1256,7 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   }
 }
 
-/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给。 */
+/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给 */
 .${exports.CACHE_HIT_PANEL_CLASS} {
   position: fixed;
   z-index: 1100;
@@ -1479,40 +1327,34 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
-
-/* 老版坞里 dsh 自己那一枚用量胶囊：插件这一枚在场时把它收起来，两版看到的都是「速度 + 这一枚」。
-   收起只是不画：内置那一枚仍在 DOM 里、仍按 dsh 自己的口径算，插件卸下时属性一撤就回来
-   （见 legacy-usage-pill）。 */
-[${exports.CACHE_HIT_SHADOWED_ATTRIBUTE}] {
-  display: none !important;
-}
 `;
     };
 
     __registry["chat/ramp.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 无极色阶的公共部分：把读数落成「段标记 + 段内位置」。
+ * 无极色阶的公共部分：把读数落成段标记加段内位置。
  *
- * 色值留在各自样式表里，这里只算落在哪一段、段内位置多少，锚点之间交给 color-mix(in oklch, …)。
+ * 色值不在这里，留在各自的样式表里（命中率那六个色标、上下文占用那六个色标），这一侧只算落在哪一段、
+ * 段内位置多少，锚点之间的插值交给 CSS 的 color-mix(in oklch, …)。
+ * 两处共用它，是因为要的是同一件事：在一个区间里连续取色，两头各自恒定，命中率到 99.0 就绿、占用到 40 就红
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RAMP_TONE_CSS = exports.RAMP_SPAN_HIGH = exports.RAMP_SPAN_LOW = exports.RAMP_POSITION_VAR = exports.RAMP_SPAN_ATTRIBUTE = void 0;
 exports.rampPosition = rampPosition;
-/** 段标记与段内位置写在这两个名字上：样式表按段标记选段，按位置算色。 */
-exports.RAMP_SPAN_ATTRIBUTE = 'data-dsh-chat-ux-ramp-span';
-/** 段内位置的变量名。 */
-exports.RAMP_POSITION_VAR = '--dsh-chat-ux-ramp-position';
-/** 低于第一个色标的那一段：两端同色，插值恒等。 */
-exports.RAMP_SPAN_LOW = 'low';
-/** 从最后一个色标起的那一段：同样恒定。 */
-exports.RAMP_SPAN_HIGH = 'high';
+// 段标记与段内位置写在这两个名字上：样式表按段标记选段，按位置算色
+exports.RAMP_SPAN_ATTRIBUTE = "data-dsh-chat-ux-ramp-span";
+// 段内位置的变量名
+exports.RAMP_POSITION_VAR = "--dsh-chat-ux-ramp-position";
+// 低于第一个色标的那一段：两端同色，插值恒等
+exports.RAMP_SPAN_LOW = "low";
+// 从最后一个色标起的那一段：同样恒定
+exports.RAMP_SPAN_HIGH = "high";
 /**
  * 两处色阶共用的七个色调，深浅两套各一份。
  *
- * 写成字面值而不是再套一层 `var()`：读色值的那一侧——上下文占用那颗饼要把色涂进内联 SVG——读的是
- * 求值后的 `color`，但这条约定仍然守着，免得下一个人以为可以随手改掉。深浅两套的色相不变、明度各自
- * 适配画布。
+ * 写成字面值而不是再套一层 var()：读色值的那一侧（上下文占用那颗饼图要把色涂进内联 SVG）读的是求值后的
+ * color，但这条约定仍然守着，免得下一个人以为可以随手改掉。深浅两套的色相不变、明度各自适配画布
  */
 exports.RAMP_TONE_CSS = `
 body {
@@ -1538,26 +1380,26 @@ body[data-ds-dark-theme] {
 /**
  * 把一个读数落到色标上。
  *
- * `stops` 是色标在读数轴上的位置（升序、至少两个），个数与样式表里那组色标一一对应。落在第一个
- * 之前（`'low'`）或最后一个之后（`'high'`）时只给段标记：那两段的两端是同一个色，插值走不出别的颜色。
+ * stops 是色标在读数轴上的位置（升序、至少两个），个数与样式表里那组色标一一对应。
+ * 落在第一个之前是 low、最后一个之后是 high，那两段的两端是同一个色，插值走不出别的颜色
  */
-function rampPosition(displayValue, stops) {
-    const floor = stops[0] ?? displayValue;
-    const top = stops[stops.length - 1] ?? displayValue;
-    if (displayValue < floor)
-        return { span: exports.RAMP_SPAN_LOW, mix: '0%' };
-    if (displayValue >= top)
-        return { span: exports.RAMP_SPAN_HIGH, mix: '0%' };
-    let segment = 0;
+function rampPosition(value, stops) {
+    const floorStop = stops[0] ?? value;
+    const topStop = stops[stops.length - 1] ?? value;
+    if (value < floorStop)
+        return { span: exports.RAMP_SPAN_LOW, mix: "0%" };
+    if (value >= topStop)
+        return { span: exports.RAMP_SPAN_HIGH, mix: "0%" };
+    let segmentIndex = 0;
     for (let index = 1; index < stops.length - 1; index += 1) {
         const stop = stops[index];
-        if (stop !== undefined && displayValue >= stop)
-            segment = index;
+        if (stop !== undefined && value >= stop)
+            segmentIndex = index;
     }
-    const from = stops[segment] ?? floor;
-    const to = stops[segment + 1] ?? top;
-    // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM。
-    return { span: String(segment), mix: (Math.round((displayValue - from) / (to - from) * 1000) / 10) + '%' };
+    const fromStop = stops[segmentIndex] ?? floorStop;
+    const toStop = stops[segmentIndex + 1] ?? topStop;
+    // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM
+    return { span: String(segmentIndex), mix: (Math.round((value - fromStop) / (toStop - fromStop) * 1000) / 10) + "%" };
 }
     };
 
@@ -1567,125 +1409,106 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DigitReel = DigitReel;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 数字轮：只让变化的那一位原地弹一下。
+ * 数字滚动：变了的那一位原地弹一下，新数字从下方 6px 处淡入、旧数字朝反方向淡出，500 ms，低位比高位晚 70 ms 起手。
  *
- * 每位最多两个数字，新旧各走同一套 6px 位移与透明度关键帧；没变的位不会重新挂载。
- * 读数形状不对或关闭动效时退回纯文本，读屏另取一份完整读数。
+ * 位移固定 6px、不参与排版，也不问元素任何尺寸，所以不可能停歪，更不需要知道「一格有多高」这个数。
+ * 整枚刚挂上（刷新页面、切会话、上下文占用的第一帧）与位数变了新长出来的那一位也照弹：没有上一个数字就
+ * 只有新数字进场，这正是「换了会话，读数跳了一下」那一下。
+ * 命中率胶囊、上下文占用的百分比、文件变更行行尾那两个 +n 与 -m 都用它；颜色不在这一截里，它不写 color，
+ * 从调用方挂在外面那一层继承，段标记与段内位置也归调用方写
  */
 const react_1 = require("react");
 const reel_styles_1 = require("./reel-styles");
-/** 读数中间那一段的形状：一至六位整数，可带一位小数。首尾那两个不变的标记由调用方给。 */
+// 读数中间那一段的形状：一至六位整数，可带一位小数；首尾那两个不变的标记由调用方给
 const READING_PATTERN = /^(\d{1,6})(?:\.(\d))?$/;
-/**
- * 这一截读数：开着时是几位数字加小数点与它首尾那两个标记，关着时是一段纯文本。
- */
+// 这一截读数：开着时是数字位加首尾标记，关着时是一段纯文本
 function DigitReel(props) {
-    const { text, prefix = '', suffix = '%', rolling, cadence, spoken } = props;
-    const reading = splitReading(text, prefix, suffix);
-    // 形状对不上（dsh 那边换了口径）、或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数。
-    if (!rolling || reading === null) {
+    const { text, prefix = "", suffix = "%", rolling, cadence, spoken } = props;
+    const readingParts = splitReading(text, prefix, suffix);
+    // 形状对不上（dsh 那边换了口径）或者读者关掉了这一项时，退回纯文本：这一截照旧是那个读数
+    if (!rolling || readingParts === null) {
         return (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_TEXT_CLASS, children: text });
     }
-    // 时长经自定义属性往下传，不写成内联 style：关键帧那一侧要用 `var()`，内联只写得了声明值。
-    const className = cadence === 'fast' ? reel_styles_1.REEL_TEXT_CLASS + ' ' + reel_styles_1.REEL_FAST_CLASS : reel_styles_1.REEL_TEXT_CLASS;
-    const digits = reading.integer.split('');
-    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: className, "aria-hidden": true, children: [prefix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: prefix }), digits.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digits.length - 1 - index))), reading.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(reading.decimal), place: digits.length })] })), suffix !== '' && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: suffix })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
+    // 时长经自定义属性往下传，不写成内联 style：关键帧那一侧要用 var()，内联只写得了声明值
+    const textClassName = cadence === "fast" ? reel_styles_1.REEL_TEXT_CLASS + " " + reel_styles_1.REEL_FAST_CLASS : reel_styles_1.REEL_TEXT_CLASS;
+    const digitCharList = readingParts.integer.split("");
+    return ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsxs)("span", { className: textClassName, "aria-hidden": true, children: [prefix !== "" && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: prefix }), digitCharList.map((digit, index) => ((0, jsx_runtime_1.jsx)(Digit, { digit: Number(digit), place: index }, digitCharList.length - 1 - index))), readingParts.decimal !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: "." }), (0, jsx_runtime_1.jsx)(Digit, { digit: Number(readingParts.decimal), place: digitCharList.length })] })), suffix !== "" && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_STATIC_CLASS, children: suffix })] }), spoken && (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_SPOKEN_CLASS, children: text })] }));
 }
-/**
- * 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面。
- */
+// 一个数字位：一个槽位，里头最多两个数字——现在的在文档流里，上一个压在它上面
 function Digit({ digit, place }) {
-    // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以**没变的那一
-    // 位不会重新挂载**、也就不会播动画：读数一变就让每位都弹，看着像一直在抽。
-    const [pair, setPair] = (0, react_1.useState)({ shown: digit, previous: null });
-    if (pair.shown !== digit)
-        setPair({ shown: digit, previous: pair.shown });
-    const delay = { animationDelay: String(place * reel_styles_1.REEL_STAGGER_MS) + 'ms' };
-    return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_SLOT_CLASS, children: [pair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: delay, children: pair.previous }, 'was-' + String(pair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: delay, children: digit }, 'now-' + String(pair.shown))] }));
+    // 读数一变就把原来那个挪到「上一个」的位置，新数字接替它。key 用的是数字本身，所以没变的那一位
+    // 不会重新挂载、也就不会播动画：读数一变就让每位都弹，看着像一直在抽
+    const [reelPair, setReelPair] = (0, react_1.useState)({ shown: digit, previous: null });
+    if (reelPair.shown !== digit)
+        setReelPair({ shown: digit, previous: reelPair.shown });
+    const staggerStyle = { animationDelay: String(place * reel_styles_1.REEL_STAGGER_MS) + "ms" };
+    return ((0, jsx_runtime_1.jsxs)("span", { className: reel_styles_1.REEL_SLOT_CLASS, children: [reelPair.previous !== null && ((0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_WAS_CLASS, style: staggerStyle, children: reelPair.previous }, "was-" + String(reelPair.previous))), (0, jsx_runtime_1.jsx)("span", { className: reel_styles_1.REEL_CELL_CLASS, style: staggerStyle, children: digit }, "now-" + String(reelPair.shown))] }));
 }
-/**
- * 把读数拆成整数部分与那一位小数：先按调用方给的形状削掉首尾那两个不变的标记，再认中间那一段。
- *
- * 两个标记都是空串时（行尾统计没有后缀）就是「削掉零个字符」，所以「有没有标记」这一层不必单独判。
- */
+// 把读数拆成整数部分与那一位小数：先按调用方给的形状削掉首尾那两个不变的标记，再认中间那一段
+// 两个标记都是空串时（行尾统计没有后缀）就是削掉零个字符，所以「有没有标记」这一层不必单独判
 function splitReading(text, prefix, suffix) {
     if (!text.startsWith(prefix) || !text.endsWith(suffix))
         return null;
-    const matched = READING_PATTERN.exec(text.slice(prefix.length, text.length - suffix.length));
-    if (matched === null)
+    const matchedReading = READING_PATTERN.exec(text.slice(prefix.length, text.length - suffix.length));
+    if (matchedReading === null)
         return null;
-    const integer = matched[1];
-    if (integer === undefined)
+    const integerPart = matchedReading[1];
+    if (integerPart === undefined)
         return null;
-    return { integer, decimal: matched[2] ?? null };
+    return { integer: integerPart, decimal: matchedReading[2] ?? null };
 }
     };
 
     __registry["chat/reel/reel-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 数字轮的样式。
+ * 数字滚动自己的样式：变了的那一位原地弹一下，一位上最多两个数字落在同一个槽位上各播一段短动画，
+ * 新的从下方 6px 处淡入、旧的朝反方向淡出，两条同用一条带过冲的曲线。
  *
- * 每位一个槽位，新旧数字叠放，只动 transform 与 opacity；位移固定 6px，不依赖槽高。
- * 常规 500ms，高频档 220ms，低位最多晚 70ms 起手。
+ * 位移只有 6px，那 45% 的过冲也就是 2.7px，槽位四周接得住，不需要裁切窗口；两条动画里只有 transform
+ * 与 opacity，一件非合成属性的活都没有。
+ * 接管那一处：原文本留在 DOM 里、读屏照旧读得到，只让开视觉位置，滚动那一截挂在同一父节点下
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.REEL_CSS = exports.REEL_HOST_CLASS = exports.REEL_TAKEOVER_ATTRIBUTE = exports.REEL_SPOKEN_CLASS = exports.REEL_STATIC_CLASS = exports.REEL_WAS_CLASS = exports.REEL_CELL_CLASS = exports.REEL_SLOT_CLASS = exports.REEL_FAST_CLASS = exports.REEL_TEXT_CLASS = exports.REEL_STAGGER_MS = exports.REEL_TURN_FAST_MS = exports.REEL_TURN_MS = void 0;
-/**
- * 一次弹动多久：常规那一档。两条关键帧的 `animation` 读的是 `--dsh-chat-ux-reel-turn`，这个常量就是它
- * 在容器上的默认值，改一处就要改另一处。
- *
- * 500 ms 与下面那个 70 ms 都是照着那张参考卡取的：280 ms 那一版在真机上「动完了但没看见」，一位
- * 数字的位移只有 6px，时间一短就只剩一次闪烁。时长与起手延后是一对，一起改。
- */
+// 一次弹动多久：常规那一档。两条关键帧的 animation 读的是 --dsh-chat-ux-reel-turn，这个常量就是它在容器上的
+// 默认值，改一处就要改另一处。500 ms 与下面那个 70 ms 都照参考卡取：280 ms 那一版在真机上「动完了但没看见」，
+// 一位数字的位移只有 6px，时间一短就只剩一次闪烁；时长与起手延后是一对，一起改
 exports.REEL_TURN_MS = 500;
-/**
- * 高频那一档：读数变化比上面那 500 ms 还密时用（文件变更行准备态/运行态那两个数，行数跟着换行走）。
- *
- * 这一档是配着**节拍**用的：调用方（`file-mutation-row` 的 `usePacedTotals`）把换数压到比这一轮的
- * 完整周期还长（220 ms 落回来，低位最多再晚 70 ms 起手，节拍取 300 ms），所以每一轮动画都走得完整、
- * 不会被下一批参数打断。留旧那一档 500 ms 则做不到——读数每一两百毫秒就跳一次，一位上会挂着一串
- * 残影，读数糊在一起。
- */
+// 高频那一档，配着节拍用：调用方（file-mutation-row 的 usePacedTotals）把换数压到比这一轮完整周期还长
+// （220 ms 落回来加低位最多 70 ms 起手，节拍 300 ms），每一轮动画才走得完整。500 ms 那一档做不到——
+// 读数每一两百毫秒就跳一次，一位上会挂着一串残影，读数糊在一起
 exports.REEL_TURN_FAST_MS = 220;
-/** 低位比高位晚这么多起手，动起来的次序从左往右。同样对齐那张参考卡。 */
+// 低位比高位晚这么多起手，动起来的次序从左往右；同样对齐那张参考卡
 exports.REEL_STAGGER_MS = 70;
-/** 进场的起点：从下方这么多像素往上落回来。 */
-const REEL_RISE = '6px';
-/** 那一条曲线：中段冲过终点、末尾弹回来。过冲量是位移的 45%，所以位移必须小。 */
-const REEL_EASE = 'cubic-bezier(0.34, 1.45, 0.64, 1)';
-/** 这一截的容器：几位数字、小数点、百分号并排。 */
-exports.REEL_TEXT_CLASS = 'dsh-chat-ux-reel-text';
-/** 高频那一档：挂在这一截的容器上，时长经自定义属性往下传（内联 style 定不了关键帧时长）。 */
-exports.REEL_FAST_CLASS = 'dsh-chat-ux-reel-fast';
-/** 一位数占的那个槽位：现在的数字在文档流里，上一个压在它上面。 */
-exports.REEL_SLOT_CLASS = 'dsh-chat-ux-reel-slot';
-/** 槽位里现在的那个数字：从下方落回来，终态零位移、零模糊。 */
-exports.REEL_CELL_CLASS = 'dsh-chat-ux-reel-cell';
-/** 上一个数字：朝反方向淡出。 */
-exports.REEL_WAS_CLASS = 'dsh-chat-ux-reel-was';
-/** 读数里的小数点与百分号：不弹，与数字位并排。 */
-exports.REEL_STATIC_CLASS = 'dsh-chat-ux-reel-static';
-/** 给读屏的那一份读数，视觉上藏起来。 */
-exports.REEL_SPOKEN_CLASS = 'dsh-chat-ux-reel-spoken';
-/** 挂在被接管的那一截读数上：原文本让位，数字轮接手。 */
-exports.REEL_TAKEOVER_ATTRIBUTE = 'data-dsh-chat-ux-reel';
-/**
- * 接手方自己那层容器：挂在被接管那一截读数的**父级**里（不是它里面，原因见 reel-host）。
- *
- * 带类名是为了能认：排查时一眼看得出这一层是本插件的，卸载时也靠它定位。
- */
-exports.REEL_HOST_CLASS = 'dsh-chat-ux-reel-host';
-/**
- * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
- *
- * 行高只写一个数（20px）：字形盒 17px 放在里面，上下各余一点，读者换字体也裁不到；小数点与百分号
- * 跟着用同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑。
- */
+// 进场的起点：从下方这么多像素落回来
+const REEL_RISE = "6px";
+// 那一条曲线：中段冲过终点、末尾弹回来；过冲量是位移的 45%，所以位移必须小
+const REEL_EASE = "cubic-bezier(0.34, 1.45, 0.64, 1)";
+// 这一截的容器：几位数字、小数点与百分号并排
+exports.REEL_TEXT_CLASS = "dsh-chat-ux-reel-text";
+// 高频那一档挂在这一截的容器上：时长经自定义属性往下传，内联 style 定不了关键帧的时长
+exports.REEL_FAST_CLASS = "dsh-chat-ux-reel-fast";
+// 一位数占的槽位：现在的数字在文档流里，上一个压在它上面
+exports.REEL_SLOT_CLASS = "dsh-chat-ux-reel-slot";
+// 槽位里现在的那个数字：从下方落回来，终态零位移
+exports.REEL_CELL_CLASS = "dsh-chat-ux-reel-cell";
+// 上一个数字：朝反方向淡出
+exports.REEL_WAS_CLASS = "dsh-chat-ux-reel-was";
+// 读数里的小数点与百分号不弹，与数字位并排
+exports.REEL_STATIC_CLASS = "dsh-chat-ux-reel-static";
+// 给读屏的那一份读数，视觉上藏起来
+exports.REEL_SPOKEN_CLASS = "dsh-chat-ux-reel-spoken";
+// 挂在被接管的那一截读数上：原文本让开，数字滚动接手
+exports.REEL_TAKEOVER_ATTRIBUTE = "data-dsh-chat-ux-reel";
+// 接手方自己那层容器：挂在被接管那一截读数的父级里（不是它里面，原因见 reel-host）；带类名是为了排查与卸载时认得出
+exports.REEL_HOST_CLASS = "dsh-chat-ux-reel-host";
+// 整份样式，由 styles.ts 拼进那张 style。行高只写一个数（20px）：字形盒 17px 放在里面，上下各余一点，
+// 读者换字体也裁不到；小数点与百分号跟着用同一个行高，所以数字与它们必然齐平，不靠对齐属性去凑
 exports.REEL_CSS = `
-/* 字号写在这一层自己身上，不靠父级给。接管那一处的父级是 dsh 的按钮，它的字号 dsh 自己会按主题与
-   字号档位重算，靠继承就意味着「读者把正文调大之后，接管方必须跟着重算」；自带一份反而稳：两处
-   （命中率胶囊与上下文占用）本来就都是「次级文字再减一档」，与 dsh 在那两处的表达式同值。 */
+/* 字号写在这一层自己身上，不靠父级给。接管那一处的父级是 dsh 的按钮，它的字号 dsh 自己会按主题与字号
+   档位重算，靠继承就意味着「读者把正文调大之后，接管方必须跟着重算」；自带一份反而稳：两处（命中率胶囊
+   与上下文占用）本来就都是「次级文字再减一档」，与 dsh 在那两处的表达式同值 */
 .${exports.REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: 20px;
   --dsh-chat-ux-reel-turn: ${exports.REEL_TURN_MS}ms;
@@ -1695,29 +1518,28 @@ exports.REEL_CSS = `
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
 }
 
-/* 高频那一档：只换时长，位移、曲线、错峰起手都不动。 */
+/* 高频那一档：只换时长，位移、曲线与错峰起手都不动 */
 .${exports.REEL_FAST_CLASS} {
   --dsh-chat-ux-reel-turn: ${exports.REEL_TURN_FAST_MS}ms;
 }
 
-/* 一位数：一个槽位。现在的数字在文档流里（槽宽由它决定），上一个数字绝对定位压在同一个位置上。 */
+/* 一位数：一个槽位。现在的数字在文档流里（槽宽由它决定），上一个数字绝对定位压在同一个位置上 */
 .${exports.REEL_SLOT_CLASS} {
   display: block;
   position: relative;
-  /* 胶囊挤的时候，这一位也不许被压窄。 */
+  /* 胶囊挤的时候，这一位也不许被压窄 */
   flex: none;
   height: var(--dsh-chat-ux-reel-cell);
 }
 
-/* 现在的那个数字：从下方落回来。终态零位移——动画走完，数字就落在它本来的位置上，没有可歪的余地
-   （位移不参与排版，只是一个 transform）。
+/* 现在的那个数字：从下方落回来，终态零位移——动画走完，数字就落在它本来的位置上（位移不参与排版，
+   只是一个 transform）。
 
-   这里用 backwards 而不是 both：填满终态会把动画里那套声明一直挂在元素上，而它与没动过的那几位
-   （小数点、百分号、没变的数字）就不是同一条渲染路径了——试过带模糊的那一版，落定之后看着像没落
-   在同一条线上。backwards 只覆盖延迟那一段（每位错开起手时需要），结束后元素回到干净的静态态。
+   用 backwards 而不是 both：填满终态会把动画里那套声明一直挂在元素上，它与没动过的那几位（小数点、
+   百分号、没变的数字）就不是同一条渲染路径了，试过带模糊的那一版，落定之后看着像没落在同一条线上。
 
-   will-change 常驻：属性是合成的还不够，元素得有自己那一层。切会话时读数这一位是**新挂载**的，
-   动画起手那一刻正是主线程最忙的时候，等那时才决定建层就晚了——实测画面会在长任务期间整段不动。 */
+   will-change 常驻：切会话时这一位是新挂载的，动画起手那一刻正是主线程最忙的时候，等那时才决定建层
+   就晚了，实测画面会在长任务期间整段不动 */
 .${exports.REEL_CELL_CLASS} {
   display: block;
   height: 100%;
@@ -1727,9 +1549,8 @@ exports.REEL_CSS = `
   animation: dsh-chat-ux-reel-in var(--dsh-chat-ux-reel-turn) ${REEL_EASE} backwards;
 }
 
-/* 上一个数字：朝反方向淡出，走完停在自己的零透明度上，不碍事。
-   它必须**脱离文档流**压在同一个槽位上：两个 display: block 上下排的话，槽位会被撑成两格高，
-   读数整行跟着长高。 */
+/* 上一个数字：朝反方向淡出，走完停在自己的零透明度上，不碍事。它必须脱离文档流压在同一个槽位上：
+   两个 display: block 上下排的话，槽位会被撑成两格高，读数整行跟着长高 */
 .${exports.REEL_WAS_CLASS} {
   display: block;
   position: absolute;
@@ -1742,41 +1563,40 @@ exports.REEL_CSS = `
 
 @keyframes dsh-chat-ux-reel-in {
   from {
-    transform: translateY(${REEL_RISE});
-    opacity: 0;
+	transform: translateY(${REEL_RISE});
+	opacity: 0;
   }
   to {
-    transform: none;
-    opacity: 1;
+	transform: none;
+	opacity: 1;
   }
 }
 
 @keyframes dsh-chat-ux-reel-out {
   from {
-    transform: none;
-    opacity: 1;
+	transform: none;
+	opacity: 1;
   }
   to {
-    transform: translateY(-${REEL_RISE});
-    opacity: 0;
+	transform: translateY(-${REEL_RISE});
+	opacity: 0;
   }
 }
 
-/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示。 */
+/* 系统说「减少动态效果」：两个数字都不动，上一个直接不显示 */
 @media (prefers-reduced-motion: reduce) {
   .${exports.REEL_CELL_CLASS},
   .${exports.REEL_WAS_CLASS} {
-    animation: none;
+	animation: none;
   }
 
   .${exports.REEL_WAS_CLASS} {
-    display: none;
+	display: none;
   }
 }
 
-/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。
-   flex: none 不能省：胶囊挤的时候，flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是
-   「小数点不见了」。 */
+/* 小数点与百分号也进同一个行盒：三处行高相同，数字与它们必然齐平。flex: none 不能省：胶囊挤的时候，
+   flex 会先把没有固定尺寸的小数点压成零宽——读者那边就是「小数点不见了」 */
 .${exports.REEL_STATIC_CLASS} {
   display: block;
   flex: none;
@@ -1784,7 +1604,7 @@ exports.REEL_CSS = `
   line-height: var(--dsh-chat-ux-reel-cell);
 }
 
-/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」。 */
+/* 给读屏的那一份读数：视觉上藏起来，读出来还是「97.3%」 */
 .${exports.REEL_SPOKEN_CLASS} {
   position: absolute;
   width: 1px;
@@ -1801,471 +1621,409 @@ exports.REEL_CSS = `
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installComposerGlass = installComposerGlass;
 /**
- * 输入框玻璃的几何与按钮标记。
+ * 输入框玻璃的几何：把卡片相对座位的上下边写进座位上的两个自定义属性，外加认下卡片里那几枚圆形按钮。
  *
- * 量出卡片相对座位的上下边，写进两个自定义属性；同时认主按钮、独立停止键与加号。
- * 座位和卡片各挂一个 ResizeObserver，另用 MutationObserver 处理切换会话时的整棵重建。
+ * 玻璃只盖输入卡片那个矩形，铺底的座位必须在卡片处让开一块洞，而 CSS 挖不出「位置由某个子元素决定」的洞，
+ * 所以这一处去量它。只在读者打开这个开关时安装（见 index.tsx 的 syncGlass），要量的只有两个盒子：
+ * 座位与卡片各挂一个 ResizeObserver，另有一个 MutationObserver 认座位出现与消失（切会话时整棵子树会重建）
  */
 const composer_glass_styles_1 = require("./composer-glass-styles");
-/** 座位与卡片的选择器，两个都是 dsh 自己的语义属性。 */
-const SEAT_SELECTOR = '[data-composer-seat]';
-const CARD_SELECTOR = '[data-composer-card]';
-/**
- * 左下角那枚加号的判据：**dsh 只在这一枚按钮上声明 `aria-haspopup="listbox"`**。
- *
- * 卡片里另外几枚各自开的是别的口子——模型选择、权限预设与加号旁边那些都是 `menu`，统计胶囊是
- * `dialog`；核对过运行版产物（2026-10，桌面 App 那份 app.asar）。它同时带 `aria-expanded`，
- * 但那个属性别人也有，所以不拿它当判据。
- */
-const ADD_SELECTOR = 'button[aria-haspopup="listbox"]';
-/**
- * 装上这一处：量出每个座位里卡片的位置，写进座位的两个自定义属性；返回卸下的把手。
- *
- */
+// 座位与卡片的选择器，两个都是 dsh 自己的语义属性
+const SEAT_SELECTOR = "[data-composer-seat]";
+const CARD_SELECTOR = "[data-composer-card]";
+// 左下角那枚加号的判据：dsh 只在这一枚按钮上声明 aria-haspopup="listbox"，卡片里另外几枚各自开的是别的
+// 口子——模型选择、权限预设与加号旁边那些都是 menu，统计胶囊是 dialog（2026-10 核对过桌面版 app.asar）
+// 它同时带 aria-expanded，但那个属性别人也有，不能当判据
+const ADD_SELECTOR = `button[aria-haspopup="listbox"]`;
+// 装上这一处，返回卸下观察者与清掉写过属性的把手
 function installComposerGlass() {
-    const bound = new Set();
-    let scheduled = false;
-    let stopped = false;
-    /** 量一次座位：卡片在就写两条边并认一次主按钮，不在就清掉（缺口回退成零高，也就是整块底）。 */
-    const measure = (seat) => {
+    const observedSeatSet = new Set();
+    let reconcileScheduled = false;
+    let disposed = false;
+    // 量一次座位：卡片在就写两条边并认一次那几枚按钮，不在就清掉（缺口回退成零高，也就是整块底）
+    const measureSeat = (seat) => {
         const card = seat.querySelector(CARD_SELECTOR);
         if (card === null) {
             seat.style.removeProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE);
             seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
             return;
         }
-        markPrimary(card);
-        markAdd(card);
+        markPrimaryButton(card);
+        // 左下角那枚加号：认不出就什么都不做，它回到 dsh 原来的样子，不报错、也不牵连玻璃与主按钮
+        const addButton = card.querySelector(ADD_SELECTOR);
+        for (const markedAdd of card.querySelectorAll(`[${composer_glass_styles_1.GLASS_ADD_ATTRIBUTE}]`)) {
+            if (markedAdd !== addButton)
+                markedAdd.removeAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE);
+        }
+        if (addButton !== null && !addButton.hasAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE))
+            addButton.setAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE, "");
         const seatBox = seat.getBoundingClientRect();
         const cardBox = card.getBoundingClientRect();
-        // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次。
-        const top = `${Math.round(cardBox.top - seatBox.top)}px`;
-        const bottom = `${Math.round(cardBox.bottom - seatBox.top)}px`;
-        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_TOP_VARIABLE) !== top)
-            seat.style.setProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE, top);
-        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE) !== bottom)
-            seat.style.setProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE, bottom);
+        // 值没变就不写：写一次就是一次样式失效，而折叠、流式这些时刻一帧里会量好几次
+        const gapTop = `${Math.round(cardBox.top - seatBox.top)}px`;
+        const gapBottom = `${Math.round(cardBox.bottom - seatBox.top)}px`;
+        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_TOP_VARIABLE) !== gapTop)
+            seat.style.setProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE, gapTop);
+        if (seat.style.getPropertyValue(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE) !== gapBottom)
+            seat.style.setProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE, gapBottom);
     };
-    const resize = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-            if (entry.target instanceof HTMLElement)
-                measure(entry.target);
-        }
+    const resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries)
+            measureSeat(entry.target);
     });
-    /** 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次。 */
-    const sync = () => {
-        if (stopped)
+    // 对账：新座位挂上观察者，消失的座位摘掉，两边都各量一次
+    const reconcileSeats = () => {
+        if (disposed)
             return;
         for (const seat of document.querySelectorAll(SEAT_SELECTOR)) {
-            if (!bound.has(seat)) {
-                bound.add(seat);
-                resize.observe(seat);
+            if (!observedSeatSet.has(seat)) {
+                observedSeatSet.add(seat);
+                resizeObserver.observe(seat);
             }
-            // 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的。
+            // 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的
             const card = seat.querySelector(CARD_SELECTOR);
             if (card !== null)
-                resize.observe(card);
-            measure(seat);
+                resizeObserver.observe(card);
+            measureSeat(seat);
         }
-        for (const seat of bound) {
+        for (const seat of observedSeatSet) {
             if (seat.isConnected)
                 continue;
-            resize.unobserve(seat);
-            bound.delete(seat);
+            resizeObserver.unobserve(seat);
+            observedSeatSet.delete(seat);
         }
     };
-    /** 对账排到下一帧、一帧最多一次：这一处会在折叠与流式这些 DOM 高频变动的时刻被叫醒，别让它在一帧里
-     查好几遍文档、量好几遍布局。 */
-    const scheduleSync = () => {
-        if (scheduled || stopped)
+    // 对账排到下一帧、一帧最多一次：这一处在折叠与流式这些 DOM 高频变动的时刻被叫醒，别让它一帧里查好几遍文档
+    const scheduleReconcile = () => {
+        if (reconcileScheduled || disposed)
             return;
-        scheduled = true;
+        reconcileScheduled = true;
         requestAnimationFrame(() => {
-            scheduled = false;
-            sync();
+            reconcileScheduled = false;
+            reconcileSeats();
         });
     };
-    const mutations = new MutationObserver((records) => {
+    const mutationObserver = new MutationObserver((records) => {
         for (const record of records) {
             if (![...record.addedNodes, ...record.removedNodes].some(touchesGlass))
                 continue;
-            scheduleSync();
+            scheduleReconcile();
             return;
         }
     });
-    sync();
-    mutations.observe(document.body, { childList: true, subtree: true });
+    reconcileSeats();
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
     return () => {
-        stopped = true;
-        mutations.disconnect();
-        resize.disconnect();
-        for (const seat of bound) {
+        disposed = true;
+        mutationObserver.disconnect();
+        resizeObserver.disconnect();
+        for (const seat of observedSeatSet) {
             seat.style.removeProperty(composer_glass_styles_1.GLASS_TOP_VARIABLE);
             seat.style.removeProperty(composer_glass_styles_1.GLASS_BOTTOM_VARIABLE);
         }
-        bound.clear();
-        for (const attribute of [composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, composer_glass_styles_1.GLASS_ADD_ATTRIBUTE]) {
-            for (const marked of document.querySelectorAll(`[${attribute}]`))
-                marked.removeAttribute(attribute);
+        observedSeatSet.clear();
+        for (const glassAttribute of [composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, composer_glass_styles_1.GLASS_ADD_ATTRIBUTE]) {
+            for (const markedButton of document.querySelectorAll(`[${glassAttribute}]`))
+                markedButton.removeAttribute(glassAttribute);
         }
     };
 }
-/**
- * 认一次卡片里那两枚圆形按钮，把属性打在它们身上：右下角的主操作按钮（发送 / 停止），以及它旁边可能
- * 在的那枚**独立停止圆**。
- *
- * 主按钮的判据只有一条：**卡片里最后一个 `button`**——dsh 把它排在工具栏最右（`InputBar.tsx` 那个
- * trailing 行的末尾），加号、模式、附件那些按钮都在它前面。它既不带语义属性、class 名又带构建期
- * hash，所以只能由这里认出来、自己打一个。
- *
- * 独立那枚的判据是两个条件的**合**：紧邻主按钮的那一个 `button`，且 className 与主按钮逐字相同。
- * dsh 只在一种状态下渲染它——**可继续的子智能体在跑**时（`InputBar.tsx` 的 `interruptible`），
- * 主按钮那时仍是发送 / 排队，停止被单独摆成一枚放在它前面，两枚共用同一个 class。两条缺一不可：
- * 只按位置会把 activity、模型选择那些按钮认进来，只按 class 会认到更远处碰巧同名的东西。
- *
- * 两处都在 `measure` 里跑（resize 与对账），所以不新增任何触发源：卡片里流式与打字引起的高频变动
- * 不会因为这一处再被叫醒。反面是 dsh 哪天把独立那枚挪到别处、或给两枚换上不同的 class——那时它退回
- * dsh 原来的样子（与没有这一条时一样），不报错、也不牵连主按钮与玻璃。
- *
- */
-function markPrimary(card) {
-    const buttons = card.querySelectorAll('button');
-    const primary = buttons.item(buttons.length - 1);
-    const stop = independentStop(buttons, primary);
-    for (const button of buttons) {
-        applyGlassMark(button, composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, button === primary);
-        applyGlassMark(button, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, button === stop);
+// 认一次卡片里那两枚圆形按钮，把属性打在它们身上：右下角的主操作按钮（发送或停止），以及它旁边可能在的那枚
+// 独立停止圆。主按钮的判据只有一条——卡片里最后一个 button，dsh 把它排在工具栏最右，加号、模式、附件那些
+// 都在它前面；它既不带语义属性、class 名又带构建期 hash，只能由这里认出来、自己打一个
+// 这一处跑在 measureSeat 里，不新增触发源：卡片里流式与打字引起的高频变动不会因为它再被叫醒
+function markPrimaryButton(card) {
+    const buttonList = card.querySelectorAll("button");
+    const primaryButton = buttonList.item(buttonList.length - 1);
+    const stopButton = findIndependentStop(buttonList, primaryButton);
+    for (const button of buttonList) {
+        applyGlassMark(button, composer_glass_styles_1.GLASS_PRIMARY_ATTRIBUTE, button === primaryButton);
+        applyGlassMark(button, composer_glass_styles_1.GLASS_STOP_ATTRIBUTE, button === stopButton);
     }
 }
-/**
- * 主按钮旁边那枚独立的停止圆：紧邻它、且 className 与它逐字相同的那一个。
- *
- */
-function independentStop(buttons, primary) {
-    if (primary === null)
+// 独立停止圆：紧邻主按钮、且 class 与主按钮逐字相同的那一枚。dsh 只在可继续的子智能体在跑时渲染它
+// （InputBar 的 interruptible），主按钮那时仍是发送或排队，停止被单独摆成一枚放在它前面，两枚共用同一个 class
+// 两条缺一不可：只按位置会把 activity、模型选择那些认进来，只按 class 会认到更远处碰巧同名的东西
+function findIndependentStop(buttonList, primaryButton) {
+    if (primaryButton === null || primaryButton.className === "")
         return null;
-    if (primary.className === '')
+    const siblingButton = buttonList.item(buttonList.length - 2);
+    if (siblingButton === null || siblingButton === primaryButton)
         return null;
-    const before = buttons.item(buttons.length - 2);
-    if (before === null || before === primary)
+    if (siblingButton.className !== primaryButton.className)
         return null;
-    return before.className === primary.className ? before : null;
+    return siblingButton;
 }
-/**
- * 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它（少一次属性写入）。
- *
- */
-function applyGlassMark(button, attribute, on) {
-    if (!on) {
-        if (button.hasAttribute(attribute))
-            button.removeAttribute(attribute);
+// 按需给一枚按钮补上或摘掉这个属性；属性已经在、又该在时不动它，少一次属性写入
+function applyGlassMark(button, attribute, shouldMark) {
+    if (button.hasAttribute(attribute) === shouldMark)
         return;
-    }
-    if (!button.hasAttribute(attribute))
-        button.setAttribute(attribute, '');
+    if (shouldMark)
+        button.setAttribute(attribute, "");
+    else
+        button.removeAttribute(attribute);
 }
-/**
- * 认一次卡片里那枚加号，把属性打在它身上。
- *
- * 与主按钮同一个分寸：认不出就什么都不做（那枚按钮回到 dsh 原来的样子），不报错、也不牵连玻璃与
- * 主按钮——dsh 哪天把它换成别的口子（不再用 listbox），表现就只有这一处。
- */
-function markAdd(card) {
-    const target = card.querySelector(ADD_SELECTOR);
-    for (const marked of card.querySelectorAll(`[${composer_glass_styles_1.GLASS_ADD_ATTRIBUTE}]`)) {
-        if (marked !== target)
-            marked.removeAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE);
-    }
-    if (target === null || target.hasAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE))
-        return;
-    target.setAttribute(composer_glass_styles_1.GLASS_ADD_ATTRIBUTE, '');
-}
-/**
- * 这一次变动有没有碰到座位或卡片。流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过。
- */
-function touchesGlass(node) {
-    if (!(node instanceof Element))
+// 这一次变动有没有碰到座位或卡片：流式输出每批都会送来一堆新节点，先过这一道筛，绝大多数批次直接跳过
+function touchesGlass(changedNode) {
+    if (!(changedNode instanceof Element))
         return false;
-    if (node.matches(SEAT_SELECTOR) || node.matches(CARD_SELECTOR))
+    if (changedNode.matches(SEAT_SELECTOR) || changedNode.matches(CARD_SELECTOR))
         return true;
-    return node.querySelector(`:is(${SEAT_SELECTOR}, ${CARD_SELECTOR})`) !== null;
+    return changedNode.querySelector(`:is(${SEAT_SELECTOR}, ${CARD_SELECTOR})`) !== null;
 }
     };
 
     __registry["chat/composer-glass/composer-glass-styles.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 输入框毛玻璃样式。
+ * 输入框毛玻璃：只把输入卡片那个矩形变成一块半透明、背后模糊的玻璃，卡片下面那排统计、上面那几张卡都不动。
  *
- * 只覆盖卡片的边框盒，座位上的缺口由 JS 写入的上下边变量决定。玻璃必须画在卡片的 ::before 上：
- * 卡片自身若成为 backdrop root，会截断菜单的模糊并改变固定定位后代的包含块；也不能给卡片加
- * isolation 或 z-index，否则菜单会被封进卡片的层叠上下文。
- *
- * 所有规则都以 body 门控属性为前缀；不支持 backdrop-filter 或 color-mix 时整块不生效。
+ * 玻璃长在卡片的 ::before 上，不长在卡片自己身上：卡片是斜杠命令、@ 提及的候选菜单与模型选择这些浮层的
+ * 祖先，卡片自己一带 backdrop-filter 就成了它们的祖先 backdrop root，菜单的模糊采样被掐断、整块透掉。
+ * 每一组规则都拿 body 上的开关属性当前缀，关掉时整块表一条都不命中，真的回到 dsh 原来的输入框
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.COMPOSER_GLASS_CSS = exports.GLASS_STOP_ATTRIBUTE = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
-/**
- * 玻璃生效的属性。它由 `index.tsx` 按开关写上或摘掉；表里每一组规则都拿它当前缀，所以
- * 「用不用这块玻璃」不必重新生成样式表。
- */
-exports.GLASS_ATTRIBUTE = 'data-chat-ux-composer-glass';
-/**
- * 缺口的上边（卡片顶相对座位顶），单位 px，由 `composer-glass.ts` 写在座位上。
- * 缺席时座位那两层背景回退到「上段铺满整块」，也就是整块底——回到 dsh 原来的样子。
- */
-exports.GLASS_TOP_VARIABLE = '--dsh-chat-ux-glass-top';
-/** 缺口的下边（卡片底相对座位顶），单位 px，同样由 `composer-glass.ts` 写。 */
-exports.GLASS_BOTTOM_VARIABLE = '--dsh-chat-ux-glass-bottom';
-/** 右下角那枚主操作按钮（发送 / 停止）身上的属性，由 `composer-glass.ts` 打。 */
-exports.GLASS_PRIMARY_ATTRIBUTE = 'data-chat-ux-glass-primary';
-/** 左下角那枚加号（添加文件 / 调指令）身上的属性，同样由 `composer-glass.ts` 打。 */
-exports.GLASS_ADD_ATTRIBUTE = 'data-chat-ux-glass-add';
-/**
- * 挂在主按钮旁边那枚**独立停止圆**上：可继续的子智能体在跑时 dsh 会另给一枚（那时主按钮仍是发送 /
- * 排队），它与主按钮同一个 class、紧排在它前面。两枚共用同一套材质，所以它也吃下面那份样式。
- */
-exports.GLASS_STOP_ATTRIBUTE = 'data-chat-ux-glass-stop';
-/** 输入框毛玻璃的全部 CSS。 */
+// 玻璃生效的开关属性，由 index.tsx 按设置写上或摘掉；表里每一组规则都拿它当前缀，开关不必重新生成样式表
+exports.GLASS_ATTRIBUTE = "data-chat-ux-composer-glass";
+// 缺口的上边（卡片顶相对座位顶，单位 px），由 composer-glass.ts 写在座位上；缺席时座位那两层背景回退成整块底
+exports.GLASS_TOP_VARIABLE = "--dsh-chat-ux-glass-top";
+// 缺口的下边（卡片底相对座位顶，单位 px），同样由 composer-glass.ts 写
+exports.GLASS_BOTTOM_VARIABLE = "--dsh-chat-ux-glass-bottom";
+// 右下角那枚主操作按钮（发送或停止）身上的属性，由 composer-glass.ts 打
+exports.GLASS_PRIMARY_ATTRIBUTE = "data-chat-ux-glass-primary";
+// 左下角那枚加号（添加文件或调指令）身上的属性，同样由 composer-glass.ts 打
+exports.GLASS_ADD_ATTRIBUTE = "data-chat-ux-glass-add";
+// 独立停止圆：可继续的子智能体在跑时 dsh 另摆一枚（那时主按钮仍是发送或排队），它与主按钮同一个 class、
+// 紧排在它前面，所以两枚共用下面同一套材质
+exports.GLASS_STOP_ATTRIBUTE = "data-chat-ux-glass-stop";
+// 输入框毛玻璃的全部 CSS
 exports.COMPOSER_GLASS_CSS = `/* dsh-chat-ux —— 输入框毛玻璃 */
+/* 整块表处处 !important：同页的 dsh-claude-style 皮肤也管输入区外观（它把卡片改成透明、改由座位铺
+   bg-base 实底），那几条选择器的特异度高得多；本插件只认语义属性、不认别的插件挂在 body 上的属性，
+   压过它的手段只剩 !important。它那条 border: none !important 不在这份表的目标里 */
 body[${exports.GLASS_ATTRIBUTE}] {
-  /* 底让出多少。注意这是**叠在几层之上的那一层的**不透明度：伪元素面上还有两片角光，合成之后的不
-     透明度会更高（0.92 的底加一片 26% 的角光 ≈ 0.94，背后只剩 6%——读者当场报「好像是直接没有毛
-     玻璃效果了」）。70% 配 blur(22px) 才是他说的「稍微再透一点」：看得到背后那片模糊，读不到内容。 */
+  /* 底让出多少。这是叠在几层之上的那一层的不透明度：伪元素面上还有两片角光，合成之后更高，
+     0.92 的底加一片 26% 的角光约 0.94，背后只剩 6%，读者当场报「好像直接没有毛玻璃效果」；
+     70% 配 blur(22px) 才是既看得到背后那片模糊、又读不到内容 */
   --dsh-chat-ux-glass-alpha: 70%;
-  /* 浅色下卡片那块底。这里必须主动压一点灰——浅色里 --dsw-specific-input-major 与画布
-     --dsw-alias-bg-base 是**同一个令牌**（都是 neutral-bluish-00），dsh 原本靠发丝描边加柔光分界，
-     玻璃把底让到七成之后，中间那一段（四停渐变里完全透明的那截）就只剩「画布色叠画布色」，
-     读者报「中间太白、和背景融进去了」。压的是一层中性冷灰：既降亮度也降饱和，中间那段才交代得
-     出边界。要调浓淡就改最后那个百分比与那枚灰——读者第二轮说浅色下整块「有一点点脏脏的」，灰从
-     15% 收到 10%、灰本身也提亮一档（从 rgb(150 158 176) 到 rgb(172 178 192)），合成之后仍比画布
-     暗七八级，中间那段照旧交代得出边界。 */
+  /* 浅色下卡片那块底。这里必须主动压一点灰：浅色里 --dsw-specific-input-major 与画布 --dsw-alias-bg-base
+   是同一个令牌（都是 neutral-bluish-00），dsh 原本靠发丝描边加柔光分界，玻璃把底让到七成之后，中间那段
+   （四停渐变里完全透明的那截）只剩画布色叠画布色，读者报「中间太白、和背景融进去了」。压的是一层中性冷灰，
+   合成之后仍比画布暗七八级；要调浓淡就改最后那个百分比与那枚灰 */
   --dsh-chat-ux-glass-base: color-mix(
-    in srgb,
-    color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) 90%,
-    rgb(172 178 192)
+	in srgb,
+	color-mix(in srgb, var(--dsw-specific-input-major, #ffffff) 97%, rgb(122 155 240)) 90%,
+	rgb(172 178 192)
   );
 }
 
-/* 深色那一档不压灰：那里的输入面色（neutral-bluish-850）本来就比画布（950）亮一档，天然分得开。 */
+/* 深色那一档不压灰：那里的输入面色（neutral-bluish-850）本来就比画布（950）亮一档，天然分得开 */
 body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   --dsh-chat-ux-glass-base: color-mix(in srgb, var(--dsw-specific-input-major, #0e1117) 97%, rgb(122 155 240));
 }
 
+/* 没有 backdrop-filter 或 color-mix 的浏览器上，只做半透明会变成文字叠文字，比不做更糟，所以整块收在这里 */
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) and (color: color-mix(in srgb, white 50%, transparent)) {
-  /* ── 一、有会话内容时：座位照旧画底，但在卡片那一段让开 ── */
+  /* 有会话内容时：座位照旧画底，在卡片那一段让开 */
   /* 两层背景各铺一段：上段从座位顶到卡片顶，下段从卡片底到座位底，中间那段留白就是让给玻璃的缺口。
-     两个变量缺席时上段铺满整块——也就是 dsh 原来的样子，这是安全的一侧。两条边由
-     composer-glass.ts 量（见那个模块），这里只负责画。 */
+     两个变量缺席时上段铺满整块——也就是 dsh 原来的样子，这是安全的一侧；两条边由 composer-glass.ts 量 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-seat],
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-seat] {
-    background:
-      linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 0 / 100% var(--dsh-chat-ux-glass-top, 100%) no-repeat,
-      linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 var(--dsh-chat-ux-glass-bottom, 100%) / 100% calc(100% - var(--dsh-chat-ux-glass-bottom, 100%)) no-repeat !important;
+	background:
+	  linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 0 / 100% var(--dsh-chat-ux-glass-top, 100%) no-repeat,
+	  linear-gradient(var(--dsw-alias-bg-base), var(--dsw-alias-bg-base)) 0 var(--dsh-chat-ux-glass-bottom, 100%) / 100% calc(100% - var(--dsh-chat-ux-glass-bottom, 100%)) no-repeat !important;
   }
 
-  /* 上方那条淡出带：座位之外，因此不被模糊。颜色刻意跟着**画布**走、不跟玻璃——它的本分是让内容淡出
-     到画布，跟着玻璃的深蓝走会在消息区底边压出一条看得见的横带（读者报过一次「一层光晕」）。 */
+  /* 座位上方那条淡出带在座位之外，因此不被模糊。颜色刻意跟着画布走、不跟玻璃：跟玻璃的深蓝走会在
+     消息区底边压出一条看得见的横带，读者报过一次「一层光晕」 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-seat]::before,
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-seat]::before {
-    content: '' !important;
-    position: absolute !important;
-    top: auto !important;
-    bottom: 100% !important;
-    left: 0 !important;
-    right: 0 !important;
-    height: var(--dsh-composer-fade-h, 36px) !important;
-    background: linear-gradient(
-      to top,
-      var(--dsw-alias-bg-base) 0%,
-      color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent) 32%,
-      color-mix(in srgb, var(--dsw-alias-bg-base) 35%, transparent) 68%,
-      transparent 100%
-    ) !important;
-    pointer-events: none !important;
+	content: '' !important;
+	position: absolute !important;
+	top: auto !important;
+	bottom: 100% !important;
+	left: 0 !important;
+	right: 0 !important;
+	height: var(--dsh-composer-fade-h, 36px) !important;
+	background: linear-gradient(
+	  to top,
+	  var(--dsw-alias-bg-base) 0%,
+	  color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent) 32%,
+	  color-mix(in srgb, var(--dsw-alias-bg-base) 35%, transparent) 68%,
+	  transparent 100%
+	) !important;
+	pointer-events: none !important;
   }
 
-  /* ── 二、卡片自己：交出底色，只留那三笔质感（底与模糊都在下面那个 ::before 上） ── */
-  /* 底色整个交出去。留在卡片自己身上的话，伪元素那层模糊就得先糊过它自己，等于没糊。 */
+  /* 卡片自己：交出底色，只留那三笔质感（底与模糊都在下面那个 ::before 上） */
+  /* 底色留在卡片自己身上的话，伪元素那层模糊就得先糊过它自己，等于没糊 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] {
-    background: transparent !important;
-    /* 玻璃那三笔质感：顶边一道亮边、内侧一圈微光、底部一道内阴影。贴底时输入框背后本来就是空白
-       （聊天内容的末尾停在输入框顶边，不会停在它后面），所以「背后透出来的模糊」这件事日常看不到；
-       玻璃感就得由卡片自己交代。dsh 原来那层 --dsw-elevation-soft（发丝描边加两片柔光）接在后面
-       留着，不能丢——那是「一个框」的边。inset 阴影画在卡片透明底的上面、内容的下面，所以底交出去
-       之后它照样看得见。 */
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.9),
-      inset 0 0 0 1px rgb(255 255 255 / 0.5),
-      inset 0 -16px 20px -18px rgb(15 17 21 / 0.045),
-      var(--dsw-elevation-soft, none) !important;
+	background: transparent !important;
+	/* 那三笔质感：顶边一道亮边、内侧一圈微光、底部一道内阴影。贴底时输入框背后本来就是空白（聊天内
+	   容的末尾停在输入框顶边，不会停在它后面），所以「背后透出来的模糊」这件事日常看不到，玻璃感得由
+	   卡片自己交代；dsh 原来那层 --dsw-elevation-soft（发丝描边加两片柔光）接在后面不能丢，那是
+	   「一个框」的边。inset 阴影画在透明底之上、内容之下，底交出去之后照样看得见 */
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.9),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.5),
+	  inset 0 -16px 20px -18px rgb(15 17 21 / 0.045),
+	  var(--dsw-elevation-soft, none) !important;
   }
 
-  /* ── 三、玻璃本体：卡片自己的 ::before，铺满卡片那个矩形 ── */
-  /* 底是两层：先一条照 dsh 自己做法（AppFrame.module.css 的 .sidebarCol）的四停渐变——两端各自一片
-     极淡的色、中间**完全透明**，再垫一层掺了一点蓝的底色。方向转成横向：卡片又宽又扁，左端就是
-     「左上角」、右端就是「右下角」，横向的两端色读起来正是读者要的那对角。深色起初沿用 dsh 那两个档
-     （0.08 / 0.07，AppFrame 第 164-167 行）；浅色起初也是 dsh 那两档（0.1 / 0.09），读者在浅色下又看
-     过一轮，说两端也要「再浅一点」，先是 0.07 / 0.06。第三轮他说整条
-     渐变「再低调点、隐约能看出有渐变色就行」，两档一起再砍一半多——深色 0.035 / 0.03、浅色
-     0.03 / 0.025（深色下实测两端只比中间亮两三个灰阶、蓝通道最多六阶）。底压过灰之后，两端本来就不必出那么多力。
-     第四轮他说浅色下整块「有一点点脏脏的、整体再调得浅一点」，浅色那两片再收四分之一（0.022 / 0.018），
-     深色那两片不动。
-     第一遍按 0.14 / 0.12 写，比 dsh 浓了一倍，那也是「看着有点脏脏的」的一半。
-     伪元素没有后代，所以它的 backdrop-filter 只会给自己那层模糊，不会再给谁造出祖先 backdrop root
-     （这正是卡片本体做不了这件事的原因，见模块头）。 */
+  /* 玻璃本体：卡片自己的 ::before，铺满卡片那个矩形 */
+  /* 底是两层：一条照 dsh 自己在 AppFrame.module.css 的 .sidebarCol 上的四停渐变——两端各一片极淡的色、
+   中间完全透明，再垫一层掺了一点蓝的底色。方向转成横向：卡片又宽又扁，左端就是「左上角」、右端就是
+   「右下角」，横向的两端色正是读者要的那对角。
+   伪元素没有后代，它的 backdrop-filter 只糊自己那层，造不出祖先 backdrop root（玻璃不能长在卡片本体上的
+   原因，见模块头） */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card]::before {
-    content: '' !important;
-    position: absolute !important;
-    inset: 0 !important;
-    /* 落到卡片内容之下。卡片自己不建立层叠上下文（见模块头），所以这一层会落到座位那一层里，
-       绘制在座位底色之上、卡片内容之下——正是「输入框的底」该在的位置。 */
-    z-index: -1 !important;
-    /* 卡片可能被别的插件改过圆角，跟着它走。 */
-    border-radius: inherit !important;
-    pointer-events: none !important;
-    background-image:
-      linear-gradient(
-        to right,
-        rgb(122 155 240 / 0.022) 0%,
-        rgb(122 155 240 / 0) 38%,
-        rgb(143 137 184 / 0) 64%,
-        rgb(143 137 184 / 0.018) 100%
-      ),
-      linear-gradient(
-        color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
-        color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent)
-      ) !important;
-    /* 半径要跟底一起调：底一实，模糊再有也不会被看见。 */
-    -webkit-backdrop-filter: blur(22px) saturate(130%);
-    backdrop-filter: blur(22px) saturate(130%);
+	content: '' !important;
+	position: absolute !important;
+	inset: 0 !important;
+	/* 落到卡片内容之下。卡片自己不建立层叠上下文（见模块头），所以这一层落进座位那一层，绘制在座位
+	   底色之上、卡片内容之下——正是输入框的底该在的位置 */
+	z-index: -1 !important;
+	/* 卡片可能被别的插件改过圆角，跟着它走 */
+	border-radius: inherit !important;
+	pointer-events: none !important;
+	background-image:
+	  linear-gradient(
+		to right,
+		rgb(122 155 240 / 0.022) 0%,
+		rgb(122 155 240 / 0) 38%,
+		rgb(143 137 184 / 0) 64%,
+		rgb(143 137 184 / 0.018) 100%
+	  ),
+	  linear-gradient(
+		color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
+		color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent)
+	  ) !important;
+	/* 模糊半径与底的不透明度是一对：底一实，模糊再大也看不出来 */
+	-webkit-backdrop-filter: blur(22px) saturate(130%);
+	backdrop-filter: blur(22px) saturate(130%);
   }
 
-  /* 深色那一档：照 dsh 自己的做法（AppFrame.module.css 的 .sidebarCol），只是方向转成横向——
-     那条配色 dsh 是用在侧栏上的（竖着：顶上一片蓝、底下一点紫），而卡片又宽又扁，横向的两端色读起来
-     正是读者要的「左上角蓝、中间深、右下角又蓝」。
-     这一版是第三稿：先试过 135deg 的斜线性渐变（扁卡片上投影几乎水平，读者一眼看出「像是从左边渐变
-     到右边」），又试过两片聚在角上的径向光（他说「有点集中，看着有点脏脏的」）。dsh 这一条的好处正在
-     于中间**完全透明**——两端各自一片极淡的色，中间交给底色，所以既不脏也不集中。 */
+  /* 深色档同一套做法，只是两端那两片更淡（0.035 与 0.03）。dsh 那条配色本来用在竖着的侧栏上，
+     而卡片又宽又扁，横向的两端色读起来正是「左端蓝、中间深、右端又偏蓝」；关键在于中间完全透明——
+     两端各自一片极淡的色、中间交给底色，既不脏也不集中 */
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card]::before,
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card]::before {
-    background-image:
-      linear-gradient(
-        to right,
-        rgb(122 155 240 / 0.035) 0%,
-        rgb(122 155 240 / 0) 38%,
-        rgb(143 137 184 / 0) 64%,
-        rgb(143 137 184 / 0.03) 100%
-      ),
-      linear-gradient(
-        color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
-        color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent)
-      ) !important;
+	background-image:
+	  linear-gradient(
+		to right,
+		rgb(122 155 240 / 0.035) 0%,
+		rgb(122 155 240 / 0) 38%,
+		rgb(143 137 184 / 0) 64%,
+		rgb(143 137 184 / 0.03) 100%
+	  ),
+	  linear-gradient(
+		color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent),
+		color-mix(in srgb, var(--dsh-chat-ux-glass-base) var(--dsh-chat-ux-glass-alpha), transparent)
+	  ) !important;
   }
 
-  /* 深色下那三笔：亮边与微光更弱、内阴影更重。 */
+  /* 深色下那三笔：亮边与微光更弱、底部内阴影更重 */
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] {
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.07),
-      inset 0 0 0 1px rgb(255 255 255 / 0.04),
-      inset 0 -16px 20px -18px rgb(0 0 0 / 0.55),
-      var(--dsw-elevation-soft, none) !important;
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.07),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.04),
+	  inset 0 -16px 20px -18px rgb(0 0 0 / 0.55),
+	  var(--dsw-elevation-soft, none) !important;
   }
 
-  /* ── 四、右下角那枚主操作按钮（发送，跑起来时是停止）：同一块玻璃上的一片蓝 ── */
-  /* 底还是 dsh 那个令牌，只让出一成多：卡片那条横向渐变从小圆底下透上来，两处就接上了。三笔质感按
-     34px 的小圆重调一遍——卡片那三笔是给 700×80 的大面写的，照搬上去会糊成一团。
-     这里**不加 backdrop-filter**：按钮背后就是卡片那块已经模糊过的玻璃，再糊一次看不出来，白多一层
-     重采样；按钮本身也没有任何后代，加不加都不牵连别人。 */
+  /* 右下角那枚主操作按钮（发送，跑起来时是停止）：同一块玻璃上的一片蓝 */
+  /* 底还是 dsh 那个令牌（--dsw-alias-button-info-fill，浅色 500、深色 400，白图标），只让出一成多：
+     卡片那条横向渐变从小圆底下透上来，两处就接上了。三笔质感按 34px 的小圆重调，照搬卡片那三笔
+     （给 700×80 的大面写的）会糊成一团。这里不加 backdrop-filter：按钮背后就是卡片那块已经糊过的
+     玻璃，再糊一次看不出来，白多一层重采样；按钮本身也没有任何后代，加不加都不牵连别人 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]) {
-    background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #4176e6) 84%, transparent) !important;
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.55),
-      inset 0 0 0 1px rgb(255 255 255 / 0.35),
-      inset 0 -10px 14px -12px rgb(15 17 21 / 0.16) !important;
+	background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #4176e6) 84%, transparent) !important;
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.55),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.35),
+	  inset 0 -10px 14px -12px rgb(15 17 21 / 0.16) !important;
   }
 
-  /* dsh 那条 hover 规则（.primary:hover:not(:disabled)）没有 !important，会被上面基础规则里的
-     !important 一起压掉，所以 hover 得自己写一条。浓淡照 dsh 的 hover 令牌，也让出一成多——比静止
-     那档更实一点，指上去才看得出是「亮了一点」而不是「换了个色」。 */
+  /* dsh 自己那条 hover 规则（.primary:hover:not(:disabled)）没有 !important，会被上面基础规则压掉，
+     所以 hover 得自己写一条；浓淡照 dsh 的 hover 令牌，也让出一成多——比静止那档更实一点，指上去才看
+     得出是「亮了一点」而不是「换了个色」 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):hover:not(:disabled) {
-    background: color-mix(in srgb, var(--dsw-alias-button-info-hover, #7aaaff) 92%, transparent) !important;
+	background: color-mix(in srgb, var(--dsw-alias-button-info-hover, #7aaaff) 92%, transparent) !important;
   }
 
-  /* 深色下那三笔：亮边与微光收得更紧（深色里一点点白就很跳），底部内阴影加重。 */
+  /* 深色下那三笔：亮边与微光收得更紧（深色里一点点白就很跳），底部内阴影加重 */
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]),
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]) {
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.28),
-      inset 0 0 0 1px rgb(255 255 255 / 0.1),
-      inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.28),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.1),
+	  inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
   }
 
-  /* ── 四之三、把 rc.2 那条「不可用就整枚淡到四成」收回来 ── */
-  /* dsh 0.2.0-rc.2 给这枚按钮的 :disabled 样式是 opacity: .4（0.2.1-alpha.2 已经不用这条，
-     那台上空输入框时它照旧实心），于是同一块玻璃在「输入框为空」时会整枚淡掉——两版的观感就
-     此分叉（实测：rc.2 空输入时按钮面 #b8cbf2，打了字之后 #5d89e5；alpha.2 一直是 #5e8ae7）。
-     材质本来是同一条规则画的，所以这里只把那层淡化收回来，两版与两种状态都是同一块玻璃。
-     代价照实说：收回来之后「还不能发送」这件事就没有视觉提示了（按钮由 dsh 端拒收，点不动），
-     这与 alpha.2 的行为一致——那一版本来就不靠淡化交代。深色档一样收，理由同一条。 */
+  /* rc.2 那条「不可用就整枚淡到四成」在这里收回来 */
+  /* dsh 0.2.0-rc.2 给这枚按钮的 :disabled 是 opacity: .4（0.2.1-alpha.2 已经不用这条，空输入框时
+     照旧实心），不收回来的话同一块玻璃在「输入框为空」时会整枚淡掉，两版观感就此分叉（实测 rc.2 空输
+     入时按钮面 #b8cbf2、打字之后 #5d89e5，alpha.2 一直是 #5e8ae7）。代价照实说：收回来之后「还不能发
+     送」没有视觉提示了，按钮仍由 dsh 端拒收、点不动，这与 alpha.2 一致；深色档一样收 */
   body[${exports.GLASS_ATTRIBUTE}] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):disabled {
-    opacity: 1 !important;
+	opacity: 1 !important;
   }
 
-  /* ── 五、左下角那枚加号（添加文件 / 调指令）：同一块玻璃上的一片灰 ── */
-  /* 与主按钮同一套做法、同一个理由：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），
-     让出两成之后卡片那条横向渐变从小圆底下透上来，两处就接上了。三笔质感按 28px 的小圆收一遍——
-     主按钮那三笔是给 34px 写的。过渡与主按钮同值，指上去是「亮了一点」而不是「换了个色」。
-     兜底色的作用与主按钮那边一样：令牌改名时不至于整条声明作废，圆片还在、只是回到中性灰。 */
+  /* 左下角那枚加号（添加文件或调指令）：同一块玻璃上的一片灰 */
+  /* 与主按钮同一套做法：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），让出两成之后
+     卡片那条横向渐变从小圆底下透上来。三笔质感按 28px 的小圆收一遍（主按钮那三笔是给 34px 写的），
+     过渡与主按钮同值。不借主按钮那支蓝——它是次要操作，整枚染蓝会把「哪一枚是发送」弄糊。兜底色的
+     作用同主按钮：令牌改名时不至于整条声明作废，圆片还在、只是回到中性灰 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}] {
-    background: color-mix(in srgb, var(--dsw-specific-selector, rgb(127 132 142)) 80%, transparent) !important;
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.45),
-      inset 0 0 0 1px rgb(255 255 255 / 0.3),
-      inset 0 -10px 14px -12px rgb(15 17 21 / 0.12) !important;
-    transition: background-color 100ms ease !important;
+	background: color-mix(in srgb, var(--dsw-specific-selector, rgb(127 132 142)) 80%, transparent) !important;
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.45),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.3),
+	  inset 0 -10px 14px -12px rgb(15 17 21 / 0.12) !important;
+	transition: background-color 100ms ease !important;
   }
 
-  /* dsh 那条 hover 规则（.add:hover:not(:disabled)）没有 !important，会被上面基础规则里的
-     !important 压掉，所以 hover 得自己写一条——浓淡与主按钮同一档：比静止更实一点。 */
+  /* dsh 那条 hover 规则（.add:hover:not(:disabled)）没有 !important，会被上面基础规则压掉，所以自
+     己写一条，浓淡与主按钮同一档：比静止更实一点 */
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled),
   body[${exports.GLASS_ATTRIBUTE}] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}]:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-solid, rgb(147 152 162)) 90%, transparent) !important;
+	background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-solid, rgb(147 152 162)) 90%, transparent) !important;
   }
 
-  /* 深色下那三笔：与主按钮同一档收法（深色里一点点白就很跳），底部内阴影同样加重。 */
+  /* 深色下那三笔与主按钮同一档收法，底部内阴影同样加重 */
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='active'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}],
   body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] [data-content-phase='hero'] [data-composer-card] [${exports.GLASS_ADD_ATTRIBUTE}] {
-    box-shadow:
-      inset 0 1px 0 0 rgb(255 255 255 / 0.22),
-      inset 0 0 0 1px rgb(255 255 255 / 0.08),
-      inset 0 -10px 14px -12px rgb(0 0 0 / 0.4) !important;
+	box-shadow:
+	  inset 0 1px 0 0 rgb(255 255 255 / 0.22),
+	  inset 0 0 0 1px rgb(255 255 255 / 0.08),
+	  inset 0 -10px 14px -12px rgb(0 0 0 / 0.4) !important;
   }
 }
 `;
@@ -2278,139 +2036,132 @@ exports.PIE_SIZE = void 0;
 exports.installContextMeterPie = installContextMeterPie;
 exports.pieImage = pieImage;
 /**
- * 输入框下方的上下文占用饼。
+ * 输入框下方那个「上下文占用」的比例圆：从环改成实心饼，按占用取色阶，并沿一条折点在圆心的折线切一刀，
+ * 已占用那一块沿角平分线推开一段，缺口就是它原来的位置
  *
- * 用内联 SVG 背景图替代 dsh 的环：已占用扇形沿圆心折线切开并推出，缝宽固定；颜色取样式表算出的
- * 当前档位。它不是座位，只能按坞与按钮的语义结构认出目标，认不出时什么都不改。
+ * dsh 没给这个圆任何语义属性，也没把它做成座位，只能从结构上认；认不出就什么都不做，不会把别的元素改花
  *
- * 扩张用 rAF 逐帧重画背景图；换图不能插值，而 path 的大弧标记在 50% 会翻面。
+ * 颜色仍归样式表：这里只把求值后的颜色读出来涂进图里，色标与插值在 context-meter-styles
  */
 const dom_contract_1 = require("../../dom-contract");
 const ramp_1 = require("../ramp");
 const reel_host_1 = require("../reel/reel-host");
 const reel_styles_1 = require("../reel/reel-styles");
 const context_meter_styles_1 = require("./context-meter-styles");
-/** 统计胶囊才带的座位 id 属性；带着它的子元素不归这一处管。 */
-const STAT_ATTRIBUTE = 'data-composer-stat';
-/** 比例圆那颗按钮：会开对话弹窗，并且画着一枚 svg。 */
-const TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"]';
-/** 读数文本的形状；dsh 写的就是「26%」。 */
+// 统计胶囊才带的座位 id 属性；带着它的子元素不归这一处管
+const STAT_ATTRIBUTE = "data-composer-stat";
+// 比例圆那颗按钮：会开对话弹窗，并且画着一枚 svg
+const TRIGGER_SELECTOR = `button[aria-haspopup="dialog"]`;
+// 读数文本的形状；dsh 写的就是「26%」
 const READING_PATTERN = /^(\d{1,3})%$/;
-/**
- * 六个色标在占用上的位置：20 绿、24 浅绿、28 黄、32 橙黄、36 橙红、40 红。低于 20 一律绿、40 及
- * 以后一律红，与样式表里那几段一一对应。
- */
+// 六个色标在占用上的位置：20 绿、24 浅绿、28 黄、32 橙黄、36 橙红、40 红
+// 低于 20 一律绿、40 及以后一律红，与样式表里那几段一一对应
 const CONTEXT_STOPS = [20, 24, 28, 32, 36, 40];
 /**
- * 饼的边长：16px。
+ * 饼的边长：16px
  *
- * 比 dsh 原来的 14px 图标大一圈，仍在按钮行高以内；左右各借 1px 后，离读数还剩 5px。
+ * 比原图标那一格（14px）大一圈就够，再大盘着这一行；上下都还在行高以内，左右各借 1px
+ * （左面是按钮的内边距，右面是图标与读数之间那 6px 的间隔），离读数还剩 5px
  */
 exports.PIE_SIZE = 16;
-/** 原图标那一格：dsh 那枚 svg 写的就是 14×14。饼比它大，靠这个数摆正。 */
+// 原图标那一格：dsh 那枚 svg 写的就是 14×14。饼比它大，靠这个数摆正
 const ICON_SIZE = 14;
 /**
- * 那道缝的宽度，像素——**唯一的旋钮**。
+ * 那道缝的宽度，像素，也是这一处唯一的可调量
  *
- * 缝由「洞口比那一块大一圈」给出（见 `pushImage` 的那条遮罩），宽恒为这个值，与推开多远无关。这一格
- * 图标上 1px 出头已经看得很清楚；再宽，那一块就要与盘面散开了。
+ * 缝由「洞口比那一块大一圈」给出（见 pushImage），宽恒为这个值，与推开多远无关；图标这个尺寸上
+ * 1px 出头已经看得很清楚，再宽那一块就要与盘面散开
  */
 const SLICE_GAP = 1.2;
 /**
- * 那一块沿角平分线推开多远，像素。
+ * 那一块沿角平分线推开多远，像素
  *
- * 缝不靠位移挣；位移只决定离开原位的距离和盘面剩下的直径。2.6px 让端出去的观感明显，盘面仍有 13.4px。
+ * 缝不靠它挣（见 pushImage），它只影响两件事：那一块离开原位多远，以及盘面还剩多少直径
+ * （PIE_SIZE 减位移，位移越大盘面越小）。2.6px 是权衡后的取值：推开的观感明显，盘面还剩 13.4px，
+ * 与原来那圈环的外轮廓同量级；实心饼比同直径的环看得清，所以还立得住
  */
 const SLICE_LIFT = 2.6;
-/** 那一圈缝的遮罩 id：同上，只在「推出去」那一套里用。 */
-const SLICE_MASK_ID = 'dsh-chat-ux-slice';
-/** 盘面的半径：占满这一格。切口开在圆里，圆外不必留白。 */
+// 那一圈缝的遮罩 id：只在推出去那一套里用
+const SLICE_MASK_ID = "dsh-chat-ux-slice";
+// 盘面的半径：占满这一格，切口开在圆里，圆外不必留白
 const RADIUS = exports.PIE_SIZE / 2;
-/** 推出去那一套的半径：得让出推开那一段，否则那一块的外缘会被这一格（`PIE_SIZE`）裁掉。 */
+// 推出去那一套的半径：得让出推开那一段，否则那一块的外缘会被这一格（PIE_SIZE）裁掉
 const PUSH_RADIUS = (exports.PIE_SIZE - SLICE_LIFT) / 2;
-/** 圆心：这一格的正中。 */
+// 圆心：这一格的正中
 const CENTER = exports.PIE_SIZE / 2;
-/** 一整圈，弧度。 */
+// 一整圈，弧度
 const FULL_TURN = Math.PI * 2;
-/** path 坐标的小数位取两位：再多的位数只是噪声。 */
+// path 坐标的小数位取两位：再多的位数只是噪声
 const PATH_PRECISION = 100;
-/** 扩张那一下用多久。与数字轮同一个时长：两件事通常同时发生，一起收才像一件事。 */
+// 扩张那一下用多久。与数字滚动同一个时长：两件事通常同时发生，一起收才像一件事
 const GROW_MS = 220;
-/** 每一枚饼当前的状态；键是那颗按钮。 */
+// 每一枚饼当前的状态；键是那颗按钮
 const paintedPies = new WeakMap();
 /**
- * 装上这一处。
+ * 装上这一处
+ * 返回的卸载函数断开观察，并把写过的标记、属性、数字滚动与内联样式撤干净
  */
 function installContextMeterPie() {
     let dock = null;
-    let frame = 0;
-    /**
-     * 这一轮要认的候选。
-     *
-     * 坞那一层带 `data-composer-dock`，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话
-     * 把它换掉时重认。真正的形状判据在 paint 里，认不出就什么都不做。
-     */
-    const candidates = () => {
+    let frameHandle = 0;
+    // 坞那一层带 data-composer-dock，比例圆与统计胶囊都是它的直接子元素；认过就记住，换会话换掉它时重认
+    const readDockChildren = () => {
         if (dock !== null && dock.isConnected)
             return Array.from(dock.children);
         dock = document.querySelector(dom_contract_1.COMPOSER_DOCK_SELECTOR);
         return dock === null ? [] : Array.from(dock.children);
     };
-    const sync = () => {
-        for (const candidate of candidates()) {
+    // 真正的形状判据在 paintContextMeter 里，认不出就什么都不做
+    const paintDockChildren = () => {
+        for (const candidate of readDockChildren()) {
             if (!(candidate instanceof HTMLSpanElement))
                 continue;
             if (candidate.hasAttribute(STAT_ATTRIBUTE))
                 continue;
-            paint(candidate);
+            paintContextMeter(candidate);
         }
     };
-    sync();
+    paintDockChildren();
+    // 流式期间每一次字符变化都会叫到这里，所以只登记一帧：一帧最多认一次
     const observer = new MutationObserver(() => {
-        // 流式期间每一次字符变化都会叫到这里，所以只登记一帧：一帧最多认一次。
-        if (frame !== 0)
+        if (frameHandle !== 0)
             return;
-        frame = requestAnimationFrame(() => {
-            frame = 0;
-            sync();
+        frameHandle = requestAnimationFrame(() => {
+            frameHandle = 0;
+            paintDockChildren();
         });
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     return () => {
         observer.disconnect();
-        if (frame !== 0)
-            cancelAnimationFrame(frame);
-        release();
+        if (frameHandle !== 0)
+            cancelAnimationFrame(frameHandle);
+        releasePieTakeover();
     };
 }
 /**
- * 一枚饼的样子：一整枚圆，被一条折点在圆心的折线切开，已占用那一块沿角平分线推出去一段。
+ * 一枚饼的样子：一整枚圆被一条折点在圆心的折线切开，已占用那一块沿角平分线推出去一段，
+ * 缺口就是那一块原来的位置
  *
- * 缺口就是那一块原来的位置，盘上因此留下同形状的一块空位；两块的间距（缝宽）恒定——那道缝由
- * 「洞口比那一块大一圈」给出，见 `pushImage`。
- *
- * 这条路径也是探针的采样依据，所以它连参数一起是公开的。
+ * 两块之间的缝宽恒定，由「洞口比那一块大一圈」给出，见 pushImage。这条路径也是检测脚本的采样依据，
+ * 所以它连参数一起是公开的
  */
 function pieImage(percent, tone, rest, shape) {
-    // 两头都单独走：满值时那道缝会与盘面的边界重合、而且「切了一刀还占满」本就说不通；空值时该画的
-    // 是一枚完整的灰盘（什么都没有，也不该有缝）。两档都画整圆，不切。
+    // 两头都单独走：满值时那道缝会与盘面的边界重合，而且「切了一刀还占满」本就说不通；空值时该画的是一枚
+    // 完整的灰盘（什么都没有，也不该有缝）。两档都画整圆，不切
     if (percent >= 100)
-        return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + tone + '"/>');
+        return inlineSvg(`<path d="${discPath(CENTER, CENTER, RADIUS)}" fill="${tone}"/>`);
     if (percent <= 0)
-        return inlineSvg('<path d="' + discPath(CENTER, CENTER, RADIUS) + '" fill="' + rest + '"/>');
+        return inlineSvg(`<path d="${discPath(CENTER, CENTER, RADIUS)}" fill="${rest}"/>`);
     const occupied = percent / 100 * 360;
     return pushImage(occupied, tone, rest, shape?.gap ?? SLICE_GAP, shape?.lift ?? SLICE_LIFT);
 }
 /**
- * 推出去：两块是**全等**的扇形，一块留在原位（那就是盘上的缺口），另一块沿角平分线挪开 lift。
+ * 推出去：两块是全等的扇形，一块留在原位（那就是盘上的缺口），另一块沿角平分线挪开 lift
  *
- * 缝宽恒定，而且不靠位移挣：盘上挖掉的不是「那一条扇形」，而是**它再向外一圈 `seam`**——所以缝环绕
- * 那一块的整条边界（两条直边、外缘弧、顶点那一头），处处一样宽，与推开多远无关。那一圈缝由一条遮罩
- * 画出来：把扇形的 path 描一道 `2 × seam` 宽的粗边，外侧那一半就是缝（内侧那一半落在那一块自己的
- * 地界里，挖掉也无妨）。
- *
- * 盘面的半径由位移定（`(PIE_SIZE - lift) / 2`），整幅图的外接尺寸恒为 `PIE_SIZE`，推开的那一侧不会被
- * 这一格的容器裁掉；圆心仍沿角平分线的反面退半个 lift，整幅图这才落在容器正中。
+ * 缝宽不靠位移挣：盘上挖掉的是那一条扇形再向外一圈 seam，所以缝环绕那一块的整条边界处处一样宽，
+ * 与推开多远无关。盘面半径随位移收（(PIE_SIZE - lift) / 2），整幅图的外接尺寸恒为 PIE_SIZE，
+ * 圆心沿角平分线的反面退半个 lift，图这才落在容器正中
  */
 function pushImage(occupied, tone, rest, seam, lift) {
     const direction = occupied / 2;
@@ -2422,43 +2173,34 @@ function pushImage(occupied, tone, rest, seam, lift) {
     const apexX = round2(centerX + lift * halfAngleSin);
     const apexY = round2(centerY - lift * halfAngleCos);
     const slice = sectorPath(apexX, apexY, PUSH_RADIUS, 0, occupied);
-    const plate = '<path d="' + discPath(centerX, centerY, PUSH_RADIUS) + ' ' + slice
-        + '" fill="' + rest + '" fill-rule="evenodd" mask="url(#' + SLICE_MASK_ID + ')"/>';
+    const plate = `<path d="${discPath(centerX, centerY, PUSH_RADIUS)} ${slice}" fill="${rest}" fill-rule="evenodd" mask="url(#${SLICE_MASK_ID})"/>`;
     return inlineSvg(sliceGapMask(slice, seam) + plate
-        + '<path d="' + slice + '" fill="' + tone + '"/>');
+        + `<path d="${slice}" fill="${tone}"/>`);
 }
 /**
- * 那一圈缝的遮罩：整幅图铺白，再把那一条扇形的 path 描一道宽边涂黑——涂黑处透明。
+ * 那一圈缝的遮罩：整幅图铺白，再把那一条扇形的 path 描一道宽边涂黑，涂黑处透明
  *
- * 描边以 path 为中心向两侧各扩半个缝宽（`stroke-width` 是 `2 × seam`）：外侧那一半是缝，内侧那一半
- * 落在那一块自己的地界里，挖掉也不影响。拐角用 round，顶点那一头因此是一段圆角的缝，与两条直边同宽。
+ * 描边以 path 为中心向两侧各扩半个缝宽（stroke-width 是 2 × seam），外侧那一半是缝，内侧那一半落在
+ * 那一块自己的地界里，挖掉也不影响；拐角用 round，顶点那一头因此是一段圆角的缝，与两条直边同宽
  */
 function sliceGapMask(slice, seam) {
-    return '<mask id="' + SLICE_MASK_ID + '" maskUnits="userSpaceOnUse" x="0" y="0"'
-        + ' width="' + exports.PIE_SIZE + '" height="' + exports.PIE_SIZE + '">'
-        + '<rect x="0" y="0" width="' + exports.PIE_SIZE + '" height="' + exports.PIE_SIZE + '" fill="#ffffff"/>'
-        + '<path d="' + slice + '" fill="none" stroke="#000000" stroke-width="' + seam * 2
-        + '" stroke-linejoin="round"/>'
-        + '</mask>';
+    return `<mask id="${SLICE_MASK_ID}" maskUnits="userSpaceOnUse" x="0" y="0" width="${exports.PIE_SIZE}" height="${exports.PIE_SIZE}">`
+        + `<rect x="0" y="0" width="${exports.PIE_SIZE}" height="${exports.PIE_SIZE}" fill="#ffffff"/>`
+        + `<path d="${slice}" fill="none" stroke="#000000" stroke-width="${seam * 2}" stroke-linejoin="round"/>`
+        + "</mask>";
 }
-/**
- * 一整圈：两段半圆拼起来。
- *
- * 不能只用一段弧——起点与终点重合时，那段弧按 SVG 的规矩会被整段忽略，画出来什么都没有。
- */
+// 一整圈：两段半圆拼起来。起点与终点重合的那段弧按 SVG 的规矩会被整段忽略，画出来什么都没有
 function discPath(cx, cy, radius) {
     const x = round2(cx);
     const top = round2(cy - radius);
     const bottom = round2(cy + radius);
-    return 'M ' + x + ' ' + top
-        + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + bottom
-        + ' A ' + radius + ' ' + radius + ' 0 1 1 ' + x + ' ' + top + ' Z';
+    return "M " + x + " " + top
+        + " A " + radius + " " + radius + " 0 1 1 " + x + " " + bottom
+        + " A " + radius + " " + radius + " 0 1 1 " + x + " " + top + " Z";
 }
 /**
- * 一角扇形：从顶点出发，走到 from 度那一点，再沿弧顺时针走到 to 度。
- *
- * 盘面与那一块都用它、用同一组角度与半径，差别只有顶点落在哪：盘面从容器正中那颗圆心起，推出去的
- * 那一块从挪开 lift 的那一点起。
+ * 一角扇形：从顶点出发，走到 from 度那一点，再沿弧顺时针走到 to 度
+ * 盘面与那一块都用它、用同一组角度与半径，差别只有顶点落在哪
  */
 function sectorPath(cx, cy, radius, from, to) {
     const x = round2(cx);
@@ -2467,38 +2209,36 @@ function sectorPath(cx, cy, radius, from, to) {
     const y0 = round2(cy - radius * Math.cos(rad(from)));
     const x1 = round2(cx + radius * Math.sin(rad(to)));
     const y1 = round2(cy - radius * Math.cos(rad(to)));
-    // 过了半个圈要走大弧，否则圆弧会挑另一侧那条近路。
+    // 过了半个圈要走大弧，否则圆弧会挑另一侧那条近路
     const largeArc = to - from > 180 ? 1 : 0;
-    return 'M ' + x + ' ' + y + ' L ' + x0 + ' ' + y0
-        + ' A ' + radius + ' ' + radius + ' 0 ' + largeArc + ' 1 ' + x1 + ' ' + y1 + ' Z';
+    return "M " + x + " " + y + " L " + x0 + " " + y0
+        + " A " + radius + " " + radius + " 0 " + largeArc + " 1 " + x1 + " " + y1 + " Z";
 }
-/** 度换弧度。0 度是 12 点，顺时针为正。 */
+// 度换弧度。0 度是 12 点，顺时针为正
 function rad(degrees) {
     return degrees / 360 * FULL_TURN;
 }
-/**
- * 把一段图元包成一张可以直接当背景图的 SVG。
- */
+// 把一段图元包成一张可以直接当背景图的 SVG
 function inlineSvg(body) {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + exports.PIE_SIZE + ' ' + exports.PIE_SIZE + '">'
-        + body + '</svg>';
-    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${exports.PIE_SIZE} ${exports.PIE_SIZE}">${body}</svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
-/** 两位小数，给 path 坐标用。 */
+// 两位小数，给 path 坐标用
 function round2(value) {
     return Math.round(value * PATH_PRECISION) / PATH_PRECISION;
 }
 /**
- * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字轮、把饼画成按钮的背景图。
+ * 认一枚比例圆：读它的百分比，把色阶的段与位置写到按钮上，再给读数挂上数字滚动、把饼画成按钮的背景图
+ * 认不出来的候选什么都不做
  */
-function paint(root) {
+function paintContextMeter(root) {
     const trigger = root.querySelector(TRIGGER_SELECTOR);
-    if (!(trigger instanceof HTMLElement) || trigger.querySelector('svg') === null)
+    if (!(trigger instanceof HTMLElement) || trigger.querySelector("svg") === null)
         return;
-    const reading = trigger.querySelector('span');
+    const reading = trigger.querySelector("span");
     if (!(reading instanceof HTMLElement))
         return;
-    const text = reading.textContent?.trim() ?? '';
+    const text = reading.textContent?.trim() ?? "";
     const matched = READING_PATTERN.exec(text);
     if (matched === null)
         return;
@@ -2506,58 +2246,54 @@ function paint(root) {
     if (captured === undefined)
         return;
     const percent = Number(captured);
-    const ramp = (0, ramp_1.rampPosition)(percent, CONTEXT_STOPS);
-    // 值没变就不写：属性与内联样式虽然不喂观察者（那只盯 childList 与 characterData），但每次同步都
-    // 重写一遍会让样式失效白白重算。
-    if (trigger.getAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE) !== ramp.span) {
-        trigger.setAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE, ramp.span);
-    }
-    if (trigger.style.getPropertyValue(ramp_1.RAMP_POSITION_VAR) !== ramp.mix) {
-        trigger.style.setProperty(ramp_1.RAMP_POSITION_VAR, ramp.mix);
-    }
-    // 数字轮挂在那串读数的**旁边**（按钮上），不是它里面：那一截归 dsh 的 React 管，读数一变它会重设
-    // 那一截的 textContent，塞在里面的节点会被一起清掉（见 reel-host 的说明）。读数形状对不上时
-    // 它自己什么都不挂，原文本照旧。
+    const toneRamp = (0, ramp_1.rampPosition)(percent, CONTEXT_STOPS);
+    // 值没变就不写：属性与内联样式喂不到观察者（那只盯 childList 与 characterData），但每次同步都重写一遍
+    // 会让样式失效白白重算
+    if (trigger.getAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE) !== toneRamp.span)
+        trigger.setAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE, toneRamp.span);
+    if (trigger.style.getPropertyValue(ramp_1.RAMP_POSITION_VAR) !== toneRamp.mix)
+        trigger.style.setProperty(ramp_1.RAMP_POSITION_VAR, toneRamp.mix);
+    // 数字滚动挂在那串读数的旁边（按钮上），不是它里面：那一截归 dsh 的 React 管，读数一变它会重设
+    // textContent，塞在里面的节点会被一起清掉（见 reel-host）
     (0, reel_host_1.paintReel)(trigger, reading, text);
-    // 先让位、再读色：让位与色阶都由这条属性开门，属性晚一步的话 `getComputedStyle` 读到的还是 dsh
-    // 给那颗按钮的默认文字色——饼会画成灰的，而且要等到下一次 DOM 变化才会重画（读者的观感是
-    // 「刚打开是灰的，聊一句才变色」）。
-    root.setAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE, '');
-    // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是「环被藏起来、饼又没有」的空格。
-    if (!paintPie(trigger, percent, reading))
+    // 先让开、再读色：让开与色阶都由这条属性开门，属性晚一步的话 getComputedStyle 读到的还是 dsh 给那颗
+    // 按钮的默认文字色，饼会画成灰的，而且要等到下一次 DOM 变化才会重画
+    root.setAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE, "");
+    // 画不出来就把属性撤回去：原环还在，读者看到的是一个环，而不是环被藏起来、饼又没有的空格
+    if (!startPieGrow(trigger, percent, reading))
         root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
 }
 /**
- * 把读数对应的那张图画进那颗按钮，落在原来那枚图标所占据的那一格上。
+ * 把读数对应的那张图画进那颗按钮，落在原来那枚图标所占据的那一格上
  *
- * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 `color` 就是这一档的颜色。读不到底色就
- * 什么都不画——那说明样式表没上（或者名字改了），此时代替原来的环会是一块空白，不如让原环留着。
+ * 底色与扇形色都从计算样式里读：段标记刚写上去，读数那一截的 color 就是这一档的颜色。读不到底色就什么都
+ * 不画——那说明样式表没上（或者名字改了），此时把原环藏起来只会留下一块空白
  */
-function paintPie(trigger, target, reading) {
-    // 扇形色就是 `color-mix` 算出来的那一份（常常是 `oklch(...)` 写法），直接拼进图片文档即可：
-    // 探针里那组 fill 写法对照（.probe/ramp.mjs）量过，图片文档认它，与 rgb 字面值画出同一个像素。
+function startPieGrow(trigger, target, reading) {
+    // 扇形色就是 color-mix 算出来的那一份（常常是 oklch(...) 写法），直接拼进图片文档即可：图片文档认它，
+    // 与 rgb 字面值画出同一个像素
     const tone = getComputedStyle(reading).color;
     const rest = getComputedStyle(trigger).getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
-    if (tone === '' || rest === '')
+    if (tone === "" || rest === "")
         return false;
-    const existing = paintedPies.get(trigger);
-    // 读数与色都没变、也没有一帧在跑：不写第二遍。
-    if (existing !== undefined && existing.handle === 0 && existing.percent === target
-        && existing.tone === tone && existing.rest === rest)
+    const previous = paintedPies.get(trigger);
+    // 读数与色都没变、也没有一帧在跑：不写第二遍
+    if (previous !== undefined && previous.handle === 0 && previous.percent === target
+        && previous.tone === tone && previous.rest === rest)
         return true;
-    // 上一次还在跑就被新读数打断了：从它当前显示的那一格接着往新目标走，不从起点重来。
-    if (existing !== undefined && existing.handle !== 0)
-        cancelAnimationFrame(existing.handle);
-    const from = existing === undefined ? 0 : existing.percent;
-    // 背景图那四个属性只在接管时写一次，之后的每一帧只换图。
-    if (existing === undefined) {
-        trigger.style.backgroundRepeat = 'no-repeat';
-        trigger.style.backgroundSize = exports.PIE_SIZE + 'px ' + exports.PIE_SIZE + 'px';
-        // 内容框的原点就是图标那一格的左边缘；饼比那一格宽 2px，起点往左借一半才与图标同心。
-        trigger.style.backgroundOrigin = 'content-box';
-        trigger.style.backgroundPosition = -(exports.PIE_SIZE - ICON_SIZE) / 2 + 'px center';
+    // 上一次还在跑就被新读数打断了：从它当前显示的那一格接着往新目标走，不从起点重来
+    if (previous !== undefined && previous.handle !== 0)
+        cancelAnimationFrame(previous.handle);
+    const from = previous === undefined ? 0 : previous.percent;
+    // 背景图那四个属性只在接管时写一次，之后的每一帧只换图
+    if (previous === undefined) {
+        trigger.style.backgroundRepeat = "no-repeat";
+        trigger.style.backgroundSize = exports.PIE_SIZE + "px " + exports.PIE_SIZE + "px";
+        // 内容框的原点就是图标那一格的左边缘；饼比那一格宽 2px，起点往左借一半才与图标同心
+        trigger.style.backgroundOrigin = "content-box";
+        trigger.style.backgroundPosition = -(exports.PIE_SIZE - ICON_SIZE) / 2 + "px center";
     }
-    const record = {
+    const piePaint = {
         percent: from,
         handle: 0,
         tone,
@@ -2566,69 +2302,70 @@ function paintPie(trigger, target, reading) {
         to: target,
         startedAt: performance.now(),
     };
-    paintedPies.set(trigger, record);
-    paintImage(trigger, from, tone, rest);
-    // 刚挂上就从 0 长出来（与数字轮那个先例一致），以及读数没变、系统要求减少动态效果：都不跑帧。
+    paintedPies.set(trigger, piePaint);
+    writePieImage(trigger, from, tone, rest);
+    // 刚挂上就从 0 长出来（与数字滚动那个先例一致），以及读数没变、系统要求减少动态效果：都不跑帧
     if (from === target || reduceMotion()) {
-        record.percent = target;
-        paintImage(trigger, target, tone, rest);
+        piePaint.percent = target;
+        writePieImage(trigger, target, tone, rest);
         return true;
     }
-    record.handle = requestAnimationFrame((now) => { advance(trigger, now); });
+    // 背景图是一整张 data URL 的 SVG，换图插不了值；CSS 过渡只能落在 conic-gradient 上，而它在 16px 这个
+    // 尺寸上的硬边有锯齿。所以留着背景图，一次变化十二帧上下，由 rAF 推读数、每帧重画一张
+    piePaint.handle = requestAnimationFrame((now) => advancePieGrow(trigger, now));
     return true;
 }
-/** 把读数对应的那张图写进那颗按钮。 */
-function paintImage(trigger, percent, tone, rest) {
+// 把读数对应的那张图写进那颗按钮
+function writePieImage(trigger, percent, tone, rest) {
     trigger.style.backgroundImage = pieImage(percent, tone, rest);
 }
 /**
- * 推一帧：把这一枚饼从起点的读数推到终点的读数。
- *
- * 缓动是收尾那一种（与数字轮那条 CSS 曲线同一档）。JS 里没有现成的三次贝塞尔求值，为一条曲线搬进来
- * 一个求解器不值——220ms 上两者的差别看不出来。
+ * 推一帧：把这一枚饼从起点的读数推到终点的读数
+ * 缓动是收尾那一种，与数字滚动那条 CSS 曲线同一档；JS 里没有现成的三次贝塞尔求值，为一条曲线搬进来一个
+ * 求解器不值，220ms 上两者的差别看不出来
  */
-function advance(trigger, now) {
-    const record = paintedPies.get(trigger);
-    if (record === undefined)
+function advancePieGrow(trigger, now) {
+    const piePaint = paintedPies.get(trigger);
+    if (piePaint === undefined)
         return;
-    const progress = Math.min(1, (now - record.startedAt) / GROW_MS);
+    const progress = Math.min(1, (now - piePaint.startedAt) / GROW_MS);
     if (progress >= 1) {
-        record.percent = record.to;
-        record.handle = 0;
-        paintImage(trigger, record.to, record.tone, record.rest);
+        piePaint.percent = piePaint.to;
+        piePaint.handle = 0;
+        writePieImage(trigger, piePaint.to, piePaint.tone, piePaint.rest);
         return;
     }
     const eased = 1 - (1 - progress) ** 3;
-    record.percent = record.from + (record.to - record.from) * eased;
-    paintImage(trigger, record.percent, record.tone, record.rest);
-    record.handle = requestAnimationFrame((next) => { advance(trigger, next); });
+    piePaint.percent = piePaint.from + (piePaint.to - piePaint.from) * eased;
+    writePieImage(trigger, piePaint.percent, piePaint.tone, piePaint.rest);
+    piePaint.handle = requestAnimationFrame((next) => advancePieGrow(trigger, next));
 }
-/** 系统说「减少动态效果」：扩张那一下不跑，直接落定。 */
+// 系统说「减少动态效果」：扩张那一下不跑，直接落定
 function reduceMotion() {
-    return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+    return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
-/** 把写过的标记、色阶、数字轮与内联样式撤干净，让原环原样回来。 */
-function release() {
-    for (const reading of document.querySelectorAll('[' + reel_styles_1.REEL_TAKEOVER_ATTRIBUTE + ']')) {
+// 把写过的标记、色阶、数字滚动与内联样式撤干净，让原环原样回来
+function releasePieTakeover() {
+    for (const reading of document.querySelectorAll("[" + reel_styles_1.REEL_TAKEOVER_ATTRIBUTE + "]")) {
         if (reading instanceof HTMLElement)
             (0, reel_host_1.releaseReel)(reading);
     }
-    for (const root of document.querySelectorAll('[' + context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE + ']')) {
+    for (const root of document.querySelectorAll("[" + context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE + "]")) {
         root.removeAttribute(context_meter_styles_1.CONTEXT_PIE_ATTRIBUTE);
     }
-    for (const trigger of document.querySelectorAll('[' + ramp_1.RAMP_SPAN_ATTRIBUTE + ']')) {
+    for (const trigger of document.querySelectorAll("[" + ramp_1.RAMP_SPAN_ATTRIBUTE + "]")) {
         if (!(trigger instanceof HTMLElement))
             continue;
-        const record = paintedPies.get(trigger);
-        if (record !== undefined && record.handle !== 0)
-            cancelAnimationFrame(record.handle);
+        const piePaint = paintedPies.get(trigger);
+        if (piePaint !== undefined && piePaint.handle !== 0)
+            cancelAnimationFrame(piePaint.handle);
         trigger.removeAttribute(ramp_1.RAMP_SPAN_ATTRIBUTE);
         trigger.style.removeProperty(ramp_1.RAMP_POSITION_VAR);
-        trigger.style.removeProperty('background-image');
-        trigger.style.removeProperty('background-repeat');
-        trigger.style.removeProperty('background-size');
-        trigger.style.removeProperty('background-origin');
-        trigger.style.removeProperty('background-position');
+        trigger.style.removeProperty("background-image");
+        trigger.style.removeProperty("background-repeat");
+        trigger.style.removeProperty("background-size");
+        trigger.style.removeProperty("background-origin");
+        trigger.style.removeProperty("background-position");
     }
 }
     };
@@ -2640,57 +2377,56 @@ exports.paintReel = paintReel;
 exports.releaseReel = releaseReel;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 把数字轮挂进 dsh 自己渲染的那串读数旁边。
+ * 把数字滚动挂进 dsh 自己渲染的那串读数旁边。
  *
- * 读数不是座位，只能从 DOM 上认；轮子必须挂在读数的父级，不能塞进读数节点，否则 React 重设
- * textContent 时会把它清掉。原读数保留给读屏。
+ * 上下文占用那串百分比不是座位——dsh 在 ContextMeter 里直接渲染一个 span，插件接不过来，所以这里认到
+ * 那一截之后挂一棵只属于自己的 React 树，渲染同一枚 DigitReel，两处的滚动必然一致。
+ * 挂的位置是读数那一截的父级，不是读数里面：dsh 重设 textContent 时会连带清掉塞进去的节点，塞在里面的
+ * 写法每次读数更新都被抹掉一次，那一截的 textContent 还会读成 26%26%，判据随即认不出读数。
+ * 读数原文本留在原处，视觉上由让开规则收起，读屏照旧读得到
  */
 const client_1 = require("react-dom/client");
 const digit_reel_1 = require("./digit-reel");
 const reel_styles_1 = require("./reel-styles");
-/** 读数的形状；dsh 写的就是「26%」。 */
+// 读数的形状；dsh 写的就是 26% 这样
 const READING_PATTERN = /^(\d{1,3})%$/;
-/** 每一处挂载：那棵树、它的容器，以及上一帧喂进去的读数；键是容器所在的元素。 */
-const hosts = new WeakMap();
-/**
- * 在读数那一截旁边放上（或更新）数字轮。
- *
- * 读数形状对不上就什么都不做：调用方照旧留着原文本。
- */
+// 每一处挂载：那棵树、它的容器，以及上一帧喂进去的读数；键是容器所在的元素
+const hostMap = new WeakMap();
+// 在读数那一截旁边放上或更新数字滚动；读数形状对不上就什么都不做，返回 false，调用方照旧留着原文本
 function paintReel(host, reading, text) {
     if (READING_PATTERN.exec(text) === null)
         return false;
-    reading.setAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE, '');
-    const existing = hosts.get(host);
-    if (existing !== undefined && existing.container.isConnected) {
-        if (existing.text === text)
+    reading.setAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE, "");
+    const knownHost = hostMap.get(host);
+    if (knownHost !== undefined && knownHost.reelContainer.isConnected) {
+        if (knownHost.renderedText === text)
             return true;
-        existing.text = text;
-        existing.root.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
+        knownHost.renderedText = text;
+        knownHost.root.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
         return true;
     }
-    // 上一棵已经不在这棵树里（dsh 把那个父级连同我们一起换掉了）：先卸掉再重挂。
-    if (existing !== undefined)
-        existing.root.unmount();
-    const container = document.createElement('span');
-    container.className = reel_styles_1.REEL_HOST_CLASS;
-    host.appendChild(container);
-    const root = (0, client_1.createRoot)(container);
-    root.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
-    hosts.set(host, { root, container, text });
+    // 上一棵已经不在这棵树里（dsh 把那个父级连同我们一起换掉了）：先卸掉再重挂
+    if (knownHost !== undefined)
+        knownHost.root.unmount();
+    const reelContainer = document.createElement("span");
+    reelContainer.className = reel_styles_1.REEL_HOST_CLASS;
+    host.appendChild(reelContainer);
+    const reelRoot = (0, client_1.createRoot)(reelContainer);
+    reelRoot.render((0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: text, rolling: true, spoken: false }));
+    hostMap.set(host, { root: reelRoot, reelContainer, renderedText: text });
     return true;
 }
-/**
- * 卸下这一处的数字轮：原文本回到原样。
- */
+// 卸下这一处的数字滚动：原文本回到原样
 function releaseReel(reading) {
     const host = reading.parentElement;
-    const existing = host === null ? undefined : hosts.get(host);
-    if (host !== null && existing !== undefined) {
-        existing.root.unmount();
-        existing.container.remove();
-        hosts.delete(host);
+    const knownHost = host === null ? undefined : hostMap.get(host);
+    if (host === null || knownHost === undefined) {
+        reading.removeAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE);
+        return;
     }
+    knownHost.root.unmount();
+    knownHost.reelContainer.remove();
+    hostMap.delete(host);
     reading.removeAttribute(reel_styles_1.REEL_TAKEOVER_ATTRIBUTE);
 }
     };
@@ -2700,21 +2436,27 @@ function releaseReel(reading) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CONTEXT_METER_CSS = exports.CONTEXT_REST_VAR = exports.CONTEXT_PIE_ATTRIBUTE = void 0;
 /**
- * 上下文占用饼的样式。
+ * 上下文占用那枚比例饼的样式
  *
- * 这里只给原环留占位、定义色阶与未占用底色；饼本身由 JS 画成内联 SVG 背景图。
- * 色值必须保持字面值，JS 会从计算样式里读出求值后的颜色。
+ * 这里只管三件事：把原环留成占位（不塌格）、给出色阶、给出未占用那一角的底色
+ *
+ * 饼本身由浏览器半区画在那颗按钮的背景图上，几何在 JS 里算：不走伪元素加 conic-gradient，是因为 dsh 的
+ * 主题把 corner-shape 全局设成 superellipse(1.5)（连 :before/:after 一起），border-radius: 50% 画出来
+ * 是圆角方块，而伪元素又只能从自定义属性里取值
+ *
+ * 色阶与命中率同一套机制（见 ../ramp）：20% 之前一律绿、40% 起一律红。色只写在这份样式表里读数那一截的
+ * color 上，浏览器半区读出来涂进 SVG，所以色值不能写成 var() 串
  */
 const ramp_1 = require("../ramp");
 const reel_styles_1 = require("../reel/reel-styles");
-/** 挂在这个比例圆的根上：在，就说明这一处已经接管。 */
-exports.CONTEXT_PIE_ATTRIBUTE = 'data-dsh-chat-ux-context-pie';
-/** 按钮上的未占用底色；浏览器半区读它来涂底。 */
-exports.CONTEXT_REST_VAR = '--dsh-chat-ux-context-rest';
+// 挂在这个比例圆的根上：在，就说明这一处已经接管
+exports.CONTEXT_PIE_ATTRIBUTE = "data-dsh-chat-ux-context-pie";
+// 按钮上的未占用底色；浏览器半区读它来涂底
+exports.CONTEXT_REST_VAR = "--dsh-chat-ux-context-rest";
 /**
- * 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。
+ * 整张样式表，由浏览器半区在安装时拼进那张 <style>
  *
- * 档位色与底色都写成字面值，不经过第二层变量：浏览器半区要用 `getComputedStyle` 把它们读出来。
+ * 档位色与底色都写成字面值，不经过第二层变量：浏览器半区要用 getComputedStyle 把它们读出来
  */
 exports.CONTEXT_METER_CSS = `
 body {
@@ -2725,26 +2467,26 @@ body[data-ds-dark-theme] {
   --dsh-chat-ux-context-rest: rgba(255, 255, 255, 0.16);
 }
 
-/* 原环让位但不塌格：图标那一格还在原处，饼就是按那一格画的。 */
+/* 原环让开但不塌格：图标那一格还在原处，饼就是按那一格画的 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > svg {
   visibility: hidden;
 }
 
-/* 读数与饼同色（就是下面那条 color 算出来的色）。
+/* 读数与饼同色（就是下面那条 color 算出来的色）
 
-   字号按输入框下方另一枚胶囊那一份来（StatsPills.module.css 的 .anchor，同样减 1px）。dsh 自己
-   这两处本来就差 1px——它这一处用的是没减的 --dsh-content-font-size-secondary，于是同一行里两个
-   挨着的数字不一样大，读者一眼看得出不齐。 */
+   字号按输入框下方另一枚胶囊那一份来（StatsPills.module.css 的 .anchor，同样减 1px）。dsh 自己这两处
+   本来就差 1px：它这一处用的是没减的 --dsh-content-font-size-secondary，于是同一行里两个挨着的数字
+   不一样大，读者一眼看得出不齐 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
 }
 
-/* 接管之后原文本让位：视觉上收起，读屏照旧读得到。不用 display: none（文本节点不生成盒子，藏了
-   读屏也没了），也不用 font-size: 0——那一手要靠接手方从父级那里把字号再拿回来，多一层继承；这里
-   用惯常的「视觉隐藏」：绝对定位加 1px 加裁剪，既不占位也不显示。
+/* 接管之后原文本让开：视觉上收起，读屏照旧读得到。不用 display: none（文本节点不生成盒子，藏了读屏
+   也没了），也不用 font-size: 0——那一手要靠接手方从父级把字号再拿回来，多一层继承；这里用绝对定位
+   加 1px 加裁剪那一套，既不占位也不显示
 
-   绝对定位同时把这一截从按钮那个 flex 行里摘出去——图标与它之间那道 6px 的 gap 也就不再算它——
-   接手的数字轮（挂在按钮上，见 reel-host）紧跟在图标后面，落点与原来的读数完全一样。 */
+   绝对定位同时把这一截从按钮那个 flex 行里摘出去，图标与它之间那道 6px 的 gap 也就不再算它；接手的
+   数字滚动（挂在按钮上，见 reel-host）紧跟在图标后面，位置与原来的读数完全一样 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span[${reel_styles_1.REEL_TAKEOVER_ATTRIBUTE}] {
   position: absolute;
   width: 1px;
@@ -2754,9 +2496,9 @@ body[data-ds-dark-theme] {
   clip-path: inset(50%);
 }
 
-/* 六个色标：20 绿、24 浅绿、28 黄、32 橙黄、36 橙红、40 红。低于 20 一律绿，40 及以后一律红——
-   读者不必等到 50 才看见红。段规则只把这一段的两个端点挂上去（端点只是引用那组共用的色调，主题不同
-   解析出来的就不同），插值交给浏览器的 color-mix；两条饱和段只有一个端点，所以恒色。 */
+/* 六个色标：20 绿、24 浅绿、28 黄、32 橙黄、36 橙红、40 红。低于 20 一律绿，40 及以后一律红，读者不必
+   等到 50 才看见红。段规则只把这一段的两个端点挂上去（端点只是引用那组共用的色调，主题不同解析出来的
+   就不同），插值交给浏览器的 color-mix；两条饱和段只有一个端点，所以恒色 */
 [${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_LOW}'] {
   --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-green);
 }
@@ -2786,13 +2528,13 @@ body[data-ds-dark-theme] {
   --dsh-chat-ux-context-to: var(--dsh-chat-ux-tone-red);
 }
 
-/* 40 及以后：不必等到 50，两端都是红。 */
+/* 40 及以后：不必等到 50，两端都是红 */
 [${ramp_1.RAMP_SPAN_ATTRIBUTE}='${ramp_1.RAMP_SPAN_HIGH}'] {
   --dsh-chat-ux-context-from: var(--dsh-chat-ux-tone-red);
 }
 
 /* 扇形色与读数色是同一个：色只写在这一处，浏览器半区把它读出来涂进 SVG。兜底那一条给的是段起点色
-   （撑不起 color-mix 时退成六档取色），读数与饼仍然同色。 */
+   （撑不起 color-mix 时退成六档取色），读数与饼仍然同色 */
 [${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
   color: var(--dsh-chat-ux-context-from, currentColor);
 }
@@ -2816,491 +2558,413 @@ exports.installFileMutationRow = installFileMutationRow;
 exports.FileMutationRow = FileMutationRow;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * run_code 内部 write 与 edit 子调用的文件变更行。
+ * run_code 内部派发的 write 与 edit 子调用行。
  *
- * 内置行只给根调用画 diff；这里遮蔽 edit 与 write 两个 keyed 座位，用同一份参数派生改动。
- * 准备态直接读参数视图，所以 +n -m 会随参数流增长；结算后优先使用结果元数据里的 hunks。
+ * 内置的文件变更行只给根调用画 diff 卡片：ui-tool 的 diff-card-model 第一行就按 parentCallId 把子调用
+ * 排除掉，行尾那个 +n -m 因此从不出现。这里自己写一份派生，唯一的差别是不排除子调用
  *
- * 子调用没有 presentationMeta，结算后只能按参数展示；edit 在 replace_all 或失败时可能与实际不同。
+ * 遮蔽的是 keyed 座位：同一 priority 上二次注册会抛错，内置那两行是默认的 0，所以这里用 -1
+ * 内置 ToolRow 的组件与 CSS Modules 类名都不在冻结的基座模块表里，拿不到，所以这一行照着它的样子重画
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const digit_reel_1 = require("../reel/digit-reel");
 const paced_value_1 = require("../paced-value");
 const file_mutation_styles_1 = require("./file-mutation-styles");
-/** 聊天行里 diff 卡片折叠中段前展示的行数；与内置的 `CHAT_DIFF_MAX_LINES` 取同一个值。 */
+// 折叠前展示的行数，与内置的 CHAT_DIFF_MAX_LINES 取同一个值
 const CHAT_DIFF_MAX_LINES = 9;
-/** 三个内容字段：write 用第一个，edit 用后两个。行尾那个输入大小算的就是它们。 */
-const CONTENT_FIELDS = ['content', 'old_string', 'new_string'];
-/** 一个 KB 的字符数。 */
+// write 用第一个，edit 用后两个；行尾的输入大小与准备态的行数都算它们
+const CONTENT_FIELDS = ["content", "old_string", "new_string"];
 const KILOBYTE = 1024;
-/** 两个文件工具共用同一枚图标：编辑铅笔。 */
 const FILE_ICON = (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconEditOutlineRegular, { size: 14 });
-/**
- * 准备态那两个数开着没有。由 `installFileMutationRow` 装进来，渲染期现读——所以插件管理页上
- * 一改，下一次渲染就跟着变。
- */
+// 准备态那两个数开着没有；由 installFileMutationRow 装进来，渲染期现读，卡片上一改下一次渲染就跟着变
 let liveDiffEnabled = () => false;
-/**
- * 在 edit / write 两个座位上遮蔽内置的文件变更行。
- */
+// 在 edit 与 write 两个座位上遮蔽内置的文件变更行
 function installFileMutationRow(slots, liveDiff) {
     liveDiffEnabled = liveDiff;
-    slots.inject('tool.call.toolview', () => {
-        const seat = { name: 'tool.call.toolview', priority: -1, locale: 'conversation' };
-        const disposeEdit = slots.register({ ...seat, key: 'edit' }, FileMutationRow);
-        const disposeWrite = slots.register({ ...seat, key: 'write' }, FileMutationRow);
+    slots.inject("tool.call.toolview", () => {
+        const seat = { name: "tool.call.toolview", priority: -1, locale: "conversation" };
+        const disposeEdit = slots.register({ ...seat, key: "edit" }, FileMutationRow);
+        const disposeWrite = slots.register({ ...seat, key: "write" }, FileMutationRow);
         return () => {
             disposeEdit();
             disposeWrite();
         };
     });
 }
-/**
- * 渲染一次 write / edit 调用：折叠态是标题、路径与 `+n -m`，展开态是 diff 卡片。
- */
+// 渲染一次 write 或 edit 调用：折叠态是标题、路径与 +n -m，展开态是 diff 卡片
 function FileMutationRow(props) {
-    const { t, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
+    const { t, block, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
-    // 每个阶段都带 `args` 视图；准备态的读数直接读它
-    const block = props.block;
-    const args = (0, react_1.useMemo)(() => {
+    // dsh 0.2.1-alpha.1 起每个阶段都带 args 视图，不再有旧版那个前缀订阅口
+    const parsedArgs = (0, react_1.useMemo)(() => {
         const head = callHead(block);
         return head === null ? null : parseArgs(head.argsRaw);
     }, [block]);
-    const model = (0, react_1.useMemo)(() => rowModel(toolName, block, args, cwd, home), [args, block, cwd, home, toolName]);
-    const hunks = (0, react_1.useMemo)(() => diffHunks(block, args), [args, block]);
-    const labels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
-    // 准备态也算在跑，与内置 ToolRow 的判据一致（`state === 'running' || state === 'preparing'`）。
-    // 否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题。
-    const running = model.state === 'running' || model.state === 'preparing';
-    const rawTotals = (0, react_1.useMemo)(() => rowTotals(block, hunks), [block, hunks]);
-    // 老虎机常开，只是流式那两态换一档更短的弹动。
-    const cadence = running ? 'fast' : undefined;
-    // 两个工具都走节拍：每一轮数字轮动画要走完整，宁可读数滞后一拍
-    // 逐批跟随会让 220 ms 的动画每 48 ms 被下一批参数打断
-    const totals = (0, paced_value_1.usePacedValue)(rawTotals, running);
-    // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次。
-    const expandable = model.state !== 'preparing'
-        && (hunks !== null || model.output !== null || model.bodyRaw !== null);
+    const displayRow = (0, react_1.useMemo)(() => rowModel(toolName, block, parsedArgs, cwd, home), [parsedArgs, block, cwd, home, toolName]);
+    const hunkList = (0, react_1.useMemo)(() => diffHunks(block, parsedArgs), [parsedArgs, block]);
+    const diffLabels = (0, react_1.useMemo)(() => diffBlockLabels(t), [t]);
+    // 准备态也算在跑，与内置 ToolRow 的判据一致；否则这一段里路径与输入大小都不扫光，而它们旁边就是正在扫光的标题
+    const running = displayRow.state === "running" || displayRow.state === "preparing";
+    const nextTotals = (0, react_1.useMemo)(() => rowTotals(block, hunkList), [block, hunkList]);
+    // 数字滚动常开，只是流式那两态换一档更短的弹动
+    const cadence = running ? "fast" : undefined;
+    // 两个工具都按节拍换数，宁可读数滞后一拍，也让每一轮动画走完整：逐批跟随会让 220 ms 的动画每 48 ms
+    // 被下一批参数打断，读数看着像硬切
+    const shownTotals = (0, paced_value_1.usePacedValue)(nextTotals, running);
+    // 准备态不给展开：那份是半截内容，摊成 diff 会被读成改完了，而且流式的每一批都要重跑一次
+    const expandable = displayRow.state !== "preparing"
+        && (hunkList !== null || displayRow.output !== null || displayRow.bodyRaw !== null);
     const open = expanded && expandable;
-    const summaryText = model.errorSummary ?? model.summary;
-    // 输入大小只要读得到就显示，不要求路径已经到达
-    // write 的 `file_path` 常常排在参数流最末，等路径会让整段准备态都没有读数
-    // 没有路径时输入大小直接跟在描述后面，分隔点只在有描述时渲染
-    // 不借用 dsh 的 `tool.preparing.content`：准备态这一行只需要这个数，前面再加一句会把行头撑长
-    const size = model.kilobytes === null ? null : model.kilobytes + 'KB';
-    const status = stateLabel(model.state, t);
-    // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动。
-    const linkAvailable = model.filePath !== undefined && model.state !== 'error' && model.state !== 'stopped';
-    const openFileClick = (0, react_1.useCallback)((event) => {
+    const summaryText = displayRow.errorSummary ?? displayRow.summary;
+    // 输入大小只要读得到就显示，不要求路径已经出现：模型给 write 生成的参数是 content 在前、file_path 在最后
+    // （2026-10-11 量了 30 次真实 write，file_path 落在整段参数流的 100%），edit 反过来是路径在最前；
+    // 照抄内置那条有路径才显示的规则，写入的数字会一直被挡到末尾。它自己拼，不借 dsh 那句 tool.preparing.content
+    const inputSizeText = displayRow.kilobytes === null ? null : displayRow.kilobytes + "KB";
+    const statusText = stateLabel(displayRow.state, t);
+    // 失败与中断的行不给路径链接：那两态下摘要换成的是裁决或失败信息，链接会把它读成一次正常改动
+    const linkAvailable = displayRow.filePath !== undefined && displayRow.state !== "error" && displayRow.state !== "stopped";
+    const onClickFileLink = (0, react_1.useCallback)((event) => {
         event.stopPropagation();
-        if (model.filePath === undefined)
+        if (displayRow.filePath === undefined)
             return;
-        openFile(model.filePath);
-    }, [model.filePath, openFile]);
-    // 路径链接是行内的一个按钮，而整行也是开合目标：Enter / 空格要落在这颗按钮上，
-    // 不能冒泡到行的 keydown 里去。
-    const linkKeyDown = (0, react_1.useCallback)((event) => {
-        if (event.key === 'Enter' || event.key === ' ')
+        openFile(displayRow.filePath);
+    }, [displayRow.filePath, openFile]);
+    // 路径链接是行内的一颗按钮，而整行也是开合目标：Enter 与空格要落在这颗按钮上，不能冒泡到行的 keydown 里
+    const onKeyDownFileLink = (0, react_1.useCallback)((event) => {
+        if (event.key === "Enter" || event.key === " ")
             event.stopPropagation();
     }, []);
-    // 路径缺席时，输入大小与增删数照旧显示；原因见上面 `size` 的四行注释
-    const collapsedContent = (summaryText !== '' || size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [summaryText !== '' && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable && ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: openFileClick, onKeyDown: linkKeyDown, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })), !linkAvailable && ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(model.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) }))] })), (size !== null || totals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [size !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: size })), totals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '+' + totals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + ' ' + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: '-' + totals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
-    const expandedContent = open && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunks !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunks, labels: labels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })), hunks === null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [model.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.input') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: model.bodyRaw })] })), model.bodyRaw !== null && model.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), model.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t('row.output') }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": model.state === 'error' || undefined, children: model.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t('row.inspect')] }))] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": model.variant, "data-tool": toolName, "data-state": model.state, children: [status !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: status }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(model.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
+    // 折叠态那一截由路径（或摘要）、输入大小、增删两个数拼成；路径缺席时另两块照旧显示，原因见上面输入大小那段
+    // 行尾那截数字外仍套着 TextShimmer：运行态整行扫光照旧，而它活动期间会把复合子节点另渲染一棵惰性副本
+    // （平台契约里那是给纯展示子节点准备的），两份同帧挂载、值同源，动画因此同步，代价是动画期间叠了一层透明度
+    const collapsedContent = summaryText === "" && inputSizeText === null && shownTotals === null ? null : ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [summaryText !== "" && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_SEP_CLASS, "aria-hidden": true }), linkAvailable ? ((0, jsx_runtime_1.jsx)("button", { type: "button", className: file_mutation_styles_1.FILE_LINK_CLASS, onClick: onClickFileLink, onKeyDown: onKeyDownFileLink, children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) })) : ((0, jsx_runtime_1.jsx)("span", { className: summaryClassName(displayRow.state), children: (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { active: running, children: summaryText }) }))] })), (inputSizeText !== null || shownTotals !== null) && ((0, jsx_runtime_1.jsxs)("span", { className: file_mutation_styles_1.FILE_SUFFIX_CLASS, children: [inputSizeText !== null && ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS, active: running, children: inputSizeText })), shownTotals !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + " " + file_mutation_styles_1.FILE_ADD_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: "+" + shownTotals.added, prefix: "+", suffix: "", rolling: true, cadence: cadence, spoken: true }) }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.TextShimmer, { className: file_mutation_styles_1.FILE_STAT_CLASS + " " + file_mutation_styles_1.FILE_DEL_CLASS, active: running, children: (0, jsx_runtime_1.jsx)(digit_reel_1.DigitReel, { text: "-" + shownTotals.removed, prefix: "-", suffix: "", rolling: true, cadence: cadence, spoken: true }) })] }))] }))] }));
+    const expandedContent = open ? ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_BODY_CLASS, children: [hunkList !== null ? ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DiffBlock, { diffs: hunkList, labels: diffLabels, maxLines: CHAT_DIFF_MAX_LINES, className: file_mutation_styles_1.FILE_DIFF_CLASS })) : ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_CLASS, children: [displayRow.bodyRaw !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t("row.input") }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, children: displayRow.bodyRaw })] })), displayRow.bodyRaw !== null && displayRow.output !== null && ((0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_DIVIDER_CLASS, "aria-hidden": true })), displayRow.output !== null && ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_IO_SECTION_CLASS, children: [(0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_LABEL_CLASS, children: t("row.output") }), (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_IO_TEXT_CLASS, "data-error": displayRow.state === "error" || undefined, children: displayRow.output })] }))] })), inspect !== undefined && ((0, jsx_runtime_1.jsxs)("button", { type: "button", className: file_mutation_styles_1.FILE_INSPECT_CLASS, onClick: inspect, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.IconInspectOutlineRegular, {}), t("row.inspect")] }))] })) : undefined;
+    return ((0, jsx_runtime_1.jsxs)("div", { className: file_mutation_styles_1.FILE_ROW_CLASS, "data-variant": displayRow.variant, "data-tool": toolName, "data-state": displayRow.state, children: [statusText !== null && (0, jsx_runtime_1.jsx)("span", { className: file_mutation_styles_1.FILE_HIDDEN_CLASS, children: statusText }), (0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.DisclosureRow, { rowClassName: file_mutation_styles_1.FILE_ROW_LINE_CLASS, leadingClassName: file_mutation_styles_1.FILE_LEADING_CLASS, titleClassName: file_mutation_styles_1.FILE_TITLE_CLASS, chevronClassName: file_mutation_styles_1.FILE_CHEVRON_CLASS, icon: FILE_ICON, title: t(displayRow.titleKey), running: running, open: open, expandable: expandable, expandOnRowClick: true, keepContentWhenOpen: true, onToggle: toggle, collapsedContent: collapsedContent, children: expandedContent })] }));
 }
 /**
- * 派生这一行要展示的改动。
+ * 派生这一行要展示的改动：未结算时只有参数可用，结算之后优先用结果元数据里真实应用的 hunks
  *
- * 与内置 diff-card-model 只有一处不同：**不排除子调用**（原因见模块注释）。其余分支保持同序：
- * 未结算时只有参数可用；结算后优先用结果元数据里真实应用的 hunks，拿不到才退回参数。
+ * 与内置 diff-card-model 只有一处不同：不排除子调用（见模块注释）
  */
-function diffHunks(block, args) {
-    if (!('kind' in block)) {
-        // 关掉时这一支与接管之前逐字一样：准备态不画，派发后只看参数 JSON。
-        if (!liveDiffEnabled())
-            return block.phase === 'preparing' ? null : intendedHunks(block.name, args);
-        // 开着时准备态不产出 hunks：那两个数由 streamedTotals 直接读参数视图给出（见 rowTotals），
-        // 而这一份半截内容摊成 diff 只会被读成改完了（准备态本来也不给展开）。
-        if (block.phase === 'preparing')
+function diffHunks(block, parsedArgs) {
+    if (!("kind" in block)) {
+        // 准备态不产出 hunks：那两个数由 rowTotals 直接读参数视图给出，而这一份半截内容摊成 diff
+        // 只会被读成改完了（准备态本来也不给展开）
+        if (block.phase === "preparing")
             return null;
-        return intendedHunks(block.name, args) ?? streamedHunks(block.name, block.args);
+        // 开关关掉时这一支与接管之前逐字一样：派发后只看参数 JSON
+        if (!liveDiffEnabled())
+            return intendedHunks(block.name, parsedArgs);
+        return intendedHunks(block.name, parsedArgs) ?? streamedHunks(block.name, block.args);
     }
     if (block.isError)
         return null;
-    const applied = appliedHunks(block.meta);
-    if (applied !== null && applied !== 'empty')
-        return applied;
-    // 没有真实 hunks 可依：write 的参数就是整份内容，edit 的参数就是那一对替换。
+    const metaHunks = appliedHunks(block.meta);
+    if (metaHunks !== null && metaHunks !== "empty")
+        return metaHunks;
+    // 子调用不持久化 presentationMeta，结算之后拿不到实际应用了什么，只能拿参数说话：
+    // write 的参数就是整份内容，edit 的参数就是那一对替换（replace_all 或写入失败时可能与实际不符）
     if (block.call === null)
         return null;
-    return intendedHunks(block.call.name, args);
+    return intendedHunks(block.call.name, parsedArgs);
 }
-/**
- * 从调用参数派生改动：write 是整份内容，edit 是那一对替换。
- */
-function intendedHunks(name, args) {
-    if (args === null)
+// 从调用参数派生改动：write 是整份内容，edit 是那一对替换
+// 参数这一侧不校验沙箱升级字段：dsh 0.2.1-alpha.1 把这道校验从客户端删掉了，它取决于会话沙箱模式、
+// 只有 Host 知道，客户端自己猜只会误杀合法行；它与内置同序，只看路径与字段类型
+function intendedHunks(name, parsedArgs) {
+    if (parsedArgs === null)
         return null;
-    const path = pickString(args, ['path', 'file_path']);
+    const path = pickString(parsedArgs, ["path", "file_path"]);
     if (path === undefined)
         return null;
-    if (name === 'write') {
-        const content = args.content;
-        return typeof content === 'string' ? [{ path, oldText: null, newText: content }] : null;
+    if (name === "write") {
+        const content = parsedArgs.content;
+        return typeof content === "string" ? [{ path, oldText: null, newText: content }] : null;
     }
-    if (name !== 'edit')
+    if (name !== "edit")
         return null;
-    const oldText = args.old_string;
-    const newText = args.new_string;
-    if (typeof oldText !== 'string' || typeof newText !== 'string')
+    const oldText = parsedArgs.old_string;
+    const newText = parsedArgs.new_string;
+    if (typeof oldText !== "string" || typeof newText !== "string")
         return null;
-    const replaceAll = args.replace_all;
-    if (replaceAll !== undefined && typeof replaceAll !== 'boolean')
+    const replaceAll = parsedArgs.replace_all;
+    if (replaceAll !== undefined && typeof replaceAll !== "boolean")
         return null;
-    return [{ path, oldText: oldText === '' ? null : oldText, newText }];
+    return [{ path, oldText: oldText === "" ? null : oldText, newText }];
 }
-/**
- * 从参数视图派生改动：准备态唯一拿得到的材料就是视图给出的字段文本——已解码，可能还没收尾。
- *
- * write 用已收到的那一截内容：`oldText` 为 null 时它同时就是「新增了多少行」的答案，与结算后的
- * 口径（`diffTotals` 对一份全 `+` 的改动计数）恒等。edit 要等价的两个字段都收尾才画——行级匹配
- * 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），宁可不画，也不给一个会
- * 上下跳的数字。
- */
+// 从参数视图派生改动：准备态唯一拿得到的材料就是视图给出的字段文本，已解码，可能还没收尾
+// write 用已收到的那一截内容，与结算后 diffTotals 的计数恒等；edit 要两个字段都收尾才画，
+// 行级匹配在部分文本上没有稳定答案，半截 new 会先被算成删除、等字段收尾又变回来，宁可不画
 function streamedHunks(name, view) {
     if (view === undefined)
         return null;
     const path = viewPath(view);
     if (path === undefined)
         return null;
-    if (name === 'write') {
-        if (!view.has('content'))
+    if (name === "write") {
+        if (!view.has("content"))
             return null;
-        const content = view.text('content');
+        const content = view.text("content");
         return content === undefined ? null : [{ path, oldText: null, newText: content }];
     }
-    if (name !== 'edit')
+    if (name !== "edit")
         return null;
-    if (!view.complete('old_string') || !view.complete('new_string'))
+    if (!view.complete("old_string") || !view.complete("new_string"))
         return null;
-    const oldText = view.text('old_string');
-    const newText = view.text('new_string');
+    const oldText = view.text("old_string");
+    const newText = view.text("new_string");
     if (oldText === undefined || newText === undefined)
         return null;
-    return [{ path, oldText: oldText === '' ? null : oldText, newText }];
+    return [{ path, oldText: oldText === "" ? null : oldText, newText }];
 }
-/**
- * 读结果元数据里真实应用的 hunks。
- */
+// 读结果元数据里真实应用的 hunks：empty 是元数据明确说没有改动，null 是不可用
 function appliedHunks(meta) {
-    if (!isRecord(meta))
+    if (typeof meta !== "object" || meta === null || Array.isArray(meta))
         return null;
     const diffs = meta.diffs;
     if (!Array.isArray(diffs))
         return null;
     if (diffs.length === 0)
-        return 'empty';
-    const hunks = [];
+        return "empty";
+    const hunkList = [];
     for (const hunk of diffs) {
-        if (!isRecord(hunk))
+        if (typeof hunk !== "object" || hunk === null)
             return null;
         const { path, oldText, newText } = hunk;
-        if (typeof path !== 'string')
+        if (typeof path !== "string")
             return null;
-        if (oldText !== null && typeof oldText !== 'string')
+        if (oldText !== null && typeof oldText !== "string")
             return null;
-        if (typeof newText !== 'string')
+        if (typeof newText !== "string")
             return null;
-        hunks.push({ path, oldText, newText });
+        hunkList.push({ path, oldText, newText });
     }
-    return hunks;
+    return hunkList;
 }
-/** 调用块处在哪个展示状态。 */
-function rowStateOfToolCall(block) {
-    if (!('kind' in block))
-        return block.phase === 'preparing' ? 'preparing' : 'running';
-    if (block.error?.code === 'interrupted')
-        return 'stopped';
-    if (block.isError)
-        return 'error';
-    return 'ok';
-}
-/** 派生整行的展示模型。 */
-function rowModel(toolName, block, args, cwd, home) {
-    const done = 'kind' in block;
+function rowModel(toolName, block, parsedArgs, cwd, home) {
+    const settled = "kind" in block;
     const head = callHead(block);
-    const rowState = rowStateOfToolCall(block);
-    const path = argumentPath(block, args);
-    const output = done ? resultText(block) || null : null;
+    let state;
+    if (!settled) {
+        state = block.phase === "preparing" ? "preparing" : "running";
+    }
+    else if (block.error?.code === "interrupted") {
+        state = "stopped";
+    }
+    else {
+        state = block.isError ? "error" : "ok";
+    }
+    const path = argumentPath(block, parsedArgs);
+    const output = settled ? resultText(block) || null : null;
     return {
-        titleKey: toolName === 'write' ? 'tool.title.write' : 'tool.title.edit',
-        variant: toolName === 'write' ? 'write' : 'edit',
-        summary: path === undefined ? '' : shortenPath(path, cwd, home),
+        titleKey: toolName === "write" ? "tool.title.write" : "tool.title.edit",
+        variant: toolName === "write" ? "write" : "edit",
+        summary: path === undefined ? "" : shortenPath(path, cwd, home),
         filePath: path,
-        bodyRaw: head === null || head.argsRaw === '' ? null : head.argsRaw,
+        bodyRaw: head === null || head.argsRaw === "" ? null : head.argsRaw,
         output,
-        errorSummary: rowState === 'error' && output !== null ? firstLine(output) : null,
-        state: rowState,
+        errorSummary: state === "error" && output !== null ? firstLine(output) : null,
+        state,
         kilobytes: contentKilobytes(block.args),
     };
 }
-/**
- * 把一次结算结果摊成展示文本：文本块原样，其余块转成 JSON。
- */
+// 把一次结算结果摊成展示文本：文本块原样，其余块转成 JSON
 function resultText(node) {
-    const parts = [];
+    const partList = [];
     for (const block of node.content) {
-        if (block.type === 'text' && typeof block.text === 'string') {
-            parts.push(block.text);
+        if (block.type === "text" && typeof block.text === "string") {
+            partList.push(block.text);
             continue;
         }
-        parts.push(JSON.stringify(block, null, 2));
+        partList.push(JSON.stringify(block, null, 2));
     }
-    if (parts.length === 0 && node.error !== undefined)
-        parts.push(node.error.name + ': ' + node.error.code);
-    return parts.join('\n');
+    if (partList.length === 0 && node.error !== undefined)
+        partList.push(node.error.name + ": " + node.error.code);
+    return partList.join("\n");
 }
-/**
- * 这一行的调用头：已结算的看结果节点带回的那一份，仍在跑的看它自己的参数。
- */
+// 调用头：已结算的看结果节点带回的那一份，仍在跑的看它自己的参数，准备态还没有
 function callHead(block) {
-    if ('kind' in block)
+    if ("kind" in block)
         return block.call;
-    return block.phase === 'start' ? { name: block.name, argsRaw: block.argsRaw } : null;
+    return block.phase === "start" ? { name: block.name, argsRaw: block.argsRaw } : null;
 }
-/**
- * 解析原始参数 JSON。
- */
-function isRecord(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+// 解析原始参数 JSON：流式中途截断或不是对象时给 null
 function parseArgs(argsRaw) {
-    let parsed;
+    let parsedJson;
     try {
-        parsed = JSON.parse(argsRaw);
+        parsedJson = JSON.parse(argsRaw);
     }
     catch {
         return null;
     }
-    return isRecord(parsed) ? parsed : null;
+    if (typeof parsedJson !== "object" || parsedJson === null || Array.isArray(parsedJson))
+        return null;
+    return parsedJson;
 }
-/**
- * 按顺序取第一个非空字符串字段。
- */
-function pickString(args, keys) {
+// 按顺序取第一个非空字符串字段
+function pickString(parsedArgs, keys) {
     for (const key of keys) {
-        const fieldValue = args[key];
-        if (typeof fieldValue === 'string' && fieldValue !== '')
+        const fieldValue = parsedArgs[key];
+        if (typeof fieldValue === "string" && fieldValue !== "")
             return fieldValue;
     }
     return undefined;
 }
-/**
- * 这一行的目标路径：先读参数视图（每个阶段都在，准备态可能还不完整），再退回派发后的原始参数。
- */
-function argumentPath(block, args) {
-    const streamedPath = viewPath(block.args);
-    if (streamedPath !== undefined)
-        return streamedPath;
-    if (args === null)
-        return undefined;
-    return pickString(args, ['path', 'file_path']);
+// 目标路径：先读参数视图（准备态可能还不完整），再退回派发后的原始参数
+function argumentPath(block, parsedArgs) {
+    return viewPath(block.args) ?? (parsedArgs === null ? undefined : pickString(parsedArgs, ["path", "file_path"]));
 }
-/**
- * 路径的视图读法。
- *
- * 与内置的文件变更行同一条规则：字段收尾了才算数——准备态可能只到了半截——解码失败
- * （转义不完整）也当没有。
- */
+// 路径的视图读法，与内置的文件变更行同一条规则：字段收尾了才算数，解码失败（转义不完整）也当没有
 function viewPath(view) {
     if (view === undefined)
         return undefined;
-    for (const key of ['path', 'file_path']) {
+    for (const key of ["path", "file_path"]) {
         if (!view.has(key) || !view.complete(key))
             continue;
         const text = view.text(key);
-        if (text !== undefined && text !== '')
+        if (text !== undefined && text !== "")
             return text;
     }
     return undefined;
 }
-/**
- * 已收到的输入大小（KB）：内容字段的解码长度之和。
- *
- * 与内置的文件变更行取同一个口径，所以同一个位置在两边显示同一个数：正在流进来的那一个字段按
- * 已收到的部分算，已经收完的按整段算。一个内容字段都还没出现时返回 null——行头不摆一个 0KB。
- */
+// 已收到的输入大小（KB）：内容字段的解码长度之和，口径与内置的文件变更行一致
+// 正在流进来的那个字段按已收到的部分算，收完的按整段算；一个内容字段都还没出现时给 null，行头不摆 0KB
 function contentKilobytes(view) {
     if (view === undefined)
         return null;
-    const open = CONTENT_FIELDS.find(key => view.has(key) && !view.complete(key));
-    const completed = CONTENT_FIELDS.reduce((total, key) => key !== open && view.complete(key)
+    const streamingField = CONTENT_FIELDS.find(key => view.has(key) && !view.complete(key));
+    const closedLength = CONTENT_FIELDS.reduce((total, key) => key !== streamingField && view.complete(key)
         ? total + (view.stringLength(key, { step: KILOBYTE }) ?? 0)
         : total, 0);
-    const remembered = countedKilobytes.get(view);
-    let next;
-    if (open === undefined) {
-        next = CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(completed / KILOBYTE) : null;
+    const rememberedKilobytes = kilobyteMap.get(view);
+    let nextKilobytes;
+    if (streamingField === undefined) {
+        nextKilobytes = CONTENT_FIELDS.some(key => view.has(key)) ? Math.ceil(closedLength / KILOBYTE) : null;
     }
     else {
-        const openLength = view.stringLength(open, { step: KILOBYTE, offset: completed }) ?? 0;
-        next = Math.ceil((completed + openLength) / KILOBYTE);
+        const streamedLength = view.stringLength(streamingField, { step: KILOBYTE, offset: closedLength }) ?? 0;
+        nextKilobytes = Math.ceil((closedLength + streamedLength) / KILOBYTE);
     }
-    if (next === null)
-        return remembered ?? null;
-    // 解码一时读不出来时 `stringLength` 给 undefined，上面按 0 计——那会让这个数掉回来。参数只追加，
-    // 它本该只往上长，所以拿上一次的数兜底、取两者的较大值。
-    const value = remembered === undefined ? next : Math.max(remembered, next);
-    countedKilobytes.set(view, value);
-    return value;
+    if (nextKilobytes === null)
+        return rememberedKilobytes ?? null;
+    // 解码一时读不出来时 stringLength 给 undefined，上面按 0 计，那会让这个数掉回来；
+    // 参数只追加，它本该只往上长，所以拿上一次的数兜底、取两者的较大值
+    const stableKilobytes = rememberedKilobytes === undefined ? nextKilobytes : Math.max(rememberedKilobytes, nextKilobytes);
+    kilobyteMap.set(view, stableKilobytes);
+    return stableKilobytes;
 }
-/**
- * 每份参数视图、每个字段一份数行记忆：视图是原地追加的，所以只数新来的那一截。
- *
- * 键必须带上字段名——edit 那一对字段（`old_string` / `new_string`）各数各的，共用一个键会互相算错。
- */
-const countedLines = new WeakMap();
-/** 每份参数视图一份 KB 记忆：用来兜住解码一时读不出来的那些帧，不让这个数回落。 */
-const countedKilobytes = new WeakMap();
-/**
- * 内容字段已收到的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行。
- *
- * 流式期每一批都要问一次，所以记住上一次数到哪、数出多少行，只扫新来的后缀；视图被换成新的
- * 一份（字段收尾，或 `settle` 用权威文本替换）时记忆自然落空，整段重数一次。
- */
+// 每份参数视图、每个字段一份行数记忆：视图是原地追加的，所以只数新来的那一截
+// 键必须带上字段名，edit 那一对字段各数各的，共用一个键会互相算错
+const lineCountMap = new WeakMap();
+// 每份参数视图一份 KB 记忆，用来兜住解码一时读不出来的那些帧，不让这个数回落
+const kilobyteMap = new WeakMap();
+// 内容字段已收到的行数，按 dsh 自己的口径：末尾那个换行是行终止符、不算新的一行，正文为空是零行
+// 流式期每一批都要问一次，所以记住上一次数到哪、数出多少行，只扫新来的后缀；视图被换成新的一份
+// （字段收尾，或 settle 用权威文本替换）时记忆自然落空，整段重数一次
 function streamedLineCount(view, key) {
-    let memory;
-    let remembered;
-    if (view !== undefined) {
-        memory = countedLines.get(view);
-        if (memory === undefined) {
-            memory = new Map();
-            countedLines.set(view, memory);
-        }
-        remembered = memory.get(key);
+    if (view === undefined)
+        return 0;
+    let memory = lineCountMap.get(view);
+    if (memory === undefined) {
+        memory = new Map();
+        lineCountMap.set(view, memory);
     }
-    const fieldText = view?.text(key);
-    // 转义序列还在路上时这一字段解码不出来（`text` 给 undefined）。那不能读成「这一段是空的」——
-    // 参数只追加，这个数本该只往上长，归零就是一次假的回落，所以保留上一次数过的结果。
-    if (fieldText === undefined)
+    const remembered = memory.get(key);
+    const text = view.text(key);
+    // 转义序列还在路上时这个字段解码不出来，那不能读成这一段是空的：参数只追加，归零就是一次假的回落
+    if (text === undefined)
         return remembered?.lines ?? 0;
-    const body = fieldText.endsWith('\n') ? fieldText.slice(0, -1) : fieldText;
-    if (body === '')
+    const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+    if (body === "")
         return 0;
     let lines = remembered?.lines ?? 1;
     for (let at = remembered?.length ?? 0; at < body.length; at++)
-        if (body[at] === '\n')
+        if (body[at] === "\n")
             lines++;
-    memory?.set(key, { length: body.length, lines });
+    memory.set(key, { length: body.length, lines });
     return lines;
 }
-/**
- * 行尾那两个数。
- *
- * 准备态（开关开着时）走 `streamedTotals`，只看参数视图。其余情形与内置同序：结算后优先用结果
- * 元数据里真实应用的 hunks，拿不到就用参数派生的那一份。
- */
-function rowTotals(block, hunks) {
-    if (!('kind' in block) && block.phase === 'preparing' && liveDiffEnabled()) {
+// 行尾那两个数：开关开着时准备态走 streamedTotals 只看参数视图，其余情形与内置同序
+function rowTotals(block, hunkList) {
+    if (!("kind" in block) && block.phase === "preparing" && liveDiffEnabled()) {
         return streamedTotals(block.name, block.args);
     }
-    if (hunks === null)
+    if (hunkList === null)
         return null;
-    return (0, dsh_client_ui_primitives_1.diffTotals)(hunks);
+    return (0, dsh_client_ui_primitives_1.diffTotals)(hunkList);
 }
-/**
- * 准备态那两个数：只看参数视图，不跑行级 diff。
- *
- * write 是「已收到的内容行数 / 0」；edit 是「已收到的新文本行数 / 已收到的旧文本行数」——两段各自数
- * 原始行数，所以两个数都只往上长，不会因为另一半补齐而回头。派发或结算之后换成真实应用的 hunks，
- * 于是落定那一下会按真实 diff 修正一次。
- *
- * 行级 diff 在部分文本上没有稳定答案（部分 new 会先被算成删除，补齐后又变回来），而这一处要的是一个
- * 只会往上跳的数——与数字轮那边的口径一致。
- *
- * **两个字段各自到、各自开始数**，不等另一半：等齐才画意味着行数要等参数 JSON 里**靠后**的那一个字段
- * 到达——模型先把 `old_string` 写完再写 `new_string` 时，那是一整段原文的时长（实测同一段参数流里 KB
- * 在 96 ms 就显示，行数要等 4.5–6.8 s）。那一位没到之前先报 0，到齐之前它只往上跳；等齐写法反而会在
- * 另一半到达时把已经数过的那一半按新进度重报一次，读数往回跳，与数字轮那一套相冲。
- */
+// 准备态那两个数：write 是已收到的内容行数对 0，edit 是已收到的新文本行数对旧文本行数，两段各自数原始行数，
+// 所以都只往上长，结算之后再按真实 diff 修正一次（行级 diff 在部分文本上没有稳定答案，不用它）
+//
+// 两个字段各自到、各自开始数，不等另一半：等齐才画意味着要等参数里靠后的那个字段，实测滞后 4.5–6.8 s
+// （同一段参数流里 KB 在 96 ms 就显示）；先到的那一半先报数，等齐反而会把数过的那一半重报一次，读数往回跳
 function streamedTotals(name, view) {
     if (view === undefined)
         return null;
-    if (name === 'write') {
-        return view.has('content') ? { added: streamedLineCount(view, 'content'), removed: 0 } : null;
+    if (name === "write") {
+        return view.has("content") ? { added: streamedLineCount(view, "content"), removed: 0 } : null;
     }
-    if (name !== 'edit')
+    if (name !== "edit")
         return null;
-    const hasOld = view.has('old_string');
-    const hasNew = view.has('new_string');
+    const hasOld = view.has("old_string");
+    const hasNew = view.has("new_string");
     if (!hasOld && !hasNew)
         return null;
     return {
-        added: hasNew ? streamedLineCount(view, 'new_string') : 0,
-        removed: hasOld ? streamedLineCount(view, 'old_string') : 0,
+        added: hasNew ? streamedLineCount(view, "new_string") : 0,
+        removed: hasOld ? streamedLineCount(view, "old_string") : 0,
     };
 }
-/**
- * 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 `~`。
- */
+// 把绝对路径缩成读者更容易对上的形状：先相对会话工作区，再把残留的主目录前缀写成 ~
 function shortenPath(path, cwd, home) {
-    if (cwd !== undefined && cwd !== '' && path.startsWith(cwd)) {
-        const rest = path.slice(cwd.length).replace(/^[\\/]+/, '');
-        if (rest !== '')
-            return rest;
+    if (cwd !== undefined && cwd !== "" && path.startsWith(cwd)) {
+        const relativePath = path.slice(cwd.length).replace(/^[\\/]+/, "");
+        if (relativePath !== "")
+            return relativePath;
     }
-    if (home !== undefined && home !== '' && path.startsWith(home)) {
-        const rest = path.slice(home.length);
-        if (rest === '' || rest.startsWith('/') || rest.startsWith('\\'))
-            return '~' + rest.replace(/\\/g, '/');
+    if (home !== undefined && home !== "" && path.startsWith(home)) {
+        const afterHome = path.slice(home.length);
+        if (afterHome === "" || afterHome.startsWith("/") || afterHome.startsWith("\\"))
+            return "~" + afterHome.replace(/\\/g, "/");
     }
     return path;
 }
-/**
- * 取一段文本的第一行。
- */
+// 取一段文本的第一行
 function firstLine(text) {
-    const lineBreakAt = text.indexOf('\n');
+    const lineBreakAt = text.indexOf("\n");
     return lineBreakAt === -1 ? text : text.slice(0, lineBreakAt);
 }
-/**
- * 摘要那半截的类名：失败与中断各自带自己的状态色。
- */
-function summaryClassName(rowState) {
-    if (rowState === 'error')
-        return file_mutation_styles_1.FILE_SUMMARY_CLASS + ' ' + file_mutation_styles_1.FILE_ERROR_CLASS;
-    if (rowState === 'stopped')
-        return file_mutation_styles_1.FILE_SUMMARY_CLASS + ' ' + file_mutation_styles_1.FILE_STOPPED_CLASS;
+// 摘要那半截的类名：失败与中断各自带自己的状态色
+function summaryClassName(state) {
+    if (state === "error")
+        return file_mutation_styles_1.FILE_SUMMARY_CLASS + " " + file_mutation_styles_1.FILE_ERROR_CLASS;
+    if (state === "stopped")
+        return file_mutation_styles_1.FILE_SUMMARY_CLASS + " " + file_mutation_styles_1.FILE_STOPPED_CLASS;
     return file_mutation_styles_1.FILE_SUMMARY_CLASS;
 }
-/**
- * 给读屏的状态文本：图标与扫光都不表达状态，这句话替它们说。
- */
-function stateLabel(rowState, t) {
-    if (rowState === 'running')
-        return t('row.running');
-    if (rowState === 'error')
-        return t('row.failed');
-    if (rowState === 'stopped')
-        return t('row.stopped');
+// 读屏用的状态文本：图标与扫光都不表达状态，这句话替它们说；跑完与正常时不播报
+function stateLabel(state, t) {
+    if (state === "running")
+        return t("row.running");
+    if (state === "error")
+        return t("row.failed");
+    if (state === "stopped")
+        return t("row.stopped");
     return null;
 }
-/**
- * 组装 diff 卡片自己的 chrome 文案。
- */
+// diff 卡片自己要的 chrome 文案
 function diffBlockLabels(t) {
     return {
-        codeLabel: t('codeBlock.title'),
-        wrapLabel: t('codeBlock.wrap'),
-        unwrapLabel: t('codeBlock.unwrap'),
-        copy: t('copy'),
-        copied: t('copied'),
-        collapseAria: t('diff.collapseAria'),
-        expandAria: hidden => t('diff.expandAria', { count: hidden }),
-        collapse: t('collapse'),
-        expand: hidden => t('diff.expandRest', { count: hidden }),
+        codeLabel: t("codeBlock.title"),
+        wrapLabel: t("codeBlock.wrap"),
+        unwrapLabel: t("codeBlock.unwrap"),
+        copy: t("copy"),
+        copied: t("copied"),
+        collapseAria: t("diff.collapseAria"),
+        expandAria: hidden => t("diff.expandAria", { count: hidden }),
+        collapse: t("collapse"),
+        expand: hidden => t("diff.expandRest", { count: hidden }),
     };
 }
     };
@@ -3313,59 +2977,57 @@ exports.usePacedValue = usePacedValue;
 /**
  * 按节拍交出读数：流式期间最多每 PACE_STEP_MS 换一次，其余情形实时跟随。
  *
- * 节拍只压换数频率，不压真值；到点应用的是那一刻的最新读数，避免数字轮动画被下一批参数打断。
+ * 节拍只压换数的频率，不压真值：交给下游的仍是最新读数，只是晚到下一拍，所以一轮数字滚动的动画不会被
+ * 下一批参数打断。这是有意的取舍，优先让动画走完整，宁可读数滞后一拍。
+ * 一拍都没到的那几批不丢，最新读数一直写在 ref 里，到点应用的是那一刻的真值，陡增时不会一跳一跳地补播中间值
  */
 const react_1 = require("react");
-/**
- * 流式期间两拍之间的间隔（毫秒）。
- *
- * 它要盖过快档那一轮的**完整周期**——新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms）——
- * 所以取 300 而不是 220：到点换数时上一轮已经走完，不会被下一批参数打断。
- */
+// 流式期间两拍之间的间隔（毫秒）。
+// 它要盖过快档那一轮的完整周期：新数字落回来 220 ms，低位再按位序晚起手（最多三位 70 ms），
+// 所以取 300 而不是 220，到点换数时上一轮已经走完
 exports.PACE_STEP_MS = 300;
 function usePacedValue(target, paced) {
-    const [shown, setShown] = (0, react_1.useState)(target);
+    const [shownValue, setShownValue] = (0, react_1.useState)(target);
     const targetRef = (0, react_1.useRef)(target);
     const nextAtRef = (0, react_1.useRef)(null);
     const pendingRef = (0, react_1.useRef)(false);
     targetRef.current = target;
     (0, react_1.useEffect)(() => {
-        // 不在流式（或这一处没有读数）：实时跟随，并让节拍归零——上一次流式的相位不该影响下一次。
+        // 不在流式：实时跟随，并把节拍归零，上一次流式的相位不该影响下一次
         if (!paced) {
             nextAtRef.current = null;
             pendingRef.current = false;
-            setShown(target);
+            setShownValue(target);
             return;
         }
         const now = Date.now();
-        // 第一次换数：读数刚出现，直接给（这一拍就是它的起点）。若这里也走「等一拍」，节拍会因为
-        // `nextAtRef` 一直是 null 而永远起不来。
+        // 第一次换数：读数刚出现，直接给。若这里也等一拍，节拍会因为 nextAtRef 一直为 null 而永远起不来
         if (nextAtRef.current === null) {
             nextAtRef.current = now + exports.PACE_STEP_MS;
-            setShown(target);
+            setShownValue(target);
             return;
         }
-        const wait = nextAtRef.current - now;
-        if (wait <= 0) {
+        const waitMs = nextAtRef.current - now;
+        if (waitMs <= 0) {
             nextAtRef.current = now + exports.PACE_STEP_MS;
-            setShown(target);
+            setShownValue(target);
             return;
         }
-        // 这一段里读数还会继续长；到点取那一刻的最新值，所以只需一个定时器，不必每批都重排。
+        // 这一段里读数还会继续长，到点取那一刻的最新值，所以只需一个定时器，不必每批都重排
         if (pendingRef.current)
             return;
         pendingRef.current = true;
         const timer = setTimeout(() => {
             pendingRef.current = false;
             nextAtRef.current = Date.now() + exports.PACE_STEP_MS;
-            setShown(targetRef.current);
-        }, wait);
+            setShownValue(targetRef.current);
+        }, waitMs);
         return () => {
             pendingRef.current = false;
             clearTimeout(timer);
         };
     }, [paced, target]);
-    return shown;
+    return shownValue;
 }
     };
 
@@ -3374,65 +3036,45 @@ function usePacedValue(target, paced) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FILE_MUTATION_CSS = exports.FILE_HIDDEN_CLASS = exports.FILE_INSPECT_CLASS = exports.FILE_IO_TEXT_CLASS = exports.FILE_IO_LABEL_CLASS = exports.FILE_IO_DIVIDER_CLASS = exports.FILE_IO_SECTION_CLASS = exports.FILE_IO_CLASS = exports.FILE_DIFF_CLASS = exports.FILE_BODY_CLASS = exports.FILE_DEL_CLASS = exports.FILE_ADD_CLASS = exports.FILE_STAT_CLASS = exports.FILE_SUFFIX_CLASS = exports.FILE_LINK_CLASS = exports.FILE_STOPPED_CLASS = exports.FILE_ERROR_CLASS = exports.FILE_SUMMARY_CLASS = exports.FILE_SEP_CLASS = exports.FILE_TITLE_CLASS = exports.FILE_CHEVRON_CLASS = exports.FILE_LEADING_CLASS = exports.FILE_ROW_LINE_CLASS = exports.FILE_ROW_CLASS = void 0;
 /**
- * 文件变更行的样式。
+ * 文件变更行自己的样式表。
  *
- * 内置 ToolRow 的类名带构建期 hash，不能当接口；这里只补共享 DisclosureRow 没画的摘要、统计、
- * 路径链接、IN/OUT 卡片和轨迹入口，尺寸与令牌逐条对齐。
+ * 这一行在 tool.call.toolview 的 edit 与 write 座位上遮蔽了内置的文件变更行，所以内置 ToolRow.module.css
+ * 那些规则要在这里重写一份：那套类名带构建期 hash，既拿不到也不能当接口
+ *
+ * 尺寸与节奏逐条对齐，行高和 leading 由共享的 DisclosureRow 承担，这里只补它没画的那几样
  */
 const reel_styles_1 = require("../reel/reel-styles");
-/** 行根节点。 */
-exports.FILE_ROW_CLASS = 'dsh-chat-ux-file-root';
-/** DisclosureRow 的 row 元素：悬停提亮的挂点。 */
-exports.FILE_ROW_LINE_CLASS = 'dsh-chat-ux-file-row';
-/** 图标槽。 */
-exports.FILE_LEADING_CLASS = 'dsh-chat-ux-file-leading';
-/** 开合 chevron。 */
-exports.FILE_CHEVRON_CLASS = 'dsh-chat-ux-file-chevron';
-/** 标题（`编辑` / `写入`）。 */
-exports.FILE_TITLE_CLASS = 'dsh-chat-ux-file-title';
-/** 标题与摘要之间的那个点。 */
-exports.FILE_SEP_CLASS = 'dsh-chat-ux-file-sep';
-/** 摘要文本。 */
-exports.FILE_SUMMARY_CLASS = 'dsh-chat-ux-file-summary';
-/** 摘要上的失败色。 */
-exports.FILE_ERROR_CLASS = 'dsh-chat-ux-file-error';
-/** 摘要上的中断色。 */
-exports.FILE_STOPPED_CLASS = 'dsh-chat-ux-file-stopped';
-/** 可点的文件路径。 */
-exports.FILE_LINK_CLASS = 'dsh-chat-ux-file-link';
-/** 行尾那一小截统计的容器。 */
-exports.FILE_SUFFIX_CLASS = 'dsh-chat-ux-file-suffix';
-/** 统计数字共用的字级。 */
-exports.FILE_STAT_CLASS = 'dsh-chat-ux-file-stat';
-/** 新增数（绿色）。 */
-exports.FILE_ADD_CLASS = 'dsh-chat-ux-file-add';
-/** 删除数（红色）。 */
-exports.FILE_DEL_CLASS = 'dsh-chat-ux-file-del';
-/** 展开体容器。 */
-exports.FILE_BODY_CLASS = 'dsh-chat-ux-file-body';
-/** 展开体里的 diff 卡片。 */
-exports.FILE_DIFF_CLASS = 'dsh-chat-ux-file-diff';
-/** 展开体里的 IN/OUT 卡片。 */
-exports.FILE_IO_CLASS = 'dsh-chat-ux-file-io';
-/** IN/OUT 卡片的一节。 */
-exports.FILE_IO_SECTION_CLASS = 'dsh-chat-ux-file-io-section';
-/** IN/OUT 之间的发丝线。 */
-exports.FILE_IO_DIVIDER_CLASS = 'dsh-chat-ux-file-io-divider';
-/** IN / OUT 两个侧标。 */
-exports.FILE_IO_LABEL_CLASS = 'dsh-chat-ux-file-io-label';
-/** IN / OUT 的正文。 */
-exports.FILE_IO_TEXT_CLASS = 'dsh-chat-ux-file-io-text';
-/** 轨迹入口那颗小胶囊。 */
-exports.FILE_INSPECT_CLASS = 'dsh-chat-ux-file-inspect';
-/** 只给读屏看的运行态标签。 */
-exports.FILE_HIDDEN_CLASS = 'dsh-chat-ux-file-hidden';
-/** 整张样式表，由浏览器半区在安装时拼进那张 `<style>`。 */
+// 行 chrome：分别交给 DisclosureRow 的对应 prop，悬停提亮挂在它渲染的那一行上
+exports.FILE_ROW_CLASS = "dsh-chat-ux-file-root";
+exports.FILE_ROW_LINE_CLASS = "dsh-chat-ux-file-row";
+exports.FILE_LEADING_CLASS = "dsh-chat-ux-file-leading";
+exports.FILE_CHEVRON_CLASS = "dsh-chat-ux-file-chevron";
+exports.FILE_TITLE_CLASS = "dsh-chat-ux-file-title";
+// 折叠态：标题与摘要之间的点、摘要、行尾那一小截统计
+exports.FILE_SEP_CLASS = "dsh-chat-ux-file-sep";
+exports.FILE_SUMMARY_CLASS = "dsh-chat-ux-file-summary";
+exports.FILE_ERROR_CLASS = "dsh-chat-ux-file-error";
+exports.FILE_STOPPED_CLASS = "dsh-chat-ux-file-stopped";
+exports.FILE_LINK_CLASS = "dsh-chat-ux-file-link";
+exports.FILE_SUFFIX_CLASS = "dsh-chat-ux-file-suffix";
+exports.FILE_STAT_CLASS = "dsh-chat-ux-file-stat";
+exports.FILE_ADD_CLASS = "dsh-chat-ux-file-add";
+exports.FILE_DEL_CLASS = "dsh-chat-ux-file-del";
+// 展开体：diff 卡片、IN/OUT 卡片与轨迹入口
+exports.FILE_BODY_CLASS = "dsh-chat-ux-file-body";
+exports.FILE_DIFF_CLASS = "dsh-chat-ux-file-diff";
+exports.FILE_IO_CLASS = "dsh-chat-ux-file-io";
+exports.FILE_IO_SECTION_CLASS = "dsh-chat-ux-file-io-section";
+exports.FILE_IO_DIVIDER_CLASS = "dsh-chat-ux-file-io-divider";
+exports.FILE_IO_LABEL_CLASS = "dsh-chat-ux-file-io-label";
+exports.FILE_IO_TEXT_CLASS = "dsh-chat-ux-file-io-text";
+exports.FILE_INSPECT_CLASS = "dsh-chat-ux-file-inspect";
+// 只给读屏看的运行态标签：状态本身只靠图标与扫光表达
+exports.FILE_HIDDEN_CLASS = "dsh-chat-ux-file-hidden";
 exports.FILE_MUTATION_CSS = `
-/* 增删色：引用 dsh 自己为"文件改动标记"准备的那一对令牌，而不是 diff 卡片正文用的
-   state-success/error-primary。理由是这两处要的东西不同：正文那对里绿色只有一种取值
-   （深浅两套都是 rgb(34,197,94)），在浅色画布上做 11px 的小字偏亮；marker 这一对天生
-   分了两套——浅色 rgb(1,162,65) / rgb(186,39,35)，深色 rgb(65,201,119) / rgb(250,66,62)，
-   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份即可。 */
+/* 增删色取 dsh 为文件改动标记准备的那一对令牌，而不是 diff 正文用的 state-success/error-primary：
+   正文那对的绿只有一种取值，11px 的小字压在浅色画布上偏亮；marker 这一对深浅各有一套，
+   正好是小字号要的对比度。想再微调就改下面这两个变量，深浅色各写一份 */
 body {
   --dsh-chat-ux-diff-added: var(--dsw-alias-file-diff-added-marker);
   --dsh-chat-ux-diff-deleted: var(--dsw-alias-file-diff-deleted-marker);
@@ -3456,7 +3098,6 @@ body {
   transition: color 100ms ease;
 }
 
-/* 2x2 的点：标题与摘要之间那道轻分隔。 */
 .${exports.FILE_SEP_CLASS} {
   flex: none;
   width: 2px;
@@ -3478,8 +3119,8 @@ body {
   transition: color 100ms ease;
 }
 
-/* 行尾那一小截：挤在摘要的省略号之外，所以自己带一份同款字级。两个数字之间留一道
-   固定的缝——比空格宽，免得 "+12" 和 "-3" 挨成一个数。 */
+/* 行尾那一小截挤在摘要的省略号之外，所以自己带一份同款字级；两个数字之间留一道固定的缝，
+   比空格宽，免得 "+12" 和 "-3" 挨成一个数 */
 .${exports.FILE_SUFFIX_CLASS} {
   flex: none;
   display: inline-flex;
@@ -3489,7 +3130,6 @@ body {
   white-space: nowrap;
 }
 
-/* 数字本身：等宽字体、比路径小两号，再用半像素把基线推回行框正中。 */
 .${exports.FILE_STAT_CLASS} {
   font-family: var(--ds-font-family-code);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
@@ -3497,14 +3137,9 @@ body {
   transform: translateY(0.5px);
 }
 
-/* 行尾那两个数现在是数字轮（见 ../reel/digit-reel），两处都要按这一行的口径重写：
-
-   1. **字号**：这一截自带的是「次级文字减一号」，比行尾统计的「减两号」大一号。
-   2. **槽高**：这一截默认一个 20px 的行盒，而这一行的行盒是 24px + delta。两者的半行距差多少，
-      数字的基线就偏多少——实测 2px（数字会浮到与旁边那个 3KB 不在一条线上），所以槽高取同一个
-      表达式。
-
-   选择器比 reel 里那一份多两层，所以不靠两份样式表在 ALL_CSS 里的先后取胜（REEL_CSS 排在前面）。 */
+/* 行尾那两个数是数字滚动（见 ../reel/digit-reel），字号与槽高都按这一行的口径重写：reel 自带的是
+   次级文字减一号、20px 的行盒，这一行是减两号、24px + delta，半行距差多少基线就偏多少（实测 2px，
+   数字会浮到与旁边那个 3KB 不在一条线上）。选择器比 reel 那一份多两层，所以不靠 ALL_CSS 里的先后取胜 */
 .${exports.FILE_SUFFIX_CLASS} .${exports.FILE_STAT_CLASS} .${reel_styles_1.REEL_TEXT_CLASS} {
   --dsh-chat-ux-reel-cell: calc(24px + var(--dsh-content-font-delta, 0px));
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
@@ -3518,14 +3153,14 @@ body {
   color: var(--dsh-chat-ux-diff-deleted);
 }
 
-/* 悬停整行提亮，但行尾那两个数字不跟——它们是这一行的结论，颜色本身就是信息，
-   跟着变成正文色就等于把结论擦掉。 */
+/* 悬停整行提亮，但行尾那两个数字不跟：它们是这一行的结论，颜色本身就是信息，
+   跟着变成正文色就等于把结论擦掉 */
 .${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_TITLE_CLASS},
 .${exports.FILE_ROW_LINE_CLASS}:hover .${exports.FILE_SUMMARY_CLASS}:not(.${exports.FILE_ERROR_CLASS}):not(.${exports.FILE_STOPPED_CLASS}) {
   color: var(--dsw-alias-label-primary);
 }
 
-/* 文件路径：同字级，点状下划线说明它可点。收缩到文字宽度，行内剩下的空白仍然属于开合目标。 */
+/* 文件路径：点状下划线说明它可点，收缩到文字宽度，行内剩下的空白仍然属于开合目标 */
 .${exports.FILE_LINK_CLASS} {
   flex: 0 1 auto;
   min-width: 0;
@@ -3568,13 +3203,13 @@ body {
   flex-direction: column;
 }
 
-/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进，行与行之间也共用同一份节奏。 */
+/* 展开体：diff 卡片与 IN/OUT 卡片共用同一份左缩进与行间节奏 */
 .${exports.FILE_DIFF_CLASS},
 .${exports.FILE_IO_CLASS} {
   margin: 4px 0 4px 4px;
 }
 
-/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线。 */
+/* IN/OUT 卡片：代码块那套表面与圆角，两节各自滚动，中间一道发丝线 */
 .${exports.FILE_IO_CLASS} {
   display: flex;
   flex-direction: column;
@@ -3618,7 +3253,7 @@ body {
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉。 */
+/* 轨迹入口：悬停整行（含标题行）或键盘聚焦时显形，平时不占视觉 */
 .${exports.FILE_INSPECT_CLASS} {
   display: inline-flex;
   align-self: flex-start;
@@ -3648,7 +3283,7 @@ body {
   color: var(--dsw-alias-label-primary);
 }
 
-/* 运行态只靠图标与扫光表达，所以状态本身要有一条给读屏的文本。 */
+/* 裁到 1px：只给读屏，视觉上不占位 */
 .${exports.FILE_HIDDEN_CLASS} {
   position: absolute;
   width: 1px;
@@ -3665,66 +3300,68 @@ body {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installCallAppearFollow = installCallAppearFollow;
 /**
- * 工具行与思考行第一次出现时，把所在滚动器补回底部。
+ * 工具行与思考行第一次出现在页面上时，把它们所在的滚动器补到底。
  *
- * 用 1ms 探针动画的 animationstart 当出现信号，不装观察器也不轮询；同一帧多次到达合并成一次 rAF。
- * 读者开始滚动、卷帘门正在跑或已经到底时都不补。
+ * dsh 的跟随在结构时刻最容易掉队：一行新内容插进来、高度跳一截，它那套平滑滚动还在重排而内容继续长，
+ * 位置就落后了。实测一次 run_code 执行（标准档，33 次结构行到达）有两次落后一百四十像素上下，读者说的
+ * 「思考跑到视野外面」就是这两次，且全部发生在过程组的组体里，主滚动框一次都没掉队。
+ * 浏览器没有「元素出现了」这种事件，MutationObserver 又等于扫描，所以给这两族行挂一条 1 ms 的检测动画：
+ * animationstart 就是元素第一次被渲染时的一次性通知，没有观察者、没有定时器，流式期间一个回调都不进
  */
 const dom_contract_1 = require("../../dom-contract");
 const fold_glide_1 = require("../fold/fold-glide");
 const follow_probe_styles_1 = require("./follow-probe-styles");
 const reader_intent_1 = require("./reader-intent");
-/** 离底不超过这么多像素就算已经贴到底，不再写一次位置；半像素的舍入不值得补一脚。 */
+// 离底不超过这么多像素就算已经贴到底，不再写一次位置；半像素的舍入不值得补一脚
 const BOTTOM_SLACK_PX = 2;
-/** 读者滚得动位置的那几种动作：来了就算接管，位置从此归他。 */
-const MARK_EVENTS = ['wheel', 'keydown'];
-/** 按下去本身不动位置的几种动作：只记下这一刻的位置，等下一次结构事件再判。 */
-const PRESS_EVENTS = ['pointerdown', 'touchstart'];
-/**
- * 装上这一处：探针属性挂上，两个事件通道接上；返回卸下的把手。
- */
+// 读者滚得动位置的那几种动作：来了就算接管，位置从此归他
+const MARK_EVENTS = ["wheel", "keydown"];
+// 按下去本身不动位置的几种动作：只记下这一刻的位置，等下一次结构事件再判
+const PRESS_EVENTS = ["pointerdown", "touchstart"];
+// 装上这一处：挂上检测属性、接上两个事件通道，返回卸下的把手
 function installCallAppearFollow() {
-    const root = typeof document === 'undefined' ? null : document.documentElement;
-    if (root === null)
+    const gateElement = typeof document === "undefined" ? null : document.documentElement;
+    if (gateElement === null)
         return () => undefined;
-    /** 已经自己动过手的滚动器：回到它的底之前，我们不再替他补。 */
-    const takenOver = new WeakSet();
-    /** 按下去那一刻的位置，等下一次结构事件到来时看它有没有真的动过。 */
-    const pressedAt = new WeakMap();
-    /** 这一帧里要处理的滚动器。一次插入可能带出整棵子调用子树，它们要的是同一脚。 */
-    const pending = new Set();
-    let frame = 0;
-    /** 这一行住在哪个滚动器里：过程组体优先，其次会话滚动框（详细与完全展开两档没有组体）。 */
+    // 已经自己动过手的滚动器：在它回到自己的底之前，我们不再替它补
+    const takenOverSet = new WeakSet();
+    // 按下去那一刻的位置，等下一次结构事件到来时看它有没有真的动过
+    const pressedTopMap = new WeakMap();
+    // 这一帧里要处理的滚动器：一次插入可能带出整棵子调用子树，父行与每个子行各响一次，它们要的是同一脚
+    const pendingScrollerSet = new Set();
+    let flushFrameId = 0;
+    // 这一行住在哪个滚动器里：过程组体优先，其次会话滚动框（详细与完全展开两档没有组体）
     const scrollerOf = (row) => row.closest(dom_contract_1.PROCESS_BODY_SELECTOR)
         ?? row.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-    /** 补一次。位置本来就到底时这里什么都不写，读那一次 scrollHeight 就是全部代价。 */
-    const follow = (scroller) => {
+    // 补一次底。位置本来就到底时这里什么都不写，读那一次 scrollHeight 就是全部代价（强制布局，
+    // 本帧的布局早已结算过，实测 0.00 ms；真要补的那几次是 0.5～2.0 ms）
+    const followToBottom = (scroller) => {
         if (!scroller.isConnected)
             return;
-        // 按下时记的位置到这一刻还没动过，说明读者只是点开了某一行看一眼，不算接管。
-        const pressed = pressedAt.get(scroller);
-        if (pressed !== undefined) {
-            pressedAt.delete(scroller);
-            if (Math.abs(scroller.scrollTop - pressed) > 0.5)
-                takenOver.add(scroller);
+        // 按下时记的位置到这一刻还没动过，说明读者只是点开某一行看一眼，不算接管
+        const pressedTop = pressedTopMap.get(scroller);
+        if (pressedTop !== undefined) {
+            pressedTopMap.delete(scroller);
+            if (Math.abs(scroller.scrollTop - pressedTop) > 0.5)
+                takenOverSet.add(scroller);
         }
         const behind = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
         if (behind <= BOTTOM_SLACK_PX) {
-            takenOver.delete(scroller);
+            takenOverSet.delete(scroller);
             return;
         }
-        if (takenOver.has(scroller))
+        if (takenOverSet.has(scroller))
             return;
-        // 折叠的卷帘门正在动高度，这一会儿位置归它管。
+        // 折叠的高度动画正在动，这一会儿位置归它管
         if ((0, fold_glide_1.isFoldGlideBusy)())
             return;
         scroller.scrollTop = scroller.scrollHeight;
     };
-    const flush = () => {
-        frame = 0;
-        for (const scroller of pending)
-            follow(scroller);
-        pending.clear();
+    const flushPendingScrollers = () => {
+        flushFrameId = 0;
+        for (const scroller of pendingScrollerSet)
+            followToBottom(scroller);
+        pendingScrollerSet.clear();
     };
     const onAppear = (event) => {
         if (!(event instanceof AnimationEvent) || event.animationName !== follow_probe_styles_1.APPEAR_PROBE_NAME)
@@ -3735,10 +3372,10 @@ function installCallAppearFollow() {
         const scroller = scrollerOf(row);
         if (scroller === null)
             return;
-        pending.add(scroller);
-        if (frame !== 0)
+        pendingScrollerSet.add(scroller);
+        if (flushFrameId !== 0)
             return;
-        frame = window.requestAnimationFrame(flush);
+        flushFrameId = window.requestAnimationFrame(flushPendingScrollers);
     };
     const onIntentMark = (event) => {
         if (!(0, reader_intent_1.isReaderScrollIntent)(event))
@@ -3746,8 +3383,8 @@ function installCallAppearFollow() {
         const scroller = event.target instanceof Element ? scrollerOf(event.target) : null;
         if (scroller === null)
             return;
-        takenOver.add(scroller);
-        pressedAt.delete(scroller);
+        takenOverSet.add(scroller);
+        pressedTopMap.delete(scroller);
     };
     const onIntentPress = (event) => {
         if (!(0, reader_intent_1.isReaderScrollIntent)(event))
@@ -3755,25 +3392,25 @@ function installCallAppearFollow() {
         const scroller = event.target instanceof Element ? scrollerOf(event.target) : null;
         if (scroller === null)
             return;
-        pressedAt.set(scroller, scroller.scrollTop);
+        pressedTopMap.set(scroller, scroller.scrollTop);
     };
-    root.setAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE, '');
-    document.addEventListener('animationstart', onAppear, true);
-    for (const type of MARK_EVENTS)
-        document.addEventListener(type, onIntentMark, { capture: true, passive: true });
-    for (const type of PRESS_EVENTS)
-        document.addEventListener(type, onIntentPress, { capture: true, passive: true });
+    gateElement.setAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE, "");
+    document.addEventListener("animationstart", onAppear, true);
+    for (const eventType of MARK_EVENTS)
+        document.addEventListener(eventType, onIntentMark, { capture: true, passive: true });
+    for (const eventType of PRESS_EVENTS)
+        document.addEventListener(eventType, onIntentPress, { capture: true, passive: true });
     return () => {
-        if (frame !== 0)
-            window.cancelAnimationFrame(frame);
-        frame = 0;
-        pending.clear();
-        document.removeEventListener('animationstart', onAppear, true);
-        for (const type of MARK_EVENTS)
-            document.removeEventListener(type, onIntentMark, true);
-        for (const type of PRESS_EVENTS)
-            document.removeEventListener(type, onIntentPress, true);
-        root.removeAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE);
+        if (flushFrameId !== 0)
+            window.cancelAnimationFrame(flushFrameId);
+        flushFrameId = 0;
+        pendingScrollerSet.clear();
+        document.removeEventListener("animationstart", onAppear, true);
+        for (const eventType of MARK_EVENTS)
+            document.removeEventListener(eventType, onIntentMark, true);
+        for (const eventType of PRESS_EVENTS)
+            document.removeEventListener(eventType, onIntentPress, true);
+        gateElement.removeAttribute(follow_probe_styles_1.APPEAR_ATTRIBUTE);
     };
 }
     };
@@ -3781,12 +3418,11 @@ function installCallAppearFollow() {
     __registry["chat/fold/fold-glide.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 折叠时压缩真身高度，让下方内容随布局让开。
+ * 折叠时用高度动画把下方内容推开。dsh 收起时把展开体整个卸掉，CSS 拿不到可过渡的旧值，只能拦下点击去压真身的高度：
+ * 真身留在原位、还是展开态，压到底再把点击还给 React，收起态接上来时不会跳
  *
- * 收起方向在捕获阶段拦下点击，压到终点后再重放，React 才卸掉展开体。只接管聊天区；
- * 过程组压组根而不是组体，避免 dsh 的组内跟随把内容滚走。
- *
- * 高度动画按可见段分段；主线程卡顿时暂停推进，避免恢复后一帧跳完视口外那段。
+ * 过程组压组根、不压组体，组体自己带滚动条，dsh 的跟随正盯着它
+ * 动画按读者看得见的那一段与视口外的那一截分两段跑，速度才不随内容长短变；主线程卡住的那几帧不算进动画时间
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ROLLING_ATTRIBUTE = void 0;
@@ -3796,148 +3432,121 @@ const dom_contract_1 = require("../../dom-contract");
 const follow_tail_1 = require("../follow/follow-tail");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 const reader_intent_1 = require("../follow/reader-intent");
-/** 卷帘门的时长，取侧栏 AnimatedRows 的同档值。 */
+// 高度动画的时长，与侧栏 AnimatedRows 一致
 const ROLL_MS = 200;
-/**
- * 可见段占整个卷帘门时长的多少；剩下那一小段留给视口外的那一截高度。
- *
- * 不能不留：门的分段就以「读者看得见的那一段」为界，收尾那一下若是瞬间跳变，下方内容会跟着瞬移。
- */
+// 可见段占整个动画时长的多少，剩下那一小段留给视口外的那一截高度。不留的话收尾那一下是瞬间跳变，下方内容会跟着瞬移
 const VISIBLE_SHARE = 0.9;
-/** 超过这个年纪的意图不再可信（点击后没有发生布局变化，或变化来自别处）。 */
+// 超过这个时长的意图不再可信：点击之后没有发生布局变化，或者那一次变化来自别处
 const INTENT_TTL_MS = 500;
-/** 其余可开合的控件（主要是过程组头）。 */
-const TOGGLE_SELECTOR = '[aria-expanded]';
-/** 弹出层控件（菜单、对话框、列表）。它们开的不是折叠体，本模块整块跳过。 */
-const POPUP_SELECTOR = '[aria-haspopup]';
-/** 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知——它们开合的是整轮内容。 */
-const SKIPPED_CONTROL_SELECTOR = '[data-turn-process], [data-turn-trigger]';
-/** 撤掉收起动画之前最多等 React 几帧：一个 requestAnimationFrame 来回通常就够。 */
+// 其余可开合的控件（过程组头等）
+const TOGGLE_SELECTOR = "[aria-expanded]";
+// 弹出层控件：菜单、对话框、列表开的不是折叠体，本模块整块跳过
+const POPUP_SELECTOR = "[aria-haspopup]";
+// 整块跳过的控件：轮次头（那个「用时 X 秒」的按钮）与轮次触发通知，它们开合的是整轮内容
+const SKIPPED_CONTROL_SELECTOR = "[data-turn-process], [data-turn-trigger]";
+// 撤掉收起动画之前最多等 React 几帧，一次 requestAnimationFrame 来回通常就够
 const SHUT_CONFIRM_FRAMES = 3;
-/**
- * 这一轮折叠的意图监听活多久。
- *
- * 它要盖住三段：等 React 收下那次点击（INTENT_TTL_MS）、等卷帘门跑完（ROLL_MS）、以及收尾之后看
- * 跟随属性的那几眼（FOLLOW_LOOK_TOTAL_MS）。短了会在最后几眼里把监听撤掉，读者那一下动手就没
- * 人看见了。
- */
+// 这一轮折叠的意图监听活多久：要盖住等 React 收下那次点击（INTENT_TTL_MS）、等动画跑完（ROLL_MS），
+// 以及收尾之后看跟随属性的那几眼（FOLLOW_LOOK_TOTAL_MS）。短了会在最后几眼里把监听撤掉，读者那一下动手就没人看见
 const FOLD_WATCH_TTL_MS = INTENT_TTL_MS + ROLL_MS + follow_tail_1.FOLLOW_LOOK_TOTAL_MS;
-/** 卷帘门跑完之后再多算一会儿「位置归动画管」，让收尾那一帧落在窗口之外。 */
+// 动画跑完之后再多算一会儿「位置归动画管」，让收尾那一帧落在窗口之外
 const FOLD_BUSY_GRACE_MS = 50;
 /**
- * 卷帘门正在走的那个真身带着这个标记，`fold-motion-styles.ts` 见到它就让子元素一律 `flex: none`：
- * 门框压着高度时，flex 不能把某一张卡片先挤没。
+ * 正在做高度动画的那个元素带着这个标记，fold-motion-styles.ts 见到它就让子元素一律 flex: none
+ * 压住高度时，flex 不能把某一张卡片先挤没
  */
-exports.ROLLING_ATTRIBUTE = 'data-chat-ux-rolling';
+exports.ROLLING_ATTRIBUTE = "data-chat-ux-rolling";
 /**
- * 两帧的时间戳隔得超过这么久，就认为中间主线程被占住过。
- *
- * 比卡住的时长本身要短：长任务之后的第一帧带的还是卡住之前排好的那个时间戳，跳变落在再下一帧上，
- * 实测四十毫秒的长任务只在时间戳上留下三十七毫秒左右的间隔。二十五毫秒在 60 Hz 下约等于掉了半帧。
+ * 两帧的时间戳隔得超过这么久，就认为中间主线程被占住过。比卡住的时长本身要短：长任务之后的第一帧
+ * 带的还是卡住之前排好的时间戳，跳变落在再下一帧上，实测四十毫秒的长任务只留下三十七毫秒的间隔
  */
 const FRAME_GAP_LIMIT_MS = 25;
-/** 还没量到这块屏幕的帧间隔时，按 60 Hz 的一帧算。 */
+// 还没量到这块屏幕的帧间隔时，按 60 Hz 的一帧算
 const NOMINAL_FRAME_MS = 16.7;
-/** 卷帘门排到哪一刻为止；这一段时间里位置归动画管。 */
+// 高度动画排到哪一刻为止，这一段时间里滚动位置归动画管
 let foldBusyUntil = 0;
 /**
- * 卷帘门正在跑。
- *
- * 这一段时间里位置归动画管；工具行跟随在补位前会先问它，避免拽动正在变化的高度。
+ * 高度动画正在跑，位置在这一段里归动画管：这中间要是有人把滚动位置拽到底，正被拉着的高度会跟着动，看起来是抖
+ * 2026-10-18 起 follow/call-appeared.ts 在补位之前会问它一句
  */
 function isFoldGlideBusy() {
     return performance.now() < foldBusyUntil;
 }
-/** 排一段「位置归动画管」的时间。 */
+// 排一段「位置归动画管」的时间
 const markFoldBusy = () => {
     foldBusyUntil = performance.now() + ROLL_MS + FOLD_BUSY_GRACE_MS;
 };
-/**
- * 装上折叠位移。只有读者点击引起的变化会补动画。
- */
+// 装上折叠时推开下方内容的高度动画，只有读者点击引起的变化会补；返回值是卸载函数
 function installFoldGlide() {
-    if (typeof document === 'undefined' || document.body === null)
-        return () => {
-        };
+    if (typeof document === "undefined" || document.body === null)
+        return () => { };
     let intent = null;
-    /** 收起动画正在跑：这 200ms 不接受新的点击，免得两次折叠叠在一起。 */
+    // 收起动画正在跑：这两百毫秒里不接受新的点击，免得两次折叠叠在一起
     let shutting = false;
-    /** 正在把拦下来的那次点击原样交还给 React——那一次不该再被拦。 */
+    // 正在把拦下来的那次点击原样交还给 React，那一次不该再被拦
     let replaying = false;
-    const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduceMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     /**
-     * 元素此刻露在读者眼里的那一段，它的终点距元素顶边有多远。
+     * 元素露在读者眼里的那一段有多高，也就是动画可见段的终点距元素顶边多远
      *
-     * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段——过程组体（max-height:
-     * min(400px, 50vh)）是那层窗口，视口是最外面那层。卷帘门的行程按这一段算，门才只走读者看得见的
-     * 地方；照全高走的话，八千像素的内容会在 200ms 里被一次性跑完，看起来就是直接弹出。
+     * 内容比窗口长的时候，元素自己占着完整高度，读者只看得到其中一段：过程组体（max-height: min(400px, 50vh)）
+     * 是那层窗口，视口是最外面那层。照全高做动画的话，八千像素的内容会在两百毫秒里跑完，看着就是直接弹出
      */
     const visibleReachOf = (element) => {
         const rect = element.getBoundingClientRect();
-        let bottom = Math.min(rect.bottom, window.innerHeight);
-        // 每一层裁剪祖先都可能把可见范围收得更窄，所以整条链都要过一遍；overflow 是 visible 的
-        // 祖先不裁东西，跳过。getComputedStyle 在这里不算浪费——元素刚插进来，样式本来就要算。
+        let visibleBottom = Math.min(rect.bottom, window.innerHeight);
+        // 每一层裁剪祖先都可能把可见范围收得更窄，整条链都要过一遍；overflow 是 visible 的祖先不裁东西，跳过。
+        // getComputedStyle 在这里不算浪费：元素刚插进来，样式本来就要算
         for (let ancestor = element.parentElement; ancestor !== null; ancestor = ancestor.parentElement) {
             const style = window.getComputedStyle(ancestor);
-            if (style.overflowX === 'visible' && style.overflowY === 'visible')
+            if (style.overflowX === "visible" && style.overflowY === "visible")
                 continue;
-            bottom = Math.min(bottom, ancestor.getBoundingClientRect().bottom);
+            visibleBottom = Math.min(visibleBottom, ancestor.getBoundingClientRect().bottom);
         }
-        return Math.max(0, Math.min(rect.height, bottom - rect.top));
+        return Math.max(0, Math.min(rect.height, visibleBottom - rect.top));
     };
     /**
-     * 控件的展开体。控件自己发 aria-controls 时以它为准（那个 id 由 useId 生成、带冒号，只能走
-     * getElementById）；否则按卸载式那一族的形状取「控件所在的折叠根里最后那个孩子」——旧版那个根
-     * 就是被点行的父级，0.2.1-alpha.2 起外层多了一个 `[data-disclosure-header]`，根在它上面一层。
-     * 返回 null 就说明这个控件当前是收起的。
+     * 控件的展开体，null 说明这个控件当前是收起的
      *
-     * 过程组头到不了这里——它先被 processBodyOf 认走，那条路动的是组根，不是展开体自己的高度。
+     * 控件自己发 aria-controls 时以它为准：那个 id 由 useId 生成、带冒号，只能走 getElementById
      */
     const expandedBodyOf = (control) => {
-        const controls = control.getAttribute('aria-controls');
+        const controls = control.getAttribute("aria-controls");
         if (controls !== null) {
-            const target = document.getElementById(controls);
-            return target instanceof HTMLElement ? target : null;
+            const controlledElement = document.getElementById(controls);
+            return controlledElement instanceof HTMLElement ? controlledElement : null;
         }
-        // 认 header 优先：它里面那个 `headerAccessory` 槽位正好落在旧写法会取到的位置上，取过来的
-        // 话收起时会把那个按钮压扁。收起态里最后那个孩子是 header 自己，`last !== row` 正好挡掉。
+        // 认 header 优先：0.2.1-alpha.2 起外层多了一层 [data-disclosure-header]，根在它上面一层。
+        // 它里面那个 headerAccessory 槽位正好落在旧写法会取到的位置上，取过来的话收起时会把那个按钮压扁
         const row = control.closest(dom_contract_1.DISCLOSURE_HEADER_SELECTOR) ?? control;
-        const last = row.parentElement?.lastElementChild;
-        return last instanceof HTMLElement && last !== row ? last : null;
+        const bodyCandidate = row.parentElement?.lastElementChild;
+        return bodyCandidate instanceof HTMLElement && bodyCandidate !== row ? bodyCandidate : null;
     };
     /**
-     * 控件控制的过程组体。
+     * 控件控制的过程组体，不是组头时为 null
      *
-     * 只有组头拿 aria-controls 指着组体（ChatGroupSeat 里的 ProcessGroupHeader），组里的成员行不发
-     * 这个属性——它们的展开体是自己的下一个兄弟。所以**「控件住在过程组里」不等于「控件是组头」**：
-     * 组体里的每一个工具行、思考行都住在 [data-step-process] 里。只看 closest 的话，点一行工具调用
-     * 会被当成展开整个过程组，那个组的组根就会代替那一行被压扁。
+     * 「控件住在过程组里」不等于「控件是组头」：组体里的每一个工具行、思考行都住在 [data-step-process] 里，
+     * 只有组头拿 aria-controls 指着组体。只看 closest 的话，点一行工具调用会被当成展开整个过程组
      */
     const processBodyOf = (control) => {
-        const controls = control.getAttribute('aria-controls');
+        const controls = control.getAttribute("aria-controls");
         if (controls === null)
             return null;
-        const target = document.getElementById(controls);
-        return target instanceof HTMLElement && target.matches(dom_contract_1.PROCESS_BODY_SELECTOR) ? target : null;
+        const controlledElement = document.getElementById(controls);
+        return controlledElement instanceof HTMLElement && controlledElement.matches(dom_contract_1.PROCESS_BODY_SELECTOR) ? controlledElement : null;
     };
-    /**
-     * 读者此刻是不是贴着会话底部。
-     *
-     * 这一份从被点的控件往上找滚动容器——与 follow-tail.ts 那份同名判据的入口不同，判据相同。
-     */
+    // 读者此刻是不是贴着会话底部。判据与 follow-tail.ts 那份相同，入口不同：这一份从被点的控件往上找滚动容器
     const controlAtBottom = (control) => {
         const scroller = control.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-        // 找不到滚动容器时按「不在底部」处理。
         if (scroller === null)
             return false;
         return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= dom_contract_1.FOLLOW_THRESHOLD_PX;
     };
     /**
-     * 挂上一份「读者有没有自己接管滚动」的监听，只活到这一轮折叠收尾为止。
+     * 挂一份「读者有没有自己接管滚动」的监听，只活到这一轮折叠收尾为止
      *
-     * 收尾要把滚动位置交还给 dsh 的跟随，而那只对本来就贴着底的读者成立：收尾晚于点击两百毫秒，
-     * 读者随时可能在中间接管滚动，接管的判据只能从事件上取。落在输入区里的指针与按键不算——那时
-     * 读者在打字，不是在滚动。
+     * 收尾晚于点击两百毫秒，读者随时可能在中间接管滚动，而接管的判据只能从事件上取。
+     * 落在输入区里的指针与按键不算，那时读者在打字，不是在滚动
      */
     const watchFold = (atBottom) => {
         let moved = false;
@@ -3945,18 +3554,18 @@ function installFoldGlide() {
             if ((0, reader_intent_1.isReaderScrollIntent)(event))
                 moved = true;
         };
-        // 认这四种：它们都会真的挪动位置。dsh 的 `READING_INTENTS` 里另有 beforematch，本处不认。
-        const types = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
-        for (const type of types)
+        // 认这四种：它们都会真的挪动位置。dsh 的 READING_INTENTS 里另有 beforematch，本处不认
+        const eventTypeList = ["wheel", "touchstart", "pointerdown", "keydown"];
+        for (const type of eventTypeList)
             document.addEventListener(type, note, true);
         const stop = () => {
-            for (const type of types)
+            for (const type of eventTypeList)
                 document.removeEventListener(type, note, true);
         };
         window.setTimeout(stop, FOLD_WATCH_TTL_MS);
         return { atBottom, moved: () => moved, stop };
     };
-    /** 把拦下来的那次点击原样交给 React。重放期间不再拦，也不再起收起动画。 */
+    // 把拦下来的那次点击原样交给 React。重放期间不再拦，也不再起收起动画
     const replay = (control) => {
         shutting = false;
         replaying = true;
@@ -3968,13 +3577,10 @@ function installFoldGlide() {
         }
     };
     /**
-     * 折叠收尾：折叠开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随。
+     * 折叠收尾：开始那一刻贴着底部的读者，收尾时把滚动位置交还给 dsh 的跟随
      *
-     * 折叠是一次量级很大的高度变化，而 dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉——
-     * 它自己那个「回到底部」按钮是唯一的重开入口。这一处只判断这一次交还算不算数；怎么交还
-     * （先钉底、属性没回来才点按钮）在 follow-tail.ts 里。
-     *
-     * 判据是「折叠开始那一刻读者贴着底」：他本来就在上面看的话，这一次交还与他无关。
+     * 折叠是一次量级很大的高度变化，dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉，
+     * 它自己那个「回到底部」按钮是唯一的重开入口。这里只判这一次交还算不算数，怎么交还在 follow-tail.ts
      */
     const handBackFollow = (watch) => {
         if (!watch.atBottom) {
@@ -3982,7 +3588,7 @@ function installFoldGlide() {
             return;
         }
         (0, follow_tail_1.ensureFollowTail)({
-            // 读者中途自己动了手，这一次交还就作废。
+            // 读者中途自己动了手，这一次交还就作废
             stillWanted: () => !watch.moved(),
             onSettled: () => {
                 watch.stop();
@@ -3990,12 +3596,10 @@ function installFoldGlide() {
         });
     };
     /**
-     * 折叠收尾的入口：动画走完再看一眼跟随。
+     * 折叠收尾的入口：动画走完再看一眼跟随
      *
-     * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画
-     * 带进来，等它真的走完——主线程卡住时它会被拉长（见 holdThroughStalls），按固定时长等就会在
-     * 门还没拉完时去钉底。没有动画可等时（收起方向在 onfinish 里调，或者这一次根本没起动画）等
-     * ROLL_MS。
+     * 收起方向的重放、展开方向的取消都落在动画末尾，滚动位置也是那时才定下来。展开方向把那条动画带进来，
+     * 等它真的走完：主线程卡住时它会被拉长，按固定时长等就会在动画还没跑完时去钉底
      */
     const settleAfterFold = (watch, roll = null) => {
         if (roll === null) {
@@ -4010,31 +3614,27 @@ function installFoldGlide() {
         roll.finished.then(settle, settle);
     };
     /**
-     * 主线程被占住的那几帧不算进卷帘门的时间。
+     * 主线程被占住的那几帧不算进高度动画的时间
      *
-     * 高度动画在主线程上走，卡住的那一段它一帧都画不出来，而 WAAPI 按墙上时间算进度：卡完之后的第一帧
-     * 会直接跳到「本该到的地方」，读者看到的是门停住、再猛地一窜。这里每帧看一眼帧间隔，隔得太久就把
-     * 动画的当前时间拨回「上一眼再往前一格」——门停一下，接着从读者上一眼看到的地方往下走。「一格」
-     * 取这块屏幕最近一次正常的帧间隔，高刷屏上不会因此多跨一步。拨回去的那一段同时算进「位置归
-     * 动画管」的时间。
-     *
-     * 在隔离页面里量过：长任务之后拨 `currentTime` 是生效的，下一帧从拨回去的位置接着走。
+     * WAAPI 按墙上时间算进度，卡完之后的第一帧会直接跳到本该到的地方，读者看到的是动画停住、再猛地一窜。
+     * 这里每帧看一眼帧间隔，隔得太久就把当前时间拨回上一眼再往前一格，一格取最近一次正常的帧间隔。
+     * 在隔离页面里量过，拨 currentTime 之后下一帧就从拨回去的位置接着走
      */
     const holdThroughStalls = (roll) => {
         let lastFrameAt = 0;
         let lastTime = 0;
         let frameInterval = NOMINAL_FRAME_MS;
-        const timeOf = () => {
-            const time = roll.currentTime;
-            return typeof time === 'number' ? time : 0;
+        const readCurrentTime = () => {
+            const rawTime = roll.currentTime;
+            return typeof rawTime === "number" ? rawTime : 0;
         };
-        const look = (now) => {
-            if (roll.playState !== 'running')
+        const checkFrameGap = (now) => {
+            if (roll.playState !== "running")
                 return;
             const gap = lastFrameAt === 0 ? 0 : now - lastFrameAt;
             if (gap > FRAME_GAP_LIMIT_MS) {
                 const resumeAt = lastTime + frameInterval;
-                const skipped = timeOf() - resumeAt;
+                const skipped = readCurrentTime() - resumeAt;
                 if (skipped > 0) {
                     roll.currentTime = resumeAt;
                     foldBusyUntil += skipped;
@@ -4044,17 +3644,17 @@ function installFoldGlide() {
                 frameInterval = gap;
             }
             lastFrameAt = now;
-            lastTime = timeOf();
-            requestAnimationFrame(look);
+            lastTime = readCurrentTime();
+            requestAnimationFrame(checkFrameGap);
         };
-        requestAnimationFrame(look);
+        requestAnimationFrame(checkFrameGap);
     };
     /**
-     * 等 React 把这次折叠落到 DOM 上，再撤掉动画与内联样式。
+     * 等 React 把这次折叠落到 DOM 上，再撤掉动画与内联样式
      *
-     * 收起方向的高度动画带着 fill: 'forwards'，把真身锁在终点高度上。React 若还没收下这次点击，
-     * cancel() 就会把高度整块还给 CSS——一次从终点弹回全高的跳变，足够把 dsh 的跟随甩出去。所以
-     * 等到 DOM 那边真的收拢了才撤；等够几帧仍然没收拢，那说明这次点击确实没有折叠，只好撤回原样。
+     * 收起方向的高度动画带着 fill: "forwards"，把真身锁在终点高度上。React 若还没收下这次点击，cancel()
+     * 就会把高度整块还给 CSS，一次从终点弹回全高的跳变足够把 dsh 的跟随甩出去。等够几帧仍然没收拢，
+     * 说明这次点击确实没有折叠，只好撤回原样
      */
     const confirmCollapsed = (settled, done, attempt = 0) => {
         if (settled() || attempt >= SHUT_CONFIRM_FRAMES) {
@@ -4066,18 +3666,15 @@ function installFoldGlide() {
         });
     };
     /**
-     * 高度动画开工前的三件记账：把裁剪关上，把 `height` 按 border-box 解释，再挂上「门正在走」的
-     * 标记，让子元素按自然高度排好、不被 flex 挤扁（见模块注释）。
-     *
-     * 展开与收起的方向相反，但这一段记账是一样的，收尾也都要把它们还回去，所以记下的旧值与还原动作
-     * 一起交回来。
+     * 高度动画开工前的记账：关上裁剪、把 height 按 border-box 解释，再挂上「高度动画正在走」的标记，
+     * 让子元素按自然高度排好、不被 flex 挤扁。展开与收起都要记账、也都要还回去，所以旧值与还原动作一起交回
      */
     const beginHeightClip = (target) => {
         const previousOverflow = target.style.overflow;
         const previousBoxSizing = target.style.boxSizing;
-        target.style.overflow = 'hidden';
-        target.style.boxSizing = 'border-box';
-        target.setAttribute(exports.ROLLING_ATTRIBUTE, '');
+        target.style.overflow = "hidden";
+        target.style.boxSizing = "border-box";
+        target.setAttribute(exports.ROLLING_ATTRIBUTE, "");
         return () => {
             target.style.overflow = previousOverflow;
             target.style.boxSizing = previousBoxSizing;
@@ -4085,197 +3682,185 @@ function installFoldGlide() {
         };
     };
     /**
-     * 卷帘门拉开：高度从起点逐帧长到全高，露出多少就占多少。
+     * 高度从起点逐帧长到全高，露出多少就占多少。只做高度这一道：曾经叠过一层按可见段走的裁剪，那是错的，
+     * 裁剪只影响绘制、高度已经先长出来了，两道进度相同、行程不同，差值就是一片空白
      *
-     * 只有高度这一道，但分两段跑：可见段占 VISIBLE_SHARE 的时长，视口外的那一截用剩下的时间补完。
-     * 不能再叠按可见段走的裁剪；高度已经先长出来，两种进度行程不同，会露出空白。
-     *
-     * rect 是 border-box 高度，而 CSS 的 height 默认按 content-box 解释；不换成 border-box，
-     * 动画会多跑上下 padding，收尾时再缩回去。
+     * rect 量到的是 border-box 高度，而 CSS 的 height 默认按 content-box 解释，不换成 border-box 就会多跑出
+     * 上下 padding 那一段，收尾 cancel 时再缩回去，看起来像内间距在动
      */
     const rollOpen = (target, from) => {
         markFoldBusy();
-        const height = target.getBoundingClientRect().height;
-        if (height <= from)
+        const fullHeight = target.getBoundingClientRect().height;
+        if (fullHeight <= from)
             return null;
         const travel = Math.max(from, visibleReachOf(target));
-        const restore = beginHeightClip(target);
-        const growing = target.animate(travel >= height
-            ? [{ height: String(from) + 'px' }, { height: String(height) + 'px' }]
+        const undoHeightClip = beginHeightClip(target);
+        const growing = target.animate(travel >= fullHeight
+            ? [{ height: String(from) + "px" }, { height: String(fullHeight) + "px" }]
             : [
-                { height: String(from) + 'px', offset: 0, easing: 'ease-out' },
-                { height: String(travel) + 'px', offset: VISIBLE_SHARE, easing: 'linear' },
-                { height: String(height) + 'px', offset: 1 },
-            ], { duration: ROLL_MS, easing: 'ease-out' });
+                { height: String(from) + "px", offset: 0, easing: "ease-out" },
+                { height: String(travel) + "px", offset: VISIBLE_SHARE, easing: "linear" },
+                { height: String(fullHeight) + "px", offset: 1 },
+            ], { duration: ROLL_MS, easing: "ease-out" });
         holdThroughStalls(growing);
         growing.onfinish = () => {
             growing.cancel();
-            restore();
+            undoHeightClip();
         };
         return growing;
     };
     /**
-     * 卷帘门收回：**动真身，不克隆**。
+     * 把真身的高度压到终点
      *
-     * 这次点击已经在捕获阶段被拦下，React 还没折叠——真身留在原位、还是展开态，于是可以像展开方向
-     * 那样压它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到终点的那
-     * 一刻再放行点击，React 这才收拢，而真身此时已经不占多余空间，接上来的时候不会跳。
-     *
-     * 和展开方向一样只有高度这一道，也分两段跑，只是方向相反：视口外的那一截先收掉，可见段用
-     * VISIBLE_SHARE 的时长卷上去。
+     * 这次点击已经在捕获阶段被拦下，React 还没折叠，真身留在原位、还是展开态，于是可以像展开方向那样压
+     * 它的高度：布局逐帧收缩，下方内容是真的被让开，不需要克隆、也不需要 FLIP。压到终点那一刻再放行点击
      */
     const rollShut = (fold) => {
         markFoldBusy();
-        const height = fold.target.getBoundingClientRect().height;
-        // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着。
-        const release = window.setTimeout(() => {
+        const fullHeight = fold.target.getBoundingClientRect().height;
+        // 兜底：动画因为任何原因没收到 onfinish 时，别把点击一直锁着
+        const releaseShutLock = window.setTimeout(() => {
             shutting = false;
         }, ROLL_MS + 200);
-        if (height <= fold.floor) {
-            window.clearTimeout(release);
+        if (fullHeight <= fold.floor) {
+            window.clearTimeout(releaseShutLock);
             replay(fold.control);
             settleAfterFold(fold.watch);
             return;
         }
         const travel = Math.max(fold.floor, visibleReachOf(fold.target));
-        const restore = beginHeightClip(fold.target);
-        const shrinking = fold.target.animate(travel >= height
-            ? [{ height: String(height) + 'px' }, { height: String(fold.floor) + 'px' }]
+        const undoHeightClip = beginHeightClip(fold.target);
+        const shrinking = fold.target.animate(travel >= fullHeight
+            ? [{ height: String(fullHeight) + "px" }, { height: String(fold.floor) + "px" }]
             : [
-                { height: String(height) + 'px', offset: 0, easing: 'linear' },
-                { height: String(travel) + 'px', offset: 1 - VISIBLE_SHARE, easing: 'ease-out' },
-                { height: String(fold.floor) + 'px', offset: 1 },
-            ], { duration: ROLL_MS, easing: 'ease-out', fill: 'forwards' });
+                { height: String(fullHeight) + "px", offset: 0, easing: "linear" },
+                { height: String(travel) + "px", offset: 1 - VISIBLE_SHARE, easing: "ease-out" },
+                { height: String(fold.floor) + "px", offset: 1 },
+            ], { duration: ROLL_MS, easing: "ease-out", fill: "forwards" });
         holdThroughStalls(shrinking);
         shrinking.onfinish = () => {
-            window.clearTimeout(release);
+            window.clearTimeout(releaseShutLock);
             replay(fold.control);
-            // DOM 那边该已经收拢了；没收拢就不能撤动画，见 confirmCollapsed。
+            // DOM 那边该已经收拢了；没收拢就不能撤动画，见 confirmCollapsed
             confirmCollapsed(fold.collapsed, () => {
                 shrinking.cancel();
-                restore();
+                undoHeightClip();
             });
             settleAfterFold(fold.watch);
         };
     };
-    const flush = () => {
-        const current = intent;
+    // 把排到的那次展开意图落到动画上
+    const applyPendingOpen = () => {
+        const pendingIntent = intent;
         intent = null;
-        if (current === null)
+        if (pendingIntent === null)
             return;
-        const watch = current.watch;
-        // 这一条路上没有动画，收尾就是把监听撤掉。
-        if (Date.now() - current.takenAt > INTENT_TTL_MS || reduceMotion()) {
+        const watch = pendingIntent.watch;
+        // 这一条路上没有动画，收尾就是把监听撤掉
+        if (Date.now() - pendingIntent.takenAt > INTENT_TTL_MS || reduceMotion()) {
             watch.stop();
             return;
         }
-        // 过程组：压组根，不压组体——组体自己带滚动条，dsh 的跟随正盯着它。
-        if (current.groupRoot !== null && current.groupBody !== null) {
-            if (current.groupBody.hasAttribute('hidden')) {
+        // 过程组：压组根，不压组体，组体自己带滚动条，dsh 的跟随正盯着它
+        if (pendingIntent.groupRoot !== null && pendingIntent.groupBody !== null) {
+            if (pendingIntent.groupBody.hasAttribute("hidden")) {
                 watch.stop();
                 return;
             }
-            settleAfterFold(watch, rollOpen(current.groupRoot, current.collapsedHeight));
+            settleAfterFold(watch, rollOpen(pendingIntent.groupRoot, pendingIntent.collapsedHeight));
             return;
         }
-        const body = expandedBodyOf(current.control);
+        const body = expandedBodyOf(pendingIntent.control);
         if (body === null) {
             watch.stop();
             return;
         }
-        // DisclosureRow：展开体是普通块级，压高度就是「拉多少显示多少」。
+        // DisclosureRow：展开体是普通块级，压多少露出多少
         settleAfterFold(watch, rollOpen(body, 0));
     };
     const onClick = (event) => {
-        // 自己重放的那一次直接放行，交给 React。
+        // 自己重放的那一次直接放行，交给 React
         if (replaying)
             return;
         const target = event.target;
         if (!(target instanceof Element))
             return;
-        // 本插件自己的自动开合派发的也是真正的 click，走的正是这条捕获路径。思考行要和读者的点击一样
-        // 起动画：它自己展开、自己收起时若走瞬时切换，读者看到的是内容「啪」地出现和消失，而工具行
-        // 那种只由读者点击的行一直是有卷帘门的。
-        // 过程组不在此列：它一次扫描可能切换好几个组，而收起动画是全局互斥的（shutting），同时来的
-        // 第二次点击会被吞掉，那一组就再也轮不到切换了。
+        // 本插件自己的自动开合派发的也是真正的 click，走的正是这条捕获路径。思考行要和读者的点击一样起动画：
+        // 它自己展开、自己收起时若走瞬时切换，读者看到的是内容啪地出现和消失，而工具行那种只由读者点击的行一直是有动画的
+        // 过程组不在此列：它一次扫描可能切换好几个组，而收起动画是全局互斥的，同时来的第二次点击会被吞掉
         if ((0, programmatic_toggle_1.isProgrammaticToggle)() && target.closest(dom_contract_1.THINK_ROW_SELECTOR) === null)
             return;
-        // 只接管聊天区。整页都在用 aria-expanded——模型选择器、设置页的下拉框、侧栏的行——
-        // 那些控件的开合与聊天流的位移无关，接管它们只会把菜单压扁、把一次点击推迟 200ms。
+        // 只接管聊天区。整页都在用 aria-expanded：模型选择器、设置页的下拉框、侧栏的行、任务面板，
+        // 接管它们只会把菜单压扁、把一次点击推迟两百毫秒
         if (target.closest(dom_contract_1.CHAT_FLOW_SELECTOR) === null)
             return;
-        // 弹出层开的不是折叠体：菜单与对话框不该带动聊天流。
+        // 弹出层开的不是折叠体，菜单与对话框不该带动聊天流
         if (target.closest(POPUP_SELECTOR) !== null)
             return;
-        // 收起动画正在跑：这 200ms 里不接受新的点击，免得两次折叠叠在一起。
+        // 收起动画正在跑：这两百毫秒里不接受新的点击
         if (shutting) {
             event.stopPropagation();
             event.preventDefault();
             return;
         }
-        // 上一轮展开方向的等待作废，它挂着的意图监听要跟着撤掉。
+        // 上一轮展开方向的等待作废，它挂着的意图监听要跟着撤掉
         intent?.watch.stop();
         intent = null;
-        // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）。
+        // 开合控件：DisclosureRow 的行，或别的带 aria-expanded 的按钮（过程组头等）
         const control = target.closest(dom_contract_1.DISCLOSURE_ROW_SELECTOR)
             ?? target.closest(TOGGLE_SELECTOR);
         if (control === null)
             return;
-        // dsh 的折叠动效正在驱动这一行：这一下归官方，插件不接管。
+        // dsh 的折叠动效正在驱动这一行，这一下归官方
         if (control.closest(dom_contract_1.MOTION_ROW_SELECTOR) !== null)
             return;
-        // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，两条路都不适合，交给 dsh 自己瞬时开合。
+        // 轮次头与轮次触发通知整块跳过：它们开合的是整轮内容，交给 dsh 自己瞬时开合
         if (control.closest(SKIPPED_CONTROL_SELECTOR) !== null)
             return;
-        // 组头控制组体，成员行不控制——见 processBodyOf。
+        // 组头控制组体，成员行不控制，见 processBodyOf
         const groupBody = processBodyOf(control);
         const groupRoot = groupBody?.parentElement?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
         const body = groupBody ?? expandedBodyOf(control);
-        const followAtBottom = controlAtBottom(control);
-        // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。起点高度要在这一边量——此刻根节点
-        // 正是收起态，那就是门要拉出来的那一段。
-        if (body === null || body.hasAttribute('hidden')) {
+        // 展开方向：等 React 把展开体插进来，再在观察回调里做动画。起点高度要在这一边量，此刻组根正是收起态
+        if (body === null || body.hasAttribute("hidden")) {
             intent = {
                 control,
                 groupBody,
                 groupRoot,
                 collapsedHeight: groupRoot?.getBoundingClientRect().height ?? 0,
-                watch: watchFold(followAtBottom),
+                watch: watchFold(controlAtBottom(control)),
                 takenAt: Date.now(),
             };
             return;
         }
         if (reduceMotion())
             return;
-        // 收起方向：把这次点击拦下来，让真身自己卷上去，卷完再放行。
+        // 收起方向：把这次点击拦下来，把真身的高度压到终点，压到了再放行
         event.stopPropagation();
         event.preventDefault();
         shutting = true;
-        const watch = watchFold(followAtBottom);
+        const watch = watchFold(controlAtBottom(control));
         const collapsed = groupBody !== null
-            ? () => groupBody.hasAttribute('hidden')
+            ? () => groupBody.hasAttribute("hidden")
             : () => !body.isConnected;
-        let floor = 0;
-        if (groupRoot !== null) {
-            // 组根停在组头那一段：组体收起来之后，组根本来的高度就是这么多。
-            floor = Math.max(0, groupRoot.getBoundingClientRect().height - body.getBoundingClientRect().height);
-        }
         rollShut({
             target: groupRoot ?? body,
-            floor,
+            // 组根停在组头那一段：组体收起来之后，组根本来的高度就是这么多
+            floor: groupRoot === null
+                ? 0
+                : Math.max(0, groupRoot.getBoundingClientRect().height - body.getBoundingClientRect().height),
             collapsed,
             control,
             watch,
         });
     };
-    const observer = new MutationObserver(flush);
-    document.addEventListener('click', onClick, true);
-    // hidden 也要观察：过程组的开合是 setAttribute('hidden', 'until-found')，只有属性变化，
-    // 不带 attributeFilter 就收不到。别处的 hidden 切换多在 intent 为 null 时到达，直接返回，
-    // 成本可以忽略。
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    const observer = new MutationObserver(applyPendingOpen);
+    document.addEventListener("click", onClick, true);
+    // hidden 也要观察：过程组的开合是 setAttribute("hidden", "until-found")，只有属性变化，
+    // 不带 attributeFilter 就收不到。别处的 hidden 切换多在 intent 为 null 时到达，直接返回，成本可以忽略
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
     return () => {
-        document.removeEventListener('click', onClick, true);
+        document.removeEventListener("click", onClick, true);
         observer.disconnect();
         intent?.watch.stop();
     };
@@ -4287,89 +3872,86 @@ function installFoldGlide() {
 /**
  * 把聊天区的滚动位置交还给 dsh 的跟随。
  *
- * 先钉到底；没有产生滚动事件时再看五眼 following-tail 属性，仍关着才点 dsh 的「回到底部」。
- * 折叠收尾调用它，调用方可用 stillWanted 在读者接管滚动后立刻作废。
+ * dsh 的跟随会被一次「像读者移动、又没到底」的滚动关掉，判据是位置比较而不是谁在滚，所以它自己的 focus()、
+ * 浏览器的 clamp、任何程序化写入都会被记成读者移动。交还分两步：先把位置钉到底（dsh 的 onScroll 会走
+ * 「读者到底」那一支，它不检查跟随当前是开是关），位置本来就在地线上时没有滚动事件、钉底成了空操作，
+ * 才去点那枚「回到底部」按钮，它无条件点亮跟随、不需要任何位移。
+ * 现在只剩折叠收尾在调它
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_INTERVAL_MS = exports.FOLLOW_LOOK_ROUNDS = void 0;
 exports.ensureFollowTail = ensureFollowTail;
 const dom_contract_1 = require("../../dom-contract");
-/** 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算。 */
+// 折叠收尾之后盯几眼。dsh 关掉跟随常常比折叠晚一步——它要等采样结算下来
 exports.FOLLOW_LOOK_ROUNDS = 5;
-/** 两眼之间隔多久；五眼正好盖过它那个五百毫秒的采样窗口。 */
+// 两眼之间隔多久
 exports.FOLLOW_LOOK_INTERVAL_MS = 100;
-/** 看满几眼用掉的时间，给调用方算自己那份监听的生命周期。 */
+// 看满几眼用掉的时间，给调用方算自己那份监听的生命周期；五眼正好盖过它那五百毫秒的采样窗口
 exports.FOLLOW_LOOK_TOTAL_MS = exports.FOLLOW_LOOK_ROUNDS * exports.FOLLOW_LOOK_INTERVAL_MS;
-/** 会话的滚动容器。dsh 的跟随与折叠动画都挂在它身上。 */
-function conversationScroller() {
-    return document.querySelector(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-}
-/**
- * 确保会话重新跟上底部，并在必要时把 dsh 的跟随一起点亮。
- */
-function ensureFollowTail(ensure = {}) {
-    const stillWanted = ensure.stillWanted ?? (() => true);
-    const scroller = conversationScroller();
+function ensureFollowTail(handover = {}) {
+    const stillWanted = handover.stillWanted ?? (() => true);
+    // 会话的滚动容器，dsh 的跟随与折叠动画都挂在它身上
+    const scroller = document.querySelector(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
     if (scroller === null) {
-        ensure.onSettled?.();
+        handover.onSettled?.();
         return;
     }
-    // 先把位置钉到底：读者该在的地方先回到那里。这一步顺带处理掉「跟随还开着、只是没跟上」——
-    // 那种情形下 dsh 的归属判定会把这一下认成读者到底，于是重新点亮跟随并清掉采样窗口。
+    // 先把位置钉到底：读者该在的地方先回到那里。这一步顺带处理掉「跟随还开着、只是没跟上」——那种情形下
+    // dsh 的归属判定会把这一下认成读者到底，于是重新点亮跟随并清掉采样窗口
     if (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > 0.5) {
         scroller.scrollTop = scroller.scrollHeight;
     }
-    let rounds = 0;
-    const look = () => {
-        if (!stillWanted() || rounds >= exports.FOLLOW_LOOK_ROUNDS) {
-            ensure.onSettled?.();
+    let lookCount = 0;
+    const lookOnce = () => {
+        if (!stillWanted() || lookCount >= exports.FOLLOW_LOOK_ROUNDS) {
+            handover.onSettled?.();
             return;
         }
-        rounds += 1;
-        // 位置钉住了不等于跟随也回来了：归属判定可能比这一次晚一步才把跟随关掉，而那之后它只认
-        // 自己那个「回到底部」按钮。
+        lookCount += 1;
+        // 位置钉住了不等于跟随也回来了：归属判定可能比这一次晚一步才把跟随关掉，那之后它只认自己那枚
+        // 「回到底部」按钮
         if (document.querySelector(dom_contract_1.FOLLOWING_TAIL_SELECTOR) === null) {
-            // 跟随关掉时 `data-chat-following-tail` 已经没了，只能顺着列自己那三层往回找它的框
-            // （从列到滚动框再到框架），按钮就挂在框架的下一个兄弟上。
-            const column = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
-            const root = column?.parentElement?.parentElement ?? null;
-            const button = root?.nextElementSibling?.querySelector('button') ?? null;
-            if (button !== null) {
-                button.click();
-                ensure.onSettled?.();
+            // 跟随关掉时 data-chat-following-tail 已经没了，只能顺着列自己那三层往回找它的框
+            // （列、滚动框、框架），按钮挂在框架的下一个兄弟上
+            const chatFlowColumn = document.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
+            const chatFrame = chatFlowColumn?.parentElement?.parentElement ?? null;
+            const backToBottomButton = chatFrame?.nextElementSibling?.querySelector("button") ?? null;
+            if (backToBottomButton !== null) {
+                backToBottomButton.click();
+                handover.onSettled?.();
                 return;
             }
         }
-        window.setTimeout(look, exports.FOLLOW_LOOK_INTERVAL_MS);
+        window.setTimeout(lookOnce, exports.FOLLOW_LOOK_INTERVAL_MS);
     };
-    window.setTimeout(look, exports.FOLLOW_LOOK_INTERVAL_MS);
+    window.setTimeout(lookOnce, exports.FOLLOW_LOOK_INTERVAL_MS);
 }
     };
 
     __registry["chat/fold/programmatic-toggle.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 本插件自己按下折叠切换时的记账。
+ * 本插件自己按下的折叠切换的记账。
  *
- * 自动开合派发的也是真正的 click，计数让「读者碰过就让他赢」的守卫能放过这一下。
+ * 自动收起思考行、自动开合过程组派发的都是真正的 click，HTMLElement.click() 走同一条捕获路径，
+ * 各自的读者意图守卫分不出它和读者那一下，所以它必须被认出来并放过。
+ * 两个自动开合模块共用这一个计数：谁都不该把对方的程序化点击记成读者的意图
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.beginProgrammaticToggle = beginProgrammaticToggle;
 exports.endProgrammaticToggle = endProgrammaticToggle;
 exports.isProgrammaticToggle = isProgrammaticToggle;
-/** 本插件自己按下折叠控件的深度。 */
+// 本插件自己按下折叠控件的深度
 let depth = 0;
-/** 标记一段本插件自己的折叠切换，让「读者意图」那几处守卫忽略其间的事件。 */
+// 标记一段本插件自己的折叠切换，让读者意图那几处守卫忽略其间的事件
 function beginProgrammaticToggle() {
     depth += 1;
 }
-/** 结束一段本插件自己的折叠切换。 */
+// 结束一段本插件自己的折叠切换
 function endProgrammaticToggle() {
     depth = Math.max(0, depth - 1);
 }
-/**
- * 此刻是否有本插件自己的折叠切换正在进行。
- */
+// 此刻是否有本插件自己的折叠切换正在进行
 function isProgrammaticToggle() {
     return depth > 0;
 }
@@ -4380,18 +3962,19 @@ function isProgrammaticToggle() {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReaderScrollIntent = isReaderScrollIntent;
 /**
- * 读者接管滚动的意图判据。
+ * 读者接管滚动的意图。
  *
- * 落在输入区里的指针和按键不算接管；键盘只认会滚动视口的键。事件类型由调用方决定。
+ * 判据只有一条：读者是不是自己动了手。落在输入区里不算，那是读者在打字；按键里只有会滚动视口的那几个算，
+ * 其余是打字与编辑。
+ * 它当年由三处共用，跟随那两块删掉之后只剩折叠收尾一处。判据仍留在这里，不并回调用点：它认的那组滚动键
+ * 与 dsh 自己的一致，与谁在调无关
  */
 const dom_contract_1 = require("../../dom-contract");
-/**
- * 一次事件是不是读者接管滚动的意图。
- */
+// 落在输入区里、或是与滚动无关的按键时为假
 function isReaderScrollIntent(event) {
     if (event.target instanceof Element && event.target.closest(dom_contract_1.COMPOSER_SELECTOR) !== null)
         return false;
-    if (event.type !== 'keydown')
+    if (event.type !== "keydown")
         return true;
     return event instanceof KeyboardEvent && dom_contract_1.SCROLL_KEYS.has(event.key);
 }
@@ -4402,21 +3985,23 @@ function isReaderScrollIntent(event) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLLOW_PROBE_CSS = exports.APPEAR_PROBE_NAME = exports.APPEAR_ATTRIBUTE = void 0;
 /**
- * 「工具行出现了」的探针样式。
+ * 「工具行出现了」这条检测规则：一条 1 ms 的动画，只为让 animationstart 响一次。
  *
- * 一条 1ms 且首尾透明度相同的动画，只为让 animationstart 响一次；零时长动画不会开始。
- * 规则收在门控属性与聊天列作用域下，关闭时一次都不命中。
+ * 两帧都写 opacity: 1，所以画面上什么都不变；是 1 ms 而不是 0，是因为零时长的动画根本不会开始、
+ * 也就不会派发事件。
+ * 整条规则收在门控属性下（挂在 documentElement 上，见 call-appeared.ts），开关关着时一条都不命中；
+ * 作用域再收一层到聊天列，聊天区以外的元素在样式匹配时被祖先过滤直接跳过，流式期间只对新节点匹配
  */
 const dom_contract_1 = require("../../dom-contract");
-/** 门控属性：在，就说明这一处在工作。关掉时摘掉它，探针一次都不跑。 */
-exports.APPEAR_ATTRIBUTE = 'data-dsh-chat-ux-follow';
-/** 探针动画的名字；监听那一侧按它过滤 animationstart。 */
-exports.APPEAR_PROBE_NAME = 'dsh-chat-ux-appear';
-/** 探针规则：工具调用行（含 run_code 里派发出去的子调用）与思考行。 */
+// 门控属性：在，就说明这一处在工作；关掉时摘掉它，检测规则一次都不跑
+exports.APPEAR_ATTRIBUTE = "data-dsh-chat-ux-follow";
+// 检测动画的名字，监听那一侧按它过滤 animationstart
+exports.APPEAR_PROBE_NAME = "dsh-chat-ux-appear";
+// 检测规则：工具调用行（含 run_code 里派发出去的子调用）与思考行
 exports.FOLLOW_PROBE_CSS = `
-/* 这两族行第一次被渲染时各响一次 animationstart——那是浏览器「这个元素出现了」的一次性通知，
-   不是轮询也不是观察者。监听那一头在 call-appeared.ts：它把所在的滚动器补到底，然后静静等着
-   下一次。两帧之间画面上没有任何变化，所以这条规则只花一次动画对象。 */
+/* 这两族行第一次被渲染时各响一次 animationstart，那是浏览器的「这个元素出现了」通知，不是轮询也不是
+   观察者；监听那一头在 call-appeared.ts，它把所在的滚动器补到底，然后静静等着下一次。
+   两帧之间画面上没有任何变化，所以这条规则只花一次动画对象 */
 @keyframes ${exports.APPEAR_PROBE_NAME} {
   from { opacity: 1; }
   to { opacity: 1; }
@@ -4432,64 +4017,57 @@ exports.FOLLOW_PROBE_CSS = `
     __registry["chat/fold/process-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 运行中的过程组默认展开，过程结束后再收起。
+ * 运行中的过程组默认展开，这一段结束（最终正文该出来了）再收回去。只对「简洁」与「标准」两档动手：
+ * 「详细」与「完全展开」的组体本来就不收纳，判据是组根上的 data-group-expanded-mode
  *
- * 阶段看组头里的 data-shimmer，开合看组体的 hidden，非收纳档看组根上的
- * data-group-expanded-mode。读者碰过的组在本阶段内不再自动切换。
+ * 阶段看组头里的 shimmer（data-shimmer，2026-09 之前叫 data-text-shimmer），开合看组体自己的 hidden：
+ * 收起时是 hidden="until-found"，展开时整个摘掉。组内的命令卡片也用 shimmer，所以阶段只在组头里查
  *
- * 官方折叠动效正在驱动某行时整块让路；「下次发送时收起」下，结束后的收起也留给官方。
+ * 读者碰过的组按阶段让开；dsh 的折叠动效正在驱动这一行、或读者把「收起时机」选成「下次发送时收起」时也让开
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installProcessFold = installProcessFold;
 const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
-/** 组头那个开合控件。 */
-const HEADER_SELECTOR = 'button[data-process-activity]';
-/** dsh 把组头标签与实时细节接起来用的分隔符（`message.turnProcess.separator`，中英文都是它）。 */
-const DETAIL_SEPARATOR = ' · ';
-/** 组根上的标记：这个组的组头此刻带着实时细节（标准或详细档，且这一段过程还没结束）。 */
-const LIVE_DETAIL_ATTRIBUTE = 'data-chat-ux-live-detail';
-/** 组根上的标记：这个组的组体此刻是展开的。 */
-const OPEN_ATTRIBUTE = 'data-chat-ux-open';
-/** 组头控件上的属性：标题里只含标签的那半截，供样式表在组体展开时替上。 */
-const LABEL_ATTRIBUTE = 'data-chat-ux-label';
+// 组头那个开合控件
+const HEADER_SELECTOR = "button[data-process-activity]";
+// dsh 把组头标签与实时细节接起来用的分隔符，中英文都是它（message.turnProcess.separator）
+const DETAIL_SEPARATOR = " · ";
+// 组根上的标记：这个组的组头此刻带着实时细节（标准或详细档，且这一段过程还没结束）
+const LIVE_DETAIL_ATTRIBUTE = "data-chat-ux-live-detail";
+// 组根上的标记：这个组的组体此刻是展开的
+const OPEN_ATTRIBUTE = "data-chat-ux-open";
+// 组头控件上的属性：标题里只含标签的那半截，供样式表在组体展开时替上
+const LABEL_ATTRIBUTE = "data-chat-ux-label";
 /**
- * 组头控件上的自定义属性：那半截标签的渐变半宽。
- * dsh 的 TextShimmer 按「字符数 × 8px」内联同一个量，样式表照着它把替代文本的流光铺成同样的宽窄。
+ * 组头控件上的自定义属性：那半截标签的渐变半宽
+ * dsh 的 TextShimmer 按「字符数 × 8px」内联同一个量，样式表照着它把替代文本的流光铺成同样的宽窄
  */
-const LABEL_SPREAD_PROPERTY = '--dsh-chat-ux-label-spread';
-/**
- * 组头控件的可访问名。替上来的文本是伪元素内容，不进可访问性树；原文本又整块让了位，
- * 所以这个名字只能由这里补。
- */
-const LABEL_NAME_ATTRIBUTE = 'aria-label';
-/** dsh 的 TextShimmer 给每个字符留的渐变半宽。 */
+const LABEL_SPREAD_PROPERTY = "--dsh-chat-ux-label-spread";
+// 组头控件的可访问名。替上来的文本是伪元素内容，不进可访问性树，原文本又整块让了位，这个名字只能由这里补
+const LABEL_NAME_ATTRIBUTE = "aria-label";
+// dsh 的 TextShimmer 给每个字符留的渐变半宽
 const SHIMMER_PIXELS_PER_CHARACTER = 8;
-/** 这一段过程已经结束，最终正文该出来了。 */
-const CLOSED = 'closed';
-/**
- * 给整页安装过程组的自动展开与收起。
- */
+// 这一段过程已经结束，最终正文该出来了
+const CLOSED = "closed";
+// 给整页安装过程组的自动展开与收起。deferCollapse 现读、不缓存：读者是否选了「下次发送时收起」
 function installProcessFold(deferCollapse) {
-    /** 读者最后一次碰某个组时，那个组处在哪个阶段。 */
-    const touchedIn = new WeakMap();
-    /** 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
-    const attemptedIn = new WeakMap();
-    /** 是否已经排了一次扫描。 */
+    // 读者最后一次碰某个组时，那个组处在哪个阶段
+    const touchedPhaseMap = new WeakMap();
+    // 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
+    const attemptedPhaseMap = new WeakMap();
+    // 是否已经排了一次扫描
     let scanQueued = false;
-    /**
-     * 把给到的这些组拉到它们当前阶段该有的样子。
-     */
+    // 把给到的这些组拉到它们当前阶段该有的样子。收集与收敛之间隔着一帧，其中可能已经有被摘掉的
     const syncGroups = (groups) => {
         for (const group of groups) {
-            // 收集与收敛之间隔着一帧，这中间组可能已经被摘掉。
             if (!group.isConnected)
                 continue;
-            // 官方正在折叠/展开这一行：这一行的开合归它的批量动画管，插件不插手。
+            // 官方正在折叠或展开这一行，这一行的开合归它的批量动画管
             if (group.closest(dom_contract_1.MOTION_ROW_SELECTOR) !== null)
                 continue;
-            // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM（dsh 只是把它裹进一个
-            // 带 `hidden` 的壳）。点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到。
+            // 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM，只是被裹进一个带 hidden 的壳，
+            // 点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到
             if (group.hasAttribute(dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE))
                 continue;
             const header = group.querySelector(HEADER_SELECTOR);
@@ -4497,52 +4075,54 @@ function installProcessFold(deferCollapse) {
             if (!(header instanceof HTMLElement) || body === null)
                 continue;
             const phase = header.querySelector(dom_contract_1.SHIMMER_SELECTOR) === null ? CLOSED : dom_contract_1.RUNNING_STATE;
-            // 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收——那一次留给官方。
+            // 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收，那一次留给官方
             if (phase === CLOSED && deferCollapse())
                 continue;
-            // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字——组体
-            // 开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独
-            // 写到属性上，样式表在组体展开时用它替掉整段文本。
-            const headerText = header.textContent ?? '';
+            // 带实时细节的档位把这一段的细节接在组头标签后面，而那一段正是组内思考行正在出的字，组体开着时
+            // 两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以把标签那半截单独写到属性上，
+            // 样式表在组体展开时用它替掉整段文本
+            const headerText = header.textContent ?? "";
             const separatorAt = headerText.indexOf(DETAIL_SEPARATOR);
             const detailed = separatorAt >= 0;
             group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed);
-            group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute('hidden'));
-            if (!detailed)
-                header.removeAttribute(LABEL_NAME_ATTRIBUTE);
+            group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute("hidden"));
             if (detailed) {
                 const label = headerText.slice(0, separatorAt);
-                // 每个扫描帧都会走到这里，值没变就不要写：同值写入也会让 ::after 的 content 重新解析
+                // 这条路径每个扫描帧都会走到，值没变就别写：同值写入也要让 ::after 的 content 重新解析一遍。
+                // 两个属性各守各的，非实时细节那一支只摘 LABEL_NAME_ATTRIBUTE，两者可能一有一无
                 if (header.getAttribute(LABEL_ATTRIBUTE) !== label)
                     header.setAttribute(LABEL_ATTRIBUTE, label);
                 if (header.getAttribute(LABEL_NAME_ATTRIBUTE) !== label)
                     header.setAttribute(LABEL_NAME_ATTRIBUTE, label);
                 const spread = `${label.length * SHIMMER_PIXELS_PER_CHARACTER}px`;
+                // 同上的道理，值没变就别再写一次
                 if (header.style.getPropertyValue(LABEL_SPREAD_PROPERTY) !== spread) {
                     header.style.setProperty(LABEL_SPREAD_PROPERTY, spread);
                 }
             }
-            // 这个阶段里读者已经决定过这个组的开合，别碰它。
-            if (touchedIn.get(group) === phase)
+            else
+                header.removeAttribute(LABEL_NAME_ATTRIBUTE);
+            // 这个阶段里读者已经决定过这个组的开合，别碰它
+            if (touchedPhaseMap.get(group) === phase)
                 continue;
-            if (body.hasAttribute('hidden') === (phase === CLOSED))
+            if (body.hasAttribute("hidden") === (phase === CLOSED))
                 continue;
-            // 一次没引起变化的点击，下一次也不会引起变化。
-            if (attemptedIn.get(group) === phase)
+            // 一次没引起变化的点击，下一次也不会引起变化
+            if (attemptedPhaseMap.get(group) === phase)
                 continue;
-            attemptedIn.set(group, phase);
+            attemptedPhaseMap.set(group, phase);
             // dsh 的组头 onClick 里有 focus()，那是给真实点击准备的。程序化点击不该把焦点从读者手里拿走，
-            // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab。
+            // 否则浏览器会给刚开合的组头画一圈焦点框，看着像有人按了 Tab
             const previousFocus = document.activeElement;
-            // 同一个 focus() 还会把组头滚进视口，而那次 scroll 在 dsh 眼里和读者自己滚一下没有区别：跟随
-            // 被挂起 500ms 采样（pending），这期间 onResize 直接返回不跟随，等它终于跑时内容已经长出去一截，
-            // nearBottom 判否，跟随就此关掉——而读者一下都没碰过键鼠。所以这一段结束后把滚动位置放回去。
+            // 同一个 focus() 还会把组头滚进视口，而那次 scroll 在 dsh 眼里和读者自己滚一下没有区别：跟随被挂起
+            // 五百毫秒采样，这期间 onResize 直接返回不跟随，等它终于跑时内容已经长出去一截，nearBottom 判否，
+            // 跟随就此关掉，而读者一下都没碰过键鼠
             const scroller = header.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
             const scrollTop = scroller === null ? null : scroller.scrollTop;
-            // 贴底与否要在点击之前量：这一下点击自己就会改布局。
+            // 贴底与否要在点击之前量：这一下点击自己就会改布局
             const wasAtBottom = scroller !== null
                 && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= dom_contract_1.FOLLOW_THRESHOLD_PX;
-            // 这一次点击是本模块派的：折叠守卫与思考行那一侧都不该把它当成读者的意图。
+            // 这一次点击是本模块派的，折叠守卫与思考行那一侧都不该把它当成读者的意图
             (0, programmatic_toggle_1.beginProgrammaticToggle)();
             try {
                 header.click();
@@ -4550,23 +4130,19 @@ function installProcessFold(deferCollapse) {
             finally {
                 (0, programmatic_toggle_1.endProgrammaticToggle)();
             }
-            // 位置要放回去，但不能把贴底的读者放到离底一截的地方：这一次写同样是一次滚动，会被 dsh
-            // 认成读者移动，跟随就此关掉。贴底时直接钉到底。
+            // 位置要放回去，但不能把贴底的读者放到离底一截的地方：这一次写同样是一次滚动，会被 dsh 认成读者移动。
+            // 贴底时直接钉到底
             if (scroller !== null && scrollTop !== null && scroller.scrollTop !== scrollTop) {
                 scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : scrollTop;
             }
-            // 读者本来就停在组头上时，这一句会把焦点放回原处，等于什么都没发生。
+            // 读者本来就停在组头上时，这一句把焦点放回原处，等于什么都没发生
             if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
                 previousFocus.focus({ preventScroll: true });
             if (document.activeElement === header)
                 header.blur();
         }
     };
-    /** 装好之后先全量收敛一遍：页面里躺着的那些组也要归位。 */
-    const syncEveryGroup = () => {
-        syncGroups(document.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR));
-    };
-    /** 记住是读者、而不是本模块刚刚决定了一个组的开合。 */
+    // 记住是读者、而不是本模块刚刚决定了一个组的开合
     const rememberReaderTouched = (event) => {
         if ((0, programmatic_toggle_1.isProgrammaticToggle)())
             return;
@@ -4577,23 +4153,19 @@ function installProcessFold(deferCollapse) {
         if (group === null)
             return;
         const header = group.querySelector(HEADER_SELECTOR);
-        touchedIn.set(group, header !== null && header.querySelector(dom_contract_1.SHIMMER_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
+        touchedPhaseMap.set(group, header !== null && header.querySelector(dom_contract_1.SHIMMER_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
     };
-    /**
-     * 这一批变化涉及哪些组。
-     *
-     * 从 records 里拿引用，而不是回头去查文档——理由同 `reasoning-fold`。组头里的实时细节是随流式
-     * 逐字变的，所以 characterData 也在观察范围里：不盯着它，组头那半截标签就会停在旧值上。
-     */
+    // 这一批变化涉及哪些组。从 records 里拿引用、不回头查文档，理由同 reasoning-fold：
+    // 组头里的实时细节随流式逐字变，所以 characterData 也在观察范围里，不盯着它，组头那半截标签就会停在旧值上
     const touchedGroups = new Set();
-    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
+    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
     const observer = new MutationObserver((records) => {
-        const known = touchedGroups.size;
+        const knownCount = touchedGroups.size;
         for (const record of records) {
-            // 与思考行那份同一个套路，多一条：`characterData` 的 target 是文本节点，得先退到它的父元素上。
+            // 与思考行那份同一套做法，多一条：characterData 的 target 是文本节点，得先退到它的父元素上
             const target = record.target;
-            const element = target instanceof Element ? target : target.parentElement;
-            const group = element?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
+            const changedElement = target instanceof Element ? target : target.parentElement;
+            const group = changedElement?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
             if (group !== null)
                 touchedGroups.add(group);
             for (const node of record.addedNodes) {
@@ -4601,38 +4173,39 @@ function installProcessFold(deferCollapse) {
                     continue;
                 if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
                     touchedGroups.add(node);
-                for (const found of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
-                    touchedGroups.add(found);
+                for (const foundGroup of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
+                    touchedGroups.add(foundGroup);
             }
         }
-        // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧。
-        if (touchedGroups.size === known)
+        // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧
+        if (touchedGroups.size === knownCount)
             return;
         if (scanQueued)
             return;
         scanQueued = true;
         requestAnimationFrame(() => {
             scanQueued = false;
-            const groups = [...touchedGroups];
+            const groupList = [...touchedGroups];
             touchedGroups.clear();
-            syncGroups(groups);
+            syncGroups(groupList);
         });
     });
     observer.observe(document.body ?? document.documentElement, {
         subtree: true,
         childList: true,
         attributes: true,
-        // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍。
-        attributeFilter: ['data-shimmer', 'hidden', dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE, 'data-chat-motion'],
+        // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍
+        attributeFilter: ["data-shimmer", "hidden", dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE, "data-chat-motion"],
         characterData: true,
     });
-    document.addEventListener('click', rememberReaderTouched, true);
-    document.addEventListener('keydown', rememberReaderTouched, true);
-    syncEveryGroup();
+    document.addEventListener("click", rememberReaderTouched, true);
+    document.addEventListener("keydown", rememberReaderTouched, true);
+    // 装好之后先全量收敛一遍：页面里躺着的那些组也要归位
+    syncGroups(document.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR));
     return () => {
         observer.disconnect();
-        document.removeEventListener('click', rememberReaderTouched, true);
-        document.removeEventListener('keydown', rememberReaderTouched, true);
+        document.removeEventListener("click", rememberReaderTouched, true);
+        document.removeEventListener("keydown", rememberReaderTouched, true);
     };
 }
     };
@@ -4640,52 +4213,50 @@ function installProcessFold(deferCollapse) {
     __registry["chat/fold/reasoning-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
- * 思考进行时自动展开思考行，思考结束后再收起。
+ * 模型还在思考时让思考行开着，思考一停就收回去。dsh 发出来的思考行一律是收起的（ReasoningRow 用的是
+ * useState(false)），也没有任何设置项暴露它，所以只能去点它自己的展开控件
  *
- * 行仍归读者所有：读者在某阶段碰过它，本阶段内不再自动切换；阶段变化后规则重新接管。
- * 只认 data-variant、data-state 与 data-expanded 这些语义属性。
+ * 认的都是语义属性：data-variant="think"、data-state（思考中是 running，停稳是 ok）和 data-expanded，
+ * 不碰那些跟着 dsh 每次构建变化的带 hash 类名
+ *
+ * 读者在某个阶段碰过的行，这个阶段之内不再动它；阶段一变（思考结束）该收还是收
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installReasoningFold = installReasoningFold;
 const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
-/**
- * 给整页安装思考行展开。
- */
+// 给整页安装思考行展开；返回值是卸载函数
 function installReasoningFold() {
-    /** 读者最后一次碰某一行时，那一行处在哪个阶段。 */
-    const touchedIn = new WeakMap();
-    /** 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试。 */
-    const attemptedIn = new WeakMap();
-    /** 是否已经排了一次扫描。 */
+    // 读者最后一次碰某一行时，那一行处在哪个阶段
+    const touchedPhaseMap = new WeakMap();
+    // 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
+    const attemptedPhaseMap = new WeakMap();
+    // 是否已经排了一次扫描
     let scanQueued = false;
-    /**
-     * 把给到的这些行拉到它们当前阶段该有的样子。
-     *
-     * 控件是哪种，取决于 dsh 怎么配置这个展开区：`expandOnRowClick` 为真时整行就是按钮，否则是
-     * 左侧那个 chevron。「第一个像按钮的后代」这一条同时覆盖两种，而不必依赖这一次构建选了哪一种。
-     */
+    // 把给到的这些行拉到它们当前阶段该有的样子
     const syncRows = (rows) => {
         for (const row of rows) {
-            // 收集与收敛之间隔着一帧，这中间行可能已经被摘掉——对不在文档里的元素点一下没有意义。
+            // 收集与收敛之间隔着一帧，这中间行可能已经被摘掉，对不在文档里的元素点一下没有意义
             if (!row.isConnected)
                 continue;
-            const phase = row.getAttribute('data-state') ?? '';
-            if (phase === '')
+            const phase = row.getAttribute("data-state") ?? "";
+            if (phase === "")
                 continue;
-            // 这个阶段里读者已经决定过这一行的状态，别碰它。
-            if (touchedIn.get(row) === phase)
+            // 这个阶段里读者已经决定过这一行的状态，别碰它
+            if (touchedPhaseMap.get(row) === phase)
                 continue;
-            if (row.hasAttribute('data-expanded') === (phase === dom_contract_1.RUNNING_STATE))
+            if (row.hasAttribute("data-expanded") === (phase === dom_contract_1.RUNNING_STATE))
                 continue;
-            // 一次没引起变化的点击，下一次也不会引起变化。
-            if (attemptedIn.get(row) === phase)
+            // 一次没引起变化的点击，下一次也不会引起变化
+            if (attemptedPhaseMap.get(row) === phase)
                 continue;
-            attemptedIn.set(row, phase);
-            const control = row.querySelector('[role="button"], button');
+            attemptedPhaseMap.set(row, phase);
+            // 控件是哪种取决于 dsh 怎么配置这个展开区：expandOnRowClick 为真时整行就是按钮，否则是左侧那个
+            // chevron。「第一个像按钮的后代」同时覆盖两种，不必依赖这一次构建选了哪一种
+            const control = row.querySelector(`[role="button"], button`);
             if (!(control instanceof HTMLElement))
                 continue;
-            // 下面那个捕获阶段的监听同样会看到这次点击，所以这一段要声明出去：那不是读者要求的。
+            // 下面那个捕获阶段的监听同样会看到这次点击，所以这一段要声明出去：那不是读者要求的
             (0, programmatic_toggle_1.beginProgrammaticToggle)();
             try {
                 control.click();
@@ -4695,11 +4266,7 @@ function installReasoningFold() {
             }
         }
     };
-    /** 装好之后先全量收敛一遍：页面里躺着的那些行也要归位。 */
-    const syncEveryRow = () => {
-        syncRows(document.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR));
-    };
-    /** 记住是读者、而不是本模块刚刚决定了一行的状态。 */
+    // 记住是读者、而不是本模块刚刚决定了一行的状态
     const rememberReaderTouched = (event) => {
         if ((0, programmatic_toggle_1.isProgrammaticToggle)())
             return;
@@ -4709,22 +4276,17 @@ function installReasoningFold() {
         const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
         if (row === null)
             return;
-        touchedIn.set(row, row.getAttribute('data-state') ?? '');
+        touchedPhaseMap.set(row, row.getAttribute("data-state") ?? "");
     };
-    /**
-     * 这一批变化涉及哪些行。
-     *
-     * 从 records 里拿引用，而不是回头去查文档：`record.target` 是浏览器直接递过来的元素，顺着它
-     * 往上找一行只是几层祖先的事；`querySelectorAll` 则要遍历整篇文档——同样的活差着一个量级。
-     */
+    // 这一批变化涉及哪些行。从 records 里拿引用、不回头查文档：record.target 是浏览器直接递过来的元素，
+    // 顺着它往上找一行只是几层祖先的事，而 querySelectorAll 要遍历整篇文档，同样的活差着一个量级
     const touchedRows = new Set();
-    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次。
+    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
     const observer = new MutationObserver((records) => {
-        const known = touchedRows.size;
+        const knownCount = touchedRows.size;
         for (const record of records) {
-            // 两条路都要走。`record.target` 是变化发生的那个节点——属性变化时它就是那一行或行内的某个
-            // 元素，子节点增删时它是父容器，两条都能顺着祖先链找到行；`addedNodes` 则覆盖「新挂上来一行」，
-            // 那时行自己就在新增的子树里。
+            // 两条路都要走：属性变化时 record.target 就是那一行或行内的某个元素，子节点增删时它是父容器，
+            // 两条都能顺着祖先链找到行；addedNodes 则覆盖「新挂上来一行」，那时行自己就在新增的子树里
             const target = record.target;
             if (target instanceof Element) {
                 const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
@@ -4736,2138 +4298,38 @@ function installReasoningFold() {
                     continue;
                 if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
                     touchedRows.add(node);
-                for (const row of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
-                    touchedRows.add(row);
+                for (const foundRow of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
+                    touchedRows.add(foundRow);
             }
         }
-        // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧。
-        if (touchedRows.size === known)
+        // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧
+        if (touchedRows.size === knownCount)
             return;
         if (scanQueued)
             return;
         scanQueued = true;
         requestAnimationFrame(() => {
             scanQueued = false;
-            const rows = [...touchedRows];
+            const rowList = [...touchedRows];
             touchedRows.clear();
-            syncRows(rows);
+            syncRows(rowList);
         });
     });
     observer.observe(document.body ?? document.documentElement, {
         subtree: true,
         childList: true,
         attributes: true,
-        attributeFilter: ['data-state', 'data-expanded'],
+        attributeFilter: ["data-state", "data-expanded"],
     });
-    document.addEventListener('click', rememberReaderTouched, true);
-    document.addEventListener('keydown', rememberReaderTouched, true);
-    syncEveryRow();
+    document.addEventListener("click", rememberReaderTouched, true);
+    document.addEventListener("keydown", rememberReaderTouched, true);
+    // 装好之后先全量收敛一遍：页面里躺着的那些行也要归位
+    syncRows(document.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR));
     return () => {
         observer.disconnect();
-        document.removeEventListener('click', rememberReaderTouched, true);
-        document.removeEventListener('keydown', rememberReaderTouched, true);
+        document.removeEventListener("click", rememberReaderTouched, true);
+        document.removeEventListener("keydown", rememberReaderTouched, true);
     };
-}
-    };
-
-    __registry["chat/send-flight/send-flight.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FLYING_ATTRIBUTE = void 0;
-exports.installSendFlight = installSendFlight;
-/**
- * 发送气泡的起飞与落地。
- *
- * 提交时抓下输入卡片，等 dsh 的即发即显行出现后挂上替身并藏起真实行；落定时摘属性、移除替身。
- * 起点抓不到、起终点跨屏或用户关闭开关时一次都不动手。
- *
- * 真实行必须在本帧绘制前藏住；后台标签页 rAF 会停，所以另设兜底定时器保证消息一定被放出来。
- */
-const dom_contract_1 = require("../../dom-contract");
-const send_reveal_1 = require("./send-reveal");
-const send_morph_1 = require("./send-morph");
-/** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
-exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
-/** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
-const ORIGIN_TTL_MS = 1500;
-/**
- * 位移上限的兜底值：一屏比它窄时按它算（见 `sameScreen`）。
- *
- * 聊天列的横向距离天生接近 900px，纵向又随窗口高度增长，不能用一个固定的像素上限判断要不要飞。
- */
-const FLIGHT_LIMIT_FLOOR_PX = 900;
-/** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
-const RESCUE_MARGIN_MS = 400;
-/**
- * 起播前先等几帧，让新子树完成第一次 raster。
- *
- * 否则合成器时间轴照走、屏幕还没有像素，读者第一眼就会看到替身已经在半路。预热期间替身停在
- * 与真卡片重合的起手格，看不出停顿。
- */
-const WARMUP_FRAMES = 2;
-/** 预热折算给让位的时长（毫秒）。按六十帧算，误差不到一帧，而让位前五十毫秒本来就不动。 */
-const WARMUP_MS = WARMUP_FRAMES * (1000 / 60);
-/** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
-const ECHO_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' ' + dom_contract_1.SUBMISSION_ECHO_SELECTOR;
-/** 已经落定的用户行。它和回显行是同一个组件的两副面孔，结构差一层。 */
-const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]';
-/** 飞行期间要认的两种行，合成一句查：正式的用户行，以及它前面那条回显。 */
-const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
-/**
- * 给整页装上发送气泡的起飞。
- */
-function installSendFlight(readEnabled) {
-    // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-        return () => {
-        };
-    /** 最近一次抓到的草稿起点。 */
-    let origin = null;
-    /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
-    const handled = new WeakSet();
-    /** 正在飞的那一段。读者连发时，最后一段说了算。 */
-    let flight = null;
-    /** 定时器兜底。 */
-    let rescue = 0;
-    for (const echo of document.querySelectorAll(ECHO_SELECTOR))
-        handled.add(echo);
-    /**
-     * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
-     *
-     * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
-     * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
-     */
-    const rowWatcher = new MutationObserver((records) => {
-        const activeFlight = flight;
-        if (activeFlight === null || !touchesUserRow(records))
-            return;
-        const row = currentRow(activeFlight.previous);
-        if (row === null || row === activeFlight.hidden)
-            return;
-        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
-        row.setAttribute(exports.FLYING_ATTRIBUTE, '');
-        activeFlight.hidden = row;
-        activeFlight.bubble = findBubble(row);
-        followTarget(activeFlight);
-    });
-    /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
-    const settle = () => {
-        const activeFlight = flight;
-        if (activeFlight === null)
-            return;
-        flight = null;
-        rowWatcher.disconnect();
-        window.clearTimeout(rescue);
-        rescue = 0;
-        // 让位早在落定前就收完了（补偿此刻本来就是 0）：这一步只是摘监听与行内属性。
-        activeFlight.reveal?.finish();
-        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
-        // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
-        // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
-        // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
-        // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
-        activeFlight.morph.wrapper.remove();
-        for (const animation of activeFlight.morph.animations)
-            animation.cancel();
-    };
-    /**
-     * 帧里四件事：吸收新的落点补偿、认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。
-     * 认行交给上面那个 observer——它不是每帧都有新答案的事。
-     *
-     * **位移与形状都不在这里写**：两条关键帧同一条时间轴，dsh 占住主线程时它们照样一起走，右边缘
-     * 始终在起点和终点之间。若把形状留在主线程，卡顿时未收窄的卡片会先飞到终点。
-     *
-     * 帧里剩下的三件都是主线程的事：`reveal` 的平台段是一次样式写（释放段交给合成器）、
-     * `compact` 是一次性的样式写、`followTarget` 读的是当前布局。
-     */
-    const tick = () => {
-        const activeFlight = flight;
-        if (activeFlight === null)
-            return;
-        // 起播后第一帧核对一次时间轴：预热之后才起跑，这一格还没画出来（见 `Morph.alignStart`）。
-        activeFlight.morph.alignStart();
-        const u = activeFlight.morph.progress();
-        if (u >= 1) {
-            settle();
-            return;
-        }
-        // 先更新落点补偿，再量终点的移动：同一帧里替身拿到的就是补偿后的位置。
-        activeFlight.reveal?.apply();
-        activeFlight.morph.compact(u);
-        followTarget(activeFlight);
-        requestAnimationFrame(tick);
-    };
-    /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
-    const startFlight = (echo, draft) => {
-        // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
-        // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
-        settle();
-        const bubble = findBubble(echo);
-        if (bubble === null)
-            return;
-        const box = bubble.getBoundingClientRect();
-        const card = draft.snapshot.box;
-        const onSameScreen = sameScreen(card.left, box.left, window.innerWidth)
-            && sameScreen(card.top, box.top, window.innerHeight);
-        if (!onSameScreen)
-            return;
-        const morph = (0, send_morph_1.startMorph)(draft.snapshot, bubble, box);
-        if (morph === null)
-            return;
-        echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
-        flight = {
-            morph,
-            targetAt: { left: box.left, top: box.top },
-            shiftedX: 0,
-            shiftedY: 0,
-            previous: lastUserRow(),
-            hidden: echo,
-            bubble,
-            reveal: null,
-        };
-        // 补偿必须等 `startMorph` 量完（形变要读一堆几何）再施加，所以放在这里。
-        // 让位的时间轴跟着预热一起推后：气泡晚几毫秒起跑，内容也不能先让开（见 `WARMUP_MS`）。
-        flight.reveal = draft.revealAnchor === null
-            ? null
-            : (0, send_reveal_1.startReveal)(draft.revealAnchor, (0, send_morph_1.timeAtRise)(1), WARMUP_MS);
-        rowWatcher.observe(document.body, { childList: true, subtree: true });
-        rescue = window.setTimeout(settle, send_morph_1.FLIGHT_MS + RESCUE_MARGIN_MS + WARMUP_MS);
-        requestAnimationFrame(tick);
-        // 预热：替身先在屏幕上静止这两帧，等它被光栅化过再放开动画。中途连发时 `flight` 已经换成新的
-        // 一段，旧的那一轮在这里自然停掉（新的一段自己有自己的预热）。
-        const warmUp = (left) => {
-            if (flight?.morph !== morph)
-                return;
-            if (left > 0) {
-                requestAnimationFrame(() => warmUp(left - 1));
-                return;
-            }
-            morph.play();
-        };
-        requestAnimationFrame(() => warmUp(WARMUP_FRAMES));
-    };
-    /**
-     * 等这一次提交的回显。
-     *
-     * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
-     */
-    const echoWatcher = new MutationObserver(() => {
-        const draft = origin;
-        if (draft === null) {
-            echoWatcher.disconnect();
-            return;
-        }
-        if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
-            origin = null;
-            echoWatcher.disconnect();
-            return;
-        }
-        const echo = takeFreshEcho(handled);
-        if (echo === null)
-            return;
-        origin = null;
-        echoWatcher.disconnect();
-        startFlight(echo, draft);
-    });
-    /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
-    const captureOrigin = () => {
-        if (!readEnabled())
-            return;
-        const input = document.querySelector(dom_contract_1.COMPOSER_INPUT_SELECTOR);
-        if (!(input instanceof HTMLElement))
-            return;
-        const card = input.closest(dom_contract_1.COMPOSER_CARD_SELECTOR);
-        if (!(card instanceof HTMLElement))
-            return;
-        // 空草稿不会提交出一条消息；量它只是白花一次克隆。
-        if ((input.textContent ?? '').trim() === '')
-            return;
-        const snapshot = (0, send_morph_1.snapshotComposer)(input, card);
-        if (snapshot === null)
-            return;
-        origin = {
-            capturedAt: performance.now(),
-            snapshot,
-            revealAnchor: (0, send_reveal_1.captureRevealAnchor)(card),
-        };
-        echoWatcher.observe(document.body, { childList: true, subtree: true });
-    };
-    /**
-     * 提交的两条手动路径：回车，和点输入卡片里的按钮。两个都早于 React 清空草稿，所以起点量得到。
-     * 点了没提交也不亏——没有回显就没有动画。
-     */
-    const onKeyDown = (event) => {
-        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)
-            return;
-        if (event.isComposing)
-            return;
-        captureOrigin();
-    };
-    const onClick = (event) => {
-        if (!(event.target instanceof Element))
-            return;
-        if (event.target.closest(dom_contract_1.COMPOSER_CARD_SELECTOR) === null)
-            return;
-        captureOrigin();
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    document.addEventListener('click', onClick, true);
-    return () => {
-        document.removeEventListener('keydown', onKeyDown, true);
-        document.removeEventListener('click', onClick, true);
-        echoWatcher.disconnect();
-        rowWatcher.disconnect();
-        origin = null;
-        settle();
-    };
-}
-/**
- * 把终点动了多少补到替身的最外层上。
- *
- * 这是每帧唯一的 JS：一次矩形读、至多一次样式写。飞行期间终点通常只动几十像素（提交后 dsh 自己会
- * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
- *
- * **让位的补偿要减掉。** 真实行的 rect 带着 `[data-chat-flow]` 的 `translateY`；替身的落点锁在
- * 「最终位置」，不跟着补偿往下走——否则它前半段会落在输入框下方（提交前的那一格），读者看到的
- * 就是气泡生成在聊天框下面。
- */
-function followTarget(value) {
-    const bubble = value.bubble;
-    if (bubble === null)
-        return;
-    const box = bubble.getBoundingClientRect();
-    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
-    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
-    if (box.width === 0)
-        return;
-    const shiftX = box.left - value.targetAt.left;
-    const shiftY = box.top - value.targetAt.top - (value.reveal?.offset() ?? 0);
-    if (shiftX === value.shiftedX && shiftY === value.shiftedY)
-        return;
-    value.shiftedX = shiftX;
-    value.shiftedY = shiftY;
-    value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)';
-}
-/**
- * 取一条还没认过的回显行。
- *
- * 一批里只认最新的一条（`querySelectorAll` 是文档序），其余的也一并记下——否则它们会在后面的帧
- * 里被当成新的，跟着再飞一次。
- */
-function takeFreshEcho(handled) {
-    const fresh = [];
-    for (const echo of document.querySelectorAll(ECHO_SELECTOR)) {
-        if (!handled.has(echo))
-            fresh.push(echo);
-    }
-    if (fresh.length === 0)
-        return null;
-    for (const echo of fresh)
-        handled.add(echo);
-    const latest = fresh.at(-1);
-    return latest instanceof HTMLElement ? latest : null;
-}
-/** 此刻该藏的那一条：回显还在就是它，回显被换掉之后就是正式那一行。 */
-function currentRow(previous) {
-    const echo = document.querySelector(ECHO_SELECTOR);
-    if (echo instanceof HTMLElement && echo !== previous)
-        return echo;
-    const row = lastUserRow();
-    return row === previous ? null : row;
-}
-/** 聊天流里最后一条用户行。 */
-function lastUserRow() {
-    const rows = document.querySelectorAll(USER_ROW_SELECTOR);
-    const last = rows.item(rows.length - 1);
-    return last instanceof HTMLElement ? last : null;
-}
-/**
- * 一行用户消息里真正画了底色的那一个元素，也就是气泡。
- *
- * 不能认死层数：回显行自己就是气泡那一行（`data-submission-echo` 挂在 `.userRow` 上），而正式行
- * 外面还套着一层流块容器——两边的深度差一层。所以从这一行往下按层找，谁先画了底色就是谁；附件行
- * 与引用摘要都没有底色，会被跳过。
- */
-function findBubble(row) {
-    const queue = Array.from(row.children);
-    while (queue.length > 0) {
-        const node = queue.shift();
-        if (node === undefined)
-            break;
-        if (node instanceof HTMLElement && (0, send_morph_1.alphaOf)(getComputedStyle(node).backgroundColor) > 0)
-            return node;
-        for (const child of node.children)
-            queue.push(child);
-    }
-    return null;
-}
-/**
- * 这一批 DOM 变化里有没有碰用户行或回显行。
- *
- * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
- * 就是几千个节点。
- */
-function touchesUserRow(records) {
-    for (const record of records) {
-        for (const node of record.addedNodes) {
-            if (isRowNode(node))
-                return true;
-        }
-        for (const node of record.removedNodes) {
-            if (isRowNode(node))
-                return true;
-        }
-    }
-    return false;
-}
-/** 一个节点自己、或者它带进来的那棵子树里，有没有用户行或回显行。 */
-function isRowNode(node) {
-    return node instanceof HTMLElement
-        && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null);
-}
-/**
- * 起终点还在同一屏里吗。
- *
- * 一屏的尺度现读视口的那一维（兜底见 `FLIGHT_LIMIT_FLOOR_PX`）：两个盒子还落在同一屏里，这段飞行
- * 就看得见；有一头已经飞出屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
- */
-function sameScreen(start, end, viewportExtent) {
-    return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent);
-}
-    };
-
-    __registry["chat/send-flight/send-reveal.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.captureRevealAnchor = captureRevealAnchor;
-exports.startReveal = startReveal;
-/**
- * 提交后的落点让位：先在聊天列上冻结视觉位移，再让补偿随气泡上升的同一段弹簧释放。
- *
- * 只改聊天列的 transform，不碰 scrollTop，否则 dsh 会把补偿认成读者滚动。
- * 释放动画在起飞时一次建好；读者一接管滚动就立即收尾。
- */
-const dom_contract_1 = require("../../dom-contract");
-const reader_intent_1 = require("../follow/reader-intent");
-const send_morph_1 = require("./send-morph");
-/**
- * 起飞后多久开始释放让位，占整段飞行的比例。0.01 约等于一个平台。
- *
- * 平台本身不吸收滚动；它把释放和 dsh 的第二次自动滚动错开。位移不是匀速的，不能按时间来取
- * 「一半」，否则气泡视觉上快落定时聊天区才开始动。
- */
-const REVEAL_HOLD = 0.01;
-/**
- * 让位收完时刻的兜底值，占整段飞行的比例。
- *
- * 调用方通常传气泡第一次到位的那一刻；不能拖到整段末尾，否则气泡已经停稳，内容还在动。
- */
-const REVEAL_DONE = 0.3;
-/** 补偿的硬上限（像素）：多行长消息、或读者离底不远但一次滚很多时，落点会被推得太深。 */
-const MAX_REVEAL_SHIFT_PX = 200;
-/** 列比这还高就不动它：一个超大的合成层不值得为一次 300 ms 的让位买单。 */
-const MAX_REVEAL_COLUMN_PX = 20000;
-/**
- * 让位弹簧的阻尼比。曲线与气泡纵向那条同源，窗口收在气泡第一次到位时，所以这一段没有过冲。
- *
- * 0.7 在让位行程上留下约五到十像素的回弹；取 0.8 会更贴气泡，但收尾几乎看不见。
- */
-const REVEAL_DAMPING = 0.7;
-/**
- * 弹簧采样的格数。续接时窗口会变，但格数固定，形状才稳定；过冲那一格另补。
- */
-const REVEAL_SAMPLES = 24;
-/** 读者接管滚动的意图事件；与 dsh 自己的 `READING_INTENTS` 是同一组。 */
-const INTENT_TYPES = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
-/**
- * 捕获阶段读一次滚动几何与阶段。读不到返回 null——不动手永远安全。
- */
-function captureRevealAnchor(card) {
-    const scroller = card.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-    if (!(scroller instanceof HTMLElement))
-        return null;
-    const phaseRoot = scroller.closest(dom_contract_1.CONTENT_PHASE_SELECTOR);
-    if (!(phaseRoot instanceof HTMLElement))
-        return null;
-    const column = scroller.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
-    if (!(column instanceof HTMLElement))
-        return null;
-    const floor = scrollFloor(scroller);
-    return {
-        scroller,
-        scrollTop: scroller.scrollTop,
-        floor,
-        atBottom: floor - scroller.scrollTop <= dom_contract_1.FOLLOW_THRESHOLD_PX,
-        active: phaseRoot.getAttribute(dom_contract_1.CONTENT_PHASE_ATTRIBUTE) === dom_contract_1.ACTIVE_CONTENT_PHASE,
-        calm: !column.hasAttribute(dom_contract_1.MOTION_ATTRIBUTE),
-    };
-}
-/**
- * 起飞那一刻开始冻结落点。必须在 `startMorph` 之后调：形变要量一大堆几何，先加补偿会污染它。
- */
-function startReveal(anchor, until = REVEAL_DONE, delayMs = 0) {
-    if (!anchor.active || !anchor.atBottom || !anchor.calm)
-        return null;
-    const scroller = anchor.scroller;
-    if (!scroller.isConnected)
-        return null;
-    const column = scroller.querySelector(dom_contract_1.CHAT_FLOW_SELECTOR);
-    if (!(column instanceof HTMLElement))
-        return null;
-    // 回显出现的那一刻 dsh 已经滚过一次；之后它还会再滚（见模块头）。这里只要求这次跟随即时到位。
-    const shift = scroller.scrollTop - anchor.scrollTop;
-    if (shift <= 0 || shift > MAX_REVEAL_SHIFT_PX)
-        return null;
-    if (Math.abs(scroller.scrollTop - scrollFloor(scroller)) > 1)
-        return null;
-    if (column.getBoundingClientRect().height > MAX_REVEAL_COLUMN_PX)
-        return null;
-    const frozenTop = anchor.scrollTop;
-    // 起点整体推后 `delayMs`：那是气泡预热的那几毫秒。之后每处 `elapsed` 都是负数，剩下的时长自己
-    // 会长出来——平台仍收在气泡起跑后 3 ms，释放仍收在气泡落到落点那一刻。
-    const startedAt = performance.now() + delayMs;
-    /** 收完的时刻（占飞行的比例）：不能早于平台末尾，否则让位短到看不见。 */
-    const doneAt = Number.isFinite(until) && until > REVEAL_HOLD ? Math.min(1, until) : REVEAL_DONE;
-    let lastShift = Number.NaN;
-    let currentOffset = 0;
-    let release = null;
-    let done = false;
-    /** 平台段：把此刻的滚动量写进行内 transform；量没变就不写。 */
-    const hold = (shiftNow) => {
-        currentOffset = shiftNow;
-        if (shiftNow === lastShift)
-            return;
-        lastShift = shiftNow;
-        column.style.transform = shiftNow === 0 ? '' : 'translateY(' + shiftNow + 'px)';
-    };
-    /** 把补偿归零、摘掉监听与动画；`done` 让落定与读者接管两条路都能安全地调。 */
-    const finish = () => {
-        if (done)
-            return;
-        done = true;
-        currentOffset = 0;
-        for (const type of INTENT_TYPES)
-            document.removeEventListener(type, onIntent, true);
-        scroller.removeEventListener('scroll', onScroll);
-        column.style.removeProperty('transform');
-        column.style.removeProperty('will-change');
-        release?.cancel();
-        release = null;
-    };
-    /**
-     * 释放：从 `from` 起一段合成器动画，在飞行剩下的时间里收尾。
-     *
-     * 还没到平台末尾（`REVEAL_HOLD`）时先把平台补进去再释放——**第一次**建出来的动画因此覆盖
-     * 整段（平台 + 释放），主线程被长任务吞掉也照原样播完，不必等它到点再回来动手。
-     * 释放途中 dsh 又滚了一截也走这里：从**此刻真正画着的那一格**续一段（见 `apply`），
-     * 所以每次续接都从画面上那个位置出发，不跳。
-     */
-    const releaseFrom = (from) => {
-        const elapsed = performance.now() - startedAt;
-        const remaining = doneAt * send_morph_1.FLIGHT_MS - elapsed;
-        release?.cancel();
-        release = null;
-        if (from <= 0 || remaining <= 0) {
-            finish();
-            return;
-        }
-        currentOffset = from;
-        column.style.transform = 'translateY(' + from + 'px)';
-        const holdLeft = REVEAL_HOLD * send_morph_1.FLIGHT_MS - elapsed;
-        const holdOffset = holdLeft > 0 ? Math.min(1, holdLeft / remaining) : 0;
-        release = column.animate(springFrames(from, holdOffset, elapsed / send_morph_1.FLIGHT_MS, doneAt), { duration: Math.max(30, remaining), fill: 'both' });
-        release.onfinish = finish;
-    };
-    /**
-     * 每帧读一次。推进由动画自己在合成器上走，这里只做两件事：吸收新滚进来的那一截，
-     * 把当前补偿报给替身（见 `offset`）。
-     */
-    const apply = () => {
-        if (done)
-            return;
-        const shiftNow = scroller.scrollTop - frozenTop;
-        // 补偿越积越多，落点会被推得太深；这种会话本来就不该冻。
-        if (shiftNow > MAX_REVEAL_SHIFT_PX) {
-            finish();
-            return;
-        }
-        const sampled = translateYOf(getComputedStyle(column).transform);
-        // dsh 又滚了一截：不压回去的话内容会瞬移一截，替身的落点也跟着跳。
-        if (shiftNow !== lastShift) {
-            const from = sampled + (shiftNow - lastShift);
-            lastShift = shiftNow;
-            releaseFrom(from);
-            return;
-        }
-        currentOffset = sampled;
-    };
-    /** 读者一动就让路：补偿继续挂着，读到的滚动会被它抵消，手感就不跟手了。 */
-    const onIntent = (event) => {
-        if ((0, reader_intent_1.isReaderScrollIntent)(event))
-            finish();
-    };
-    /**
-     * dsh 的滚动落进来时立刻补一次。
-     *
-     * scroll 事件在 rAF 之后、绘制之前派发，所以长任务吞掉一帧时，这一截也不会被画出来。
-     */
-    const onScroll = () => {
-        if (done)
-            return;
-        // 量没变就不用算：释放段里读回动画当前值要一次强制样式计算，不值得每个 scroll 都付。
-        if (scroller.scrollTop - frozenTop === lastShift)
-            return;
-        apply();
-    };
-    column.style.willChange = 'transform';
-    for (const type of INTENT_TYPES)
-        document.addEventListener(type, onIntent, true);
-    scroller.addEventListener('scroll', onScroll, { passive: true });
-    // 平台与释放一开始就交给合成器：主线程卡住也不误点、不跳帧。
-    hold(shift);
-    releaseFrom(shift);
-    return {
-        apply,
-        offset: () => currentOffset,
-        finish,
-    };
-}
-/** 滚动容器此刻还能滚多远。 */
-function scrollFloor(scroller) {
-    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-}
-/**
- * 让位那一段的关键帧：平台 + 一条采样的弹簧。`travel` 是这一段要放掉的补偿量（像素，正值向下）。
- *
- * **每一格 linear，形状全在采样点里**——与气泡那条位移同一种写法（`send-morph.ts` 的 `mover`），
- * 浏览器不再插值第二次。整条关键帧里从头到尾只有 `transform`，这是它整段留在合成器上的前提。
- *
- * `from` 与 `to` 不是时长：进度按**绝对时间**取气泡那条弹簧上的值（见 `atRise`），所以窗口拉长
- * 之后形状不变、只是摊开——两条曲线因此同步，而不是各自压缩到自己的窗口里跑完。续接时窗口从
- * 此刻起算（`from` 就是此刻的进度），曲线接在半路上，不会从起点重跑一遍。
- */
-function springFrames(travel, holdOffset, from, to) {
-    const start = (0, send_morph_1.springProgress)(atRise(from), REVEAL_DAMPING, send_morph_1.RISE_OMEGA);
-    // 这段要放掉的进度：起点已经在弹簧上的某个位置，归一化要从它开始算。
-    const span = (0, send_morph_1.springProgress)(atRise(to), REVEAL_DAMPING, send_morph_1.RISE_OMEGA) - start;
-    if (!(span > 0))
-        return [{ transform: 'translateY(0px)' }];
-    const frames = [{ transform: 'translateY(' + travel + 'px)' }];
-    if (holdOffset > 0)
-        frames.push({ transform: 'translateY(' + travel + 'px)', offset: holdOffset });
-    for (const offset of springOffsets(holdOffset, from, to)) {
-        // 位置与进度必须用同一个时间：offset 是动画内的比例，换算成绝对占比就是 from + offset·(to−from)。
-        const reached = (0, send_morph_1.springProgress)(atRise(from + offset * (to - from)), REVEAL_DAMPING, send_morph_1.RISE_OMEGA);
-        frames.push({
-            transform: 'translateY(' + travel * (1 - (reached - start) / span) + 'px)',
-            offset,
-        });
-    }
-    return frames;
-}
-/**
- * 窗口里的时间占比换算到气泡纵向弹簧上的占比：先扣掉起步那段水平滑行（`RISE_DELAY`）。
- *
- * 让位与气泡读的是同一条曲线的同一段——同一个 `springProgress`、同一个 `RISE_OMEGA`、同一段延迟，
- * 所以任意一帧上两者的进度都是同一个数（阻尼比各一套，那一点差别只落在收尾的过冲上）。
- */
-function atRise(u) {
-    const shifted = (u - send_morph_1.RISE_DELAY) / (1 - send_morph_1.RISE_DELAY);
-    return shifted > 0 ? shifted : 0;
-}
-/**
- * 采样点：平台之后均分 `REVEAL_SAMPLES` 段，再把过冲峰值那一格单独补进去。
- *
- * 返回的就已经是**动画内的位置**，不是「平台之后的进度」：位置与进度共用一个时间刻度，
- * 两套刻度会把曲线画成另一个形状。
- */
-function springOffsets(holdOffset, from, to) {
-    const points = [];
-    for (let index = 1; index <= REVEAL_SAMPLES; index += 1) {
-        points.push(holdOffset + (1 - holdOffset) * (index / REVEAL_SAMPLES));
-    }
-    const peak = peakOffset();
-    // 峰位算在弹簧坐标上；先加回起步延迟换成绝对占比，再折算成这段动画里的位置。落在窗外就不补。
-    const absolute = send_morph_1.RISE_DELAY + (1 - send_morph_1.RISE_DELAY) * peak;
-    const inWindow = to > from ? (absolute - from) / (to - from) : 0;
-    if (peak > 0 && inWindow > holdOffset && inWindow < 1)
-        points.push(inWindow);
-    return points.sort((left, right) => left - right);
-}
-/**
- * 过冲峰值落在弹簧上的哪个位置：`π / ωd`。
- *
- * 少了这一格，采样会把回弹削平——峰只占一小段，二十几格未必落得上它。这是**弹簧坐标**上的位置
- * （已经扣掉起步延迟），换算回窗口由 `springOffsets` 负责。
- */
-function peakOffset() {
-    if (REVEAL_DAMPING >= 1)
-        return 0;
-    const damped = send_morph_1.RISE_OMEGA * Math.sqrt(1 - REVEAL_DAMPING * REVEAL_DAMPING);
-    return damped > 0 ? Math.PI / damped : 0;
-}
-/**
- * 从一条计算出来的 transform 里读纵向平移。
- *
- * 释放段是合成器动画，读不回「这一帧该有的值」以外的中间态；我们只用它把替身锁到最终落点，
- * 几十毫秒的采样误差看不见。
- */
-function translateYOf(transform) {
-    if (transform === 'none' || transform === '')
-        return 0;
-    const matrix = /^matrix\((.+)\)$/.exec(transform);
-    if (matrix !== null) {
-        const values = (matrix[1] ?? '').split(',');
-        const offset = Number(values[5]);
-        return Number.isFinite(offset) ? offset : 0;
-    }
-    const matrix3d = /^matrix3d\((.+)\)$/.exec(transform);
-    if (matrix3d !== null) {
-        const values = (matrix3d[1] ?? '').split(',');
-        const offset = Number(values[13]);
-        return Number.isFinite(offset) ? offset : 0;
-    }
-    return 0;
-}
-    };
-
-    __registry["chat/send-flight/send-morph.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 发送气泡的形变：把输入卡片克隆、预先算好形状与文字层，再交给合成器从卡片收成气泡。
- *
- * 位移、形状、颜色和字层必须共用一条时间轴：任何一条单独跑快，卡顿时右边缘都会越出消息列。
- * clip-path 与 background-color 上不了合成器；形状走壳的 scale，内容用反向 scale 抵消。
- *
- * 替身靠克隆、计算样式、卡片与子树的绘制面、祖先链共同还原；祖先链只抄 class，不抄 data-*。
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.RISE_DELAY = exports.RISE_OMEGA = exports.FLIGHT_MS = void 0;
-exports.snapshotComposer = snapshotComposer;
-exports.pixel = pixel;
-exports.alphaOf = alphaOf;
-exports.startMorph = startMorph;
-exports.timeAtRise = timeAtRise;
-exports.springProgress = springProgress;
-/**
- * 整段飞行时长（毫秒）。只留开关，不开放时长。
- *
- * 改它时同步重算 `文档/业务/发送动效.md` 的一帧对照表；兜底定时器按 FLIGHT_MS + RESCUE_MARGIN_MS 走。
- */
-exports.FLIGHT_MS = 350;
-/**
- * 位移与形变共用的角频率。
- *
- * 两者必须同一条曲线、同一条时间轴，右边缘才始终落在起点和终点之间；单独调快位移会让未收窄的
- * 卡片越出消息列。取 7 是为了压住首帧位移，同时避免形变收尾时出现可见顿挫。
- */
-const ACROSS_OMEGA = 7;
-/**
- * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
- * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
- */
-const RISE_DAMPING = 0.8;
-/**
- * 纵向弹簧的角频率。落点让位复用它，只另配阻尼比和时间窗。
- */
-exports.RISE_OMEGA = 7.5;
-/**
- * 纵向起步的延迟，占整段的比例。
- *
- * 延迟段只横移、不上升，接缝处弹簧速度为零；落点让位用同一延迟对齐两边进度。
- */
-exports.RISE_DELAY = 0.15;
-/**
- * 形变收尾的位置，占整段的比例。
- *
- * 越早收完，宽度越早退进列内，右边缘越安全；剩下的时间只留给上升与落定。
- */
-const MORPH_END = 0.45;
-/** 上面那几条常量的合订本：`readTuning` 的兜底值，也是每段飞行默认用的那一套。 */
-const DEFAULT_TUNING = {
-    acrossOmega: ACROSS_OMEGA,
-    riseDelay: exports.RISE_DELAY,
-    riseOmega: exports.RISE_OMEGA,
-    riseDamping: RISE_DAMPING,
-    morphEnd: MORPH_END,
-};
-/** 覆盖曲线参数用的 `localStorage` 键（见 `readTuning`）。 */
-const TUNING_KEY = 'dsh-chat-ux:send-flight';
-/** 这一段飞行正在用的参数；每段起飞前由 `readTuning()` 现读一次。 */
-let tuning = DEFAULT_TUNING;
-/**
- * 内容反向缩放的除数下限（**像素**）。`visible` 被右边缘那道夹子夹到 0 时，倒数会算出 `Infinity`——
- * 那几帧壳本来就什么都看不见（缩放是 0），给个半像素的下限只为让关键帧里是一个有限数。
- */
-const MIN_REVERSE_DIVISOR = 0.5;
-/**
- * 圆角补偿里的缩放下限（**比值**）。和上面那个不是一回事，别拿来顶替：壳收到最窄时纵轴缩放约 0.45，
- * 拿 0.5 当比例下限会把补偿算少，圆角在竖直方向被压扁——实测视觉半径从 20 掉到 17.96px，归一那一帧
- * 再跳回 20（`morph-probe` 逐帧读数）。这里只需要挡住 0，取一个远小于任何真实缩放的数。
- */
-const MIN_CORNER_SCALE = 0.02;
-/**
- * 归一那一帧，画面上的圆角与终态差多少（水平 + 垂直，像素）才值得补一段过渡。
- *
- * 没卡过时两者本来就相等，剩下的是浮点噪声；卡过才差得出几像素到十几像素。
- */
-const CORNER_SNAP_PX = 2;
-/** 卡顿留下的那个椭圆收回正圆用的时长。短到看不出「角在动」，长到不像一帧的跳。 */
-const CORNER_RECOVER_MS = 110;
-/**
- * 相邻两次帧回调之间进度差多少才算「主线程卡过」。
- *
- * 摊到 300 ms 的整段上：60 fps 一帧是 0.056、**30 fps 一帧就到了 0.111**。阈值取 0.15（45 ms）——
- * 低于它只当是帧率低或抖动，不补过渡，否则那段收拢会在低帧率的机器上每一次飞行都播一遍。
- */
-const CORNER_STALL_GAP = 0.15;
-/**
- * 起播后第一帧，动画的时间比墙钟快多少（毫秒）才值得把时间轴退回去（见 `Morph.alignStart`）。
- *
- * 一帧是十六点七毫秒，正常起跑两边最多差一帧的零头；取 24（一帧半）留出抖动，又不至于把真错位漏掉。
- */
-const ALIGN_TOLERANCE_MS = 24;
-/** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
-const SAMPLES = 60;
-/** 工具栏在形变进度走到这里时收完、淡完（五十五毫秒上下）。比形状早：多出来的东西先走，剩下的才是气泡。 */
-const CHROME_GONE_AT = 0.8;
-/** 工具栏收到最小时的缩放。不收到零：它是淡掉的，缩放只负责「往角里退」的那个方向感。 */
-const CHROME_MIN_SCALE = 0.55;
-/** 光晕（卡片的阴影与描边）在形变进度走到这里时淡完。气泡没有阴影，比工具栏晚一点走。 */
-const HALO_GONE_AT = 0.9;
-/** 输入框那份草稿克隆最晚亮到这里就换成气泡的写法：引用、技能那些小块在两边的样式不一样。 */
-const DRAFT_HANDOFF_AT = 0.5;
-/** 行高分档的粒度。多行时行距从 24 走到 22，每半像素一档。 */
-const LINE_HEIGHT_STEP = 0.5;
-/**
- * 字最多分几层。折行在一串离散的宽度上变化，一段很长的正文可能变上几十次，每一层都是一张合成层
- * 纹理；超过这个数就把最短的那些段并进前一段——少几次重排，读者看不出来。
- */
-const MAX_TEXT_LAYERS = 14;
-/**
- * 从卡片祖先那里继承下来、克隆必须带上的普通属性。自定义属性另外按差值挑。
- *
- * **`font-size` 与 `line-height` 必须在。** dsh 给输入区定的字号挂在**祖先**的选择器上（hero 态一条、
- * 会话态一条），克隆一离开那条链，这两项就直接掉回 body 的 16px：实测逐路径对齐 37 对元素，有
- * **26 对字号对不上**（卡片 15px 对替身 16px，输入面 14px/24px 对 16px/26px）。这一条不需要任何人
- * 动样式，**每一段飞行都在发生**。
- *
- * 抄在外壳上不会夺走克隆里自己写死的字号：直接命中的规则赢过继承，所以只有那些**没写死**、本来
- * 靠祖先传下来的元素会被兜住——正是要兜的那批。
- */
-const INHERITED_PROPERTIES = [
-    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
-    'font-variation-settings', 'font-kerning', 'line-height', 'letter-spacing', 'word-spacing', 'text-rendering',
-    '-webkit-font-smoothing', 'direction',
-];
-/** 字层要从气泡身上抄的排字属性：少抄一条，折行或字形就会和真实气泡对不上。 */
-const TEXT_PROPERTIES = [
-    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
-    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
-    '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
-    'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
-];
-/**
- * 卡片那一层的面要抄哪些属性。
- *
- * 只抄**画出来的东西**：颜色、图像，以及图像怎么铺。**不抄几何与布局**——替身的壳自己管几何
- * （逐格缩放、反向缩放、圆角补偿），把 `width` / `position` / `transform` 这一类抄进去会和它打架。
- */
-const SURFACE_PROPERTIES = [
-    'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
-];
-/**
- * 克隆子树里每个元素要抄哪些属性。
- *
- * 与 `SURFACE_PROPERTIES` 同一口径（只抄画出来的东西），只是铺得开一些：一个元素画在页面上的
- * 东西除了背景还有边框、阴影、圆角、字与那几样跟绘制有关的开关。**不抄几何与布局**——替身的壳
- * 自己管几何（逐格缩放、反向缩放、圆角补偿），把 `width` / `position` / `transform` 这一类抄进去
- * 会和它打架；也不抄 `transition` / `animation`，抄下来克隆会自己动起来，把整段时间轴搅乱。
- * **`opacity` 也不抄**：替身自己那几段淡出就是靠它，而差异抄法写下去的声明带着 `!important`、在层叠
- * 顺序里压得过动画——真卡片某个元素那一刻恰好是半透明的（例如禁用的按钮），那个元素就会在整段飞行
- * 里一直半透明，不肯淡出去。
- */
-const PAINT_PROPERTIES = [
-    'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
-    'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
-    'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
-    'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
-    'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
-    'box-shadow', 'text-shadow', 'visibility', 'filter', 'mix-blend-mode', 'clip-path',
-    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'letter-spacing', 'line-height',
-    'text-align', 'text-transform', 'white-space', 'word-break', 'overflow-wrap',
-];
-/**
- * 伪元素那一层要抄哪些属性：**全量**，连 `content` 与定位几何一起。
- *
- * 与元素自己那层不同：替身身上那条伪元素规则多半整个不成立（玻璃那条要祖先带 `data-phase`），
- * 不给 `content` 它根本不会出现，不给定位与尺寸它会落在错的地方。这里抄的 `position` / `top` /
- * `width` 是**伪元素自己的**几何，不是替身壳管的那套几何，两者不打架。
- */
-const PSEUDO_PROPERTIES = [
-    'content', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height', 'z-index',
-    ...PAINT_PROPERTIES,
-];
-/** 替身里每个元素身上的坐号：那一小段 `<style>` 的选择器靠它定位到具体哪个元素。 */
-const PAINT_ATTRIBUTE = 'data-chat-ux-send-paint';
-/**
- * 插入符那一层。`scrub` 会把它整块从克隆里摘掉，所以逐元素抄面的名单里也不能有它（含它的后代）——
- * 少一个元素就整体错位，抄上去的会是一排别人的样式。
- */
-const CARET_LAYER_SELECTOR = '[data-chat-ux-caret-layer]';
-/**
- * 逐元素抄面的元素数上限。超过就整块不抄，退回「卡片那一层 + 三条路」。
- *
- * 这一步要读两遍子树的计算样式（真卡片一遍、替身一遍），而提交那一帧 dsh 的主线程本来就重
- * （见 `文档/开发/性能风险.md`）。所以它是「更好」，不是「必须」：宁可退回本来的样子，也不让
- * 起手那一停变长。
- *
- * **这个数是拍的，不是量出来的**：输入卡片子树常见在几十到一百多个元素之间，取 240 留一倍余量。
- * 第一次实测之后按读数回来改它。
- */
-const MAX_PAINT_ELEMENTS = 240;
-/**
- * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
- *
- * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
- * 没有第二条路——留或不留，就是它命中或不命中。留下的代价量过：
- *
- *   `document.querySelector` 取**文档序第一个**，而替身永远挂在文档最后（见 `startMorph`），
- *   真卡片与真输入框都在它前面；dsh 自己那几处认卡片（`ModelSelect`、`MenuView`、
- *   `FeedbackDialog`、`AgentPresetSeat`）要么从真节点往上 `closest`，要么取文档序第一个，
- *   两条路都够不到替身。而替身只活 `FLIGHT_MS`，`wrapper` 上还写着 `inert`：里面的东西既拿不到
- *   焦点，也进不了无障碍树。收益是 dsh 与同页别的插件写在这几个属性上的规则在替身上照常生效。
- *
- * 所以下面留下的三个是**样式钩子**：`data-composer-card`、`data-composer-input`、
- * `data-input-scroll`（它们从清单里删掉了，不是被忽略）。而 `id` 必须摘——文档里多一个同 id 的
- * 节点，`getElementById`、`label[for]`、页内锚点全会认错人，这是兜不了底的坏；`contenteditable`
- * 与 `tabindex` / `autofocus` 是可编辑性与焦点序，不是外观；`data-lexical-editor` 与
- * `data-chat-ux-caret` 是两套运行时的把手（Lexical 的编辑器根、本插件插入符的让位标记），替身
- * 里没有对应的运行时，留着只会让找的人认错。
- */
-const IDENTITY_ATTRIBUTES = [
-    'id', 'contenteditable', 'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
-];
-/**
- * 模拟祖先链最多几层。
- *
- * 超过就**整条不套**，不做截断：链是从卡片往上数的，被截掉的正是最外面那几层，而 `.hero .input`
- * 这类选择器认的恰好是外层——留着半条链，外层没了、内层照匹配，选择器会错配到链上别的元素上，
- * 比完全没有链更坏。
- *
- * **这个数实测过，别照着直觉往回改。** dsh 的输入卡片到 body 是 **15 层**（hero 空态与提交后的
- * 会话语态一致，两次独立会话一致），其中七层是没有语义的空 `div` 与 `[data-slot]` 座位——当初估
- * 「七八层」正是漏掉了这些。取 **24**：留一倍余量给 dsh 以后加容器，同时仍然挡得住病态深度——
- * 到了那个量级，多半是某个插件把整棵树包进了自己的布局容器里，那种情况下把链照搬过去反而会把
- * 它的容器样式一起带进来。
- */
-const MAX_ANCESTOR_LINKS = 24;
-/**
- * 抓一次输入卡片：几何、外观、以及整张克隆。
- *
- * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
- * `cloneNode`，放在读者按下回车的那一刻不会让它等。
- */
-function snapshotComposer(input, card) {
-    const box = card.getBoundingClientRect();
-    if (box.width === 0 || box.height === 0)
-        return null;
-    const scroll = input.closest('[data-input-scroll]');
-    if (scroll === null || scroll.parentElement !== card)
-        return null;
-    const cardStyle = getComputedStyle(card);
-    // 卡片那一层的面得在这一帧抄下来：既因为克隆要的就是那一刻的样子，也因为伪元素那条规则
-    // （玻璃只在本插件开着、且祖先是 `active` / `hero` 相位时才命中）在替身上不一定还匹配。
-    const surface = {
-        card: readDeclarations(cardStyle, SURFACE_PROPERTIES),
-        before: readPseudoLayer(card, '::before', SURFACE_PROPERTIES),
-        after: readPseudoLayer(card, '::after', SURFACE_PROPERTIES),
-        behind: behindColorOf(card),
-    };
-    // 克隆子树里每个元素的面：替身靠 class 与祖先链只能命中一部分规则，凡是选择器里认祖先 `data-*`
-    // 的（同页皮肤那几条、玻璃给按钮上色的那一条）在替身上全失配。所以这一帧把真卡片子树里每个元素
-    // 画出来的值抄下来，起飞时跟替身现算的值比一次、只把不一样的写进去（见 `startMorph` 里那段）。
-    // 元素太多就整块不抄（见 `MAX_PAINT_ELEMENTS`）。
-    // 名单要和克隆里的元素一一对应：`scrub` 会把插入符那一层整块摘掉，所以那一支（连同它的后代）
-    // 在这一份里也不能有——少一个就整体错位，抄上去的会是一排别人的样式。
-    const descendants = [...card.querySelectorAll('*')]
-        .filter(element => element.closest(CARET_LAYER_SELECTOR) === null);
-    const subtree = descendants.length > MAX_PAINT_ELEMENTS ? null : descendants.map((element) => ({
-        own: readDeclarations(getComputedStyle(element), PAINT_PROPERTIES),
-        before: readPseudoLayer(element, '::before', PSEUDO_PROPERTIES),
-        after: readPseudoLayer(element, '::after', PSEUDO_PROPERTIES),
-    }));
-    const inputStyle = getComputedStyle(input);
-    const inputBox = input.getBoundingClientRect();
-    const text = {
-        left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
-        top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
-        right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
-        lineHeight: pixel(inputStyle.lineHeight),
-    };
-    // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
-    // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
-    const paths = [];
-    const rectOf = (element) => {
-        const r = element.getBoundingClientRect();
-        return [r.left - box.left, r.top - box.top, r.width, r.height];
-    };
-    const collect = (element, path) => {
-        const [, , width, height] = rectOf(element);
-        if (width * height === 0) {
-            if (getComputedStyle(element).display !== 'contents')
-                return;
-            Array.from(element.children).forEach((child, index) => {
-                collect(child, [...path, index]);
-            });
-            return;
-        }
-        const groups = Array.from(element.children).filter((child) => {
-            const [, , w, h] = rectOf(child);
-            return w * h > 0;
-        });
-        if (width >= box.width * 0.9 && groups.length >= 2) {
-            Array.from(element.children).forEach((child, index) => {
-                const rect = rectOf(child);
-                if (rect[2] * rect[3] > 0)
-                    paths.push({ path: [...path, index], rect });
-            });
-            return;
-        }
-        paths.push({ path, rect: rectOf(element) });
-    };
-    Array.from(card.children).forEach((child, index) => {
-        if (child !== scroll)
-            collect(child, [index]);
-    });
-    // 继承环境：自定义属性只挑和挂载点上不一样的（替身就挂在它下面，一样的本来就继承得到）。
-    //
-    // 基准取**挂载点**，三种情形都对着验算过：
-    //   变量只定义在中间祖先上、挂载点没有：两边不同，抄下来
-    //     不抄的话替身拿不到这个变量，`var(--x)` 会掉进 fallback
-    //   挂载点与卡片取值相同：不抄，替身从挂载点继承到的就是同一个值
-    //   中间祖先覆盖挂载点、卡片沿用：两边不同，抄的是祖先那一份，也就是卡片此刻算出来的
-    //     那一份（覆盖值），替身拿到的与真卡片一致。
-    // 唯一的边界是「变量只在挂载点上定义」：替身本来就继承得到，不抄也对。
-    const hostStyle = getComputedStyle(ghostHost());
-    const context = [];
-    for (let index = 0; index < cardStyle.length; index += 1) {
-        const name = cardStyle[index];
-        if (name === undefined || !name.startsWith('--'))
-            continue;
-        const value = cardStyle.getPropertyValue(name);
-        if (value !== hostStyle.getPropertyValue(name))
-            context.push([name, value]);
-    }
-    for (const name of INHERITED_PROPERTIES)
-        context.push([name, cardStyle.getPropertyValue(name)]);
-    // 祖先链：克隆离开父链之后，`.hero .input` 这类后代选择器在它身上全都不匹配，而 dsh 的 hero 态
-    // 最小高度正是这么写的。所以把链记下来，起飞时照着套回去（见 `startMorph`）。只记标签与 class：
-    // 替身要的是**选择器命中**，而 `data-*` 是别人手里的状态把手、抄进链里会被读成过期状态（见
-    // `AncestorMark` 那段），`id` 更是复制过去只会让人认错。
-    // 这一段跑在读者按下回车的那一帧上，所以只读属性：读属性不碰布局，不会把布局结算拖进这一帧。
-    const ancestors = [];
-    let interrupted = false;
-    for (let node = card.parentElement; node !== null && node !== document.body; node = node.parentElement) {
-        // 替身自己的部件不该进链。真卡片的祖先里本来不会有它，这是防御——防的是上一段还没落定就又
-        // 抓了一次起点。链在这里断掉就**整条不要**：少一层的话，外层选择器会错配到内层上去。
-        if (node.hasAttribute(GHOST_ATTRIBUTE)) {
-            interrupted = true;
-            break;
-        }
-        ancestors.push({
-            tag: node.tagName.toLowerCase(),
-            className: node.getAttribute('class') ?? '',
-        });
-    }
-    ancestors.reverse();
-    const clone = card.cloneNode(true);
-    if (!(clone instanceof HTMLElement))
-        return null;
-    scrub(clone);
-    // 这几条**必须带 `!important`**，不是保险起见随手加的。克隆带着卡片自己的 class 与 `data-*`
-    // ——替身要的就是让宿主与同页插件的规则命中它（`IDENTITY_ATTRIBUTES` 那段讲了为什么留钩子）。
-    // 而那些规则里就有 `!important` 的：实测同页的颜色插件用 `!important` 压过 `[data-composer-card]`。
-    // 普通行内样式**压不住 `!important`**，于是一条 `position: fixed` 配居中的规则就能让克隆当场飞
-    // 到屏幕正中、再随动画掉回来——读者看到的是「聊天框被抬到中间又闪下去」。行内 + `!important` 是
-    // 样式层级的顶格（只输给动画），把定位与尺寸钉在起飞那一刻量到的值上。
-    pin(clone, [
-        ['position', 'absolute'],
-        ['left', '0px'],
-        ['top', '0px'],
-        ['right', 'auto'],
-        ['bottom', 'auto'],
-        ['margin', '0px'],
-        ['width', box.width + 'px'],
-        ['max-width', 'none'],
-        ['height', box.height + 'px'],
-        ['box-sizing', 'border-box'],
-        ['transform', 'none'],
-        ['float', 'none'],
-        ['background', 'transparent'],
-        ['box-shadow', 'none'],
-    ]);
-    const draft = clone.children[Array.from(card.children).indexOf(scroll)];
-    if (!(draft instanceof HTMLElement))
-        return null;
-    // 草稿区的高度钉死：hero 态的最小高度挂在 `.hero .input` 上，克隆离开 `.hero` 就会塌，
-    // 工具栏会跟着往上跑。
-    const scrollBox = scroll.getBoundingClientRect();
-    draft.style.height = scrollBox.height + 'px';
-    draft.style.minHeight = '0px';
-    draft.style.maxHeight = 'none';
-    const chrome = [];
-    for (const { path, rect } of paths) {
-        let element = clone;
-        for (const index of path)
-            element = element?.children[index];
-        if (element instanceof HTMLElement)
-            chrome.push({ element, rect });
-    }
-    return {
-        box,
-        surface,
-        subtree,
-        radius: pixel(cardStyle.borderTopLeftRadius),
-        shadow: cardStyle.boxShadow,
-        clone,
-        draft,
-        draftScrollTop: scroll.scrollTop,
-        chrome,
-        text,
-        context,
-        // 太深、或者中途断开，都整条作废（见 `MAX_ANCESTOR_LINKS`）：null 是「不模拟」，不是「这条链是空的」。
-        ancestors: interrupted || ancestors.length > MAX_ANCESTOR_LINKS ? null : ancestors,
-    };
-}
-/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
-function pixel(value) {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
-function alphaOf(color) {
-    const parts = colorParts(color);
-    if (parts === null)
-        return 0;
-    return parts[3] ?? 1;
-}
-/**
- * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
- */
-function startMorph(snapshot, bubble, end) {
-    if (end.width === 0 || end.height === 0)
-        return null;
-    const start = snapshot.box;
-    const style = getComputedStyle(bubble);
-    const W0 = start.width;
-    const H0 = start.height;
-    const W1 = end.width;
-    const H1 = end.height;
-    const R0 = snapshot.radius;
-    const R1 = pixel(style.borderTopLeftRadius);
-    const from = snapshot.text;
-    const to = {
-        left: bubble.clientLeft + pixel(style.paddingLeft),
-        top: bubble.clientTop + pixel(style.paddingTop),
-        right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
-        lineHeight: pixel(style.lineHeight),
-    };
-    const boxWidth = Math.max(W0, W1);
-    const boxHeight = Math.max(H0, H1);
-    const dx = end.left - start.left;
-    const dy = end.top - start.top;
-    // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
-    // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
-    const reach = end.right - start.left;
-    // 这一段用哪一套参数：默认值，或者浏览器里那一份覆盖（见 `readTuning`）。现读一次，所以调完参数
-    // 发下一条消息就是新的，不必刷新页面。
-    tuning = readTuning();
-    // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
-    const samples = [];
-    for (let step = 0; step <= SAMPLES; step += 1) {
-        const u = step / SAMPLES;
-        const m = morphProgress(u);
-        const width = W0 + (W1 - W0) * m;
-        const left = from.left + (to.left - from.left) * m;
-        const right = from.right + (to.right - from.right) * m;
-        samples.push({
-            u,
-            m,
-            width,
-            // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
-            // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
-            visible: Math.max(0, Math.min(width, reach - dx * m)),
-            height: H0 + (H1 - H0) * m,
-            // 圆角要等字撑高的那几格落定之后再算（见 `textWindows` 调用之后那段），这里先占个位。
-            radius: 0,
-            left,
-            top: from.top + (to.top - from.top) * m,
-            content: Math.max(1, width - left - right),
-            lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
-        });
-    }
-    const wrapper = document.createElement('div');
-    wrapper.setAttribute(GHOST_ATTRIBUTE, '');
-    wrapper.setAttribute('aria-hidden', 'true');
-    wrapper.inert = true;
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000';
-    wrapper.style.left = start.left + 'px';
-    wrapper.style.top = start.top + 'px';
-    const mover = document.createElement('div');
-    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform';
-    const halo = document.createElement('div');
-    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity';
-    halo.style.width = W0 + 'px';
-    halo.style.height = H0 + 'px';
-    halo.style.borderRadius = R0 + 'px';
-    halo.style.boxShadow = snapshot.shadow;
-    const shell = document.createElement('div');
-    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform';
-    shell.style.width = boxWidth + 'px';
-    shell.style.height = boxHeight + 'px';
-    for (const [name, value] of snapshot.context)
-        shell.style.setProperty(name, value);
-    // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
-    // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
-    // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
-    const scaler = document.createElement('div');
-    scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform';
-    scaler.style.width = boxWidth + 'px';
-    scaler.style.height = boxHeight + 'px';
-    // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
-    // 半径补偿见下面那段动画。
-    shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight);
-    shell.appendChild(scaler);
-    // 底色不做 `background-color` 动画：它和几何属性写在同一段关键帧里时，整段都会掉回主线程（实测
-    // 主线程一占住，形状与颜色一起定格，只有透明度还在走）；而透明度是合成器最老的那条路，旧一点的
-    // Chromium 上也稳。所以起手那格与落定那格各画一层，中间靠上面那层的透明度淡过去——两层都是不
-    // 透明的实色，按 α 叠正好就是两色的线性插值。
-    //
-    // 绘制序按 DOM 序，依次是卡片背后的底色、卡片自身、`::before`、`::after`，最后是气泡色淡入
-    // 中间那三层都是**照抄卡片那一刻算出来的值**（见
-    // `ComposerSurface`），所以画在卡片 `::before` 上的东西——玻璃的底与两片端色——跟着一起飞，
-    // 不必认识它是什么。
-    //
-    // 为什么要垫那层背后底色：卡面可能是半透明的（玻璃的底只有七成），替身飞过消息列时若直接透过去，
-    // 会看见下面滚过的字。垫一层卡片原来位置背后的底色，替身就与真卡片一样，只透到画布为止。
-    const behindFill = document.createElement('div');
-    behindFill.style.cssText = 'position:absolute;inset:0';
-    behindFill.style.backgroundColor = snapshot.surface.behind;
-    const cardFill = document.createElement('div');
-    cardFill.style.cssText = 'position:absolute;inset:0';
-    paintSurface(cardFill, snapshot.surface.card);
-    const beforeFill = document.createElement('div');
-    beforeFill.style.cssText = 'position:absolute;inset:0';
-    paintSurface(beforeFill, snapshot.surface.before);
-    const afterFill = document.createElement('div');
-    afterFill.style.cssText = 'position:absolute;inset:0';
-    paintSurface(afterFill, snapshot.surface.after);
-    const bubbleFill = document.createElement('div');
-    bubbleFill.style.cssText = 'position:absolute;inset:0;will-change:opacity';
-    bubbleFill.style.backgroundColor = style.backgroundColor;
-    scaler.append(behindFill, cardFill, beforeFill, afterFill, bubbleFill);
-    // 克隆脱离了卡片的父链，后代选择器在它身上全都不匹配，所以照着卡片的祖先套一条链回来。每一层
-    // `display: contents`：不生成盒子，因而既不参与布局、也不当包含块（克隆仍然相对壳定位），但
-    // **照样参与选择器匹配**——要的就是这个。链套在壳里、克隆外面：这些选择器认的是克隆里的元素，
-    // 链只要在克隆之上就够；套到 mover 外面会连光晕与壳一起罩进去，而它们两块是替身自己的装饰，
-    // 不是卡片的后代。缺链时（`ancestors` 为 null）克隆直接挂在壳上，与加固之前一样。
-    // `display: contents` 写在**行内**：祖先那一层的 class 规则里就算有 `display`，优先级也压不过
-    // 行内（dsh 的样式里没有 `!important`），链不会因为带上某个 class 就长出盒子来。
-    let cloneHost = scaler;
-    for (const mark of snapshot.ancestors ?? []) {
-        const link = document.createElement(mark.tag);
-        // 这里的 `!important` 同样必要，理由和克隆那几条一样：链节点带着祖先的 class，而祖先那层的规则
-        // 里可能就有 `display`（实测同页插件在用 `!important`）。一旦它长出盒子，问题不只是多一层——
-        // 它可能成为克隆的**包含块**，克隆那几条 `left: 0; top: 0` 就会相对它算，位置整体偏掉。
-        link.style.setProperty('display', 'contents', 'important');
-        link.setAttribute('aria-hidden', 'true');
-        // 只带 class：链上**一个 `data-*` 都不写**，理由与实测见 `AncestorMark`。
-        if (mark.className !== '')
-            link.className = mark.className;
-        cloneHost.appendChild(link);
-        cloneHost = link;
-    }
-    cloneHost.appendChild(snapshot.clone);
-    // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
-    // 自己，其余每段一层。
-    const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth);
-    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding);
-    // 半径 = **可见区短边的一半 × 圆度**，圆度从 `2R0/短边` 走到 `2R1/短边`；半径因此总是跟着区域
-    // 一起收，两端精确还原真实值（起手与真卡片逐点一致，落定就是气泡自己的圆角）。
-    //
-    // **圆度用进度的平方根插值，不是线性。** 这是一次量出来的取舍：卡顿冻住的是 `border-radius` 的
-    // 写入值，形状却在合成器上继续收——而**圆度在冻结期间保持不变**（写入值除以缩放，分子分母按两个
-    // 方向各自的缩放比走，正好约掉）。所以冻结那一刻圆度越高，回来时看到的那个椭圆就越接近气泡自己
-    // 的角。平方根让圆度在前段抬得快：30 ms 时 75%（线性只有 64%）。四种卡顿跨度逐一比过，平方根
-    // 的「离 20×20 差多少」都比线性小一到两成——30 ms 冻到 90 ms 是 14.7 对 18.3，60 ms 冻到 90 ms
-    // 给的是 13.4×20.4，垂直方向正好贴上气泡的圆弧。中段仍是圆角矩形（75% 圆度），不是胶囊。
-    //
-    // 把半径压成一个恒定值会让卡顿椭圆更小，但离终点的角更远、跳变更大；这里优先保留终点形状。
-    //
-    // **两端都夹在短边的一半以内**：圆度不超过 1，半径就不会撞上浏览器那条「半径之和超过边长就等比
-    // 缩小所有角」的静默规则——那条规则一接管，这条曲线说什么都不算了，极窄的气泡上还会连水平方向
-    // 一起缩。
-    //
-    // **必须在 `textWindows` 之后算**：多行时字会把外框撑高（那里写 `sample.height`），短边跟着变，
-    // 早算一步就会在归一那一帧对不上。
-    const shortStart = Math.min(W0, H0);
-    const shortEnd = Math.min(W1, H1);
-    const shareStart = shortStart > 0 ? Math.min(1, (2 * R0) / shortStart) : 0;
-    const shareEnd = shortEnd > 0 ? Math.min(1, (2 * R1) / shortEnd) : 0;
-    for (const sample of samples) {
-        const shortSide = Math.min(sample.visible, sample.height);
-        const share = shareStart + (shareEnd - shareStart) * Math.sqrt(sample.m);
-        sample.radius = (shortSide / 2) * share;
-    }
-    const layers = bubbleWindows.map((window) => {
-        const layer = textLayer(bubble, style);
-        layer.style.width = window.width + 'px';
-        layer.style.lineHeight = window.lineHeight + 'px';
-        scaler.appendChild(layer);
-        return { layer, window };
-    });
-    mover.appendChild(halo);
-    mover.appendChild(shell);
-    wrapper.appendChild(mover);
-    // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
-    // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
-    ghostHost().appendChild(wrapper);
-    // 克隆要进了文档才能滚到原来的位置。
-    if (snapshot.draftScrollTop > 0)
-        snapshot.draft.scrollTop = snapshot.draftScrollTop;
-    // 克隆里每个元素再跟真卡片那一刻的值比一次，只把不一样的写下来。
-    //
-    // **必须在替身进了文档之后读**：要比的是「替身此刻算出来的值」，它得先拿得到链上的规则与继承。
-    // 早一步（克隆还游离着）读到的是一份断了继承的值，那时就只剩「把值全量钉一遍」这条路——而全量钉
-    // 会把不该钉的也钉住（理由见 `PAINT_PROPERTIES` 里的 `opacity` 那一条）。
-    //
-    // 替身多半已经靠 class 与祖先链画对了，差的就是规则失配的那几笔——包括伪元素：替身身上那条伪元素
-    // 规则多半整个不成立（见 `ElementSurface`），得把它连 `content` 与定位一起写进去。写成 `<style>`
-    // 而不是行内，是因为伪元素没法行内设置——两者共用同一套选择器，靠打在元素上的坐号定位。
-    const subtree = snapshot.subtree;
-    if (subtree !== null) {
-        /** 那一刻抄下来的值里，有哪些与替身现在算出来的不一样。 */
-        const differences = (from, now) => {
-            const declarations = [];
-            for (const [name, value] of from) {
-                if (now.getPropertyValue(name) === value)
-                    continue;
-                declarations.push(name + ':' + value + ' !important');
-            }
-            return declarations;
-        };
-        const rules = [];
-        const clones = [...snapshot.clone.querySelectorAll('*')];
-        clones.forEach((element, index) => {
-            const surface = subtree[index];
-            if (surface === undefined)
-                return;
-            const own = differences(surface.own, getComputedStyle(element));
-            const before = surface.before === null ? [] : differences(surface.before, getComputedStyle(element, '::before'));
-            const after = surface.after === null ? [] : differences(surface.after, getComputedStyle(element, '::after'));
-            if (own.length + before.length + after.length === 0)
-                return;
-            element.setAttribute(PAINT_ATTRIBUTE, String(index));
-            const selector = '[' + PAINT_ATTRIBUTE + '="' + index + '"]';
-            if (own.length > 0)
-                rules.push(selector + '{' + own.join(';') + '}');
-            if (before.length > 0)
-                rules.push(selector + '::before{' + before.join(';') + '}');
-            if (after.length > 0)
-                rules.push(selector + '::after{' + after.join(';') + '}');
-        });
-        if (rules.length > 0) {
-            const paintStyle = document.createElement('style');
-            paintStyle.textContent = rules.join('');
-            shell.appendChild(paintStyle);
-        }
-    }
-    const timing = { duration: exports.FLIGHT_MS, easing: 'linear', fill: 'forwards' };
-    const animations = [];
-    const run = (element, frames) => {
-        const animation = element.animate(frames, timing);
-        animations.push(animation);
-        return animation;
-    };
-    // 只在 [windowFrom, windowUntil] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
-    // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-    const between = (windowFrom, windowUntil, frame, stride = 1) => {
-        const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil);
-        const frames = [];
-        inside.forEach((sample, index) => {
-            // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
-            // 看不出来，省下的关键帧换的是实打实的建动画时间。**形状与内容那两段必须同格**，一错格两层就
-            // 不再互为倒数，中段会看见偏移。
-            if (index % stride !== 0)
-                return;
-            frames.push({ ...frame(sample), offset: sample.u });
-        });
-        // 末尾那一格永远补上：它是定形的值，缺了它会停在上一格上。
-        const final = inside.at(-1);
-        if (final !== undefined && (frames.at(-1)?.offset ?? -1) !== final.u) {
-            frames.push({ ...frame(final), offset: final.u });
-        }
-        const first = frames[0];
-        const last = frames.at(-1);
-        if (first !== undefined && (first.offset ?? 0) > 0)
-            frames.unshift({ ...first, offset: 0 });
-        if (last !== undefined && (last.offset ?? 1) < 1)
-            frames.push({ ...last, offset: 1 });
-        return frames;
-    };
-    // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
-    // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
-    // 左边，右边由宽度决定，两条边都单调。
-    // 纵向就是弹簧本身，**不补任何下限**：过冲幅度 = 行程 × 1.52%，只由 `RISE_DAMPING` 决定
-    // 窄气泡、短行程弹得少，长行程弹得多；补下限会让每次飞行都弹同样一段。
-    const travel = run(mover, samples.map(sample => ({
-        offset: sample.u,
-        transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
-    })));
-    // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
-    // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
-    // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
-    const shape = run(shell, between(0, tuning.morphEnd, sample => ({
-        transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
-    })));
-    // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
-    // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
-    const inverse = run(scaler, between(0, tuning.morphEnd, sample => ({
-        transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
-            + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
-    })));
-    // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
-    // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
-    // 壳的 `transform` 照样在合成器上。卡顿时半径停在旧值、形状却继续在合成器上收，两者的比例会散
-    // （宽收到 404 px 时圆角冻在 23.5 px，等缩到 44 高，那 23.5 px 就是满圆）。这是留在主线程的固有
-    // 代价，只能靠「半径本身跟着短边走」把错拍压到最小。
-    // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
-    //
-    // **采样密度要与形状同格**：半径现在随短边逐格变，隔一格取一格会让这条折线与缩放那条错开，
-    // 中段能看见角比轮廓早一格到位。
-    const corners = run(shell, between(0, tuning.morphEnd, sample => ({
-        borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
-    })));
-    /**
-     * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
-     *
-     * 位移与形状现在由同一条时间轴驱动，本来就不会互相领先；读动画自己的时间而不是墙上时钟，为的是起手
-     * 那一两帧：WAAPI 动画那时还是 pending（`startTime` 没定），按 offset 0 画——也就是**整张输入卡片**，
-     * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
-     * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
-     * 起手那一格。
-     */
-    const progress = () => {
-        const raw = travel.currentTime;
-        if (typeof raw !== 'number')
-            return 0;
-        const u = raw / exports.FLIGHT_MS;
-        if (!(u > 0))
-            return 0;
-        return u > 1 ? 1 : u;
-    };
-    /** 壳归一了没有（见 `compact`）。 */
-    let normalized = false;
-    /**
-     * 上一次帧回调看到的进度。
-     *
-     * 主线程被占住时 `tick` 不跑，这个值就停在卡顿前那一格上——而圆角的写入值也正是冻在那一格。
-     * `compact` 靠它与当前 `u` 的差认出「这一帧之前卡了多久」。
-     */
-    let lastTickU = null;
-    /**
-     * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
-     *
-     * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
-     * 尺寸做，字就越发虚。归一那一帧里「宽度从 `boxWidth` 改成 `visible`」与「缩放从 `visible / boxWidth`
-     * 归到 1」是等价的（`boxWidth × visible / boxWidth = visible`），所以视觉不跳。
-     *
-     * **必须把两条动画 `cancel` 掉**：它们 `fill: forwards`，会一直按最后一帧写着 `transform`，行内那两条
-     * 归 1 压不过动画。取消之后属性回落到行内，正好是归一后的样子。
-     *
-     * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
-     * 改高，拿整段末尾去比就会在归一时跳一下。
-     *
-     * 圆角在这之前已经是**视觉半径**（按那一格的可见短边算出来的，见 `textWindows` 之后那段）；归一
-     * 之后壳的布局尺寸就是可见尺寸，同一把尺子，直接写回去即可。
-     */
-    const compact = (u) => {
-        if (normalized)
-            return;
-        const stalledAt = lastTickU;
-        lastTickU = u;
-        if (u < tuning.morphEnd)
-            return;
-        const final = samples.find(sample => sample.u >= tuning.morphEnd) ?? samples.at(-1);
-        const before = samples.find(sample => sample.u >= (stalledAt ?? 0)) ?? samples[0];
-        if (final === undefined || before === undefined)
-            return;
-        normalized = true;
-        // 卡顿跨过这一帧时，圆角停在**上一帧**那一格的补偿值上，而形状已经收到终点——直接换成
-        // `final.radius` 就是一次硬跳（读者报的「快落地时突然变成正确圆角」）。要补的正是这一下。
-        //
-        // **不读样式**：`getComputedStyle` 会按动画的 `currentTime` 采样，读到的永远是「这一帧该有的
-        // 值」，读不回冻结的那个。改成用进度差推算——卡顿时`tick` 不跑，`lastTickU` 就停在卡顿前那一格。
-        const stalled = stalledAt !== null && u - stalledAt > CORNER_STALL_GAP;
-        // 冻结那一格的补偿值换算到终点的尺寸上，就是此刻画面上那个椭圆。
-        const frozenHorizontal = before.radius * (final.visible / Math.max(before.visible, 1));
-        const frozenVertical = before.radius * (final.height / Math.max(before.height, 1));
-        shape.cancel();
-        inverse.cancel();
-        corners.cancel();
-        shell.style.width = final.visible + 'px';
-        shell.style.height = final.height + 'px';
-        shell.style.transform = 'none';
-        scaler.style.transform = 'none';
-        shell.style.borderRadius = final.radius + 'px';
-        if (!stalled)
-            return;
-        const off = Math.abs(frozenHorizontal - final.radius) + Math.abs(frozenVertical - final.radius);
-        if (off < CORNER_SNAP_PX)
-            return;
-        // 归一之后壳的缩放是 1，`border-radius` 就是视觉半径：先摆回卡顿留下的那个椭圆，再用一小段收回
-        // 正圆。一帧的跳变成一瞬的舒展，而且**只在真卡过的时候才播**。
-        shell.animate([
-            { borderRadius: frozenHorizontal + 'px / ' + frozenVertical + 'px' },
-            { borderRadius: final.radius + 'px' },
-        ], { duration: CORNER_RECOVER_MS, easing: 'ease-out' });
-    };
-    // 气泡色从透明淡到实，落定那格把下面四层整个盖住
-    // 卡面是照抄来的、可能半透明，压在气泡色上会偏色，所以必须由气泡色在上层淡入
-    run(bubbleFill, between(0, tuning.morphEnd, sample => ({ opacity: String(sample.m) }), 2));
-    // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
-    // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
-    const shadow = shadowSpread(snapshot.shadow);
-    run(halo, between(0, tuning.morphEnd, sample => ({
-        transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
-        opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
-    }), 2));
-    for (const piece of snapshot.chrome) {
-        const [x, y, width, height] = piece.rect;
-        // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
-        const anchorRight = x + width / 2 > W0 / 2;
-        const anchorBottom = y + height / 2 > H0 / 2;
-        piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%');
-        run(piece.element, between(0, tuning.morphEnd, (sample) => {
-            const gone = Math.min(1, sample.m / CHROME_GONE_AT);
-            const shiftX = anchorRight ? sample.visible - W0 : 0;
-            const shiftY = anchorBottom ? sample.height - H0 : 0;
-            return {
-                transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
-                opacity: String(1 - gone),
-            };
-        }, 2));
-    }
-    // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
-    const draftUntil = draftWindow === undefined ? 1 : draftWindow.until;
-    run(snapshot.draft, between(0, draftUntil, sample => ({
-        transform: 'translate(' + (sample.left - from.left) + 'px, '
-            + (sample.top - from.top + (sample.lineHeight - from.lineHeight) / 2) + 'px)',
-    })));
-    run(snapshot.draft, stepOpacity(0, draftUntil));
-    for (const { layer, window } of layers) {
-        run(layer, between(window.from, window.until, sample => ({
-            transform: 'translate(' + sample.left + 'px, ' + (sample.top + (sample.lineHeight - window.lineHeight) / 2) + 'px)',
-        })));
-        run(layer, stepOpacity(window.from, window.until));
-    }
-    // 预热：全部动画先停在起手那一格（见 `Morph.play`）。替身刚插进文档，第一次 raster 要跨一两个
-    // 合成器帧；这期间合成器上的时间轴照走、屏幕上却还没有它的像素，等 `send-flight` 的预热帧走完
-    // 再起跑，第一眼才落在起手格上。
-    for (const animation of animations) {
-        animation.pause();
-        animation.currentTime = 0;
-    }
-    /** 起跑了没有（见 `Morph.play`）。 */
-    let started = false;
-    /** 起跑那一刻的墙钟；没起跑时为 null。起首对齐拿它当尺子（见 `alignStart`）。 */
-    let playedAt = null;
-    /** 首帧对齐做过没有（见 `Morph.alignStart`）。 */
-    let aligned = false;
-    /** 见 `Morph.play`。 */
-    const play = () => {
-        if (started)
-            return;
-        started = true;
-        playedAt = performance.now();
-        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程被长任务拖住时这一格会晚出几十毫秒
-        // （动画还没起跑，屏幕上却该动了）。
-        const now = document.timeline.currentTime;
-        for (const animation of animations) {
-            animation.play();
-            if (typeof now === 'number')
-                animation.startTime = now;
-        }
-    };
-    /** 见 `Morph.alignStart`。 */
-    const alignStart = () => {
-        if (aligned)
-            return;
-        const raw = travel.currentTime;
-        if (typeof raw !== 'number' || raw <= 0)
-            return;
-        aligned = true;
-        if (playedAt === null)
-            return;
-        const ahead = raw - (performance.now() - playedAt);
-        if (ahead <= ALIGN_TOLERANCE_MS)
-            return;
-        for (const animation of animations) {
-            const start = animation.startTime;
-            if (typeof start === 'number')
-                animation.startTime = start + ahead;
-        }
-    };
-    return { wrapper, compact, progress, play, alignStart, animations };
-}
-/** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
-const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
-/**
- * 替身挂在哪儿，以及**它从谁那里继承**。
- *
- * 一处两用是刻意的：`snapshotComposer` 拿它当自定义属性的差值基准（替身继承到的就是它的值），
- * `startMorph` 拿它当挂载点。两处各写一个 `document.body` 也跑得起来，可那样这件耦合就只活在
- * 注释里了——哪天换挂载点（挂进某个 portal 容器）而漏掉基准那一处，症状是「一部分变量悄悄抄错
- * 值」，从外观反推回挂载点几乎不可能。
- *
- * 挂载点还必须是文档的**最后一个**子节点，理由见 `startMorph` 里那句注释。
- */
-function ghostHost() {
-    return document.body;
-}
-/**
- * 把几条声明钉在行内、并带上 `!important`。
- *
- * 替身里有两样东西会被**别人的**规则命中：带着卡片 class 与 `data-*` 的克隆（要的就是命中），以及
- * 套在它外面的模拟祖先链。这些选择器上可能有 `!important` 的规则——实测同页的颜色插件就用它压过
- * `[data-composer-card]`。普通行内样式压不住 `!important`：一条居中的规则就足以让克隆飞到屏幕
- * 正中再掉回来。行内 + `!important` 是样式层级的顶格：级联顺序里作者声明的 `!important` 排在动画之上
- * （动画与过渡都在它下面）。也正因为这样，钉的时候要留意别把替身自己那几段动画驱动的属性一起钉死
- * ——`PAINT_PROPERTIES` 里因此没有 `opacity`。
- */
-function pin(element, declarations) {
-    for (const [name, value] of declarations)
-        element.style.setProperty(name, value, 'important');
-}
-/**
- * 把形变沿途的每一个宽度都排一遍，折行一样（多行时再加上行高同档）的归成一段。
- *
- * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
- * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
- * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
- */
-function textWindows(bubble, style, samples, finalLineHeight, bottomPadding) {
-    const probeHost = document.createElement('div');
-    probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none';
-    const probe = textLayer(bubble, style);
-    probe.style.position = 'static';
-    probeHost.appendChild(probe);
-    document.body.appendChild(probeHost);
-    const layouts = new Map();
-    const layoutAt = (width) => {
-        // 宽度原样用，不取整：气泡是按字的宽度收缩的，它的内容区就是最长那一行的宽度，往下舍哪怕
-        // 零点几像素，最后那一行都会被挤到下一行去。
-        const key = width;
-        const known = layouts.get(key);
-        if (known !== undefined)
-            return known;
-        probe.style.width = key + 'px';
-        const range = document.createRange();
-        range.selectNodeContents(probe);
-        const tops = new Set();
-        const parts = [];
-        for (const rect of range.getClientRects()) {
-            tops.add(Math.round(rect.top));
-            parts.push(Math.round(rect.top) + ':' + Math.round(rect.right));
-        }
-        const layout = { signature: parts.join(','), lines: tops.size };
-        layouts.set(key, layout);
-        return layout;
-    };
-    // 每一格按这一格里最窄的那一刻排：外框在这五毫秒里还在收，按起点排的话，字会在这一格的后半截
-    // 顶进右边的内边距、甚至顶出外框（实测形变最快那一段，一格能收十几像素）。第一格按卡片自己的
-    // 宽度排——它就是输入框里原样的折行，而弹簧起手的那一格几乎没动。
-    const widths = samples.map((sample, index) => {
-        const next = samples[index + 1];
-        return index === 0 || next === undefined ? sample.content : Math.min(sample.content, next.content);
-    });
-    // 不必每一格都排：默认的折行是贪心的，两个宽度排出来一模一样，夹在中间的每一个宽度也一样
-    // （每一行能放下的，至少是窄的那边放下的、至多是宽的那边放下的，两边相同就只能是它）。所以只在
-    // 两头不一样的地方二分下去——一段长正文从四十来次排版降到十来次。
-    const perSample = new Array(widths.length);
-    const fill = (from, to) => {
-        if (to - from <= 1)
-            return;
-        const left = perSample[from];
-        const right = perSample[to];
-        if (left !== undefined && right !== undefined && left.signature === right.signature) {
-            for (let index = from + 1; index < to; index += 1)
-                perSample[index] = left;
-            return;
-        }
-        const middle = (from + to) >> 1;
-        perSample[middle] = layoutAt(widths[middle] ?? 0);
-        fill(from, middle);
-        fill(middle, to);
-    };
-    const lastIndex = widths.length - 1;
-    perSample[0] = layoutAt(widths[0] ?? 0);
-    perSample[lastIndex] = layoutAt(widths[lastIndex] ?? 0);
-    fill(0, lastIndex);
-    const windows = [];
-    samples.forEach((sample, index) => {
-        const width = widths[index] ?? sample.content;
-        const layout = perSample[index] ?? layoutAt(width);
-        // 窄下来之后行数变多，字要是比外框还高，外框跟着长——自适应高度的气泡本来就是这样。
-        const needed = sample.top + layout.lines * sample.lineHeight + bottomPadding;
-        if (needed > sample.height)
-            sample.height = needed;
-        // 单行时行高不影响字形的位置（上下的差由平移补上），不必为它分层。
-        const lineHeight = layout.lines > 1
-            ? Math.round(sample.lineHeight / LINE_HEIGHT_STEP) * LINE_HEIGHT_STEP
-            : finalLineHeight;
-        const key = layout.signature + '|' + lineHeight;
-        const last = windows.at(-1);
-        if (last !== undefined)
-            last.until = sample.u;
-        if (last !== undefined && last.key === key)
-            return;
-        windows.push({ key, from: sample.u, until: sample.u, width, lineHeight });
-    });
-    probeHost.remove();
-    const lastWindow = windows.at(-1);
-    if (lastWindow !== undefined)
-        lastWindow.until = 1;
-    // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
-    const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1;
-    const first = windows[0];
-    if (first !== undefined && first.until > handoff) {
-        windows.splice(1, 0, { key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight });
-        first.until = handoff;
-    }
-    // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
-    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
-    while (windows.length > MAX_TEXT_LAYERS) {
-        let shortest = 2;
-        for (let index = 3; index < windows.length - 1; index += 1) {
-            const window = windows[index];
-            const best = windows[shortest];
-            if (window === undefined || best === undefined)
-                continue;
-            if (window.until - window.from < best.until - best.from)
-                shortest = index;
-        }
-        const removed = windows[shortest];
-        const following = windows[shortest + 1];
-        if (removed === undefined || following === undefined)
-            break;
-        following.from = removed.from;
-        windows.splice(shortest, 1);
-    }
-    return windows;
-}
-/**
- * 一层预先排好的正文：气泡里的内容原样克隆，排字属性从气泡上抄。
- */
-function textLayer(bubble, style) {
-    const layer = document.createElement('div');
-    layer.style.cssText = 'position:absolute;left:0;top:0;margin:0;padding:0;border:0;box-sizing:content-box;will-change:transform,opacity';
-    for (const name of TEXT_PROPERTIES)
-        layer.style.setProperty(name, style.getPropertyValue(name));
-    for (const node of bubble.childNodes) {
-        const copy = node.cloneNode(true);
-        if (copy instanceof Element)
-            scrub(copy);
-        layer.appendChild(copy);
-    }
-    return layer;
-}
-/**
- * 一段只在 `[from, until)` 里亮着的透明度：两头是阶跃，合成器上切换。
- */
-function stepOpacity(from, until) {
-    const frames = [];
-    if (from > 0)
-        frames.push({ offset: 0, opacity: '0' }, { offset: from, opacity: '0' });
-    frames.push({ offset: from, opacity: '1' }, { offset: until, opacity: '1' });
-    if (until < 1)
-        frames.push({ offset: until, opacity: '0' }, { offset: 1, opacity: '0' });
-    return frames;
-}
-/**
- * 把一棵克隆里的身份标记全部摘掉：替身不能被 dsh 或本插件找成输入框、也不能拿到焦点。
- * 摘哪些、为什么样式钩子不摘，见 `IDENTITY_ATTRIBUTES`。
- */
-function scrub(root) {
-    const all = [root, ...root.querySelectorAll('*')];
-    for (const element of all) {
-        for (const name of IDENTITY_ATTRIBUTES)
-            element.removeAttribute(name);
-    }
-    for (const layer of root.querySelectorAll(CARET_LAYER_SELECTOR))
-        layer.remove();
-}
-/**
- * 形变进度：一条临界阻尼的弹簧，压进前 `tuning.morphEnd` 段。弹簧在窗口末端还差一点点没到，整条按
- * 末端的值归一，终点严丝合缝、中间也不跳。
- */
-function morphProgress(u) {
-    if (u >= tuning.morphEnd)
-        return 1;
-    return springProgress(u / tuning.morphEnd, 1, tuning.acrossOmega) / springProgress(1, 1, tuning.acrossOmega);
-}
-/**
- * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
- */
-function riseProgress(u) {
-    const shifted = (u - tuning.riseDelay) / (1 - tuning.riseDelay);
-    if (!(shifted > 0))
-        return 0;
-    return springProgress(shifted, tuning.riseDamping, tuning.riseOmega);
-}
-/**
- * 反解纵向进度：气泡在视觉上走到 `progress` 那一刻，占整段飞行的多少。
- *
- * 让位要收在「气泡底边越过输入框上沿」那一刻，而那是一个**位移比例**、不是时间；纵向弹簧又不是
- * 匀速的，所以要反解一次。二分 24 次，误差压在一帧以下（0.06 的进度差在 60 fps 里就是两帧）。
- */
-function timeAtRise(progress) {
-    if (!(progress > 0))
-        return 0;
-    let low = 0;
-    let high = 1;
-    for (let step = 0; step < 24; step += 1) {
-        const mid = (low + high) / 2;
-        if (riseProgress(mid) < progress)
-            low = mid;
-        else
-            high = mid;
-    }
-    return (low + high) / 2;
-}
-/**
- * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
- *
- * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
- * 就是它。`u` 超出 1 的部分由调用方夹住。
- *
- * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
- * （见 `send-reveal.ts` 的 `springFrames`）。
- */
-function springProgress(u, damping, omega) {
-    if (damping >= 1)
-        return 1 - (1 + omega * u) * Math.exp(-omega * u);
-    const damped = omega * Math.sqrt(1 - damping * damping);
-    return 1 - Math.exp(-damping * omega * u)
-        * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
-}
-/**
- * 这一段飞行要用的曲线参数：默认值，加上浏览器里那一份覆盖。
- *
- * **这是给开发期试参数的口子。** 在控制台里写
- *
- *     localStorage.setItem('dsh-chat-ux:send-flight', '{"acrossOmega":7,"riseDelay":0.15}')
- *
- * 然后发一条消息就能看到新的一套：每段起飞前现读一次，不必重新构建、也不必刷新页面。
- * `localStorage.removeItem('dsh-chat-ux:send-flight')` 就回到默认值。能覆盖的键就是 `FlightTuning`
- * 那五个——`acrossOmega`（越大开局越快、横向越早走完）、`riseDelay`（越大开头那段水平滑行越长）、
- * `riseOmega`、`riseDamping`、`morphEnd`。它不进配置：卡片上没有这一行，schema 里也没有。
- *
- * **只认说得通的值**：不是有限数、或越界（`morphEnd` 要在 0 与 1 之间、阻尼比夹在 0.05~1）就退回
- * 默认——一次笔误不该把动画钉死在半路。读不到 `localStorage`（隐私模式会直接抛）时同样退默认。
- */
-function readTuning() {
-    let raw = null;
-    try {
-        raw = window.localStorage.getItem(TUNING_KEY);
-    }
-    catch {
-        return DEFAULT_TUNING;
-    }
-    if (raw === null || raw === '')
-        return DEFAULT_TUNING;
-    let parsed;
-    try {
-        parsed = JSON.parse(raw);
-    }
-    catch {
-        return DEFAULT_TUNING;
-    }
-    if (parsed === null || typeof parsed !== 'object')
-        return DEFAULT_TUNING;
-    const source = parsed;
-    const read = (key) => {
-        const value = source[key];
-        return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_TUNING[key];
-    };
-    const acrossOmega = read('acrossOmega');
-    const riseOmega = read('riseOmega');
-    const morphEnd = read('morphEnd');
-    return {
-        acrossOmega: acrossOmega > 0 ? acrossOmega : DEFAULT_TUNING.acrossOmega,
-        riseDelay: Math.min(0.9, Math.max(0, read('riseDelay'))),
-        riseOmega: riseOmega > 0 ? riseOmega : DEFAULT_TUNING.riseOmega,
-        riseDamping: Math.min(1, Math.max(0.05, read('riseDamping'))),
-        morphEnd: morphEnd > 0 && morphEnd < 1 ? morphEnd : DEFAULT_TUNING.morphEnd,
-    };
-}
-/**
- * 一个圆角半径在非均匀缩放的壳上该怎么写。
- *
- * 壳的宽按 `sx` 收、高按 `sy` 收（详情见 `MORPH_END`：宽收得比高快），圆角会跟着被压成椭圆。CSS 的
- * `border-radius` 支持两个轴各写一个半径（`水平 / 垂直`），所以把缩放除回去，视觉上就还是正圆。
- */
-function cornerRadius(radius, sx, sy) {
-    return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px';
-}
-/**
- * 一条 box-shadow 向外扩多少：取各层里最大的 `模糊半径 + 扩散半径`。颜色函数里的数字先剔掉。
- *
- * 光晕那一层要用它把阴影的外沿收回可见右边缘以内（见 `startMorph` 里 halo 的缩放）。
- */
-function shadowSpread(shadow) {
-    if (shadow === '' || shadow === 'none')
-        return 0;
-    let spread = 0;
-    for (const part of shadow.split(/,(?![^()]*\))/)) {
-        const clean = part.replace(/[a-z-]+\([^)]*\)/gi, ' ');
-        const found = clean.match(/-?\d*\.?\d+px/g);
-        if (found === null)
-            continue;
-        const values = found.map(Number.parseFloat);
-        spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0));
-    }
-    return spread;
-}
-/**
- * 抄下一层的「面」：按白名单把这一刻算出来的值读下来。
- *
- * 抄的永远是**画出来的东西**，不碰几何与布局——替身的壳自己管几何（逐格缩放、反向缩放、圆角补偿），
- * 抄进去会和它打架。伪元素的定位几何也不在这份白名单里（元素那层根本用不上那几条），它由
- * `PSEUDO_PROPERTIES` 单独列上，理由见那里。
- */
-function readDeclarations(style, properties) {
-    return properties.map((name) => [name, style.getPropertyValue(name)]);
-}
-/**
- * 抄一个伪元素那一层。
- *
- * `content` 是 `none` 就是没有这个伪元素，给 null——替身那一层什么都不写，回落到本来的样子。
- */
-function readPseudoLayer(element, pseudo, properties) {
-    const style = getComputedStyle(element, pseudo);
-    if (style.content === 'none')
-        return null;
-    return readDeclarations(style, properties);
-}
-/**
- * 卡片背后最先画实的那层底色。
- *
- * 一路往上找第一个不透明的 `background-color`——多半是画布。到 `body` 都没找到就给 `transparent`：
- * 垫不出来就不垫，宁可不透，也不画一块来路不明的色。
- */
-function behindColorOf(card) {
-    for (let node = card.parentElement; node !== null; node = node.parentElement) {
-        const color = getComputedStyle(node).backgroundColor;
-        if (alphaOf(color) >= 1)
-            return color;
-    }
-    return 'transparent';
-}
-/**
- * 把抄下来的一层「面」写到替身的某一片填充上。
- */
-function paintSurface(element, declarations) {
-    for (const [name, value] of declarations ?? [])
-        element.style.setProperty(name, value);
-}
-/** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
-function colorParts(color) {
-    const match = /^rgba?\(([^)]+)\)$/.exec(color.trim());
-    if (match === null)
-        return null;
-    const raw = match[1];
-    if (raw === undefined)
-        return null;
-    const parts = raw.split(',').map(part => Number.parseFloat(part));
-    if (parts.length < 3 || parts.some(part => !Number.isFinite(part)))
-        return null;
-    return parts;
-}
-    };
-
-    __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 发送气泡起飞时的样式。
- *
- * 真实行用 visibility 隐藏，保留布局盒供替身逐帧量终点；运行指示只给 min-height 与 overflow，
- * 高度和行前 gap 的动画在 running-entry.ts 做。这一行没有淡入。
- *
- * 属性名必须与 send-flight.ts、index.tsx 一字不差。
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SEND_FLIGHT_CSS = exports.SEND_ON_ATTRIBUTE = void 0;
-/** 门控属性：跟着「聊天气泡动效」这个开关挂上与摘掉。 */
-exports.SEND_ON_ATTRIBUTE = 'data-chat-ux-send-on';
-/** 整份样式，由 `styles.ts` 拼进那张 `<style>`。 */
-exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
-[data-chat-ux-send-flight] {
-  visibility: hidden;
-}
-
-/* 「深度求索中，用时 N 秒」那一行的占位——静态那一半。门控属性跟着「聊天气泡动效」这个开关
-   走：没有让位时它本来就看不出突变，关掉就回到 dsh 原样。
-
-   只放两条常驻声明，高度与行前那道 gap 的动画在 running-entry.ts 里做。CSS 做不干净，两处：
-
-   1. [data-chat-flow] 是 flex 列，这一行是它的 flex item。flex item 的 min-height: auto
-      解析成内容最小高度，height: 0 会被撑回 22 px；只有 overflow 不是 visible 时才归零，而
-      overflow: clip 在 Chromium 里并不触发那一条（实测 min-height 仍是 auto，插进去就是满高，
-      整条 height 过渡一次都没跑过）。所以显式写 min-height: 0。
-   2. 行前那道 gap 是 dsh 给这一行的 margin-top: 12px。dsh 那条规则的特异性是 0,7,0，这里
-      0,3,0 压不住——@starting-style 里的 margin 起始值实测被丢弃。只能内联写。
-
-   overflow 常驻：零高时把内容裁掉，这一行本来就没有溢出，留着无害。 */
-[data-chat-ux-send-on] [data-chat-flow] [data-chat-running] {
-  min-height: 0;
-  overflow: clip;
-}
-`;
-    };
-
-    __registry["chat/send-flight/running-entry.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 「深度求索中」那一行的零高入场。
- *
- * 插入后的微任务里把 height 和 margin-top 压成零，再逐帧长回自然值，避免 dsh 的跟随把气泡
- * 与历史一帧顶上去。先停在起手格，隔两拍再起跑，躲开提交那一记长任务。
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.installRunningEntry = installRunningEntry;
-/** 那一行自己。与样式表里的选择器必须一字不差。 */
-const RUNNING_ROW_SELECTOR = '[data-chat-running]';
-/** 占位时长（毫秒）。 */
-const ENTRY_MS = 180;
-/**
- * 占位的缓动。**不能像气泡落地那样抢跑**：原先那条 0.22/1/0.36/1 在前四分之一时长就走完七成半，
- * 三十几像素的位移挤进前四十毫秒，读起来还是一次「顶」。换成缓入缓出——同一时刻大约走一半，剩下的
- * 摊在整段里。占位这件事本身是「空间被填出来」，不该有回弹。
- */
-const ENTRY_EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
-/** 兜底清理在动画时长之后再多等多久（毫秒）。 */
-const CLEANUP_GRACE_MS = 80;
-/**
- * 起播前先等几帧——与 `send-flight.ts` 的 `WARMUP_FRAMES` 同一个理由（见模块头）。这一行的插入
- * 几乎总在提交那一记长任务里，动画若同时起跑，长任务结束时第一帧就是满高。
- */
-const WARMUP_FRAMES = 2;
-/** 预热折算的毫秒数；兜底定时器要把它一起算进去。 */
-const WARMUP_MS = WARMUP_FRAMES * (1000 / 60);
-/**
- * 起播后第一帧，动画比墙钟快多少（毫秒）才值得把时间轴退回去。
- *
- * 与替身那一处同值（`send-morph.ts` 的 `ALIGN_TOLERANCE_MS`）：一帧半以内是 rAF 与动画时间轴的
- * 正常相位差，回拨反而会顿一下。
- */
-const ALIGN_TOLERANCE_MS = 24;
-/**
- * 装上占位动画。
- */
-function installRunningEntry() {
-    const grown = new WeakSet();
-    const observer = new MutationObserver((records) => {
-        for (const record of records) {
-            for (const node of record.addedNodes) {
-                if (!(node instanceof Element))
-                    continue;
-                const rows = node.matches(RUNNING_ROW_SELECTOR)
-                    ? [node]
-                    : Array.from(node.querySelectorAll(RUNNING_ROW_SELECTOR));
-                for (const row of rows)
-                    growFromZero(row, grown);
-            }
-        }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-}
-/**
- * 把这一行的首帧高度与行前 gap 一起压成零，再动画回它们自己的值。
- */
-function growFromZero(row, grown) {
-    if (!(row instanceof HTMLElement) || grown.has(row))
-        return;
-    grown.add(row);
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches)
-        return;
-    // 两个值都必须在写内联之前读完：getComputedStyle 返回的是活对象，写一个会改掉另一个的读数。
-    // 关键帧里的 height 是 content-box 的高度，元素还没布局时 computed 是 auto，退回矩形高度。
-    const computed = getComputedStyle(row);
-    const measured = Number.parseFloat(computed.height);
-    const natural = Number.isFinite(measured) && measured > 0 ? measured : row.getBoundingClientRect().height;
-    if (natural <= 0)
-        return;
-    const gap = Number.parseFloat(computed.marginTop);
-    const settledGap = Number.isFinite(gap) && gap > 0 ? gap : 0;
-    row.style.height = '0px';
-    row.style.marginTop = '0px';
-    const growth = row.animate([
-        { height: '0px', marginTop: '0px' },
-        { height: natural + 'px', marginTop: settledGap + 'px' },
-    ], 
-    // fill 必须 forwards：不填的话动画一结束元素就回落到内联的那个零高，而 onfinish 到清理
-    // 之间只要隔着一帧，读者就会看见这一行闪一下。填住之后末值一直挂着，直到 remove 接上。
-    { duration: ENTRY_MS, easing: ENTRY_EASING, fill: 'forwards' });
-    // 先停在起手那一格，等两拍 rAF 再起跑（见 `WARMUP_FRAMES`）。停着的时候它就是零高——
-    // 读者看不见它，dsh 的跟随也一步都不走，所以这两帧不花任何视觉上的代价。
-    growth.pause();
-    growth.currentTime = 0;
-    let rescue = 0;
-    const cleanup = () => {
-        window.clearTimeout(rescue);
-        // cancel 与两个 removeProperty 在同一段同步代码里：样式只重算一次，中间没有可画的帧。
-        growth.cancel();
-        row.style.removeProperty('height');
-        row.style.removeProperty('margin-top');
-    };
-    const rescueIn = (delay) => {
-        window.clearTimeout(rescue);
-        rescue = window.setTimeout(cleanup, delay);
-    };
-    growth.onfinish = cleanup;
-    // 兜底：onfinish 在无头环境里实测有不触发的情形，而失败模式是这一行永远零高。脚本幂等。
-    // 从创建这一刻起算，起跑若被推迟（后台页签里 rAF 会停）也有一道保底。
-    rescueIn(WARMUP_MS + ENTRY_MS + CLEANUP_GRACE_MS);
-    const play = () => {
-        if (!row.isConnected) {
-            cleanup();
-            return;
-        }
-        const startedAt = performance.now();
-        growth.play();
-        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程一忙这一格就晚出几十毫秒。
-        const now = document.timeline.currentTime;
-        if (typeof now === 'number')
-            growth.startTime = now;
-        rescueIn(ENTRY_MS + CLEANUP_GRACE_MS);
-        // 起播后第一帧核一次时间轴：动画若跑在墙钟前面（超过一帧半），把起点后移，让这一格退回
-        // 起手。rAF 在绘制之前，回拨不可见；主线程被长任务吞掉时两边差值为负，不会误触发。
-        requestAnimationFrame(() => {
-            const reached = growth.currentTime;
-            if (typeof reached !== 'number' || reached <= 0 || reached >= ENTRY_MS)
-                return;
-            const ahead = reached - (performance.now() - startedAt);
-            if (ahead <= ALIGN_TOLERANCE_MS)
-                return;
-            const start = growth.startTime;
-            if (typeof start === 'number')
-                growth.startTime = start + ahead;
-        });
-    };
-    requestAnimationFrame(() => requestAnimationFrame(play));
 }
     };
 
@@ -6877,199 +4339,186 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatUxConfigCard = ChatUxConfigCard;
 const jsx_runtime_1 = require("react/jsx-runtime");
 /**
- * 插件管理页上的配置卡片。
+ * 插件管理页上的插件配置卡片。
  *
- * 用与 dsh 设置页相同的 primitives 与设计令牌搭出开关行；开关和档位即时写入，并读回配置确认落地。
- * locale 服务缺席时按浏览器语言显示。
+ * dsh 0.1.6 起把一个 bundle 自己的配置渲染在 bundle 的页面上、plugins.bundle.config 座位里、按包名 keyed；
+ * 标题与面包屑由页面画，这里只是 view 为 page 时的那张表单
+ *
+ * 零件全是平台自带的：开关是 ui-primitives 的 Switch，档位是同一个包里的 SegmentedControl，覆盖徽标是 Tag，
+ * 字段节奏与 --dsw-* 令牌见 config-card-styles.ts
+ *
+ * 开关与档位点一下即写，写入在途时控件禁用；点完之后从 host 读回来的值才算数，写入本身会吞掉传输层与版本号的失败
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
 const settings_scope_1 = require("./settings-scope");
-/** 设置分节里的字段名；必须与 host 侧的 schema 一致。 */
-const AUTO_FOLD_FIELD = 'autoFold';
-const CARET_FIELD = 'caretMotion';
-const SEND_FLIGHT_FIELD = 'sendFlight';
-const HIT_REEL_FIELD = 'hitReel';
-const CONTEXT_PIE_FIELD = 'contextPie';
-const COMPOSER_GLASS_FIELD = 'composerGlass';
-const LIVE_DIFF_FIELD = 'liveDiff';
-const FOLLOW_FIELD = 'followOnAppear';
+// 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
+const AUTO_FOLD_FIELD = "autoFold";
+const CARET_FIELD = "caretMotion";
+const HIT_REEL_FIELD = "hitReel";
+const CONTEXT_PIE_FIELD = "contextPie";
+const COMPOSER_GLASS_FIELD = "composerGlass";
+const LIVE_DIFF_FIELD = "liveDiff";
+const FOLLOW_FIELD = "followOnAppear";
 const ZH_COPY = {
-    summary: () => '光标动效、气泡动效、读数与输入框玻璃都在这里调。',
-    autoFoldLabel: '自动开合',
-    autoFoldHint: '思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。'
-        + '你自己动手折叠过的，它不再打扰。',
-    followLabel: '工具行跟随',
-    followHint: '工具调用和新出现的思考行一到，滚动条就自己跟到底，新内容不会落到看不见的地方。'
-        + '你自己往上翻的时候它一概不动，回到最下面又接着跟。',
-    caretLabel: '光标动效',
-    caretHint: '输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，'
-        + '打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。',
-    caretOff: '关',
-    caretMove: '移动时',
-    caretTyping: '无论何时',
-    sendLabel: '聊天气泡动效',
-    sendHint: '按下发送后，输入框浮起来收成一条气泡飞进对话里，让「已经发出去了」看得见。',
-    reelLabel: '命中率转轮',
-    reelHint: '输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——'
-        + '新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。',
-    pieLabel: '上下文占用饼',
-    pieHint: '输入框下方那圈上下文占用环换成一枚实心饼，按占用多少取色；已占用那一角沿折线切开、推开一点，'
-        + '像从盘子里切下来的一块。关掉就回到 dsh 原来的环。',
-    glassLabel: '输入框毛玻璃',
-    glassHint: '输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；'
-        + '右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。',
-    liveDiffLabel: '实时改动行数',
-    liveDiffHint: '直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。'
-        + '数字一变，变了的那一位会像读数那样在原地弹到新值。'
-        + '默认开着。',
-    overridden: '已覆盖',
-    reset: '重置',
-    failed: '保存未生效，请重试。',
-    unavailable: '这个页面暂时读不到本插件的配置，设置改不了。请确认插件已在当前环境启用，然后重新打开这一页。',
-    readOnly: '当前设置不可修改，改动无法保存。',
+    summary: () => "光标动效、读数与输入框玻璃都在这里调。",
+    autoFoldLabel: "自动开合",
+    autoFoldHint: "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
+        + "你自己动手折叠过的，它不再打扰。",
+    followLabel: "工具行跟随",
+    followHint: "工具调用和新出现的思考行一到，滚动条就自己跟到底，新内容不会落到看不见的地方。"
+        + "你自己往上翻的时候它一概不动，回到最下面又接着跟。",
+    caretLabel: "光标动效",
+    caretHint: "输入光标滑到新位置，而不是直接跳过去。「移动时」只在方向键、点击这类明确移动时滑动，"
+        + "打字瞬时；「无论何时」连打字也一起滑。关掉就用浏览器原本的光标。",
+    caretOff: "关",
+    caretMove: "移动时",
+    caretTyping: "无论何时",
+    reelLabel: "命中率转轮",
+    reelHint: "输入框下方那枚胶囊里的命中率变化时，变了的那几位数字在原地弹一下就落到新读数——"
+        + "新的从下方一点落回来，旧的朝反方向淡出。关掉就直接换成新数字。",
+    pieLabel: "上下文占用饼",
+    pieHint: "输入框下方那圈上下文占用环换成一枚实心饼，按占用多少取色；已占用那一角沿折线切开、推开一点，"
+        + "像从盘子里切下来的一块。关掉就回到 dsh 原来的环。",
+    glassLabel: "输入框毛玻璃",
+    glassHint: "输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；"
+        + "右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。",
+    liveDiffLabel: "实时改动行数",
+    liveDiffHint: "直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。"
+        + "数字一变，变了的那一位会像读数那样在原地弹到新值。"
+        + "默认开着。",
+    overridden: "已覆盖",
+    reset: "重置",
+    failed: "保存未生效，请重试。",
+    unavailable: "这个页面暂时读不到本插件的配置，设置改不了。请确认插件已在当前环境启用，然后重新打开这一页。",
+    readOnly: "当前设置不可修改，改动无法保存。",
 };
 const EN_COPY = {
-    summary: () => 'Caret motion, bubble motion, the readouts and the composer glass are all adjustable here.',
-    autoFoldLabel: 'Automatic folding',
-    autoFoldHint: 'A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a '
-        + 'tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.',
-    followLabel: 'Follow new rows',
-    followHint: 'When a tool call or a new reasoning row arrives, the scroll follows to the bottom so nothing lands '
-        + 'out of sight. While you scroll up yourself it keeps still, and picks up again once you are back at '
-        + 'the bottom.',
-    caretLabel: 'Caret motion',
-    caretHint: 'The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow '
-        + 'keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser\'s own cursor.',
-    caretOff: 'Off',
-    caretMove: 'On move',
-    caretTyping: 'On typing',
-    sendLabel: 'Chat bubble motion',
-    sendHint: 'When you send a message, the composer lifts off and folds into a bubble that flies into the conversation, '
-        + 'so a send is something you can see.',
-    reelLabel: 'Cache-hit reels',
-    reelHint: 'When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new '
-        + 'values — each one drops back in from just below while the old digit fades out the other way. Off swaps '
-        + 'the number instantly.',
-    pieLabel: 'Context pie',
-    pieHint: 'The context ring under the composer becomes a solid pie that takes its colour from how full the context '
-        + 'is; the occupied slice is cut along a fold line and slides out a little, like a piece cut from a plate. '
-        + 'Turning it off restores dsh\'s own ring.',
-    glassLabel: 'Composer glass',
-    glassHint: 'The composer carries its own blue gradient and lets a little of what sits behind it through; its '
-        + 'highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the '
-        + 'same material. Turning it off restores dsh\'s own composer and button.',
-    liveDiffLabel: 'Live change counts',
-    liveDiffHint: 'When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content '
-        + 'is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value '
-        + 'the way the readouts do. On by default.',
-    overridden: 'Overridden',
-    reset: 'Reset',
-    failed: 'The save did not take effect. Please try again.',
-    unavailable: 'This page cannot read the plugin configuration right now, so settings cannot be changed. Check that the '
-        + 'plugin is enabled in this environment, then open this page again.',
-    readOnly: 'These settings cannot be changed, so edits cannot be saved.',
+    summary: () => "Caret motion, the readouts and the composer glass are all adjustable here.",
+    autoFoldLabel: "Automatic folding",
+    autoFoldHint: "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
+        + "tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.",
+    followLabel: "Follow new rows",
+    followHint: "When a tool call or a new reasoning row arrives, the scroll follows to the bottom so nothing lands "
+        + "out of sight. While you scroll up yourself it keeps still, and picks up again once you are back at "
+        + "the bottom.",
+    caretLabel: "Caret motion",
+    caretHint: `The text cursor slides to its new position instead of jumping. "On move" animates deliberate moves — arrow `
+        + `keys, clicks — and leaves typing instant; "On typing" animates typing too. Off keeps the browser's own cursor.`,
+    caretOff: "Off",
+    caretMove: "On move",
+    caretTyping: "On typing",
+    reelLabel: "Cache-hit reels",
+    reelHint: "When the cache-hit rate in the pill below the composer changes, the digits that changed pop to their new "
+        + "values — each one drops back in from just below while the old digit fades out the other way. Off swaps "
+        + "the number instantly.",
+    pieLabel: "Context pie",
+    pieHint: "The context ring under the composer becomes a solid pie that takes its colour from how full the context "
+        + "is; the occupied slice is cut along a fold line and slides out a little, like a piece cut from a plate. "
+        + "Turning it off restores dsh's own ring.",
+    glassLabel: "Composer glass",
+    glassHint: "The composer carries its own blue gradient and lets a little of what sits behind it through; its "
+        + "highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the "
+        + "same material. Turning it off restores dsh's own composer and button.",
+    liveDiffLabel: "Live change counts",
+    liveDiffHint: "When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content "
+        + "is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value "
+        + "the way the readouts do. On by default.",
+    overridden: "Overridden",
+    reset: "Reset",
+    failed: "The save did not take effect. Please try again.",
+    unavailable: "This page cannot read the plugin configuration right now, so settings cannot be changed. Check that the "
+        + "plugin is enabled in this environment, then open this page again.",
+    readOnly: "These settings cannot be changed, so edits cannot be saved.",
 };
-/**
- * 渲染这个插件的配置：几个开关与光标动效的三档。
- */
+// 渲染这个插件的配置：几个开关与光标动效的三档；页面要摘要时只给那一行字
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
-    // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文。
-    const activeLanguage = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => (locale ? locale.subscribe(listener) : () => {
-    }), [locale]), (0, react_1.useCallback)(() => (locale ? locale.getSnapshot().active : null), [locale]));
-    const browserLanguage = typeof navigator === 'undefined' ? null : navigator.language;
-    // dsh 的活跃语言优先，子标签按主语言归类；没有 locale 或取不到时问浏览器，仍认不出就用中文
-    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? 'zh';
-    const copy = language.toLowerCase().split('-')[0] === 'en' ? EN_COPY : ZH_COPY;
+    // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文
+    const subscribeLanguage = (0, react_1.useCallback)((listener) => locale ? locale.subscribe(listener) : () => { }, [locale]);
+    const readLanguage = (0, react_1.useCallback)(() => locale ? locale.getSnapshot().active : null, [locale]);
+    const activeLanguage = (0, react_1.useSyncExternalStore)(subscribeLanguage, readLanguage);
+    const browserLanguage = typeof navigator === "undefined" ? null : navigator.language;
+    // dsh 的活跃语言优先，zh-Hant 这类子标签按主语言归到中文；它缺席或拿不出内容时问浏览器语言，
+    // 两条都认不出英文就用中文。dsh 自己把认不出的语言落回英文，这张卡片不跟它：中文是这套文案的主要读者
+    const language = nonEmpty(activeLanguage) ?? nonEmpty(browserLanguage) ?? "zh";
+    const copy = language.toLowerCase().split("-")[0] === "en" ? EN_COPY : ZH_COPY;
     const [saving, setSaving] = (0, react_1.useState)(false);
-    const [failed, setFailed] = (0, react_1.useState)(false);
+    const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
-    const autoFoldOn = storedBoolean(snapshot.value, AUTO_FOLD_FIELD, settings_scope_1.DEFAULT_AUTO_FOLD);
-    const followOn = storedBoolean(snapshot.value, FOLLOW_FIELD, settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR);
-    const sendOn = storedBoolean(snapshot.value, SEND_FLIGHT_FIELD, settings_scope_1.DEFAULT_SEND_FLIGHT);
-    const reelOn = storedBoolean(snapshot.value, HIT_REEL_FIELD, settings_scope_1.DEFAULT_HIT_REEL);
-    const pieOn = storedBoolean(snapshot.value, CONTEXT_PIE_FIELD, settings_scope_1.DEFAULT_CONTEXT_PIE);
-    const glassOn = storedBoolean(snapshot.value, COMPOSER_GLASS_FIELD, settings_scope_1.DEFAULT_COMPOSER_GLASS);
-    const liveDiffOn = storedBoolean(snapshot.value, LIVE_DIFF_FIELD, settings_scope_1.DEFAULT_LIVE_DIFF);
+    const autoFoldOn = storedAutoFold(snapshot.value);
+    const followOn = storedFollow(snapshot.value);
+    const reelOn = storedHitReel(snapshot.value);
+    const pieOn = storedContextPie(snapshot.value);
+    const glassOn = storedGlass(snapshot.value);
+    const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
-    const unavailable = snapshot.status === 'unavailable';
+    const unavailable = snapshot.status === "unavailable";
     const readOnly = snapshot.writable === false;
     const controlsDisabled = saving || unavailable || readOnly;
-    const caretOptions = [
-        { value: 'off', label: copy.caretOff },
-        { value: 'move', label: copy.caretMove },
-        { value: 'typing', label: copy.caretTyping },
+    const caretOptionList = [
+        { value: "off", label: copy.caretOff },
+        { value: "move", label: copy.caretMove },
+        { value: "typing", label: copy.caretTyping },
     ];
-    if (view === 'summary')
+    if (view === "summary")
         return (0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, { children: copy.summary() });
-    // 一个没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件。
+    // 没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件
     if (unavailable)
         return (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.unavailable });
-    /** 写入一个字段，然后从 host 读回来确认它真的落地了。 */
+    // 写入一个字段，再从 host 读回来确认它真的落地了
     const writeField = async (field, next, readBack) => {
         setSaving(true);
-        setFailed(false);
-        try {
-            const accepted = await scope.set(field, next);
-            const landed = accepted && readBack(scope.getSnapshot().value) === next;
-            setFailed(!landed);
-        }
-        catch {
-            setFailed(true);
-        }
-        finally {
-            setSaving(false);
-        }
+        setSaveFailed(false);
+        const accepted = await scope.set(field, next);
+        const landed = accepted && readBack(scope.getSnapshot().value) === next;
+        setSaveFailed(!landed);
+        setSaving(false);
     };
-    /** 清掉用户层里的覆盖，让取值退回默认层。 */
-    const reset = async (field) => {
+    // 清掉用户层里的覆盖，让取值退回默认层
+    const resetField = async (field) => {
         setSaving(true);
-        setFailed(false);
-        try {
-            await scope.unset(field);
-            setFailed(userLayerHasField(scope.getSnapshot().user, field));
-        }
-        catch {
-            setFailed(true);
-        }
-        finally {
-            setSaving(false);
-        }
+        setSaveFailed(false);
+        await scope.unset(field);
+        setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
+        setSaving(false);
     };
-    /** 一行「标签 + 说明 + 覆盖徽标 + 控件」的骨架。 */
-    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && overrideBadges(copy, controlsDisabled, () => void reset(field)), control] }));
-    /** 一行布尔开关；读回时沿用同一个字段和默认值。 */
-    const switchRow = (field, label, hint, checked, fallback) => rowChrome(field, label, hint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: checked, disabled: controlsDisabled, label: label, onChange: (next) => void writeField(field, next, section => storedBoolean(section, field, fallback)) })));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), switchRow(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, autoFoldOn, settings_scope_1.DEFAULT_AUTO_FOLD), switchRow(FOLLOW_FIELD, copy.followLabel, copy.followHint, followOn, settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + '-caret', value: caretMode, options: caretOptions, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), switchRow(SEND_FLIGHT_FIELD, copy.sendLabel, copy.sendHint, sendOn, settings_scope_1.DEFAULT_SEND_FLIGHT), switchRow(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, reelOn, settings_scope_1.DEFAULT_HIT_REEL), switchRow(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, pieOn, settings_scope_1.DEFAULT_CONTEXT_PIE), switchRow(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, glassOn, settings_scope_1.DEFAULT_COMPOSER_GLASS), switchRow(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, liveDiffOn, settings_scope_1.DEFAULT_LIVE_DIFF), failed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件，七行共用；用户层盖过这个字段时才挂徽标与重置
+    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
-/** 「已覆盖」徽标与重置按钮。 */
-function overrideBadges(copy, disabled, onReset) {
-    return ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: disabled, onClick: onReset, children: copy.reset })] }));
+function storedAutoFold(value) {
+    return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
 }
-/** 从 host 的值里读一个布尔开关；字段缺席时用默认值。 */
-function storedBoolean(section, field, fallback) {
-    return section?.[field] ?? fallback;
+function storedFollow(value) {
+    return value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
 }
-/** 从 host 的值里读光标动效档位。 */
-function storedCaret(section) {
-    return section?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+function storedHitReel(value) {
+    return value?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL;
 }
-/** 只放行非空字符串。 */
-function nonEmpty(candidate) {
-    if (typeof candidate !== 'string' || candidate === '')
+function storedLiveDiff(value) {
+    return value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
+}
+function storedContextPie(value) {
+    return value?.contextPie ?? settings_scope_1.DEFAULT_CONTEXT_PIE;
+}
+function storedGlass(value) {
+    return value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
+}
+function storedCaret(value) {
+    return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+}
+function nonEmpty(value) {
+    if (typeof value !== "string" || value === "")
         return undefined;
-    return candidate;
+    return value;
 }
-/**
- * 原始用户层里有没有这个字段。标记「已覆盖」看的是「在不在」，而不是值比不比得上默认值：
- * 一个恰好等于默认值的覆盖，仍然是覆盖。
- */
+// 原始用户层里有没有这个字段：标记已覆盖看的是它在不在，而不是值比不比得上默认值，恰好等于默认值的覆盖也算覆盖
 function userLayerHasField(user, field) {
-    if (typeof user !== 'object' || user === null)
+    if (typeof user !== "object" || user === null)
         return false;
-    return Object.hasOwn(user, field);
+    return field in user;
 }
     };
 
@@ -7078,30 +4527,29 @@ function userLayerHasField(user, field) {
 /**
  * 插件配置卡片的样式。
  *
- * 类名统一带插件前缀，颜色与节奏使用 dsh 的 --dsw-* 令牌，跟随主题切换。
+ * 与插件管理页表达自己的方式一致：同一套 --dsw-* 令牌、同一套字段节奏与控件几何，一张夹在两张官方
+ * 卡片中间的卡片该读起来像这一页自己的一部分
+ *
+ * 开关本身不在这里画，用的是平台提供的 Switch；这一份只管把标题、说明与控件摆成官方开关行的样子
+ * 保持纯文本的理由与聊天区样式表相同：client bundle 单文件自包含，没有资源 URL
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARD_CSS = exports.CARD_CLASS = void 0;
-/**
- * 卡片渲染的类名。带前缀，所以不可能和宿主页面自己的类名撞车
- * （那一页用的是带 hash 的 CSS Module 名，而插件的样式表是普通的全局 CSS）。
- */
+// 卡片渲染的类名，带前缀所以不会和宿主页面的类名撞车（那一页用的是带 hash 的 CSS Modules 名，插件的样式表是普通的全局 CSS）
 exports.CARD_CLASS = {
-    form: 'dsh-chat-ux-card-form',
-    notice: 'dsh-chat-ux-card-notice',
-    row: 'dsh-chat-ux-card-row',
-    rowText: 'dsh-chat-ux-card-row-text',
-    label: 'dsh-chat-ux-card-label',
-    labelLine: 'dsh-chat-ux-card-label-line',
-    badges: 'dsh-chat-ux-card-badges',
-    reset: 'dsh-chat-ux-card-reset',
-    hint: 'dsh-chat-ux-card-hint',
-    failed: 'dsh-chat-ux-card-failed',
-    segment: 'dsh-chat-ux-card-segment',
+    form: "dsh-chat-ux-card-form",
+    notice: "dsh-chat-ux-card-notice",
+    row: "dsh-chat-ux-card-row",
+    rowText: "dsh-chat-ux-card-row-text",
+    label: "dsh-chat-ux-card-label",
+    labelLine: "dsh-chat-ux-card-label-line",
+    badges: "dsh-chat-ux-card-badges",
+    reset: "dsh-chat-ux-card-reset",
+    hint: "dsh-chat-ux-card-hint",
+    failed: "dsh-chat-ux-card-failed",
+    segment: "dsh-chat-ux-card-segment",
 };
-/**
- * 卡片的样式表。每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则。
- */
+// 每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则
 exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 .${exports.CARD_CLASS.form} {
   display: flex;
@@ -7138,7 +4586,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-/* 标签那一行：行内 flex，标签后面再跟什么小标都不会把说明挤下去。 */
+/* 标签那一行：行内 flex，标签后面再跟什么小标都不会把说明挤下去 */
 .${exports.CARD_CLASS.labelLine} {
   display: flex;
   align-items: center;
@@ -7185,13 +4633,13 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
   line-height: 1.5;
 }
 
-/* 首行之外每一行都带一条分隔线，各行于是有同一个节奏。 */
+/* 首行之外每一行都带一条分隔线，各行于是有同一个节奏 */
 .${exports.CARD_CLASS.row}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 /* 分段控件由平台自己画（ui-primitives 的 SegmentedControl），这里只保证它不被左侧文字挤扁：
-   它是这一行里唯一的控件，宽度该由它自己定。 */
+   它是这一行里唯一的控件，宽度该由它自己定 */
 .${exports.CARD_CLASS.segment} {
   flex: none;
 }
@@ -7202,48 +4650,35 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyTranscriptViewDefault = applyTranscriptViewDefault;
-/** `ui-chat` 这一条的命名空间；dsh 的聊天设置住在它里面。 */
-const CHAT_SETTINGS_NAMESPACE = 'ui-chat';
-/** 「工作步骤展示」那一项的字段名。 */
-const TRANSCRIPT_VIEW_FIELD = 'transcriptView';
-/** 要补的那一档。 */
-const TRANSCRIPT_VIEW_STANDARD = 'standard';
-/**
- * 补上这一次默认：表单就绪之前等着，就绪之后写一次就撒手。
- */
+// dsh 的聊天设置条目，工作步骤展示那一项住在它里面
+const CHAT_SETTINGS_NAMESPACE = "ui-chat";
+const TRANSCRIPT_VIEW_FIELD = "transcriptView";
+const TRANSCRIPT_VIEW_STANDARD = "standard";
+// 表单就绪之前等着，就绪之后写一次就撒手；不可写、或被版本号围栏挡回来时不再纠缠，下次加载页面时再说
 function applyTranscriptViewDefault(forms) {
     const form = forms.get(CHAT_SETTINGS_NAMESPACE);
-    let done = false;
-    const check = () => {
-        if (done)
+    let written = false;
+    const fillDefaultOnce = () => {
+        if (written)
             return;
-        if (!needsStandard(form.getSnapshot()))
+        const snapshot = form.getSnapshot();
+        if (snapshot.status !== "ready")
             return;
-        done = true;
-        void form.set(TRANSCRIPT_VIEW_FIELD, TRANSCRIPT_VIEW_STANDARD).catch(() => undefined);
+        if (snapshot.writable === false)
+            return;
+        const userSection = snapshot.user;
+        const selectedMode = typeof userSection === "object" && userSection !== null
+            ? userSection[TRANSCRIPT_VIEW_FIELD] ?? undefined
+            : undefined;
+        // 用户层里写过这个字段就不再动手，写的是 null 也算写过
+        if (selectedMode !== undefined)
+            return;
+        written = true;
+        void form.set(TRANSCRIPT_VIEW_FIELD, TRANSCRIPT_VIEW_STANDARD);
     };
-    // 订阅之前先看一眼：共享表单常常比插件先到，那一次快照变化就不会再来了。
-    check();
-    return form.subscribe(check);
-}
-/**
- * 这一刻该不该补。
- */
-function needsStandard(snapshot) {
-    if (snapshot.status !== 'ready')
-        return false;
-    if (snapshot.writable === false)
-        return false;
-    return savedMode(snapshot.user) === undefined;
-}
-/** 用户层里显式写下的档位。 */
-function savedMode(user) {
-    if (!isRecord(user))
-        return undefined;
-    return user[TRANSCRIPT_VIEW_FIELD] ?? undefined;
-}
-function isRecord(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+    // 共享表单常常比插件先到，那一次快照变化就不会再来，所以订阅之前先看一眼
+    fillDefaultOnce();
+    return form.subscribe(fillDefaultOnce);
 }
     };
 
@@ -7252,11 +4687,10 @@ function isRecord(value) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
 /**
- * 聊天区样式，写成纯文本是为了让 client bundle 保持单文件自包含
- * （DSH 的 client 模块加载器不提供任何资源 URL）。
+ * 聊天区样式。写成纯文本是因为 client bundle 必须单文件自包含，DSH 的 client 模块加载器不提供资源 URL。
  *
- * `ALL_CSS` 是注入的那一张表：下面这份聊天区规则，再加上调色板（两处色阶共用的一组色调）、数字轮、
- * 卡片、插入符、文件变更行、折叠体入场、输入框那块玻璃那几份各自的 `*-styles.ts`。
+ * ALL_CSS 是注入的那一张表：下面这份聊天区规则，再加上调色板、数字滚动、卡片、插入符、文件变更行、
+ * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
  */
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const ramp_1 = require("./chat/ramp");
@@ -7268,45 +4702,41 @@ const context_meter_styles_1 = require("./chat/context-meter/context-meter-style
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const follow_probe_styles_1 = require("./chat/follow/follow-probe-styles");
 const fold_motion_styles_1 = require("./chat/fold/fold-motion-styles");
-const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
-/** 注入样式表的固定 id，用于卸载和排查。 */
-exports.STYLE_ID = 'dsh-chat-ux-style';
-/** 聊天区样式表。 */
+// 注入样式表的固定 id，用于卸载和排查
+exports.STYLE_ID = "dsh-chat-ux-style";
+// 聊天区样式表
 exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
 
-/* 过程组的组体只该在纵向滚。dsh 的 .body 只声明了 overflow-y: auto，而按 CSS Overflow 规范，
-   一个轴是 visible、另一个不是时，visible 会计算成 auto——于是它同时成了横向滚动容器，内容只要
-   横向多出一两个像素就长出横向滚动条（宽表格的 100cqw 突破、行内代码的 inline-flex 原子，或者
-   scrollbar-gutter 削窄之后剩下的一点舍入，都算）。「详细」与「完全展开」两档走的是简写
-   overflow: visible，两轴一起放开，本来就没有这个问题，所以这一条只认收纳档。
+/* 过程组的组体只该在纵向滚。dsh 的 .body 只声明了 overflow-y: auto，按 CSS Overflow 规范，
+   一个轴是 visible、另一个不是时 visible 会计算成 auto，于是它同时成了横向滚动容器，内容横向多出
+   一两个像素就长出横向滚动条（宽表格的 100cqw 突破、行内代码的 inline-flex 原子都算）。
+   详细与完全展开两档走的是简写 overflow: visible，两轴一起放开，所以这一条只认收纳档
 
-   横向超出只裁剪、不给滚：组体里能横向滚的东西（代码块、表格）各自带着自己的 overflow-x，不该由
-   组体这一层再兜一次。裁剪掉的那一条同时也不再占掉组体底部——dsh 自己量的是 scrollHeight
-   减 clientHeight，少一条滚动条就少一份偏差。 */
+   横向超出只裁剪、不给滚：组体里能横向滚的东西（代码块、表格）各自带着自己的 overflow-x。
+   裁剪掉的那一条也不再占组体底部，而 dsh 量的是 scrollHeight 减 clientHeight，少一条滚动条就少一份偏差 */
 [data-step-process]:not([data-group-expanded-mode]) [data-step-process-body] {
   overflow-x: hidden;
 }
 
-/* 带实时细节的档位（标准与详细）把这一段的细节接在组头标签后面（"正在分析请求 · …"），而那一段正是组内思考行正在出的字——
-   组体开着的时候两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，所以让原文本整块让位，
-   改显示 process-fold 写在属性上的那半截标签：组头、图标和开合控件都还在原处，只是不再跟着出字。
-   组体一收起，原文本立刻回来；没有实时细节的档位标记不成立，什么都不变。
+/* 带实时细节的档位（标准与详细）把这一段的细节接在组头标签后面（"正在分析请求 · …"），
+   而那段正是组内思考行正在出的字，组体开着时两处一起出字。detail 与标签在同一个文本节点里，CSS 切不开，
+   所以让原文本整块让开，改显示 process-fold 写在属性上的那半截标签：组头、图标和开合控件都还在原处。
+   组体一收起，原文本立刻回来；没有实时细节的档位标记不成立，什么都不变
 
-   替上来的那半截还要自己带流光：动画原本挂在被隐藏的那个元素上，跟着它一起没了。下面这道渐变、
-   它的半宽和周期都对着 ui-primitives 的 TextShimmer 抄，只有 keyframes 的名字是自己的——那份样式
-   走的是 CSS Modules，宿主自己的动画名随时会被改名，不能当接口用。dsh 2026-09 那次更新把流光的
-   做法换成了蒙版扫动（mask-image 加 translateX，1.5 s、delay 0.3 s），这里仍是自己这一版连续
-   渐变，只共享周期；要换成同一套机制是另一件事。 */
+   替上来的那半截自己带流光：动画原本挂在被隐藏的那个元素上，跟着它一起没了。下面这道渐变、
+   它的半宽和周期都对着 ui-primitives 的 TextShimmer 抄，只有 keyframes 的名字是自己的，那份样式
+   走的是 CSS Modules，宿主自己的动画名随时会被改名。dsh 2026-09 那次更新把流光换成蒙版扫动
+   （mask-image 加 translateX，1.5 s、delay 0.3 s），这里仍是自己这一版连续渐变，只共享周期 */
 
-/* 让位的是 TextShimmer 的**整层**——data-shimmer 那个根上，主内容与那层装饰副本都在里面。这个
-   属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成了 data-shimmer；2026-10-17 起只认新名。 */
+/* 让开的是 TextShimmer 整层：data-shimmer 那个根上，主内容与那层装饰副本都在里面。
+   这个属性在 dsh 2026-09 的更新里从 data-text-shimmer 改成 data-shimmer，2026-10-17 起只认新名 */
 [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity] > [data-shimmer] {
   display: none;
 }
 
 [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
   content: attr(data-chat-ux-label);
-  /* 组头是 flex 容器，原文本作为 flex 项带着这三个约束，替上来的文本要占同一格。 */
+  /* 组头是 flex 容器，原文本作为 flex 项带着这三个约束，替上来的文本要占同一格 */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7318,10 +4748,10 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
 }
 
 /* 撑得起这道渐变的浏览器，才把文字交给背景去画；撑不起就让它老实当一段静态标签，
-   而不是配上一个画不出来的背景、把字也一起搭进去。
+   而不是配上一个画不出来的背景、把字也一起搭进去
 
-   括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入
-   「未知的函数形式」而恒为假，整块规则静默跳过——文字还在，流光没了，且不留任何痕迹。 */
+   括号里必须是一个「属性: 值」声明。写成裸的函数调用（color-mix(...)）会被规范归入「未知的函数形式」
+   而恒为假，整块规则静默跳过，文字还在、流光没了，且不留任何痕迹 */
 @supports (color: color-mix(in oklab, currentColor 50%, transparent)) and ((-webkit-background-clip: text) or (background-clip: text)) {
   [data-step-process][data-chat-ux-live-detail][data-chat-ux-open] button[data-process-activity]::after {
     background-image: linear-gradient(
@@ -7348,27 +4778,24 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
   }
 }
 
-/* 轨迹视图里收掉输入区。dsh 的 Trajectory 会让会话壳把输入框当浮层压在记录表上（座位从
-   sticky 改成 absolute，卡片位置一个像素都不动），于是这张卡片永远盖在记录表下方——切到轨迹
-   就是想看记录，输入区在那一页上没有用处。这里把整条座位收掉，记录表铺到底。
+/* 轨迹视图里收掉输入区。dsh 的 Trajectory 会让会话壳把输入框当浮层压在记录表上（座位从 sticky 改成
+   absolute，卡片位置一个像素都不动），于是这张卡片永远盖在记录表下方，而切到轨迹就是想看记录
 
-   判据只用 dsh 的两个语义属性：[data-conversation-composer-overlay] 是「这个视图要求浮层
-   composer」的标记（dsh 自己的契约，只有轨迹视图挂它），[data-conversation-scroll] 是它所在
-   的滚动容器，而座位正是那个容器的直接子元素。末端的子选择器不是装饰：同页其他会话（侧栏里
-   的子智能体会话）各有各的滚动容器，容器里没有那个标记，所以不会跟着一起没。
+   判据只用 dsh 的两个语义属性：[data-conversation-composer-overlay] 是「这个视图要求浮层 composer」
+   的标记，只有轨迹视图挂它；[data-conversation-scroll] 是它所在的滚动容器，座位正是那个容器的直接子元素。
+   末端的子选择器不是装饰：同页其他会话（侧栏里的子智能体会话）各有各的滚动容器，容器里没有那个标记
 
-   底部不留补丁：座上高度由 dsh 的 ResizeObserver 写进滚动容器的 --dsh-composer-height，
-   座位一收起它自己变成 0px，轨迹的 --dsh-trajectory-bottom-clearance 跟着落到 16px。 */
+   底部不留补丁：座位高度由 dsh 的 ResizeObserver 写进滚动容器的 --dsh-composer-height，
+   座位一收起它自己变成 0px，轨迹的 --dsh-trajectory-bottom-clearance 跟着落到 16px */
 [data-conversation-scroll]:has([data-conversation-composer-overlay]) > [data-composer-seat] {
   display: none;
 }
 `;
 /**
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
- *
- * 加了带 CSS 的特性，把它的 CSS 加进这张清单——入口只认这一处，不再自己拼。
+ * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join('\n');
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
@@ -7376,31 +4803,35 @@ exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CARET_MOTION_CSS = void 0;
 /**
- * 插入符动效的样式。
+ * 输入框插入符动效的样式
  *
- * 原生插入符的隐藏与自绘层的显示都由脚本先写标记再命中规则；脚本没跑起来时一条规则都不生效。
- * 位移走 transform，不触发布局。
+ * 三条规则：按掉原生插入符、给挂那根的父元素补定位上下文、把自绘的那根画出来
+ * 前两条只认 caret-motion.ts 写上的标记，脚本半途没跑起来时一条都不命中，原生插入符还在
+ * 这是这套动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏
  */
 const caret_motion_1 = require("./caret-motion");
-/** 自绘插入符的宽度。VS Code 的 `cursorWidth` 默认是 0，渲染时按屏幕缩放落到 2px，同档。 */
-const CARET_WIDTH = '2px';
-/** 位移时长，与 VS Code 的平滑光标同档。 */
-const CARET_TRAVEL_MS = '80ms';
-/** 闪烁周期。Chromium 自己的插入符就是亮五百毫秒、灭五百毫秒。 */
-const CARET_BLINK_PERIOD = '1s';
-/** 自绘那根的选择器，抬到 0-2-0，压过宿主容器给子元素定的规则。 */
+// 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px，与这里同档
+const CARET_WIDTH = "2px";
+// 位移时长，与 VS Code 的平滑光标同档
+const CARET_TRAVEL_MS = "80ms";
+// 闪烁周期。Chromium 自己的插入符就是亮五百毫秒、灭五百毫秒
+const CARET_BLINK_PERIOD = "1s";
+// 自绘那根的选择器。同一个属性写两遍，把它抬到 0-2-0
+// 它落进别人的容器里当子元素，容器给子元素定的规则也会落到它身上：作答框的 .field > * 就给它写了
+// grid-area、padding 与一整套字体，下面那串显式写回的项正是对着这些
 const LAYER = `[${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${caret_motion_1.CARET_LAYER_ATTRIBUTE}]`;
-/**
- * 插入符动效的样式表，由 `styles.ts` 拼进注入的那一张。
- */
+// 插入符动效的样式表，由 styles.ts 拼进注入的那一张
 exports.CARET_MOTION_CSS = `
-/* 自绘的那根就位之后，原生插入符才让位。标记由 caret-motion 在挂上光标之后才写。 */
+/* 自绘的那根就位之后，原生插入符才被按掉
+   标记由 caret-motion 在挂上光标之后才写
+   dsh 自己给每种面各定了 caret-color（主输入框的 .input、作答框的 .fieldInput，都是一个类，0-1-0），
+   下面那两个属性选择器（0-2-0）与「标签 + 属性」（0-1-1）都赢 */
 [data-composer-input][${caret_motion_1.CARET_ATTRIBUTE}],
 textarea[${caret_motion_1.CARET_ATTRIBUTE}] {
   caret-color: transparent;
 }
 
-/* 挂那根的父元素原本不是定位上下文时才有这个标记。它们都没有绝对定位的后代，所以这一条不改任何布局。 */
+/* 挂那根的父元素原本不是定位上下文时才有这个标记。它们都没有绝对定位的后代，所以这一条不改任何布局 */
 [${caret_motion_1.CARET_HOST_ATTRIBUTE}] {
   position: relative;
 }
@@ -7421,11 +4852,12 @@ ${LAYER} {
   border: 0;
   visibility: hidden;
   pointer-events: none;
-  /* 颜色是接管那一刻从这个面的原生插入符上读下来的；读到之前退回 dsh 给主输入框定的那一支。 */
+  /* 颜色是接管那一刻从这个面的原生插入符上读下来的；读到之前退回 dsh 给主输入框定的那一支 */
   background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
+  /* 过渡的是 transform 而不是 top 与 left：VS Code 那边过渡的是布局属性，这里没有理由跟着付那份代价 */
   transition: transform ${CARET_TRAVEL_MS} ease;
   will-change: transform;
-  /* 原生那根被按下去了，闪烁得自己来。 */
+  /* 原生那根被按下去了，闪烁得自己来 */
   animation: ${caret_motion_1.CARET_BLINK_NAME} ${CARET_BLINK_PERIOD} step-end infinite;
 }
 
@@ -7438,7 +4870,7 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 连闪烁一起停：这一档要的是少动，恒亮的光标正好是 VS Code 的 solid 档的样子。 */
+  /* 连闪烁一起停：这一档要的是少动，恒亮的光标正好是 VS Code 的 solid 档的样子 */
   ${LAYER} {
     transition: none;
     animation: none;
@@ -7452,16 +4884,19 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLD_MOTION_CSS = void 0;
 /**
- * 折叠体入场与卷帘门期间的排版。
+ * 折叠体的入场动画，以及高度动画期间的排版
  *
- * 展开体插入时用 @starting-style 做 2px 淡入；退场时元素同帧被移除，CSS 没有可过渡的旧值。
- * 只认 data-disclosure-row 等语义属性，并排除聊天流之外与轮次头子树。
+ * dsh 的 DisclosureRow 在收起时把展开体整个卸掉（ui-primitives/src/DisclosureRow.tsx），重新插入的那一帧是唯一
+ * 能挂过渡的时机，所以用 @starting-style 给起始值，从 2px 上方淡入。只动 opacity 与 translate，高度在插入瞬间
+ * 就位：逐帧改高度会让聊天区的跟随与过程组体里那层跟随互相追，分页锚点按元素位置记录，动画期间量到的位置也会漂
  *
- * 卷帘门运行时子元素一律 flex: none，避免 flex 先挤扁自带滚动的卡片。
+ * 收起方向做不到退场，元素在同一帧就被移除，CSS 没有可过渡的旧值
  */
 const dom_contract_1 = require("../../dom-contract");
 const fold_glide_1 = require("./fold-glide");
-/** 展开体的入场：2px 上浮 + 淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）。 */
+// 展开体的入场：2px 上浮加淡入，节奏取聊天区已有的 120ms（MessageItem 与 TurnNavigator 预览同档）
+// 两条排除：聊天区之外（文件预览、工作流面板）也发 [data-disclosure-row]，所以整条规则收在 [data-chat-flow] 里面；
+// 轮次头展开时几十个过程成员一起被当成刚插入，会整块滑着出现，所以过程成员的整棵子树与轮次触发通知都排除
 exports.FOLD_MOTION_CSS = `
 @starting-style {
   [data-chat-flow] :is(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR}, ${dom_contract_1.DISCLOSURE_ROW_SELECTOR}) ~ *:not(${dom_contract_1.DISCLOSURE_HEADER_SELECTOR} *, [data-turn-process-member] *, [data-turn-trigger] *) {
@@ -7480,7 +4915,8 @@ exports.FOLD_MOTION_CSS = `
   }
 }
 
-/* 卷帘门走的时候，门里的每一张卡片按自然高度排好，不被 flex 挤扁。 */
+/* 高度动画期间，展开体里的每张卡片按自然高度排好，不被 flex 挤扁。这两百毫秒里谁也不该改它，所以带 !important；
+   动画一停标记就撤，排版回到 dsh 原样：展开体的高度本来就是子元素自然高度之和，两种排法在终点上一个像素都不差 */
 [${fold_glide_1.ROLLING_ATTRIBUTE}] > * {
   flex: none !important;
 }

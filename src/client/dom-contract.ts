@@ -1,143 +1,101 @@
 /**
  * dsh 聊天区的 DOM 契约。
  *
- * 只认 dsh 的语义属性，不认带构建期 hash 的 class 名；两个以上模块共用的选择器都收在这里。
+ * 这里全是 dsh 自己发出的语义属性。它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版而坏，
+ * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 
-/** 聊天列。 */
-export const CHAT_FLOW_SELECTOR = '[data-chat-flow]'
+// 聊天列
+export const CHAT_FLOW_SELECTOR = "[data-chat-flow]"
 
-/** 每一行思考行；它的阶段看 `data-state`。 */
-export const THINK_ROW_SELECTOR = '[data-variant="think"]'
+// 每一行思考行；它的阶段看 data-state
+export const THINK_ROW_SELECTOR = `[data-variant="think"]`
 
 /**
- * 每一次工具调用的包装层——根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
- *
- * 它与思考行是「结构时刻」的两个锚点：它们第一次被渲染时，dsh 的跟随最容易掉队（见
- * follow/call-appeared.ts）。
+ * 每一次工具调用的包装层：根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
+ * 它与思考行是结构时刻的两个锚点，它们第一次渲染时 dsh 的跟随最容易掉队
  */
-export const CALL_ROW_SELECTOR = '[data-chat-call-id]'
+export const CALL_ROW_SELECTOR = "[data-chat-call-id]"
 
-/** 模型还在思考、过程还在跑时的阶段值。 */
-export const RUNNING_STATE = 'running'
+// 模型还在思考、过程还在跑时的阶段值
+export const RUNNING_STATE = "running"
 
 /**
- * TextShimmer 正在扫光的元素。它挂着，就说明这一段内容还在动。
- *
- * 2026-09 起这个属性就叫 `data-shimmer`；插件自 2026-10-17 起不再认旧名 `data-text-shimmer`。
+ * TextShimmer 正在扫光的元素：它在，就说明这一段内容还在动。
+ * 2026-09 起这个属性叫 data-shimmer，2026-10-17 起不再认旧名 data-text-shimmer
  */
-export const SHIMMER_SELECTOR = '[data-shimmer]'
+export const SHIMMER_SELECTOR = "[data-shimmer]"
 
-/** 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动。 */
-export const CONVERSATION_SCROLL_SELECTOR = '[data-conversation-scroll]'
+// 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
+export const CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]"
 
 /**
  * 跟随开着时 dsh 挂在聊天框架上的语义属性；它没了，就说明跟随已经被关掉。
- *
- * 属性名与选择器两种形式各有人用（前者喂 `attributeFilter`，后者查页面），所以两个都写在这里：
- * 各自就地拼字符串的话，改一处就会漏一处。
+ * 属性名与选择器两种形式各有人用：前者喂 attributeFilter，后者查页面，两个都写在这里
  */
-export const FOLLOWING_TAIL_ATTRIBUTE = 'data-chat-following-tail'
+export const FOLLOWING_TAIL_ATTRIBUTE = "data-chat-following-tail"
 
-/** 同一个契约的选择器形式。 */
-export const FOLLOWING_TAIL_SELECTOR = '[' + FOLLOWING_TAIL_ATTRIBUTE + ']'
+// 同一个契约的选择器形式
+export const FOLLOWING_TAIL_SELECTOR = "[" + FOLLOWING_TAIL_ATTRIBUTE + "]"
 
 /**
- * 读者离底部多近才算「贴着底部」，取 dsh 自己的 `FOLLOW_THRESHOLD + 1`。
- *
- * 那条线以内，dsh 把内容增长当成「跟着尾巴走」：尺寸一变就瞬时滚到底。
+ * 读者离底部多近才算贴着底部，取 dsh 自己的 FOLLOW_THRESHOLD + 1。
+ * 那条线以内，dsh 把内容增长当成跟着尾巴走：尺寸一变就瞬时滚到底
  */
 export const FOLLOW_THRESHOLD_PX = 25
 
-/** 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动。 */
-export const COMPOSER_SELECTOR = '[data-composer-seat]'
+// 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动
+export const COMPOSER_SELECTOR = "[data-composer-seat]"
 
-/** 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位，发送气泡按它取起点。 */
-export const COMPOSER_INPUT_SELECTOR = '[data-composer-input]'
+// 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
+export const COMPOSER_INPUT_SELECTOR = "[data-composer-input]"
 
 /**
- * 输入区里的纯文本框：提问卡片的作答框（`[data-question-key]` 下），以及排队消息的行内编辑框
- * （`[data-queue-dock]` 下，子智能体跑着时追加的那几条就在这里改）。两者都是 textarea，都住在
- * 输入区座位里，主会话与侧栏里的子智能体会话都一样。
+ * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
+ * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样
  */
-export const COMPOSER_TEXTAREA_SELECTOR = '[data-composer-seat] textarea'
+export const COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea"
 
 /**
  * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
- *
- * 它是 dsh 0.2.1-alpha.1 起才有的——0.2.0-rc.2 及更早的坞只有类名（带构建期 hash，认不得），
- * 那一版里统计是**一枚**胶囊（带下面那个属性），比例圆是它的兄弟。
+ * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
  */
-export const COMPOSER_DOCK_SELECTOR = '[data-composer-dock]'
+export const COMPOSER_DOCK_SELECTOR = "[data-composer-dock]"
 
-/** 输入卡片（那条胶囊）。落在它里面的点击可能是提交。 */
-export const COMPOSER_CARD_SELECTOR = '[data-composer-card]'
+// 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致
+export const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "])
+
+// dsh 给每一个过程组放的属性
+export const PROCESS_GROUP_SELECTOR = "[data-step-process]"
 
 /**
- * 提交之后 dsh 立刻挂上来的那条「即发即显」回显行；发送气泡的落点就是它。
- *
- * 排队的那一条落在队列坞里、也带这个属性，所以要飞的那条必须连同聊天列一起认（见 `send-flight.ts`）。
+ * 过程组根上的档位标记：在，就说明这一档不收纳组体（详细与完全展开两档）。
+ * 这两档里组头仍在 DOM，只是被 dsh 裹进一个带 hidden 的壳，所以判档位只能靠它，不能靠找不到组头
  */
-export const SUBMISSION_ECHO_SELECTOR = '[data-submission-echo]'
-
-/** 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致。 */
-export const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '])
-
-/** dsh 给每一个过程组放的属性。 */
-export const PROCESS_GROUP_SELECTOR = '[data-step-process]'
+export const PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode"
 
 /**
- * 过程组根上：在，就说明这一档不收纳组体（「详细」与「完全展开」两档）。
- *
- * 这两档里组头**仍在 DOM**，只是被 dsh 裹进一个带 `hidden` 的壳，所以判档位只能靠它，
- * 不能再靠「找不到组头」。
+ * dsh 的折叠动效正在驱动这一行：collapse 是收起中，reveal 是展开中。
+ * 官方批量折叠与展开期间，插件的过程组自动开合与高度动画都要让开：同一行上叠两套高度动画只会互相打架。
+ * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
  */
-export const PROCESS_EXPANDED_MODE_ATTRIBUTE = 'data-group-expanded-mode'
+export const MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`
+
+// 过程组体；收起时带 hidden
+export const PROCESS_BODY_SELECTOR = "[data-step-process-body]"
+
+// 过程组体里的内容层；组体滚的就是它
+export const PROCESS_CONTENT_SELECTOR = "[data-step-process-content]"
 
 /**
- * dsh 的折叠动效正在驱动这一行：`collapse` 是收起中、`reveal` 是展开中。
- *
- * 官方批量折叠/展开期间，插件的过程组自动开合与卷帘门都应让路——同一行上叠两套高度动画只会互相
- * 打架。列上的作用域标记（`data-chat-motion=""`）不算，只认这两个值。
+ * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
+ * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
  */
-export const MOTION_ROW_SELECTOR = '[data-chat-motion="collapse"], [data-chat-motion="reveal"]'
-
-/**
- * 会话内容的阶段（`hero` / `settling` / `active`），挂在会话内容根上。
- *
- * 发送动效只在 `active` 这一档里做「落点让位」：hero 与 settling 各有自己的一整套布局切换，
- * 往里插一脚只会打架。
- */
-export const CONTENT_PHASE_ATTRIBUTE = 'data-content-phase'
-export const CONTENT_PHASE_SELECTOR = '[' + CONTENT_PHASE_ATTRIBUTE + ']'
-export const ACTIVE_CONTENT_PHASE = 'active'
-
-/**
- * 列上的折叠动效作用域标记（`data-chat-motion=""`）；行上的同名字符串另带阶段值。
- *
- * 它在列上时，说明 dsh 正在跑一段批量折叠/展开的高度动画——那一会儿的行高与滚动都在变，
- * 想动聊天区的人应当让路。
- */
-export const MOTION_ATTRIBUTE = 'data-chat-motion'
-
-/** 过程组体；收起时带 `hidden`。 */
-export const PROCESS_BODY_SELECTOR = '[data-step-process-body]'
-
-/** 过程组体里的内容层；组体滚的就是它。 */
-export const PROCESS_CONTENT_SELECTOR = '[data-step-process-content]'
-
-/**
- * DisclosureRow 的**被点那一行**。展开体是它的兄弟——0.2.1-alpha.2 起改成外层 header 的兄弟。
- *
- * 谁取展开体，就得同时认下面那个 header：只认这一个的话，alpha.2 上取到的是空槽位，
- * 于是「不报错、只是不动了」。
- */
-export const DISCLOSURE_ROW_SELECTOR = '[data-disclosure-row]'
+export const DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]"
 
 /**
  * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
- *
- * 它把被点行与 `headerAccessory` 槽位一起裹住，展开体因此从「行的兄弟」变成「它的兄弟」；
- * 旧版没有这一层（`closest` 返回 null），两处取展开体的地方都按「有就用、没有就退回行自己」。
+ * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
+ * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
  */
-export const DISCLOSURE_HEADER_SELECTOR = '[data-disclosure-header]'
+export const DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]"
