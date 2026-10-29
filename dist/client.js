@@ -45,6 +45,7 @@ window.__ModuleLoader__.load({
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.inject = void 0;
 exports.apply = apply;
+const bubble_rise_1 = require("./chat/bubble-rise/bubble-rise");
 const caret_motion_1 = require("./chat/caret/caret-motion");
 const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
 const composer_glass_1 = require("./chat/composer-glass/composer-glass");
@@ -96,6 +97,8 @@ function apply(ctx) {
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
+        bubbleRise: settings_scope_1.DEFAULT_BUBBLE_RISE,
+        bubbleTuning: settings_scope_1.DEFAULT_BUBBLE_TUNING,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
@@ -158,6 +161,19 @@ function apply(ctx) {
             return;
         followDispose = (0, call_appeared_1.installCallAppearFollow)();
     };
+    // 气泡冒头也是一装一卸的一处：开关关掉时整块不装，回声的隐藏规则与探针一起失效，气泡就是 dsh 原来的样子。
+    // 参数不重装：动画每次播之前现读一份，所以卡片上拖完滑杆不必重落，下一次发送就按新的走
+    let bubbleRiseDispose = null;
+    const syncBubbleRise = () => {
+        if (!settings.bubbleRise) {
+            bubbleRiseDispose?.();
+            bubbleRiseDispose = null;
+            return;
+        }
+        if (bubbleRiseDispose !== null)
+            return;
+        bubbleRiseDispose = (0, bubble_rise_1.installBubbleRise)(() => settings.bubbleTuning);
+    };
     const syncSettings = () => {
         const value = scope.getSnapshot().value;
         settings.autoFold = value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -166,11 +182,14 @@ function apply(ctx) {
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
+        settings.bubbleRise = value?.bubbleRise ?? settings_scope_1.DEFAULT_BUBBLE_RISE;
+        settings.bubbleTuning = (0, settings_scope_1.readBubbleTuning)(value);
         syncGlass();
         caret.resync();
         syncPie();
         syncAutoFold();
         syncFollow();
+        syncBubbleRise();
     };
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror");
@@ -208,6 +227,16 @@ function apply(ctx) {
     // 所以这一处从 DOM 之外接管：动真实高度，让布局逐帧长出来、逐帧收回去，收起方向靠拦下那次点击
     // 把展开体留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响
     ctx.effect(() => (0, fold_glide_1.installFoldGlide)(), "dsh-chat-ux: fold glide");
+    // 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来再升到落点。动的是聊天列里真实那一行
+    // 里的气泡，不克隆替身；行本身仍在布局里占位。提交后本地的回声由这一处先藏起来，真实行到达时
+    // 才把它摆出来，所以同一条消息只会出现一次。常驻，没有开关
+    ctx.effect(() => {
+        syncBubbleRise();
+        return () => {
+            bubbleRiseDispose?.();
+            bubbleRiseDispose = null;
+        };
+    }, "dsh-chat-ux: bubble rise");
     // 内置的文件变更行只给根调用画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
     // 所以 run_code 的程序里派发出去的 write 与 edit 拿不到行尾那截 +n -m。这一处用 -1 的遮挡等级
     // 在 edit 与 write 两个座位上接管那一行：keyed 座位按 priority 升序取最低的那个渲染，内置那两行是默认的 0。
@@ -250,6 +279,467 @@ const CHAT_SETTINGS_NAMESPACE = "ui-chat";
 const PACKAGE_NAME = "@alm-allen/dsh-chat-ux";
 // 配置条目 id；设置服务按它标识一份表单
 const SETTINGS_NAMESPACE = "dsh-chat-ux";
+    };
+
+    __registry["chat/bubble-rise/bubble-rise.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installBubbleRise = installBubbleRise;
+/**
+ * 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来，微顿，再升到它该在的位置。
+ *
+ * 两段加两条弹簧：第一段 easeInOut 从 emergeScale 长到 oversize，中间微顿并先往外送 holdDrift，
+ * 第二段用欠阻尼弹簧回到 1。弹簧的角频率按「回落穿过终点落在这一段末尾」反算，尺寸那条用同一个
+ * 穿越时刻，所以落定那一帧尺寸正好是 1，清掉 transform 不会跳
+ *
+ * 参数每次播之前读一遍，所以插件管理页上拖完滑杆，下一次发送就按新的走，不必刷新
+ *
+ * 动的是真实那一行里的气泡，不是替身：行本身仍在布局里占着那个位置，冒头期间落点是空的。
+ * 判据全用 dsh 的语义属性：[data-submission-echo] 是提交后本地的回声，[data-chat-flow-kind="user"]
+ * 是 Host 接住之后那一行。两者之间没有别的事件可用，所以回声那边挂一条 1 ms 的探针动画，
+ * animationstart 就是「提交了」这通通知；真实行出现靠 MutationObserver 认，它回调在绘制之前
+ *
+ * 侧栏里的子智能体会话各有各的滚动器与输入区，所以这一整套都从那一行自己往上找，不用 document
+ */
+const dom_contract_1 = require("../../dom-contract");
+const bubble_rise_styles_1 = require("./bubble-rise-styles");
+// 尺寸与位置在同一次穿越里收尾；让尺寸先到，落定那一帧还会差一点
+const SIZE_SPEED = 1;
+// 弹簧尾巴不再等：超过这一段还没判到落定，就直接收
+const SETTLE_SLACK_MS = 200;
+// 回声出现之后最多等这么久，超时就把回声放出来，别让读者以为没发出去
+const ECHO_WAIT_MS = 1200;
+// 气泡右缘能超出聊天列多少：那个滚动器的左右各有 16px 内边距，再往外就被裁了
+const SIDE_CLEARANCE_PX = 16;
+// 判定「聊天列的底就是输入区的顶」时的容差
+const CLIP_TOLERANCE_PX = 2;
+// 气泡那一层；行里除了它还有时间与复制那一行
+const BUBBLE_SELECTOR = "[data-message-bubble]";
+// 真实那一行
+const USER_ROW_SELECTOR = '[data-chat-flow-kind="user"]';
+/**
+ * 装上这一处：挂门控属性、接上回声的探针，返回卸下的把手
+ * @param readTuning 现读一份冒头参数；每次播放之前调一次，卡片上改完下一次就生效
+ */
+function installBubbleRise(readTuning) {
+    const gate = typeof document === "undefined" ? null : document.documentElement;
+    if (gate === null)
+        return () => undefined;
+    gate.setAttribute(bubble_rise_styles_1.RISE_ATTRIBUTE, "");
+    const active = new Set();
+    let observer = null;
+    let waitTimer = 0;
+    // 收掉等待窗口：观察器与超时一起断
+    const closeWindow = () => {
+        observer?.disconnect();
+        observer = null;
+        if (waitTimer !== 0)
+            window.clearTimeout(waitTimer);
+        waitTimer = 0;
+    };
+    // 把回声放出来：等待超时，或者这一条接不上动画时，读者至少看得见自己发的内容
+    const revealEchoes = (scope) => {
+        for (const echo of scope.querySelectorAll(`[${bubble_rise_styles_1.SUBMISSION_ECHO_ATTRIBUTE}]`)) {
+            echo.setAttribute(bubble_rise_styles_1.RISE_ECHO_HELD_ATTRIBUTE, "");
+        }
+    };
+    // 新增的这一批里有没有真实那一行；认到就关窗口，不再往后看
+    const claimFirstRow = (nodes, scroller) => {
+        for (const node of nodes) {
+            if (!(node instanceof HTMLElement))
+                continue;
+            // 新增的通常就是那一行自己；整块替换时取最后一条，最旧的那些不会因此重新冒头
+            const row = node.matches(USER_ROW_SELECTOR)
+                ? node
+                : [...node.querySelectorAll(USER_ROW_SELECTOR)].at(-1) ?? null;
+            if (row === null)
+                continue;
+            closeWindow();
+            if (!playRise(row, active, readTuning()))
+                revealEchoes(scroller);
+            return true;
+        }
+        return false;
+    };
+    // 回声到了，真实行还会在几百毫秒内到：只在这一小段里看新增节点
+    const watchRows = (echo) => {
+        closeWindow();
+        const scroller = echo.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
+        if (scroller === null)
+            return;
+        observer = new MutationObserver((records) => {
+            for (const record of records) {
+                if (claimFirstRow(record.addedNodes, scroller))
+                    return;
+            }
+        });
+        observer.observe(scroller, { childList: true, subtree: true });
+        waitTimer = window.setTimeout(() => {
+            revealEchoes(scroller);
+            closeWindow();
+        }, ECHO_WAIT_MS);
+    };
+    const onEchoAppear = (event) => {
+        if (!(event instanceof AnimationEvent) || event.animationName !== bubble_rise_styles_1.RISE_ECHO_PROBE_NAME)
+            return;
+        const echo = event.target;
+        if (!(echo instanceof Element))
+            return;
+        if (!echo.hasAttribute(bubble_rise_styles_1.SUBMISSION_ECHO_ATTRIBUTE) || echo.hasAttribute(bubble_rise_styles_1.PENDING_STEERING_ATTRIBUTE))
+            return;
+        watchRows(echo);
+    };
+    document.addEventListener("animationstart", onEchoAppear, true);
+    return () => {
+        document.removeEventListener("animationstart", onEchoAppear, true);
+        closeWindow();
+        for (const finish of [...active])
+            finish();
+        gate.removeAttribute(bubble_rise_styles_1.RISE_ATTRIBUTE);
+        for (const echo of document.querySelectorAll(`[${bubble_rise_styles_1.RISE_ECHO_HELD_ATTRIBUTE}]`)) {
+            echo.removeAttribute(bubble_rise_styles_1.RISE_ECHO_HELD_ATTRIBUTE);
+        }
+    };
+}
+/**
+ * 这一条气泡从输入框里冒出来再落回去
+ * @param row 真实那一行
+ * @param active 正在跑的清理函数，卸载时一并收掉
+ * @param tuning 这一次用的十个参数
+ * @returns 播没播；没播时调用方要把回声放出来
+ */
+function playRise(row, active, tuning) {
+    const view = row.ownerDocument.defaultView;
+    if (view === null)
+        return false;
+    if (typeof view.matchMedia === "function" && view.matchMedia("(prefers-reduced-motion: reduce)").matches)
+        return false;
+    // 折叠动效正在动这一行：同一行上叠两套位移只会互相追
+    if (row.closest(dom_contract_1.MOTION_ROW_SELECTOR) !== null)
+        return false;
+    const scroller = row.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
+    const bubble = row.querySelector(BUBBLE_SELECTOR);
+    const seat = scroller?.querySelector(dom_contract_1.COMPOSER_SELECTOR) ?? null;
+    const column = row.closest(dom_contract_1.CHAT_FLOW_SELECTOR);
+    // 跟随开着才有 data-chat-following-tail，那个元素也正是纵向裁剪气泡的那一层
+    const chatRoot = row.closest(dom_contract_1.FOLLOWING_TAIL_SELECTOR);
+    if (scroller === null || bubble === null || seat === null || column === null || chatRoot === null)
+        return false;
+    const bubbleRect = bubble.getBoundingClientRect();
+    const seatRect = seat.getBoundingClientRect();
+    const columnRect = column.getBoundingClientRect();
+    const rootRect = chatRoot.getBoundingClientRect();
+    if (bubbleRect.height === 0 || seatRect.height === 0)
+        return false;
+    const { poseAt, stageEnd, totalMs } = createTimeline(tuning);
+    // 聊天列的底就是输入区的顶时，它自己的纵向裁剪正好把气泡切在那一格，这是要的遮挡。
+    // 内容还没铺满一屏的会话里这条线远在上方，气泡会整块画不出来，这时把裁剪让开，
+    // 交由输入区座位那 36px 的渐变去遮
+    const croppedAtSeat = Math.abs(rootRect.bottom - seatRect.top) <= CLIP_TOLERANCE_PX;
+    const previousOverflowY = chatRoot.style.overflowY;
+    if (!croppedAtSeat)
+        chatRoot.style.overflowY = "visible";
+    // 落点是气泡自己的矩形，不含下面那一行时间与复制
+    const startScrollTop = scroller.scrollTop;
+    const endRight = bubbleRect.right;
+    const endBottom = bubbleRect.bottom;
+    const bubbleHeight = bubbleRect.height;
+    const columnRight = columnRect.right;
+    const draw = (elapsed) => {
+        const pose = poseAt(elapsed);
+        const emerged = clamp01(pose.emerge);
+        const travel = clamp01(pose.travel);
+        // 冒出阶段只露一截：底边被输入区挡住，露出多少由这一段的进度决定，不靠尺寸顺带露出
+        const seatTop = seat.getBoundingClientRect().top;
+        const startRight = columnRight + Math.min(tuning.outdent, SIDE_CLEARANCE_PX) * emerged;
+        const startBottom = seatTop + bubbleHeight * pose.scale - tuning.reveal * emerged;
+        // 落点跟着滚动走，起手点钉在输入区上
+        const endBottomNow = endBottom - (scroller.scrollTop - startScrollTop);
+        const right = startRight + (endRight - startRight) * travel;
+        const bottom = startBottom + (endBottomNow - startBottom) * travel;
+        // 缩放圆心在右下角（transform-origin 写在下面），所以右下角就是这两个点
+        const dx = right - endRight;
+        const dy = bottom - endBottomNow;
+        bubble.style.transform = `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale(${pose.scale.toFixed(4)})`;
+    };
+    bubble.style.transformOrigin = "100% 100%";
+    bubble.style.willChange = "transform";
+    draw(0);
+    let startedAt = null;
+    let frameId = 0;
+    let overshot = false;
+    let finished = false;
+    const finish = () => {
+        if (finished)
+            return;
+        finished = true;
+        if (frameId !== 0)
+            view.cancelAnimationFrame(frameId);
+        bubble.style.transform = "";
+        bubble.style.transformOrigin = "";
+        bubble.style.willChange = "";
+        chatRoot.style.overflowY = previousOverflowY;
+        active.delete(finish);
+    };
+    const tick = (now) => {
+        if (!bubble.isConnected) {
+            finish();
+            return;
+        }
+        if (startedAt === null)
+            startedAt = now;
+        const elapsed = now - startedAt;
+        draw(elapsed);
+        const pose = poseAt(elapsed);
+        // 判据挂在行程上：尺寸那一条这时候已经收敛到 1 了，行程还在动
+        if (elapsed > stageEnd && pose.travel > 1.001)
+            overshot = true;
+        if ((overshot && pose.travel <= 1) || elapsed >= totalMs + SETTLE_SLACK_MS) {
+            finish();
+            return;
+        }
+        frameId = view.requestAnimationFrame(tick);
+    };
+    active.add(finish);
+    frameId = view.requestAnimationFrame(tick);
+    return true;
+}
+// 按一份参数封出一段时间轴：两条弹簧的角频率与两段的分界都只算一次
+function createTimeline(tuning) {
+    // 卡片上的段长可以调到 0，而 0 会让每一帧的进度都变成 NaN，所以这里兜到至少 1 ms
+    const emergeMs = Math.max(1, tuning.emergeMs);
+    const riseMs = Math.max(1, tuning.riseMs);
+    // 阻尼比贴着 1 时那条根式退化成 0，角频率会除零
+    const riseDamping = Math.min(tuning.riseDamping, 0.999);
+    const sizeDamping = Math.min(tuning.sizeDamping, 0.999);
+    const stageEnd = emergeMs + tuning.hold;
+    const totalMs = stageEnd + riseMs;
+    const riseOmega = omegaFor(riseMs, riseDamping);
+    const sizeOmega = omegaFor(riseMs / SIZE_SPEED, sizeDamping);
+    const ease = cubicBezierEase(tuning.emergeBezierX1, tuning.emergeBezierY1, tuning.emergeBezierX2, tuning.emergeBezierY2);
+    const poseAt = (elapsed) => {
+        const emerge = ease(elapsed / emergeMs);
+        const holdAt = tuning.hold <= 0 ? 1 : (elapsed - emergeMs) / tuning.hold;
+        const drift = tuning.holdDrift * smoothstep(holdAt);
+        const riseAt = Math.max(0, elapsed - stageEnd) / 1000;
+        const rise = spring(riseAt, riseOmega, riseDamping);
+        const size = spring(riseAt, sizeOmega, sizeDamping);
+        const grow = tuning.emergeScale + (tuning.oversize - tuning.emergeScale) * emerge;
+        const scale = elapsed < emergeMs ? grow : 1 + (tuning.oversize - 1) * (1 - size);
+        return { emerge, scale, travel: drift + (1 - drift) * rise };
+    };
+    return { poseAt, stageEnd, totalMs };
+}
+// 欠阻尼弹簧的阶跃响应：起步速度为 0，冲过 1 再落回来
+function spring(seconds, omega, damping) {
+    if (seconds <= 0)
+        return 0;
+    const dampedOmega = omega * Math.sqrt(1 - damping * damping);
+    const decay = Math.exp(-damping * omega * seconds);
+    return 1 - decay * (Math.cos(dampedOmega * seconds) + (damping * omega / dampedOmega) * Math.sin(dampedOmega * seconds));
+}
+/**
+ * 把「冲过终点、回落穿过终点」这一刻钉在这一段末尾
+ * @param ms 这一段多长
+ * @param damping 阻尼比；越小过冲越多
+ * @returns 角频率，段长与过冲因此互相牵住，尾巴不留到总时长之后
+ */
+function omegaFor(ms, damping) {
+    const dampedRatio = Math.sqrt(1 - damping * damping);
+    const cross = 2 * Math.PI - Math.atan(dampedRatio / damping);
+    return cross / ((ms / 1000) * dampedRatio);
+}
+/**
+ * 三次贝塞尔缓动：两个控制点的横坐标限制在 0 到 1，纵坐标可以出界，于是曲线能先退后进或先冲过头。
+ * 先用牛顿法从横坐标反解参数，解不出来再退回二分——与浏览器画 cubic-bezier() 用的那套相同
+ * @param x1 第一控制点横坐标，0 到 1
+ * @param y1 第一控制点纵坐标，可以出界
+ * @param x2 第二控制点横坐标，0 到 1
+ * @param y2 第二控制点纵坐标，可以出界
+ * @returns 把 0 到 1 的进度映射成曲线上的值
+ */
+function cubicBezierEase(x1, y1, x2, y2) {
+    const ax = 3 * x1 - 3 * x2 + 1;
+    const bx = 3 * x2 - 6 * x1;
+    const cx = 3 * x1;
+    const ay = 3 * y1 - 3 * y2 + 1;
+    const by = 3 * y2 - 6 * y1;
+    const cy = 3 * y1;
+    const sampleX = (t) => ((ax * t + bx) * t + cx) * t;
+    const sampleY = (t) => ((ay * t + by) * t + cy) * t;
+    const slopeX = (t) => (3 * ax * t + 2 * bx) * t + cx;
+    return (progress) => {
+        const target = clamp01(progress);
+        if (target <= 0)
+            return 0;
+        if (target >= 1)
+            return 1;
+        let t = target;
+        for (let step = 0; step < 8; step++) {
+            const diff = sampleX(t) - target;
+            if (Math.abs(diff) < 1e-6)
+                return sampleY(t);
+            const slope = slopeX(t);
+            if (Math.abs(slope) < 1e-6)
+                break;
+            t -= diff / slope;
+            if (t < 0 || t > 1)
+                break;
+        }
+        let low = 0;
+        let high = 1;
+        t = target;
+        for (let step = 0; step < 24; step++) {
+            const value = sampleX(t);
+            if (Math.abs(value - target) < 1e-6)
+                break;
+            if (value < target)
+                low = t;
+            else
+                high = t;
+            t = (low + high) / 2;
+        }
+        return sampleY(t);
+    };
+}
+function smoothstep(value) {
+    const x = clamp01(value);
+    return x * x * (3 - 2 * x);
+}
+function clamp01(value) {
+    return Math.min(1, Math.max(0, value));
+}
+    };
+
+    __registry["dom-contract.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * dsh 聊天区的 DOM 契约。
+ *
+ * 这里全是 dsh 自己发出的语义属性。它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版而坏，
+ * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+// 聊天列
+exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
+// 每一行思考行；它的阶段看 data-state
+exports.THINK_ROW_SELECTOR = `[data-variant="think"]`;
+/**
+ * 每一次工具调用的包装层：根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
+ * 它与思考行是结构时刻的两个锚点，它们第一次渲染时 dsh 的跟随最容易掉队
+ */
+exports.CALL_ROW_SELECTOR = "[data-chat-call-id]";
+// 模型还在思考、过程还在跑时的阶段值
+exports.RUNNING_STATE = "running";
+/**
+ * TextShimmer 正在扫光的元素：它在，就说明这一段内容还在动。
+ * 2026-09 起这个属性叫 data-shimmer，2026-10-17 起不再认旧名 data-text-shimmer
+ */
+exports.SHIMMER_SELECTOR = "[data-shimmer]";
+// 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
+exports.CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]";
+/**
+ * 跟随开着时 dsh 挂在聊天框架上的语义属性；它没了，就说明跟随已经被关掉。
+ * 属性名与选择器两种形式各有人用：前者喂 attributeFilter，后者查页面，两个都写在这里
+ */
+exports.FOLLOWING_TAIL_ATTRIBUTE = "data-chat-following-tail";
+// 同一个契约的选择器形式
+exports.FOLLOWING_TAIL_SELECTOR = "[" + exports.FOLLOWING_TAIL_ATTRIBUTE + "]";
+/**
+ * 读者离底部多近才算贴着底部，取 dsh 自己的 FOLLOW_THRESHOLD + 1。
+ * 那条线以内，dsh 把内容增长当成跟着尾巴走：尺寸一变就瞬时滚到底
+ */
+exports.FOLLOW_THRESHOLD_PX = 25;
+// 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动
+exports.COMPOSER_SELECTOR = "[data-composer-seat]";
+// 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
+exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
+/**
+ * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
+ * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样
+ */
+exports.COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea";
+/**
+ * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
+ * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
+ */
+exports.COMPOSER_DOCK_SELECTOR = "[data-composer-dock]";
+// 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致
+exports.SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+// dsh 给每一个过程组放的属性
+exports.PROCESS_GROUP_SELECTOR = "[data-step-process]";
+/**
+ * 过程组根上的档位标记：在，就说明这一档不收纳组体（详细与完全展开两档）。
+ * 这两档里组头仍在 DOM，只是被 dsh 裹进一个带 hidden 的壳，所以判档位只能靠它，不能靠找不到组头
+ */
+exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode";
+/**
+ * dsh 的折叠动效正在驱动这一行：collapse 是收起中，reveal 是展开中。
+ * 官方批量折叠与展开期间，插件的过程组自动开合与高度动画都要让开：同一行上叠两套高度动画只会互相打架。
+ * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
+ */
+exports.MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`;
+// 过程组体；收起时带 hidden
+exports.PROCESS_BODY_SELECTOR = "[data-step-process-body]";
+// 过程组体里的内容层；组体滚的就是它
+exports.PROCESS_CONTENT_SELECTOR = "[data-step-process-content]";
+/**
+ * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
+ * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
+ */
+exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
+/**
+ * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
+ * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
+ * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
+ */
+exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
+    };
+
+    __registry["chat/bubble-rise/bubble-rise-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.BUBBLE_RISE_CSS = exports.PENDING_STEERING_ATTRIBUTE = exports.SUBMISSION_ECHO_ATTRIBUTE = exports.RISE_ECHO_HELD_ATTRIBUTE = exports.RISE_ECHO_PROBE_NAME = exports.RISE_ATTRIBUTE = void 0;
+/**
+ * 发送气泡的冒头：样式表这半边只有两条，一条探针、一条先把回声藏起来。
+ *
+ * 探针是「提交了」这通通知：回声行第一次被渲染时响一次 animationstart，画面上没有任何变化。
+ * 它是 1 ms 而不是 0，因为零时长的动画根本不会开始；两帧都写 opacity: 0，于是它与下面那条隐藏规则
+ * 叠在同一处，任何时候都不会把回声放出来
+ *
+ * 隐藏只认 dsh 的两个语义属性：[data-submission-echo] 是提交后本地的回声，
+ * [data-pending-steering] 是运行中追加的排队消息，那些照旧显示
+ */
+const dom_contract_1 = require("../../dom-contract");
+// 门控属性：在，说明这一处在工作；摘掉它，下面每一条规则都不命中
+exports.RISE_ATTRIBUTE = "data-dsh-chat-ux-rise";
+// 回声行上那条 1 ms 的检测动画名，监听那一侧按它过滤 animationstart
+exports.RISE_ECHO_PROBE_NAME = "dsh-chat-ux-rise-echo";
+// 回声放出来的标记：等待超时或这一条接不上动画时打在它身上，让读者至少看见自己发的内容
+exports.RISE_ECHO_HELD_ATTRIBUTE = "data-dsh-chat-ux-rise-held";
+// 回声行的那两个语义属性，样式与脚本读同一组字符串
+exports.SUBMISSION_ECHO_ATTRIBUTE = "data-submission-echo";
+exports.PENDING_STEERING_ATTRIBUTE = "data-pending-steering";
+// 这一处的全部 CSS：一条探针、一条隐藏
+exports.BUBBLE_RISE_CSS = `
+/* 回声出现的通知：从 0 到 0，只为一个 animationstart，不留任何可见痕迹 */
+@keyframes ${exports.RISE_ECHO_PROBE_NAME} {
+  from { opacity: 0; }
+  to { opacity: 0; }
+}
+
+[${exports.RISE_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} [${exports.SUBMISSION_ECHO_ATTRIBUTE}]:not([${exports.PENDING_STEERING_ATTRIBUTE}]) {
+  animation: ${exports.RISE_ECHO_PROBE_NAME} 1ms linear;
+}
+
+/* 真实行到达之前，回声不该先在落点闪一下：它被藏起来，占位照旧，读者的气泡从输入框里冒出来。
+   超时或接不上动画时脚本会补上那个标记，这一条就不再命中 */
+[${exports.RISE_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} [${exports.SUBMISSION_ECHO_ATTRIBUTE}]:not([${exports.PENDING_STEERING_ATTRIBUTE}]):not([${exports.RISE_ECHO_HELD_ATTRIBUTE}]) {
+  opacity: 0;
+  pointer-events: none;
+}
+`;
     };
 
     __registry["chat/caret/caret-motion.js"] = function (module, exports, require) {
@@ -773,92 +1263,6 @@ function surfaceOf(element) {
 }
     };
 
-    __registry["dom-contract.js"] = function (module, exports, require) {
-"use strict";
-/**
- * dsh 聊天区的 DOM 契约。
- *
- * 这里全是 dsh 自己发出的语义属性。它的 class 名每次都带构建期 hash，认了就等着随 dsh 发版而坏，
- * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
-// 聊天列
-exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
-// 每一行思考行；它的阶段看 data-state
-exports.THINK_ROW_SELECTOR = `[data-variant="think"]`;
-/**
- * 每一次工具调用的包装层：根调用与 run_code 里派发出去的子调用都带它，卡片三个阶段复用同一个节点。
- * 它与思考行是结构时刻的两个锚点，它们第一次渲染时 dsh 的跟随最容易掉队
- */
-exports.CALL_ROW_SELECTOR = "[data-chat-call-id]";
-// 模型还在思考、过程还在跑时的阶段值
-exports.RUNNING_STATE = "running";
-/**
- * TextShimmer 正在扫光的元素：它在，就说明这一段内容还在动。
- * 2026-09 起这个属性叫 data-shimmer，2026-10-17 起不再认旧名 data-text-shimmer
- */
-exports.SHIMMER_SELECTOR = "[data-shimmer]";
-// 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
-exports.CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]";
-/**
- * 跟随开着时 dsh 挂在聊天框架上的语义属性；它没了，就说明跟随已经被关掉。
- * 属性名与选择器两种形式各有人用：前者喂 attributeFilter，后者查页面，两个都写在这里
- */
-exports.FOLLOWING_TAIL_ATTRIBUTE = "data-chat-following-tail";
-// 同一个契约的选择器形式
-exports.FOLLOWING_TAIL_SELECTOR = "[" + exports.FOLLOWING_TAIL_ATTRIBUTE + "]";
-/**
- * 读者离底部多近才算贴着底部，取 dsh 自己的 FOLLOW_THRESHOLD + 1。
- * 那条线以内，dsh 把内容增长当成跟着尾巴走：尺寸一变就瞬时滚到底
- */
-exports.FOLLOW_THRESHOLD_PX = 25;
-// 输入区。落在它里面的指针与按键是读者在打字，不是在接管滚动
-exports.COMPOSER_SELECTOR = "[data-composer-seat]";
-// 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
-exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
-/**
- * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
- * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样
- */
-exports.COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea";
-/**
- * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
- * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
- */
-exports.COMPOSER_DOCK_SELECTOR = "[data-composer-dock]";
-// 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致
-exports.SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
-// dsh 给每一个过程组放的属性
-exports.PROCESS_GROUP_SELECTOR = "[data-step-process]";
-/**
- * 过程组根上的档位标记：在，就说明这一档不收纳组体（详细与完全展开两档）。
- * 这两档里组头仍在 DOM，只是被 dsh 裹进一个带 hidden 的壳，所以判档位只能靠它，不能靠找不到组头
- */
-exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode";
-/**
- * dsh 的折叠动效正在驱动这一行：collapse 是收起中，reveal 是展开中。
- * 官方批量折叠与展开期间，插件的过程组自动开合与高度动画都要让开：同一行上叠两套高度动画只会互相打架。
- * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
- */
-exports.MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`;
-// 过程组体；收起时带 hidden
-exports.PROCESS_BODY_SELECTOR = "[data-step-process-body]";
-// 过程组体里的内容层；组体滚的就是它
-exports.PROCESS_CONTENT_SELECTOR = "[data-step-process-content]";
-/**
- * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
- * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
- */
-exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
-/**
- * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
- * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
- * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
- */
-exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
-    };
-
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1075,7 +1479,8 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.DEFAULT_BUBBLE_TUNING = exports.DEFAULT_BUBBLE_RISE = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.readBubbleTuning = readBubbleTuning;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 思考行与过程组自己开合，这是本插件的主要效果
 exports.DEFAULT_AUTO_FOLD = true;
@@ -1091,6 +1496,45 @@ exports.DEFAULT_COMPOSER_GLASS = true;
 exports.DEFAULT_LIVE_DIFF = true;
 // dsh 自己的跟随在结构时刻会掉队，实测一次 run_code 执行里落后到一百四十像素上下，正好把新出现的行推出视野
 exports.DEFAULT_FOLLOW_ON_APPEAR = true;
+// 发出之后那一条从输入框里探出来再升到落点；关掉时气泡直接出现在那里
+exports.DEFAULT_BUBBLE_RISE = true;
+// 一份完整的冒头参数，缺字段时按这一份补齐
+exports.DEFAULT_BUBBLE_TUNING = {
+    emergeMs: 210,
+    emergeScale: 1.43,
+    reveal: 35,
+    outdent: 12,
+    hold: 100,
+    holdDrift: 0.06,
+    riseMs: 360,
+    oversize: 1.34,
+    riseDamping: 0.62,
+    sizeDamping: 0.55,
+    // 压到最后的缓入：大半程贴地，临了才冲上去
+    emergeBezierX1: 0.66,
+    emergeBezierY1: 0,
+    emergeBezierX2: 0.96,
+    emergeBezierY2: 0.17,
+};
+// 从表单值里拼出一份完整的冒头参数，缺的按默认值补齐
+function readBubbleTuning(value) {
+    return {
+        emergeMs: value?.bubbleEmergeMs ?? exports.DEFAULT_BUBBLE_TUNING.emergeMs,
+        emergeScale: value?.bubbleEmergeScale ?? exports.DEFAULT_BUBBLE_TUNING.emergeScale,
+        reveal: value?.bubbleReveal ?? exports.DEFAULT_BUBBLE_TUNING.reveal,
+        outdent: value?.bubbleOutdent ?? exports.DEFAULT_BUBBLE_TUNING.outdent,
+        hold: value?.bubbleHold ?? exports.DEFAULT_BUBBLE_TUNING.hold,
+        holdDrift: value?.bubbleHoldDrift ?? exports.DEFAULT_BUBBLE_TUNING.holdDrift,
+        riseMs: value?.bubbleRiseMs ?? exports.DEFAULT_BUBBLE_TUNING.riseMs,
+        oversize: value?.bubbleOversize ?? exports.DEFAULT_BUBBLE_TUNING.oversize,
+        riseDamping: value?.bubbleRiseDamping ?? exports.DEFAULT_BUBBLE_TUNING.riseDamping,
+        sizeDamping: value?.bubbleSizeDamping ?? exports.DEFAULT_BUBBLE_TUNING.sizeDamping,
+        emergeBezierX1: value?.bubbleEmergeBezierX1 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierX1,
+        emergeBezierY1: value?.bubbleEmergeBezierY1 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierY1,
+        emergeBezierX2: value?.bubbleEmergeBezierX2 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierX2,
+        emergeBezierY2: value?.bubbleEmergeBezierY2 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierY2,
+    };
+}
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -4347,7 +4791,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 零件全是平台自带的：开关是 ui-primitives 的 Switch，档位是同一个包里的 SegmentedControl，覆盖徽标是 Tag，
  * 字段节奏与 --dsw-* 令牌见 config-card-styles.ts
  *
- * 开关与档位点一下即写，写入在途时控件禁用；点完之后从 host 读回来的值才算数，写入本身会吞掉传输层与版本号的失败
+ * 开关与档位点一下即写，写入在途时控件禁用；点完之后从 host 读回来的值才算数，写入本身会吞掉传输层与版本号的失败。
+ * 冒头那十个参数是滑杆，冒出那一段的缓动是一张可以拖的曲线图：改的时候只动本地的草稿，松手或停手一小会儿才写一次，
+ * host 接受之后草稿撤掉、以读回的值为准
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
@@ -4361,8 +4807,58 @@ const CONTEXT_PIE_FIELD = "contextPie";
 const COMPOSER_GLASS_FIELD = "composerGlass";
 const LIVE_DIFF_FIELD = "liveDiff";
 const FOLLOW_FIELD = "followOnAppear";
+const BUBBLE_RISE_FIELD = "bubbleRise";
+const BUBBLE_EMERGE_MS_FIELD = "bubbleEmergeMs";
+const BUBBLE_EMERGE_SCALE_FIELD = "bubbleEmergeScale";
+const BUBBLE_REVEAL_FIELD = "bubbleReveal";
+const BUBBLE_OUTDENT_FIELD = "bubbleOutdent";
+const BUBBLE_EMERGE_BEZIER_X1_FIELD = "bubbleEmergeBezierX1";
+const BUBBLE_EMERGE_BEZIER_Y1_FIELD = "bubbleEmergeBezierY1";
+const BUBBLE_EMERGE_BEZIER_X2_FIELD = "bubbleEmergeBezierX2";
+const BUBBLE_EMERGE_BEZIER_Y2_FIELD = "bubbleEmergeBezierY2";
+const BUBBLE_HOLD_FIELD = "bubbleHold";
+const BUBBLE_HOLD_DRIFT_FIELD = "bubbleHoldDrift";
+const BUBBLE_RISE_MS_FIELD = "bubbleRiseMs";
+const BUBBLE_OVERSIZE_FIELD = "bubbleOversize";
+const BUBBLE_RISE_DAMPING_FIELD = "bubbleRiseDamping";
+const BUBBLE_SIZE_DAMPING_FIELD = "bubbleSizeDamping";
+// 拖动之后停手这么久就写一次；写盘太频繁没有意义，松手那一刻还会立刻补一次
+const TUNING_WRITE_DELAY_MS = 220;
+// 参数键到 host 字段名的翻译表：滑杆与曲线图都按它写盘，被拒时也按它找回草稿
+const BUBBLE_TUNING_FIELDS = {
+    emergeMs: BUBBLE_EMERGE_MS_FIELD,
+    emergeScale: BUBBLE_EMERGE_SCALE_FIELD,
+    reveal: BUBBLE_REVEAL_FIELD,
+    outdent: BUBBLE_OUTDENT_FIELD,
+    hold: BUBBLE_HOLD_FIELD,
+    holdDrift: BUBBLE_HOLD_DRIFT_FIELD,
+    riseMs: BUBBLE_RISE_MS_FIELD,
+    oversize: BUBBLE_OVERSIZE_FIELD,
+    riseDamping: BUBBLE_RISE_DAMPING_FIELD,
+    sizeDamping: BUBBLE_SIZE_DAMPING_FIELD,
+    emergeBezierX1: BUBBLE_EMERGE_BEZIER_X1_FIELD,
+    emergeBezierY1: BUBBLE_EMERGE_BEZIER_Y1_FIELD,
+    emergeBezierX2: BUBBLE_EMERGE_BEZIER_X2_FIELD,
+    emergeBezierY2: BUBBLE_EMERGE_BEZIER_Y2_FIELD,
+};
+// 曲线图纵轴能拖到的范围：0 到 1 之外是回弹那一段，两头都留一点看得见的余量
+const CURVE_Y_MIN = -0.6;
+const CURVE_Y_MAX = 1.6;
+// 顺序照那份 demo 的面板：先第一段四个，再中间两个，最后第二段四个；缓动那一段在曲线图上，不占滑杆
+const BUBBLE_TUNERS = [
+    { key: "emergeMs", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms" },
+    { key: "emergeScale", min: 0.2, max: 2, step: 0.01, digits: 2, suffix: "×" },
+    { key: "reveal", min: 0, max: 120, step: 1, digits: 0, suffix: " px" },
+    { key: "outdent", min: 0, max: 40, step: 1, digits: 0, suffix: " px" },
+    { key: "hold", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms" },
+    { key: "holdDrift", min: 0, max: 1, step: 0.01, digits: 2, suffix: "" },
+    { key: "riseMs", min: 0, max: 3000, step: 10, digits: 0, suffix: " ms" },
+    { key: "oversize", min: 0.5, max: 3, step: 0.01, digits: 2, suffix: "×" },
+    { key: "riseDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: "" },
+    { key: "sizeDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: "" },
+];
 const ZH_COPY = {
-    summary: () => "光标动效、读数与输入框玻璃都在这里调。",
+    summary: () => "光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     autoFoldLabel: "自动开合",
     autoFoldHint: "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
         + "你自己动手折叠过的，它不再打扰。",
@@ -4385,9 +4881,37 @@ const ZH_COPY = {
     glassHint: "输入框那一块带一条蓝调渐变，底微微透出背后的一点色调，玻璃的亮边与内阴影也在这里；"
         + "右下角那枚发送（跑起来时是停止）与左下角那枚加号跟着同一套材质。关掉就回到 dsh 原来的输入框与按钮。",
     liveDiffLabel: "实时改动行数",
-    liveDiffHint: "直接调用写入或编辑时，行尾那两个 `+n -m` 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。"
-        + "数字一变，变了的那一位会像读数那样在原地弹到新值。"
-        + "默认开着。",
+    liveDiffHint: "直接调用写入或编辑时，行尾那两个 +n -m 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。"
+        + "数字一变，变了的那一位会像读数那样在原地弹到新值。",
+    bubbleLabel: "发送气泡冒头",
+    bubbleHint: "发出之后，那一条先只探出输入框上沿一小截，微顿一下，再升到它该在的位置——落下时还会冲过一点再弹回来。"
+        + "关掉就直接出现在落点。",
+    tuningSummary: "动效参数",
+    tuningHint: "拖完就生效，不用保存，也不用刷新；下一次发送按新的走。区间给得很宽，两头都能拖到底："
+        + "段长 0 就是那一段不停，阻尼越小回弹越明显，0.99 几乎不弹。「冒出」「停顿」「升起」三段相加就是整段多长。"
+        + "「右探出」超过 16 像素之后不再往外——那是滚动器给的内边距，再远就被裁掉了。",
+    curveLabel: "冒出缓动",
+    curveHint: "拖那两个圆点。横轴是冒出这一段走了几成，纵轴是冒到哪；虚线是匀速，曲线压在它下面就是先慢后快，"
+        + "举在它上面就是先冲过去。圆点拖到方框上下之外，那一段就会先退一下、或者先冲过头再回来。",
+    curvePointOne: "缓动控制点 1",
+    curvePointTwo: "缓动控制点 2",
+    tuningReset: "全部恢复默认",
+    tuners: {
+        emergeMs: "冒出时长",
+        emergeScale: "起点大小",
+        reveal: "露出高度",
+        outdent: "右探出",
+        emergeBezierX1: "缓动 X1",
+        emergeBezierY1: "缓动 Y1",
+        emergeBezierX2: "缓动 X2",
+        emergeBezierY2: "缓动 Y2",
+        hold: "停顿",
+        holdDrift: "停顿外送",
+        riseMs: "升起时长",
+        oversize: "放大",
+        riseDamping: "位置回弹",
+        sizeDamping: "尺寸回弹",
+    },
     overridden: "已覆盖",
     reset: "重置",
     failed: "保存未生效，请重试。",
@@ -4395,7 +4919,7 @@ const ZH_COPY = {
     readOnly: "当前设置不可修改，改动无法保存。",
 };
 const EN_COPY = {
-    summary: () => "Caret motion, the readouts and the composer glass are all adjustable here.",
+    summary: () => "Caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint: "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
         + "tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.",
@@ -4422,9 +4946,40 @@ const EN_COPY = {
         + "highlight and inner shadow belong to this too, and the send button (stop while it runs) wears the "
         + "same material. Turning it off restores dsh's own composer and button.",
     liveDiffLabel: "Live change counts",
-    liveDiffHint: "When you write or edit a file directly, the `+n -m` at the end of the row starts growing while the content "
+    liveDiffHint: "When you write or edit a file directly, the +n -m at the end of the row starts growing while the content "
         + "is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value "
-        + "the way the readouts do. On by default.",
+        + "the way the readouts do.",
+    bubbleLabel: "Send bubble rises",
+    bubbleHint: "Once sent, the message first shows just a sliver above the composer, holds for a moment, then rises to "
+        + "where it belongs — overshooting a little before it settles. Off puts it straight at its place.",
+    tuningSummary: "Motion tuning",
+    tuningHint: "Changes apply as you drag them — no save, no reload; the next send uses them. The ranges are deliberately "
+        + "wide, so both ends are reachable: a zero span means that stage does not pause at all, a smaller damping "
+        + "bounces more, and 0.99 barely moves. Emerge plus hold plus rise is the length of the whole animation. "
+        + "Outdent stops moving past 16px — that is the inner padding of the scroller, and anything further is clipped.",
+    curveLabel: "Emerge easing",
+    curveHint: "Drag the two dots. Across is how far the emerge stage has got, up is how far it has risen; the dashed "
+        + "line is even speed, so a curve below it starts slow and a curve above it rushes ahead. Pull a dot "
+        + "outside the box and that stage backs up first, or overshoots before it settles.",
+    curvePointOne: "Easing control point 1",
+    curvePointTwo: "Easing control point 2",
+    tuningReset: "Restore all defaults",
+    tuners: {
+        emergeMs: "Emerge time",
+        emergeScale: "Start size",
+        reveal: "Reveal",
+        outdent: "Outdent",
+        emergeBezierX1: "Ease X1",
+        emergeBezierY1: "Ease Y1",
+        emergeBezierX2: "Ease X2",
+        emergeBezierY2: "Ease Y2",
+        hold: "Hold",
+        holdDrift: "Hold drift",
+        riseMs: "Rise time",
+        oversize: "Oversize",
+        riseDamping: "Position damping",
+        sizeDamping: "Size damping",
+    },
     overridden: "Overridden",
     reset: "Reset",
     failed: "The save did not take effect. Please try again.",
@@ -4432,7 +4987,7 @@ const EN_COPY = {
         + "plugin is enabled in this environment, then open this page again.",
     readOnly: "These settings cannot be changed, so edits cannot be saved.",
 };
-// 渲染这个插件的配置：几个开关与光标动效的三档；页面要摘要时只给那一行字
+// 渲染这个插件的配置：几个开关、光标动效的三档，以及冒头那十根滑杆；页面要摘要时只给那一行字
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
     // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文
@@ -4447,6 +5002,23 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
+    // 滑杆拖动期间的本地值：host 接受之后撤掉，显示回到读回来的那一份
+    const [draft, setDraft] = (0, react_1.useState)({});
+    const pendingWrites = (0, react_1.useRef)(new Map());
+    const flushTimer = (0, react_1.useRef)(null);
+    // 草稿只在 host 还没追上它的时候才有用：追上之后撤掉，显示回到读回来的那一份，
+    // 别处改了同一份配置也不会被手里的旧值盖住
+    (0, react_1.useEffect)(() => {
+        const host = (0, settings_scope_1.readBubbleTuning)(snapshot.value);
+        setDraft(current => {
+            const kept = {};
+            for (const key of Object.keys(current)) {
+                if (current[key] !== host[key])
+                    kept[key] = current[key];
+            }
+            return Object.keys(kept).length === Object.keys(current).length ? current : kept;
+        });
+    }, [snapshot.value]);
     const autoFoldOn = storedAutoFold(snapshot.value);
     const followOn = storedFollow(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
@@ -4454,6 +5026,8 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const glassOn = storedGlass(snapshot.value);
     const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
+    const bubbleRiseOn = storedBubbleRise(snapshot.value);
+    const tuning = { ...(0, settings_scope_1.readBubbleTuning)(snapshot.value), ...draft };
     const unavailable = snapshot.status === "unavailable";
     const readOnly = snapshot.writable === false;
     const controlsDisabled = saving || unavailable || readOnly;
@@ -4484,9 +5058,171 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
         setSaving(false);
     };
-    // 一行开关的骨架：标签、说明、覆盖徽标、控件，七行共用；用户层盖过这个字段时才挂徽标与重置
+    // 把这几次拖动攒下的字段一次写出去。被拒的那几个把草稿删掉，滑杆弹回真实值并给出失败提示；
+    // 被接受的草稿先留着——host 的快照可能晚一拍才追上，这时撤草稿会让滑杆往回跳一帧
+    const flushTuning = async () => {
+        flushTimer.current = null;
+        const entries = [...pendingWrites.current];
+        pendingWrites.current.clear();
+        if (entries.length === 0)
+            return;
+        setSaveFailed(false);
+        const accepted = await Promise.all(entries.map(([field, value]) => scope.set(field, value)));
+        const rejected = new Set(entries.filter((_, index) => accepted[index] !== true).map(([field]) => field));
+        if (rejected.size > 0) {
+            setDraft(current => {
+                const kept = { ...current };
+                for (const [key, field] of Object.entries(BUBBLE_TUNING_FIELDS)) {
+                    if (rejected.has(field))
+                        delete kept[key];
+                }
+                return kept;
+            });
+            setSaveFailed(true);
+        }
+    };
+    // 拖动只改本地；停手一小会儿或松手时再写，写盘频率与拖动次数无关
+    const previewValues = (next) => {
+        setDraft(current => ({ ...current, ...next }));
+        for (const [key, value] of Object.entries(next)) {
+            pendingWrites.current.set(BUBBLE_TUNING_FIELDS[key], value);
+        }
+        if (flushTimer.current !== null)
+            window.clearTimeout(flushTimer.current);
+        flushTimer.current = window.setTimeout(() => void flushTuning(), TUNING_WRITE_DELAY_MS);
+    };
+    // 一根滑杆只改一个键；曲线图的一个圆点改两个
+    const previewTuning = (spec, raw) => {
+        const next = {};
+        next[spec.key] = roundToStep(raw, spec.step);
+        previewValues(next);
+    };
+    const flushNow = () => {
+        if (flushTimer.current === null)
+            return;
+        window.clearTimeout(flushTimer.current);
+        void flushTuning();
+    };
+    // 所有参数一起退回默认层
+    const resetTuning = async () => {
+        if (flushTimer.current !== null) {
+            window.clearTimeout(flushTimer.current);
+            flushTimer.current = null;
+        }
+        pendingWrites.current.clear();
+        setSaving(true);
+        setSaveFailed(false);
+        const accepted = await Promise.all(Object.values(BUBBLE_TUNING_FIELDS).map(field => scope.unset(field)));
+        setDraft({});
+        setSaveFailed(accepted.some(landed => !landed));
+        setSaving(false);
+    };
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(BUBBLE_RISE_FIELD, copy.bubbleLabel, copy.bubbleHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: bubbleRiseOn, disabled: controlsDisabled, label: copy.bubbleLabel, onChange: (next) => void writeField(BUBBLE_RISE_FIELD, next, storedBubbleRise) }))), (0, jsx_runtime_1.jsxs)("details", { className: config_card_styles_1.CARD_CLASS.tuning, children: [(0, jsx_runtime_1.jsx)("summary", { className: config_card_styles_1.CARD_CLASS.tuningSummary, children: copy.tuningSummary }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: copy.tuningHint }), (0, jsx_runtime_1.jsx)(BubbleCurveEditor, { tuning: tuning, disabled: controlsDisabled, label: copy.curveLabel, hint: copy.curveHint, pointLabels: [copy.curvePointOne, copy.curvePointTwo], onChange: previewValues, onCommit: flushNow }), BUBBLE_TUNERS.map(spec => {
+                        const value = tuning[spec.key];
+                        const label = copy.tuners[spec.key];
+                        return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.tuner, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.tunerLabel, children: label }), (0, jsx_runtime_1.jsx)("input", { type: "range", className: config_card_styles_1.CARD_CLASS.tunerInput, min: spec.min, max: spec.max, step: spec.step, value: value, disabled: controlsDisabled, "aria-label": label, onChange: (event) => previewTuning(spec, Number(event.currentTarget.value)), onPointerUp: flushNow, onKeyUp: flushNow }), (0, jsx_runtime_1.jsx)("output", { className: config_card_styles_1.CARD_CLASS.tunerValue, children: formatTuned(value, spec) })] }, spec.key));
+                    }), (0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.tuningActions, children: (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetTuning(), children: copy.tuningReset }) })] }), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+}
+function BubbleCurveEditor({ tuning, disabled, label, hint, pointLabels, onChange, onCommit }) {
+    const plot = (0, react_1.useRef)(null);
+    // 正在拖哪个圆点：只决定下一次 move 改谁，不参与渲染
+    const dragging = (0, react_1.useRef)(null);
+    // 一个圆点的两维一起交出去，越界与步进都收在这里，拖得再野也不会写出范围
+    const writePoint = (which, point) => {
+        const x = roundToStep(clampRange(point.x, 0, 1), 0.01);
+        const y = roundToStep(clampRange(point.y, CURVE_Y_MIN, CURVE_Y_MAX), 0.01);
+        onChange(which === "first"
+            ? { emergeBezierX1: x, emergeBezierY1: y }
+            : { emergeBezierX2: x, emergeBezierY2: y });
+    };
+    // 指针位置换算回曲线坐标：横轴铺满整张图，纵轴从下往上
+    const readPoint = (event) => {
+        const rect = plot.current?.getBoundingClientRect();
+        if (rect === undefined || rect.width === 0 || rect.height === 0)
+            return null;
+        const ratio = (event.clientY - rect.top) / rect.height;
+        return {
+            x: (event.clientX - rect.left) / rect.width,
+            y: CURVE_Y_MAX - ratio * (CURVE_Y_MAX - CURVE_Y_MIN),
+        };
+    };
+    const startDrag = (which) => (event) => {
+        if (disabled)
+            return;
+        dragging.current = which;
+        // 捕获挂在图上：指针拖到卡片外面也还能收到 move 与 up
+        plot.current?.setPointerCapture(event.pointerId);
+        const point = readPoint(event);
+        if (point !== null)
+            writePoint(which, point);
+    };
+    const moveDrag = (event) => {
+        const which = dragging.current;
+        if (which === null)
+            return;
+        const point = readPoint(event);
+        if (point !== null)
+            writePoint(which, point);
+    };
+    const endDrag = () => {
+        if (dragging.current === null)
+            return;
+        dragging.current = null;
+        onCommit();
+    };
+    // 键盘也能挪：方向键一次 0.01，按住 Shift 一次 0.1
+    const keyPoint = (which) => (event) => {
+        const delta = event.shiftKey ? 0.1 : 0.01;
+        const point = which === "first"
+            ? { x: tuning.emergeBezierX1, y: tuning.emergeBezierY1 }
+            : { x: tuning.emergeBezierX2, y: tuning.emergeBezierY2 };
+        if (event.key === "ArrowLeft")
+            point.x -= delta;
+        else if (event.key === "ArrowRight")
+            point.x += delta;
+        else if (event.key === "ArrowUp")
+            point.y += delta;
+        else if (event.key === "ArrowDown")
+            point.y -= delta;
+        else
+            return;
+        event.preventDefault();
+        writePoint(which, point);
+        onCommit();
+    };
+    const first = { x: curveX(tuning.emergeBezierX1), y: curveY(tuning.emergeBezierY1) };
+    const second = { x: curveX(tuning.emergeBezierX2), y: curveY(tuning.emergeBezierY2) };
+    const start = { x: curveX(0), y: curveY(0) };
+    const end = { x: curveX(1), y: curveY(1) };
+    const curve = "M " + start.x + " " + start.y
+        + " C " + first.x + " " + first.y + " " + second.x + " " + second.y + " " + end.x + " " + end.y;
+    const readout = "cubic-bezier(" + [tuning.emergeBezierX1, tuning.emergeBezierY1, tuning.emergeBezierX2, tuning.emergeBezierY2]
+        .map(value => value.toFixed(2))
+        .join(", ") + ")";
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezier, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.tunerLabel, children: label }), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezierPlot, ref: plot, onPointerMove: moveDrag, onPointerUp: endDrag, onPointerCancel: endDrag, children: [(0, jsx_runtime_1.jsxs)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", "aria-hidden": "true", children: [(0, jsx_runtime_1.jsx)("rect", { className: config_card_styles_1.CARD_CLASS.bezierFrame, x: 0, y: end.y, width: 100, height: start.y - end.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierRule, d: "M " + start.x + " " + start.y + " L " + end.x + " " + end.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierArm, d: "M " + start.x + " " + start.y + " L " + first.x + " " + first.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierArm, d: "M " + end.x + " " + end.y + " L " + second.x + " " + second.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierCurve, d: curve })] }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.bezierHandle, style: { left: first.x + "%", top: first.y + "%" }, disabled: disabled, "aria-label": pointLabels[0], onPointerDown: startDrag("first"), onKeyDown: keyPoint("first") }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.bezierHandle, style: { left: second.x + "%", top: second.y + "%" }, disabled: disabled, "aria-label": pointLabels[1], onPointerDown: startDrag("second"), onKeyDown: keyPoint("second") })] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint }), (0, jsx_runtime_1.jsx)("output", { className: config_card_styles_1.CARD_CLASS.bezierReadout, children: readout })] }));
+}
+// 横轴只认 0..1：这里就是时间进度，越界没有意义
+function curveX(value) {
+    return clampRange(value, 0, 1) * 100;
+}
+// 纵轴按 CURVE_Y_MIN..CURVE_Y_MAX 铺满整张图，0 与 1 于是落在方框的上下边
+function curveY(value) {
+    return ((CURVE_Y_MAX - clampRange(value, CURVE_Y_MIN, CURVE_Y_MAX)) / (CURVE_Y_MAX - CURVE_Y_MIN)) * 100;
+}
+function clampRange(value, min, max) {
+    if (!Number.isFinite(value))
+        return min;
+    return Math.min(max, Math.max(min, value));
+}
+// 滑杆给的是按步进对齐的原始数，浮点步进要收一次小数位，否则 host 的 schema 会因为差一滴滴判它不合法
+function roundToStep(value, step) {
+    return step < 1 ? Number(value.toFixed(2)) : Math.round(value);
+}
+// 读数：整数部分按位数补齐，单位直接跟在后面
+function formatTuned(value, spec) {
+    return value.toFixed(spec.digits) + spec.suffix;
 }
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -4508,6 +5244,9 @@ function storedGlass(value) {
 }
 function storedCaret(value) {
     return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+}
+function storedBubbleRise(value) {
+    return value?.bubbleRise ?? settings_scope_1.DEFAULT_BUBBLE_RISE;
 }
 function nonEmpty(value) {
     if (typeof value !== "string" || value === "")
@@ -4548,6 +5287,21 @@ exports.CARD_CLASS = {
     hint: "dsh-chat-ux-card-hint",
     failed: "dsh-chat-ux-card-failed",
     segment: "dsh-chat-ux-card-segment",
+    tuning: "dsh-chat-ux-card-tuning",
+    tuningSummary: "dsh-chat-ux-card-tuning-summary",
+    tuningActions: "dsh-chat-ux-card-tuning-actions",
+    tuner: "dsh-chat-ux-card-tuner",
+    tunerLabel: "dsh-chat-ux-card-tuner-label",
+    tunerInput: "dsh-chat-ux-card-tuner-input",
+    tunerValue: "dsh-chat-ux-card-tuner-value",
+    bezier: "dsh-chat-ux-card-bezier",
+    bezierPlot: "dsh-chat-ux-card-bezier-plot",
+    bezierFrame: "dsh-chat-ux-card-bezier-frame",
+    bezierRule: "dsh-chat-ux-card-bezier-rule",
+    bezierArm: "dsh-chat-ux-card-bezier-arm",
+    bezierCurve: "dsh-chat-ux-card-bezier-curve",
+    bezierHandle: "dsh-chat-ux-card-bezier-handle",
+    bezierReadout: "dsh-chat-ux-card-bezier-readout",
 };
 // 每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则
 exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
@@ -4643,6 +5397,164 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 .${exports.CARD_CLASS.segment} {
   flex: none;
 }
+
+/* 冒头那十根滑杆收在一个折叠块里：卡片本来就长，参数摊开会让别的开关要滚很远才看得到。
+   折叠头与卡片上的标签同一档字重，前面的加号自己做——原生三角在各家的深色主题里粗细不一 */
+.${exports.CARD_CLASS.tuning} {
+  margin-top: 4px;
+  padding: 12px 0 4px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.${exports.CARD_CLASS.tuningSummary} {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  list-style: none;
+}
+
+.${exports.CARD_CLASS.tuningSummary}::-webkit-details-marker {
+  display: none;
+}
+
+.${exports.CARD_CLASS.tuningSummary}::before {
+  content: "＋";
+  display: inline-block;
+  width: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 折叠头下面那段说明留一点气口，右端别顶到读数的列上 */
+.${exports.CARD_CLASS.tuning} > .${exports.CARD_CLASS.hint} {
+  margin: 6px 0 10px;
+  padding-right: 72px;
+}
+
+.${exports.CARD_CLASS.tuning}[open] > .${exports.CARD_CLASS.tuningSummary}::before {
+  content: "－";
+}
+
+/* 一行三列：名字、滑杆、读数。读数是等宽数字，拖动时不会因为位数变化左右跳 */
+.${exports.CARD_CLASS.tuner} {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 60px;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.${exports.CARD_CLASS.tunerLabel} {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.${exports.CARD_CLASS.tunerInput} {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--dsw-alias-label-primary);
+}
+
+.${exports.CARD_CLASS.tunerValue} {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  text-align: right;
+}
+
+/* 冒出那一段缓动的曲线图。曲线与两根控制柄是 SVG（整张图横纵都被拉伸，所以线宽走 non-scaling-stroke），
+   两个圆点是普通按钮绝对定位在图上——SVG 里的圆会被那层非等比缩放拉成椭圆 */
+.${exports.CARD_CLASS.bezier} {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 12px;
+}
+
+.${exports.CARD_CLASS.bezierPlot} {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  height: 200px;
+  touch-action: none;
+  user-select: none;
+}
+
+.${exports.CARD_CLASS.bezierPlot} svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.${exports.CARD_CLASS.bezierPlot} svg :is(path, rect) {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 0..1 那一方框：方框上下之外就是回弹的范围 */
+.${exports.CARD_CLASS.bezierFrame} {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 1;
+}
+
+/* 匀速那条对角线：曲线压在它下面就是先慢后快 */
+.${exports.CARD_CLASS.bezierRule} {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+
+.${exports.CARD_CLASS.bezierArm} {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 1;
+}
+
+.${exports.CARD_CLASS.bezierCurve} {
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 2;
+}
+
+.${exports.CARD_CLASS.bezierHandle} {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, Canvas);
+  cursor: grab;
+  touch-action: none;
+}
+
+.${exports.CARD_CLASS.bezierHandle}:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.${exports.CARD_CLASS.bezierHandle}:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.${exports.CARD_CLASS.bezierReadout} {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.${exports.CARD_CLASS.tuningActions} {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 0 2px;
+}
 `;
     };
 
@@ -4692,6 +5604,7 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * ALL_CSS 是注入的那一张表：下面这份聊天区规则，再加上调色板、数字滚动、卡片、插入符、文件变更行、
  * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
  */
+const bubble_rise_styles_1 = require("./chat/bubble-rise/bubble-rise-styles");
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const ramp_1 = require("./chat/ramp");
 const reel_styles_1 = require("./chat/reel/reel-styles");
@@ -4795,7 +5708,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, bubble_rise_styles_1.BUBBLE_RISE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {

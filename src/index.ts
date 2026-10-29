@@ -45,6 +45,32 @@ export const DEFAULT_LIVE_DIFF = true
 // 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好把新出现的思考推出视野
 export const DEFAULT_FOLLOW_ON_APPEAR = true
 
+// 发送气泡的冒头。默认开着：发出之后那一条从输入框里探出来再升到落点，而不是直接出现在那里。
+// 关掉时这一处整块不装，气泡就是 dsh 原来的样子
+export const DEFAULT_BUBBLE_RISE = true
+
+// 冒头那一条动效的十个参数。这一套是在 .probe/想实现的气泡动效.html 里试出来的一版（2026-10-30），
+// 起手比落点大出不少、露出也高，靠的是「挤出来」那一口的劲，而不是慢慢长出来
+// 它们只在气泡动画播一次时读一次，所以卡片上改完，下一次发送就按新的走
+export const DEFAULT_BUBBLE_EMERGE_MS = 210
+export const DEFAULT_BUBBLE_EMERGE_SCALE = 1.43
+export const DEFAULT_BUBBLE_REVEAL = 35
+export const DEFAULT_BUBBLE_OUTDENT = 12
+export const DEFAULT_BUBBLE_HOLD = 100
+export const DEFAULT_BUBBLE_HOLD_DRIFT = 0.06
+export const DEFAULT_BUBBLE_RISE_MS = 360
+export const DEFAULT_BUBBLE_OVERSIZE = 1.34
+export const DEFAULT_BUBBLE_RISE_DAMPING = 0.62
+export const DEFAULT_BUBBLE_SIZE_DAMPING = 0.55
+
+// 冒出那一段的缓动，写成一条三次贝塞尔的四个控制点。默认值 (0.66, 0, 0.96, 0.17)
+// 是一条压到最后的缓入：大半程都贴着地走，临了才一下冲上去，配上 1.43 的起点，冒头那一下是「挤出来」的
+// X 只取 0 到 1，取到界外曲线就不再单调；Y 放开到 -1 到 2，超出这一段会先退后进或先冲过头
+export const DEFAULT_BUBBLE_EMERGE_BEZIER_X1 = 0.66
+export const DEFAULT_BUBBLE_EMERGE_BEZIER_Y1 = 0
+export const DEFAULT_BUBBLE_EMERGE_BEZIER_X2 = 0.96
+export const DEFAULT_BUBBLE_EMERGE_BEZIER_Y2 = 0.17
+
 // 这个插件拥有的配置字段
 export interface Config {
 	// 思考行与过程组是否自己开合。关掉时两块都整块不装
@@ -61,6 +87,36 @@ export interface Config {
 	liveDiff: Volatile<boolean>
 	// 工具调用与思考行第一次出现时是否把滚动位置补到底
 	followOnAppear: Volatile<boolean>
+	// 发送之后那一条气泡是否从输入框里冒出来
+	bubbleRise: Volatile<boolean>
+	// 冒出那一段多长
+	bubbleEmergeMs: Volatile<number>
+	// 冒头起手时气泡缩到多大
+	bubbleEmergeScale: Volatile<number>
+	// 冒头那一刻露出输入区上沿多高一截
+	bubbleReveal: Volatile<number>
+	// 起手比聊天列右缘再往外探多少
+	bubbleOutdent: Volatile<number>
+	// 冒完到升起之间停多久
+	bubbleHold: Volatile<number>
+	// 停顿里先往外送多少，用来接住第二段的零起步
+	bubbleHoldDrift: Volatile<number>
+	// 升起那一段多长
+	bubbleRiseMs: Volatile<number>
+	// 冒头那一刻比落定后大多少
+	bubbleOversize: Volatile<number>
+	// 位置回弹的阻尼比，越小过冲越多
+	bubbleRiseDamping: Volatile<number>
+	// 尺寸回弹的阻尼比
+	bubbleSizeDamping: Volatile<number>
+	// 冒出那一段缓动的第一控制点横坐标
+	bubbleEmergeBezierX1: Volatile<number>
+	// 冒出那一段缓动的第一控制点纵坐标
+	bubbleEmergeBezierY1: Volatile<number>
+	// 冒出那一段缓动的第二控制点横坐标
+	bubbleEmergeBezierX2: Volatile<number>
+	// 冒出那一段缓动的第二控制点纵坐标
+	bubbleEmergeBezierY2: Volatile<number>
 }
 
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
@@ -72,6 +128,28 @@ export const Config = Schema.object({
 	composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
 	liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
 	followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
+	bubbleRise: Schema.boolean().default(DEFAULT_BUBBLE_RISE).volatile(),
+	// 下面这十四个数不设 min / max / step。它们只在本地调手感，可拖的范围由卡片上那几根滑杆卡住；
+	// 而 schema 一旦收紧，读者存过的旧值就会让整份配置判成非法，插件在管理页上直接变成「异常」——
+	// 右探出的上限从 40 收到 16 时就是这么坏掉的（invalid config: expected number <= 16 but got 40），
+	// 一个滑块的历史值能把整个插件锁在外面，代价远大于那点约束力。运行时的兜底在 bubble-rise：
+	// 段长兜到至少 1 ms，阻尼贴着 1 也夹住，右探出再大也只按滚动器的内边距（16px）算
+	bubbleEmergeMs: Schema.number().default(DEFAULT_BUBBLE_EMERGE_MS).volatile(),
+	bubbleEmergeScale: Schema.number().default(DEFAULT_BUBBLE_EMERGE_SCALE).volatile(),
+	bubbleReveal: Schema.number().default(DEFAULT_BUBBLE_REVEAL).volatile(),
+	bubbleOutdent: Schema.number().default(DEFAULT_BUBBLE_OUTDENT).volatile(),
+	bubbleHold: Schema.number().default(DEFAULT_BUBBLE_HOLD).volatile(),
+	bubbleHoldDrift: Schema.number().default(DEFAULT_BUBBLE_HOLD_DRIFT).volatile(),
+	bubbleRiseMs: Schema.number().default(DEFAULT_BUBBLE_RISE_MS).volatile(),
+	bubbleOversize: Schema.number().default(DEFAULT_BUBBLE_OVERSIZE).volatile(),
+	bubbleRiseDamping: Schema.number().default(DEFAULT_BUBBLE_RISE_DAMPING).volatile(),
+	bubbleSizeDamping: Schema.number().default(DEFAULT_BUBBLE_SIZE_DAMPING).volatile(),
+	// 冒出那一段的缓动：一条三次贝塞尔，两个控制点。卡片把 X 卡在 0 到 1、Y 放到 -1 到 2；
+	// 这里同样不校验——曲线在没有这几条约束时也只是形状古怪，不会算不出值
+	bubbleEmergeBezierX1: Schema.number().default(DEFAULT_BUBBLE_EMERGE_BEZIER_X1).volatile(),
+	bubbleEmergeBezierY1: Schema.number().default(DEFAULT_BUBBLE_EMERGE_BEZIER_Y1).volatile(),
+	bubbleEmergeBezierX2: Schema.number().default(DEFAULT_BUBBLE_EMERGE_BEZIER_X2).volatile(),
+	bubbleEmergeBezierY2: Schema.number().default(DEFAULT_BUBBLE_EMERGE_BEZIER_Y2).volatile(),
 })
 
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写
