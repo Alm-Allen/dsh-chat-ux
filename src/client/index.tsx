@@ -22,10 +22,11 @@ import {installCallAppearFollow} from "./chat/follow/call-appeared"
 import {installFoldGlide} from "./chat/fold/fold-glide"
 import {installProcessFold} from "./chat/fold/process-fold"
 import {installReasoningFold} from "./chat/fold/reasoning-fold"
+import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
 	DEFAULT_AUTO_FOLD, DEFAULT_BUBBLE_RISE, DEFAULT_BUBBLE_TUNING, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, readBubbleTuning,
+	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, readBubbleTuning,
 } from "./settings/settings-scope"
 import type {BubbleRiseTuning, ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
@@ -72,6 +73,7 @@ export function apply(ctx: ClientContext): void {
 		glass: DEFAULT_COMPOSER_GLASS,
 		liveDiff: DEFAULT_LIVE_DIFF,
 		followOn: DEFAULT_FOLLOW_ON_APPEAR,
+		sendFlight: DEFAULT_SEND_FLIGHT,
 		bubbleRise: DEFAULT_BUBBLE_RISE,
 		bubbleTuning: DEFAULT_BUBBLE_TUNING,
 	}
@@ -138,7 +140,8 @@ export function apply(ctx: ClientContext): void {
 	// 参数不重装：动画每次播之前现读一份，所以卡片上拖完滑杆不必重落，下一次发送就按新的走
 	let bubbleRiseDispose: (() => void) | null = null
 	const syncBubbleRise = (): void => {
-		if (!settings.bubbleRise) {
+		// 形变开着时冒头不装：两套都盯着同一条真实行，同一帧上叠两套位移只会互相追
+		if (!settings.bubbleRise || settings.sendFlight) {
 			bubbleRiseDispose?.()
 			bubbleRiseDispose = null
 			return
@@ -154,6 +157,7 @@ export function apply(ctx: ClientContext): void {
 		settings.glass = value?.composerGlass ?? DEFAULT_COMPOSER_GLASS
 		settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
 		settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
+		settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
 		settings.bubbleRise = value?.bubbleRise ?? DEFAULT_BUBBLE_RISE
 		settings.bubbleTuning = readBubbleTuning(value)
 		syncGlass()
@@ -209,6 +213,10 @@ export function apply(ctx: ClientContext): void {
 	// 所以这一处从 DOM 之外接管：动真实高度，让布局逐帧长出来、逐帧收回去，收起方向靠拦下那次点击
 	// 把展开体留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响
 	ctx.effect(() => installFoldGlide(), "dsh-chat-ux: fold glide")
+
+	// 发送气泡的形变：读者按下发送以后，整张输入卡片（连工具栏与草稿）收成落点那条气泡。开关关掉时
+	// 连起点都不量。它与下面那一处冒头盯着同一个位置，所以冒头那边会先看这个开关
+	ctx.effect(() => installSendFlight(() => settings.sendFlight), "dsh-chat-ux: send flight")
 
 	// 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来再升到落点。动的是聊天列里真实那一行
 	// 里的气泡，不克隆替身；行本身仍在布局里占位。提交后本地的回声由这一处先藏起来，真实行到达时
@@ -289,6 +297,8 @@ interface ChatUxSettings {
 	liveDiff: boolean
 	// 工具调用与思考行出现时是否补一次底，改一次就得重落一次（装或卸）
 	followOn: boolean
+	// 发送气泡是否走形变（整张卡片收成气泡），改一次就得重落一次
+	sendFlight: boolean
 	// 发送气泡是否冒头，改一次就得重落一次（装或卸）
 	bubbleRise: boolean
 	// 冒头那十个参数，每次播放前现读

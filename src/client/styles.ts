@@ -5,6 +5,7 @@
  * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
  */
 import {BUBBLE_RISE_CSS} from "./chat/bubble-rise/bubble-rise-styles"
+import {SEND_FLIGHT_CSS} from "./chat/send-flight/send-flight-styles"
 import {CARET_MOTION_CSS} from "./chat/caret/caret-motion-styles"
 import {RAMP_TONE_CSS} from "./chat/ramp"
 import {REEL_CSS} from "./chat/reel/reel-styles"
@@ -111,4 +112,4 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-export const ALL_CSS = [CHAT_AREA_CSS, FOLLOW_PROBE_CSS, BUBBLE_RISE_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, COMPOSER_GLASS_CSS].join("\n")
+export const ALL_CSS = [CHAT_AREA_CSS, FOLLOW_PROBE_CSS, BUBBLE_RISE_CSS, SEND_FLIGHT_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, COMPOSER_GLASS_CSS].join("\n")

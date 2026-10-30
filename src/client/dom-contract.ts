@@ -50,6 +50,15 @@ export const COMPOSER_SELECTOR = "[data-composer-seat]"
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 export const COMPOSER_INPUT_SELECTOR = "[data-composer-input]"
 
+// 输入卡片（那条胶囊）。落在它里面的点击可能是提交
+export const COMPOSER_CARD_SELECTOR = "[data-composer-card]"
+
+/**
+ * 提交之后 dsh 立刻挂上来的那条「即发即显」回显行；发送气泡的落点就是它。
+ * 排队的那一条落在队列坞里、也带这个属性，所以要飞的那条必须连同聊天列一起认
+ */
+export const SUBMISSION_ECHO_SELECTOR = "[data-submission-echo]"
+
 /**
  * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
  * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样

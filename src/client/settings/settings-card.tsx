@@ -11,15 +11,16 @@
  * 冒头那十个参数是滑杆，冒出那一段的缓动是一张可以拖的曲线图：改的时候只动本地的草稿，松手或停手一小会儿才写一次，
  * host 接受之后草稿撤掉、以读回的值为准
  */
-import {useCallback, useEffect, useId, useRef, useState, useSyncExternalStore} from "react"
+import {useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore} from "react"
 import type {KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactElement} from "react"
 import {SegmentedControl, Switch, Tag} from "@deepseek-ai/dsh-client-ui-primitives"
 import type {SegmentedControlOption} from "@deepseek-ai/dsh-client-ui-primitives"
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
+import {bernsteinWeight, createTravelCurve, CURVE_GAP} from "./bubble-curve"
 import {CARD_CLASS} from "./config-card-styles"
 import {
 	DEFAULT_AUTO_FOLD, DEFAULT_BUBBLE_RISE, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-	DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, readBubbleTuning,
+	DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, readBubbleTuning,
 } from "./settings-scope"
 import type {BubbleRiseTuning, ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
@@ -31,50 +32,40 @@ const CONTEXT_PIE_FIELD = "contextPie"
 const COMPOSER_GLASS_FIELD = "composerGlass"
 const LIVE_DIFF_FIELD = "liveDiff"
 const FOLLOW_FIELD = "followOnAppear"
+const SEND_FLIGHT_FIELD = "sendFlight"
 const BUBBLE_RISE_FIELD = "bubbleRise"
-const BUBBLE_EMERGE_MS_FIELD = "bubbleEmergeMs"
 const BUBBLE_EMERGE_SCALE_FIELD = "bubbleEmergeScale"
 const BUBBLE_REVEAL_FIELD = "bubbleReveal"
 const BUBBLE_OUTDENT_FIELD = "bubbleOutdent"
-const BUBBLE_EMERGE_BEZIER_X1_FIELD = "bubbleEmergeBezierX1"
-const BUBBLE_EMERGE_BEZIER_Y1_FIELD = "bubbleEmergeBezierY1"
-const BUBBLE_EMERGE_BEZIER_X2_FIELD = "bubbleEmergeBezierX2"
-const BUBBLE_EMERGE_BEZIER_Y2_FIELD = "bubbleEmergeBezierY2"
-const BUBBLE_HOLD_FIELD = "bubbleHold"
-const BUBBLE_HOLD_DRIFT_FIELD = "bubbleHoldDrift"
-const BUBBLE_RISE_MS_FIELD = "bubbleRiseMs"
-const BUBBLE_OVERSIZE_FIELD = "bubbleOversize"
-const BUBBLE_RISE_DAMPING_FIELD = "bubbleRiseDamping"
-const BUBBLE_SIZE_DAMPING_FIELD = "bubbleSizeDamping"
+const BUBBLE_TOTAL_MS_FIELD = "bubbleTotalMs"
+const BUBBLE_CURVE_X_FIELD = "bubbleCurveX"
+const BUBBLE_CURVE_Y_FIELD = "bubbleCurveY"
 
 // 拖动之后停手这么久就写一次；写盘太频繁没有意义，松手那一刻还会立刻补一次
 const TUNING_WRITE_DELAY_MS = 220
 
 // 参数键到 host 字段名的翻译表：滑杆与曲线图都按它写盘，被拒时也按它找回草稿
 const BUBBLE_TUNING_FIELDS: Record<keyof BubbleRiseTuning, string> = {
-	emergeMs: BUBBLE_EMERGE_MS_FIELD,
 	emergeScale: BUBBLE_EMERGE_SCALE_FIELD,
 	reveal: BUBBLE_REVEAL_FIELD,
 	outdent: BUBBLE_OUTDENT_FIELD,
-	hold: BUBBLE_HOLD_FIELD,
-	holdDrift: BUBBLE_HOLD_DRIFT_FIELD,
-	riseMs: BUBBLE_RISE_MS_FIELD,
-	oversize: BUBBLE_OVERSIZE_FIELD,
-	riseDamping: BUBBLE_RISE_DAMPING_FIELD,
-	sizeDamping: BUBBLE_SIZE_DAMPING_FIELD,
-	emergeBezierX1: BUBBLE_EMERGE_BEZIER_X1_FIELD,
-	emergeBezierY1: BUBBLE_EMERGE_BEZIER_Y1_FIELD,
-	emergeBezierX2: BUBBLE_EMERGE_BEZIER_X2_FIELD,
-	emergeBezierY2: BUBBLE_EMERGE_BEZIER_Y2_FIELD,
+	totalMs: BUBBLE_TOTAL_MS_FIELD,
+	curveX: BUBBLE_CURVE_X_FIELD,
+	curveY: BUBBLE_CURVE_Y_FIELD,
 }
 
-// 曲线图纵轴能拖到的范围：0 到 1 之外是回弹那一段，两头都留一点看得见的余量
-const CURVE_Y_MIN = -0.6
-const CURVE_Y_MAX = 1.6
+// 曲线图纵轴能拖到的范围：0 到 1 之外各留一点看得见的余量，负值是退回输入区里，越过 1 就是冲过落点
+const CURVE_Y_MIN = -0.15
+const CURVE_Y_MAX = 1.3
+
+// 冒头参数里落成滑杆的那几个：曲线之外都是数，滑杆只管这几个
+type BubbleNumberKey = {
+	[K in keyof BubbleRiseTuning]: BubbleRiseTuning[K] extends number ? K : never
+}[keyof BubbleRiseTuning]
 
 // 一根滑杆：参数键、范围与单位，字段名查上面那张表
 interface BubbleTunerSpec {
-	readonly key: keyof BubbleRiseTuning
+	readonly key: BubbleNumberKey
 	readonly min: number
 	readonly max: number
 	readonly step: number
@@ -83,18 +74,12 @@ interface BubbleTunerSpec {
 	readonly suffix: string
 }
 
-// 顺序照那份 demo 的面板：先第一段四个，再中间两个，最后第二段四个；缓动那一段在曲线图上，不占滑杆
+// 顺序照那份 demo 的面板：先起手那三个，再整段多长；曲线在那张图上，不占滑杆
 const BUBBLE_TUNERS: readonly BubbleTunerSpec[] = [
-	{key: "emergeMs", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms"},
 	{key: "emergeScale", min: 0.2, max: 2, step: 0.01, digits: 2, suffix: "×"},
 	{key: "reveal", min: 0, max: 120, step: 1, digits: 0, suffix: " px"},
 	{key: "outdent", min: 0, max: 40, step: 1, digits: 0, suffix: " px"},
-	{key: "hold", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms"},
-	{key: "holdDrift", min: 0, max: 1, step: 0.01, digits: 2, suffix: ""},
-	{key: "riseMs", min: 0, max: 3000, step: 10, digits: 0, suffix: " ms"},
-	{key: "oversize", min: 0.5, max: 3, step: 0.01, digits: 2, suffix: "×"},
-	{key: "riseDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: ""},
-	{key: "sizeDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: ""},
+	{key: "totalMs", min: 100, max: 3000, step: 10, digits: 0, suffix: " ms"},
 ]
 
 // 一种语言的文案
@@ -117,16 +102,17 @@ interface Copy {
 	glassHint: string
 	liveDiffLabel: string
 	liveDiffHint: string
+	sendFlightLabel: string
+	sendFlightHint: string
 	bubbleLabel: string
 	bubbleHint: string
 	tuningSummary: string
 	tuningHint: string
 	curveLabel: string
 	curveHint: string
-	curvePointOne: string
-	curvePointTwo: string
+	curveHandle: (index: number) => string
 	tuningReset: string
-	tuners: Record<keyof BubbleRiseTuning, string>
+	tuners: Record<BubbleNumberKey, string>
 	overridden: string
 	reset: string
 	failed: string
@@ -167,37 +153,30 @@ const ZH_COPY: Copy = {
 	liveDiffHint:
 		"直接调用写入或编辑时，行尾那两个 +n -m 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。"
 		+ "数字一变，变了的那一位会像读数那样在原地弹到新值。",
+	sendFlightLabel: "发送气泡形变",
+	sendFlightHint:
+		"发出之后整张输入卡片收成落点那条气泡：越收越窄、圆角跟着收，草稿的字换成气泡里的字。"
+		+ "关掉就回到 dsh 原来的样子；这一项开着时「冒头」不生效。",
 	bubbleLabel: "发送气泡冒头",
 	bubbleHint:
-		"发出之后，那一条先只探出输入框上沿一小截，微顿一下，再升到它该在的位置——落下时还会冲过一点再弹回来。"
+		"发出之后，那一条先从输入框上沿探出来一点、微微一沉，再冲上去落到它该在的位置——落下时还冲过一点再收回来。"
 		+ "关掉就直接出现在落点。",
 	tuningSummary: "动效参数",
 	tuningHint:
-		"拖完就生效，不用保存，也不用刷新；下一次发送按新的走。区间给得很宽，两头都能拖到底："
-		+ "段长 0 就是那一段不停，阻尼越小回弹越明显，0.99 几乎不弹。「冒出」「停顿」「升起」三段相加就是整段多长。"
+		"拖完就生效，不用保存，也不用刷新；下一次发送按新的走。整段只有一条曲线：起手多小、一开始露出多高一截、"
+		+ "往右探多少、整段多长都在上面调，形状在那张图上拖。"
 		+ "「右探出」超过 16 像素之后不再往外——那是滚动器给的内边距，再远就被裁掉了。",
-	curveLabel: "冒出缓动",
+	curveLabel: "行程曲线",
 	curveHint:
-		"拖那两个圆点。横轴是冒出这一段走了几成，纵轴是冒到哪；虚线是匀速，曲线压在它下面就是先慢后快，"
-		+ "举在它上面就是先冲过去。圆点拖到方框上下之外，那一段就会先退一下、或者先冲过头再回来。",
-	curvePointOne: "缓动控制点 1",
-	curvePointTwo: "缓动控制点 2",
+		"横轴是整段走了几成，纵轴是行程：贴底是还整个藏在输入区后面，顶边那条线是落点，浅虚线是「露出一整截」的高度。"
+		+ "曲线在那条虚线附近压平就是微顿，越过顶边就是冲过落点再落回来。六个白点横竖都能拖，曲线本身也能按住拖。",
+	curveHandle: (index: number) => "第 " + index + " 个控制点",
 	tuningReset: "全部恢复默认",
 	tuners: {
-		emergeMs: "冒出时长",
 		emergeScale: "起点大小",
 		reveal: "露出高度",
 		outdent: "右探出",
-		emergeBezierX1: "缓动 X1",
-		emergeBezierY1: "缓动 Y1",
-		emergeBezierX2: "缓动 X2",
-		emergeBezierY2: "缓动 Y2",
-		hold: "停顿",
-		holdDrift: "停顿外送",
-		riseMs: "升起时长",
-		oversize: "放大",
-		riseDamping: "位置回弹",
-		sizeDamping: "尺寸回弹",
+		totalMs: "总时长",
 	},
 	overridden: "已覆盖",
 	reset: "重置",
@@ -244,39 +223,34 @@ const EN_COPY: Copy = {
 		"When you write or edit a file directly, the +n -m at the end of the row starts growing while the content "
 		+ "is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value "
 		+ "the way the readouts do.",
+	sendFlightLabel: "Send bubble morph",
+	sendFlightHint:
+		"Once sent, the whole composer card shrinks into the bubble that lands in the chat: it narrows, its corners "
+		+ "close up, and the draft text hands over to the message text. Off restores dsh's own behaviour; while this "
+		+ "is on, the rise below does not run.",
 	bubbleLabel: "Send bubble rises",
 	bubbleHint:
-		"Once sent, the message first shows just a sliver above the composer, holds for a moment, then rises to "
-		+ "where it belongs — overshooting a little before it settles. Off puts it straight at its place.",
+		"Once sent, the message first shows a sliver above the composer, sinks a touch, then rushes up to where it "
+		+ "belongs — overshooting a little before it settles. Off puts it straight at its place.",
 	tuningSummary: "Motion tuning",
 	tuningHint:
-		"Changes apply as you drag them — no save, no reload; the next send uses them. The ranges are deliberately "
-		+ "wide, so both ends are reachable: a zero span means that stage does not pause at all, a smaller damping "
-		+ "bounces more, and 0.99 barely moves. Emerge plus hold plus rise is the length of the whole animation. "
-		+ "Outdent stops moving past 16px — that is the inner padding of the scroller, and anything further is clipped.",
-	curveLabel: "Emerge easing",
+		"Changes apply as you drag them — no save, no reload; the next send uses them. The whole rise is one curve: "
+		+ "start size, how much shows at first, how far it leans out and total length are the sliders here, and the "
+		+ "shape is dragged on the plot. Outdent stops moving past 16px — that is the inner padding of the scroller, "
+		+ "and anything further is clipped.",
+	curveLabel: "Travel curve",
 	curveHint:
-		"Drag the two dots. Across is how far the emerge stage has got, up is how far it has risen; the dashed "
-		+ "line is even speed, so a curve below it starts slow and a curve above it rushes ahead. Pull a dot "
-		+ "outside the box and that stage backs up first, or overshoots before it settles.",
-	curvePointOne: "Easing control point 1",
-	curvePointTwo: "Easing control point 2",
+		"Across is how far the animation has got, up is how far the bubble has travelled: the bottom is still hidden "
+		+ "behind the composer, the top line is its landing spot, and the dashed line is where a full sliver shows. "
+		+ "Flat near that line is the pause; above the top line is the overshoot. The six dots move both ways, and the "
+		+ "curve itself can be dragged too.",
+	curveHandle: (index: number) => "Control point " + index,
 	tuningReset: "Restore all defaults",
 	tuners: {
-		emergeMs: "Emerge time",
 		emergeScale: "Start size",
 		reveal: "Reveal",
 		outdent: "Outdent",
-		emergeBezierX1: "Ease X1",
-		emergeBezierY1: "Ease Y1",
-		emergeBezierX2: "Ease X2",
-		emergeBezierY2: "Ease Y2",
-		hold: "Hold",
-		holdDrift: "Hold drift",
-		riseMs: "Rise time",
-		oversize: "Oversize",
-		riseDamping: "Position damping",
-		sizeDamping: "Size damping",
+		totalMs: "Total length",
 	},
 	overridden: "Overridden",
 	reset: "Reset",
@@ -321,7 +295,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 	// 滑杆拖动期间的本地值：host 接受之后撤掉，显示回到读回来的那一份
 	const [draft, setDraft] = useState<Partial<BubbleRiseTuning>>({})
-	const pendingWrites = useRef(new Map<string, number>())
+	const pendingWrites = useRef(new Map<string, unknown>())
 	const flushTimer = useRef<number | null>(null)
 	// 草稿只在 host 还没追上它的时候才有用：追上之后撤掉，显示回到读回来的那一份，
 	// 别处改了同一份配置也不会被手里的旧值盖住
@@ -330,7 +304,8 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 		setDraft(current => {
 			const kept: Partial<BubbleRiseTuning> = {}
 			for (const key of Object.keys(current) as (keyof BubbleRiseTuning)[]) {
-				if (current[key] !== host[key]) kept[key] = current[key]
+				if (current[key] === host[key]) continue
+				keepEntry(kept, key, current[key])
 			}
 			return Object.keys(kept).length === Object.keys(current).length ? current : kept
 		})
@@ -343,6 +318,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 	const glassOn = storedGlass(snapshot.value)
 	const liveDiffOn = storedLiveDiff(snapshot.value)
 	const caretMode = storedCaret(snapshot.value)
+	const sendFlightOn = storedSendFlight(snapshot.value)
 	const bubbleRiseOn = storedBubbleRise(snapshot.value)
 	const tuning: BubbleRiseTuning = {...readBubbleTuning(snapshot.value), ...draft}
 	const unavailable = snapshot.status === "unavailable"
@@ -406,7 +382,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 	// 拖动只改本地；停手一小会儿或松手时再写，写盘频率与拖动次数无关
 	const previewValues = (next: Partial<BubbleRiseTuning>): void => {
 		setDraft(current => ({...current, ...next}))
-		for (const [key, value] of Object.entries(next) as [keyof BubbleRiseTuning, number][]) {
+		for (const [key, value] of Object.entries(next) as [keyof BubbleRiseTuning, unknown][]) {
 			pendingWrites.current.set(BUBBLE_TUNING_FIELDS[key], value)
 		}
 		if (flushTimer.current !== null) window.clearTimeout(flushTimer.current)
@@ -534,6 +510,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 					onChange={(next: boolean) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff)}
 				/>
 			))}
+			{rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, (
+				<Switch
+					checked={sendFlightOn}
+					disabled={controlsDisabled}
+					label={copy.sendFlightLabel}
+					onChange={(next: boolean) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight)}
+				/>
+			))}
 			{rowChrome(BUBBLE_RISE_FIELD, copy.bubbleLabel, copy.bubbleHint, (
 				<Switch
 					checked={bubbleRiseOn}
@@ -550,7 +534,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 					disabled={controlsDisabled}
 					label={copy.curveLabel}
 					hint={copy.curveHint}
-					pointLabels={[copy.curvePointOne, copy.curvePointTwo]}
+					handleLabel={copy.curveHandle}
 					onChange={previewValues}
 					onCommit={flushNow}
 				/>
@@ -593,35 +577,58 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 	)
 }
 
-// 冒出那一段的缓动曲线：横轴 0..1 铺满整张图，纵轴按 CURVE_Y_MIN..CURVE_Y_MAX 换算成百分比
+// 行程曲线：横轴 0..1 铺满整张图，纵轴按 CURVE_Y_MIN..CURVE_Y_MAX 换算成百分比
+// 拖法与 .probe/想实现的气泡动效.html 里那张图一致：六个把手横纵都能拖，曲线本身也能按住拖
 interface BubbleCurveEditorProps {
 	// 当前这一份参数，草稿已经合进来了
 	readonly tuning: BubbleRiseTuning
-	// 卡片不可写时两个圆点也拖不动
+	// 卡片不可写时把手与曲线都拖不动
 	readonly disabled: boolean
 	readonly label: string
 	readonly hint: string
-	// 两个圆点的无障碍名字，顺序是第一个控制点、第二个控制点
-	readonly pointLabels: readonly [string, string]
+	// 第几个控制点叫什么，给六个把手各自的无障碍名字
+	readonly handleLabel: (index: number) => string
 	// 拖动时每动一下交出去一次，写盘由外面按自己的节奏攒
 	readonly onChange: (next: Partial<BubbleRiseTuning>) => void
 	// 松手或按键结束的时候立刻补一次写
 	readonly onCommit: () => void
 }
 
-function BubbleCurveEditor({tuning, disabled, label, hint, pointLabels, onChange, onCommit}: BubbleCurveEditorProps): ReactElement {
-	const plot = useRef<HTMLDivElement | null>(null)
-	// 正在拖哪个圆点：只决定下一次 move 改谁，不参与渲染
-	const dragging = useRef<"first" | "second" | null>(null)
+// 曲线图现在能不能拖：开发阶段开着随时调；打包给读者时置成 false，图上只剩一条只读的曲线
+const CURVE_EDITABLE = true
 
-	// 一个圆点的两维一起交出去，越界与步进都收在这里，拖得再野也不会写出范围
-	const writePoint = (which: "first" | "second", point: {x: number; y: number}): void => {
-		const x = roundToStep(clampRange(point.x, 0, 1), 0.01)
-		const y = roundToStep(clampRange(point.y, CURVE_Y_MIN, CURVE_Y_MAX), 0.01)
-		onChange(which === "first"
-			? {emergeBezierX1: x, emergeBezierY1: y}
-			: {emergeBezierX2: x, emergeBezierY2: y})
-	}
+// 画那条线取多少个点：够平滑，又不至于每帧算太多
+const CURVE_SAMPLES = 48
+
+// 拖曲线时离拖动处越远的把手越少动：窗宽这么宽，远到两端基本不动
+const CURVE_BEND_WIDTH = 0.3
+
+// 指针纵向离曲线这么近才算按住了它，像素
+const CURVE_PICK_PX = 10
+
+// 曲线坐标写进配置时留三位小数：浮点尾巴不必带进配置里
+const CURVE_DIGITS = 3
+
+// 首尾两点钉死，只有中间这六个可以拖
+const CURVE_HANDLES = [1, 2, 3, 4, 5, 6] as const
+
+function BubbleCurveEditor({tuning, disabled, label, hint, handleLabel, onChange, onCommit}: BubbleCurveEditorProps): ReactElement {
+	const plot = useRef<HTMLDivElement | null>(null)
+	// 正在拖哪个把手：只决定下一次 move 改谁，不参与渲染
+	const draggingHandle = useRef<number | null>(null)
+	// 正在拖曲线本身：按各把手在拖动处的权重把纵向偏移摊下去
+	const bendingCurve = useRef(false)
+	// 这一份卡片现在能不能改：卡片本身不可写、或者发布版关掉了曲线编辑，都拖不动
+	const editable = CURVE_EDITABLE && !disabled
+	const curve = useMemo(() => createTravelCurve(tuning.curveX, tuning.curveY), [tuning.curveX, tuning.curveY])
+	const outline = useMemo(() => {
+		let path = ""
+		for (let step = 0; step <= CURVE_SAMPLES; step++) {
+			const progress = step / CURVE_SAMPLES
+			path += (step === 0 ? "M " : " L ") + plotCurveX(progress) + " " + plotCurveY(curve.at(progress))
+		}
+		return path
+	}, [curve])
 
 	// 指针位置换算回曲线坐标：横轴铺满整张图，纵轴从下往上
 	const readPoint = (event: {clientX: number; clientY: number}): {x: number; y: number} | null => {
@@ -629,58 +636,101 @@ function BubbleCurveEditor({tuning, disabled, label, hint, pointLabels, onChange
 		if (rect === undefined || rect.width === 0 || rect.height === 0) return null
 		const ratio = (event.clientY - rect.top) / rect.height
 		return {
-			x: (event.clientX - rect.left) / rect.width,
+			x: clampRange((event.clientX - rect.left) / rect.width, 0, 1),
 			y: CURVE_Y_MAX - ratio * (CURVE_Y_MAX - CURVE_Y_MIN),
 		}
 	}
 
-	const startDrag = (which: "first" | "second") => (event: ReactPointerEvent<HTMLButtonElement>): void => {
-		if (disabled) return
-		dragging.current = which
+	// 一个把手的两维一起交出去：横坐标不越过相邻两点，纵坐标不出图的上下边
+	const writeHandle = (index: number, point: {x: number; y: number}): void => {
+		const lowest = (tuning.curveX[index - 1] ?? 0) + CURVE_GAP
+		const highest = (tuning.curveX[index + 1] ?? 1) - CURVE_GAP
+		const nextX = tuning.curveX.slice()
+		const nextY = tuning.curveY.slice()
+		nextX[index] = roundToDigits(clampRange(point.x, lowest, highest))
+		nextY[index] = roundToDigits(clampRange(point.y, CURVE_Y_MIN, CURVE_Y_MAX))
+		onChange({curveX: nextX, curveY: nextY})
+	}
+
+	// 拖曲线本身：这一点要挪多少，就按各把手在这里的权重摊下去，改动最小的那种分法
+	const bendAt = (position: number, target: number): void => {
+		const param = curve.paramAt(position)
+		const share: number[] = []
+		let norm = 0
+		for (const index of CURVE_HANDLES) {
+			const distance = (tuning.curveX[index] ?? position) - position
+			const weight = bernsteinWeight(index, param) * Math.exp(-((distance / CURVE_BEND_WIDTH) ** 2))
+			share[index] = weight
+			norm += weight * weight
+		}
+		if (!(norm > 0)) return
+		const delta = target - curve.at(position)
+		const nextY = tuning.curveY.slice()
+		for (const index of CURVE_HANDLES) {
+			const moved = (nextY[index] ?? 0) + delta * (share[index] ?? 0) / norm
+			nextY[index] = roundToDigits(clampRange(moved, CURVE_Y_MIN, CURVE_Y_MAX))
+		}
+		onChange({curveY: nextY})
+	}
+
+	const startHandle = (index: number) => (event: ReactPointerEvent<HTMLButtonElement>): void => {
+		if (!editable) return
+		// 别让这一下冒泡到图上，否则同一次按下会又被当成「拖曲线」
+		event.stopPropagation()
+		event.preventDefault()
+		draggingHandle.current = index
 		// 捕获挂在图上：指针拖到卡片外面也还能收到 move 与 up
 		plot.current?.setPointerCapture(event.pointerId)
 		const point = readPoint(event)
-		if (point !== null) writePoint(which, point)
+		if (point !== null) writeHandle(index, point)
+	}
+
+	// 按在曲线那一带上也是拖曲线：先把纵向偏差算出来，够近才开始
+	const startBend = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		if (!editable) return
+		const point = readPoint(event)
+		if (point === null) return
+		const rect = plot.current?.getBoundingClientRect()
+		if (rect === undefined || rect.height === 0) return
+		const tolerance = (CURVE_PICK_PX / rect.height) * (CURVE_Y_MAX - CURVE_Y_MIN)
+		if (Math.abs(point.y - curve.at(point.x)) > tolerance) return
+		event.preventDefault()
+		bendingCurve.current = true
+		plot.current?.setPointerCapture(event.pointerId)
+		bendAt(point.x, point.y)
 	}
 
 	const moveDrag = (event: ReactPointerEvent<HTMLDivElement>): void => {
-		const which = dragging.current
-		if (which === null) return
 		const point = readPoint(event)
-		if (point !== null) writePoint(which, point)
+		if (point === null) return
+		const handle = draggingHandle.current
+		if (handle !== null) {
+			writeHandle(handle, point)
+			return
+		}
+		if (bendingCurve.current) bendAt(point.x, point.y)
 	}
 
 	const endDrag = (): void => {
-		if (dragging.current === null) return
-		dragging.current = null
+		if (draggingHandle.current === null && !bendingCurve.current) return
+		draggingHandle.current = null
+		bendingCurve.current = false
 		onCommit()
 	}
 
-	// 键盘也能挪：方向键一次 0.01，按住 Shift 一次 0.1
-	const keyPoint = (which: "first" | "second") => (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
-		const delta = event.shiftKey ? 0.1 : 0.01
-		const point = which === "first"
-			? {x: tuning.emergeBezierX1, y: tuning.emergeBezierY1}
-			: {x: tuning.emergeBezierX2, y: tuning.emergeBezierY2}
+	// 键盘也能挪：方向键一次 0.01，按住 Shift 一次 0.05
+	const keyHandle = (index: number) => (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+		const delta = event.shiftKey ? 0.05 : 0.01
+		const point = {x: tuning.curveX[index] ?? 0, y: tuning.curveY[index] ?? 0}
 		if (event.key === "ArrowLeft") point.x -= delta
 		else if (event.key === "ArrowRight") point.x += delta
 		else if (event.key === "ArrowUp") point.y += delta
 		else if (event.key === "ArrowDown") point.y -= delta
 		else return
 		event.preventDefault()
-		writePoint(which, point)
+		writeHandle(index, point)
 		onCommit()
 	}
-
-	const first = {x: curveX(tuning.emergeBezierX1), y: curveY(tuning.emergeBezierY1)}
-	const second = {x: curveX(tuning.emergeBezierX2), y: curveY(tuning.emergeBezierY2)}
-	const start = {x: curveX(0), y: curveY(0)}
-	const end = {x: curveX(1), y: curveY(1)}
-	const curve = "M " + start.x + " " + start.y
-		+ " C " + first.x + " " + first.y + " " + second.x + " " + second.y + " " + end.x + " " + end.y
-	const readout = "cubic-bezier(" + [tuning.emergeBezierX1, tuning.emergeBezierY1, tuning.emergeBezierX2, tuning.emergeBezierY2]
-		.map(value => value.toFixed(2))
-		.join(", ") + ")"
 
 	return (
 		<div className={CARD_CLASS.bezier}>
@@ -688,50 +738,62 @@ function BubbleCurveEditor({tuning, disabled, label, hint, pointLabels, onChange
 			<div
 				className={CARD_CLASS.bezierPlot}
 				ref={plot}
+				onPointerDown={startBend}
 				onPointerMove={moveDrag}
 				onPointerUp={endDrag}
 				onPointerCancel={endDrag}
 			>
 				<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-					<rect className={CARD_CLASS.bezierFrame} x={0} y={end.y} width={100} height={start.y - end.y} />
-					<path className={CARD_CLASS.bezierRule} d={"M " + start.x + " " + start.y + " L " + end.x + " " + end.y} />
-					<path className={CARD_CLASS.bezierArm} d={"M " + start.x + " " + start.y + " L " + first.x + " " + first.y} />
-					<path className={CARD_CLASS.bezierArm} d={"M " + end.x + " " + end.y + " L " + second.x + " " + second.y} />
-					<path className={CARD_CLASS.bezierCurve} d={curve} />
+					<rect className={CARD_CLASS.bezierFrame} x={0} y={plotCurveY(1)} width={100} height={plotCurveY(0) - plotCurveY(1)} />
+					<path className={CARD_CLASS.bezierCurve} d={outline} />
 				</svg>
-				<button
-					type="button"
-					className={CARD_CLASS.bezierHandle}
-					style={{left: first.x + "%", top: first.y + "%"}}
-					disabled={disabled}
-					aria-label={pointLabels[0]}
-					onPointerDown={startDrag("first")}
-					onKeyDown={keyPoint("first")}
-				/>
-				<button
-					type="button"
-					className={CARD_CLASS.bezierHandle}
-					style={{left: second.x + "%", top: second.y + "%"}}
-					disabled={disabled}
-					aria-label={pointLabels[1]}
-					onPointerDown={startDrag("second")}
-					onKeyDown={keyPoint("second")}
-				/>
+				{CURVE_HANDLES.map(index => (
+					<button
+						key={index}
+						type="button"
+						className={CARD_CLASS.bezierHandle}
+						style={{
+							left: plotCurveX(tuning.curveX[index] ?? 0) + "%",
+							top: plotCurveY(tuning.curveY[index] ?? 0) + "%",
+						}}
+						disabled={!editable}
+						aria-label={handleLabel(index)}
+						onPointerDown={startHandle(index)}
+						onKeyDown={keyHandle(index)}
+					/>
+				))}
 			</div>
 			<p className={CARD_CLASS.hint}>{hint}</p>
-			<output className={CARD_CLASS.bezierReadout}>{readout}</output>
+			<div className={CARD_CLASS.bezierReadout}>
+				<div>{"X " + tuning.curveX.map(value => value.toFixed(CURVE_DIGITS)).join(", ")}</div>
+				<div>{"Y " + tuning.curveY.map(value => value.toFixed(CURVE_DIGITS)).join(", ")}</div>
+			</div>
 		</div>
 	)
 }
 
 // 横轴只认 0..1：这里就是时间进度，越界没有意义
-function curveX(value: number): number {
+function plotCurveX(value: number): number {
 	return clampRange(value, 0, 1) * 100
 }
 
 // 纵轴按 CURVE_Y_MIN..CURVE_Y_MAX 铺满整张图，0 与 1 于是落在方框的上下边
-function curveY(value: number): number {
+function plotCurveY(value: number): number {
 	return ((CURVE_Y_MAX - clampRange(value, CURVE_Y_MIN, CURVE_Y_MAX)) / (CURVE_Y_MAX - CURVE_Y_MIN)) * 100
+}
+
+// 曲线坐标收到三位小数，写进配置的数不带浮点尾巴
+function roundToDigits(value: number): number {
+	return Number(value.toFixed(CURVE_DIGITS))
+}
+
+// 一列一列地把草稿搬过去：键是联合类型，直接索引赋值会要求两条分支的值同时成立
+function keepEntry<K extends keyof BubbleRiseTuning>(
+	target: Partial<BubbleRiseTuning>,
+	key: K,
+	value: BubbleRiseTuning[K] | undefined,
+): void {
+	target[key] = value
 }
 
 function clampRange(value: number, min: number, max: number): number {
@@ -775,6 +837,10 @@ function storedGlass(value: ChatUxSection | undefined): boolean {
 
 function storedCaret(value: ChatUxSection | undefined): CaretMotionMode {
 	return value?.caretMotion ?? DEFAULT_CARET_MOTION
+}
+
+function storedSendFlight(value: ChatUxSection | undefined): boolean {
+	return value?.sendFlight ?? DEFAULT_SEND_FLIGHT
 }
 
 function storedBubbleRise(value: ChatUxSection | undefined): boolean {

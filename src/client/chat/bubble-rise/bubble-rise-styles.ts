@@ -1,12 +1,15 @@
 /**
- * 发送气泡的冒头：样式表这半边只有两条，一条探针、一条先把回声藏起来。
+ * 发送气泡的冒头：样式表这半边只有三条，两条探针、一条先把回声藏起来。
  *
  * 探针是「提交了」这通通知：回声行第一次被渲染时响一次 animationstart，画面上没有任何变化。
  * 它是 1 ms 而不是 0，因为零时长的动画根本不会开始；两帧都写 opacity: 0，于是它与下面那条隐藏规则
  * 叠在同一处，任何时候都不会把回声放出来
  *
- * 隐藏只认 dsh 的两个语义属性：[data-submission-echo] 是提交后本地的回声，
- * [data-pending-steering] 是运行中追加的排队消息，那些照旧显示
+ * 插话的回声另有一条探针：它要等在跑的那一轮走到下一个 Step 才转正，可能等几分钟，
+ * 脚本那边给它开的是长窗口；显示照旧，隐藏规则把它排除在外
+ *
+ * 隐藏只认 dsh 的语义属性：[data-submission-echo] 是提交后本地的回声，
+ * [data-pending-steering] 是运行中插话与排队消息，那些照旧显示
  */
 import {CHAT_FLOW_SELECTOR} from "../../dom-contract"
 
@@ -23,7 +26,7 @@ export const RISE_ECHO_HELD_ATTRIBUTE = "data-dsh-chat-ux-rise-held"
 export const SUBMISSION_ECHO_ATTRIBUTE = "data-submission-echo"
 export const PENDING_STEERING_ATTRIBUTE = "data-pending-steering"
 
-// 这一处的全部 CSS：一条探针、一条隐藏
+// 这一处的全部 CSS：两条探针、一条隐藏
 export const BUBBLE_RISE_CSS = `
 /* 回声出现的通知：从 0 到 0，只为一个 animationstart，不留任何可见痕迹 */
 @keyframes ${RISE_ECHO_PROBE_NAME} {
@@ -32,6 +35,11 @@ export const BUBBLE_RISE_CSS = `
 }
 
 [${RISE_ATTRIBUTE}] ${CHAT_FLOW_SELECTOR} [${SUBMISSION_ECHO_ATTRIBUTE}]:not([${PENDING_STEERING_ATTRIBUTE}]) {
+  animation: ${RISE_ECHO_PROBE_NAME} 1ms linear;
+}
+
+/* 插话的回声：同样只为一个 animationstart，显示不动 */
+[${RISE_ATTRIBUTE}] ${CHAT_FLOW_SELECTOR} [${PENDING_STEERING_ATTRIBUTE}] {
   animation: ${RISE_ECHO_PROBE_NAME} 1ms linear;
 }
 

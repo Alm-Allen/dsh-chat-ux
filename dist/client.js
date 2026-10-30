@@ -56,6 +56,7 @@ const call_appeared_1 = require("./chat/follow/call-appeared");
 const fold_glide_1 = require("./chat/fold/fold-glide");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
+const send_flight_1 = require("./chat/send-flight/send-flight");
 const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
 const transcript_default_1 = require("./settings/transcript-default");
@@ -97,6 +98,7 @@ function apply(ctx) {
         glass: settings_scope_1.DEFAULT_COMPOSER_GLASS,
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
+        sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
         bubbleRise: settings_scope_1.DEFAULT_BUBBLE_RISE,
         bubbleTuning: settings_scope_1.DEFAULT_BUBBLE_TUNING,
     };
@@ -165,7 +167,8 @@ function apply(ctx) {
     // 参数不重装：动画每次播之前现读一份，所以卡片上拖完滑杆不必重落，下一次发送就按新的走
     let bubbleRiseDispose = null;
     const syncBubbleRise = () => {
-        if (!settings.bubbleRise) {
+        // 形变开着时冒头不装：两套都盯着同一条真实行，同一帧上叠两套位移只会互相追
+        if (!settings.bubbleRise || settings.sendFlight) {
             bubbleRiseDispose?.();
             bubbleRiseDispose = null;
             return;
@@ -182,6 +185,7 @@ function apply(ctx) {
         settings.glass = value?.composerGlass ?? settings_scope_1.DEFAULT_COMPOSER_GLASS;
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
+        settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.bubbleRise = value?.bubbleRise ?? settings_scope_1.DEFAULT_BUBBLE_RISE;
         settings.bubbleTuning = (0, settings_scope_1.readBubbleTuning)(value);
         syncGlass();
@@ -227,6 +231,9 @@ function apply(ctx) {
     // 所以这一处从 DOM 之外接管：动真实高度，让布局逐帧长出来、逐帧收回去，收起方向靠拦下那次点击
     // 把展开体留在展开态，压到终点再放行。只认点击，流式追加与自动开合都不受影响
     ctx.effect(() => (0, fold_glide_1.installFoldGlide)(), "dsh-chat-ux: fold glide");
+    // 发送气泡的形变：读者按下发送以后，整张输入卡片（连工具栏与草稿）收成落点那条气泡。开关关掉时
+    // 连起点都不量。它与下面那一处冒头盯着同一个位置，所以冒头那边会先看这个开关
+    ctx.effect(() => (0, send_flight_1.installSendFlight)(() => settings.sendFlight), "dsh-chat-ux: send flight");
     // 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来再升到落点。动的是聊天列里真实那一行
     // 里的气泡，不克隆替身；行本身仍在布局里占位。提交后本地的回声由这一处先藏起来，真实行到达时
     // 才把它摆出来，所以同一条消息只会出现一次。常驻，没有开关
@@ -286,37 +293,43 @@ const SETTINGS_NAMESPACE = "dsh-chat-ux";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installBubbleRise = installBubbleRise;
 /**
- * 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来，微顿，再升到它该在的位置。
+ * 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来，微微沉一下，再升到它该在的位置。
  *
- * 两段加两条弹簧：第一段 easeInOut 从 emergeScale 长到 oversize，中间微顿并先往外送 holdDrift，
- * 第二段用欠阻尼弹簧回到 1。弹簧的角频率按「回落穿过终点落在这一段末尾」反算，尺寸那条用同一个
- * 穿越时刻，所以落定那一帧尺寸正好是 1，清掉 transform 不会跳
+ * 整段只有一条曲线：八个控制点的七次贝塞尔，横轴是时间进度、纵轴是行程。行程 0 时整个气泡还在
+ * 输入区后面，1 是落点，越过 1 就是冲过落点再落回来——起点那一口探出、中间那一下沉、末尾那点过冲，
+ * 全都是这一条曲线的形状。尺寸绑在同一个行程上，从 emergeScale 长到 1，落定那一帧正好是一倍，
+ * 清掉 transform 不会跳
  *
  * 参数每次播之前读一遍，所以插件管理页上拖完滑杆，下一次发送就按新的走，不必刷新
  *
  * 动的是真实那一行里的气泡，不是替身：行本身仍在布局里占着那个位置，冒头期间落点是空的。
- * 判据全用 dsh 的语义属性：[data-submission-echo] 是提交后本地的回声，[data-chat-flow-kind="user"]
- * 是 Host 接住之后那一行。两者之间没有别的事件可用，所以回声那边挂一条 1 ms 的探针动画，
- * animationstart 就是「提交了」这通通知；真实行出现靠 MutationObserver 认，它回调在绘制之前
+ * 判据全用 dsh 的语义属性：[data-submission-echo] 是提交后本地的回声，
+ * [data-chat-flow-kind="user"] 与 [data-chat-flow-kind="steering"] 是 Host 接住之后的那一行（正常提交与插话）。
+ * 「提交了」这通通知有两条路：回声那边挂的一条 1 ms 探针动画，以及提交动作本身（回车、点发送之后输入面被清空）。
+ * 会话闲着的时候回声可能压根不渲染（durable 行与它同一帧到齐，被 dsh 抑制），只剩后一条路可用。
+ * 真实行出现靠 MutationObserver 认，它的回调在绘制之前
  *
  * 侧栏里的子智能体会话各有各的滚动器与输入区，所以这一整套都从那一行自己往上找，不用 document
  */
 const dom_contract_1 = require("../../dom-contract");
+const bubble_curve_1 = require("../../settings/bubble-curve");
 const bubble_rise_styles_1 = require("./bubble-rise-styles");
-// 尺寸与位置在同一次穿越里收尾；让尺寸先到，落定那一帧还会差一点
-const SIZE_SPEED = 1;
-// 弹簧尾巴不再等：超过这一段还没判到落定，就直接收
-const SETTLE_SLACK_MS = 200;
-// 回声出现之后最多等这么久，超时就把回声放出来，别让读者以为没发出去
-const ECHO_WAIT_MS = 1200;
+// 普通提交之后等 user 行这么久：正常几百毫秒就到，超时就把回声放出来
+const USER_WAIT_MS = 1200;
+// 插话要等运行中那一轮走到下一个 Step 才落进 transcript，可能好几分钟
+const STEERING_WAIT_MS = 15 * 60 * 1000;
+// 点了输入区里的按钮之后隔这么久再看输入面空没空：发送按钮与停止按钮都住在那里面
+const SEND_CLICK_PROBE_MS = 120;
 // 气泡右缘能超出聊天列多少：那个滚动器的左右各有 16px 内边距，再往外就被裁了
 const SIDE_CLEARANCE_PX = 16;
 // 判定「聊天列的底就是输入区的顶」时的容差
 const CLIP_TOLERANCE_PX = 2;
 // 气泡那一层；行里除了它还有时间与复制那一行
 const BUBBLE_SELECTOR = "[data-message-bubble]";
-// 真实那一行
-const USER_ROW_SELECTOR = '[data-chat-flow-kind="user"]';
+// 行上的种类：正常提交是 user，跑着的时候插话是 steering
+const FLOW_KIND_ATTRIBUTE = "data-chat-flow-kind";
+// 读者自己发的那一行，两种都要冒头
+const ROW_SELECTOR = `[${FLOW_KIND_ATTRIBUTE}="user"], [${FLOW_KIND_ATTRIBUTE}="steering"]`;
 /**
  * 装上这一处：挂门控属性、接上回声的探针，返回卸下的把手
  * @param readTuning 现读一份冒头参数；每次播放之前调一次，卡片上改完下一次就生效
@@ -327,15 +340,24 @@ function installBubbleRise(readTuning) {
         return () => undefined;
     gate.setAttribute(bubble_rise_styles_1.RISE_ATTRIBUTE, "");
     const active = new Set();
+    // 播过的行不再播：几条通知路线可能同时盯上同一条
+    const played = new WeakSet();
     let observer = null;
-    let waitTimer = 0;
+    let observedScroller = null;
+    // 两种期待各自的截止时刻：普通提交等 user 行，插话等 steering 行
+    let userUntil = 0;
+    let steeringUntil = 0;
+    let closeTimer = 0;
     // 收掉等待窗口：观察器与超时一起断
     const closeWindow = () => {
         observer?.disconnect();
         observer = null;
-        if (waitTimer !== 0)
-            window.clearTimeout(waitTimer);
-        waitTimer = 0;
+        observedScroller = null;
+        userUntil = 0;
+        steeringUntil = 0;
+        if (closeTimer !== 0)
+            window.clearTimeout(closeTimer);
+        closeTimer = 0;
     };
     // 把回声放出来：等待超时，或者这一条接不上动画时，读者至少看得见自己发的内容
     const revealEchoes = (scope) => {
@@ -343,55 +365,129 @@ function installBubbleRise(readTuning) {
             echo.setAttribute(bubble_rise_styles_1.RISE_ECHO_HELD_ATTRIBUTE, "");
         }
     };
-    // 新增的这一批里有没有真实那一行；认到就关窗口，不再往后看
-    const claimFirstRow = (nodes, scroller) => {
+    // 最后一个期待过期时把观察器收掉：插话那一路可能等很久，不能全靠一个短窗
+    const scheduleClose = () => {
+        if (closeTimer !== 0)
+            window.clearTimeout(closeTimer);
+        closeTimer = 0;
+        const left = Math.max(userUntil, steeringUntil) - Date.now();
+        if (!(left > 0)) {
+            closeWindow();
+            return;
+        }
+        closeTimer = window.setTimeout(() => {
+            closeTimer = 0;
+            // 这一段时间里可能又开了一路，等最后那一路也过期
+            if (Date.now() < Math.max(userUntil, steeringUntil)) {
+                scheduleClose();
+                return;
+            }
+            const scroller = observedScroller;
+            if (scroller !== null)
+                revealEchoes(scroller);
+            closeWindow();
+        }, left + 20);
+    };
+    // 新增的这一批里有没有正等着的那一行：认到就播，这一路不再等
+    const claimRow = (nodes, scroller) => {
+        const now = Date.now();
         for (const node of nodes) {
             if (!(node instanceof HTMLElement))
                 continue;
-            // 新增的通常就是那一行自己；整块替换时取最后一条，最旧的那些不会因此重新冒头
-            const row = node.matches(USER_ROW_SELECTOR)
-                ? node
-                : [...node.querySelectorAll(USER_ROW_SELECTOR)].at(-1) ?? null;
-            if (row === null)
-                continue;
-            closeWindow();
-            if (!playRise(row, active, readTuning()))
-                revealEchoes(scroller);
-            return true;
+            const found = node.matches(ROW_SELECTOR)
+                ? [node]
+                : [...node.querySelectorAll(ROW_SELECTOR)];
+            // 整块替换时取最后一条，最旧的那些不会因此重新冒头
+            for (const row of found.reverse()) {
+                if (played.has(row))
+                    continue;
+                const steering = row.getAttribute(FLOW_KIND_ATTRIBUTE) === "steering";
+                if (now > (steering ? steeringUntil : userUntil))
+                    continue;
+                played.add(row);
+                if (steering)
+                    steeringUntil = 0;
+                else
+                    userUntil = 0;
+                if (!playRise(row, active, readTuning()))
+                    revealEchoes(scroller);
+                scheduleClose();
+                return true;
+            }
         }
         return false;
     };
-    // 回声到了，真实行还会在几百毫秒内到：只在这一小段里看新增节点
-    const watchRows = (echo) => {
-        closeWindow();
-        const scroller = echo.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
-        if (scroller === null)
-            return;
-        observer = new MutationObserver((records) => {
-            for (const record of records) {
-                if (claimFirstRow(record.addedNodes, scroller))
-                    return;
-            }
-        });
-        observer.observe(scroller, { childList: true, subtree: true });
-        waitTimer = window.setTimeout(() => {
-            revealEchoes(scroller);
+    // 开一路等待：普通提交只等几百毫秒，插话要等运行中那一轮走到下一个 Step
+    const expectRow = (scroller, steering) => {
+        if (observedScroller !== scroller || observer === null) {
             closeWindow();
-        }, ECHO_WAIT_MS);
+            observedScroller = scroller;
+            observer = new MutationObserver((records) => {
+                for (const record of records) {
+                    if (claimRow(record.addedNodes, scroller))
+                        return;
+                }
+            });
+            observer.observe(scroller, { childList: true, subtree: true });
+        }
+        if (steering)
+            steeringUntil = Date.now() + STEERING_WAIT_MS;
+        else
+            userUntil = Date.now() + USER_WAIT_MS;
+        scheduleClose();
+    };
+    // 事件落在哪个滚动器上：侧栏子智能体会话各有各的输入区与聊天列
+    const scrollerOf = (target) => {
+        if (!(target instanceof Element))
+            return null;
+        const seat = target.closest(dom_contract_1.COMPOSER_SELECTOR);
+        return seat?.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR) ?? null;
     };
     const onEchoAppear = (event) => {
         if (!(event instanceof AnimationEvent) || event.animationName !== bubble_rise_styles_1.RISE_ECHO_PROBE_NAME)
             return;
         const echo = event.target;
-        if (!(echo instanceof Element))
+        if (!(echo instanceof Element) || !echo.hasAttribute(bubble_rise_styles_1.SUBMISSION_ECHO_ATTRIBUTE))
             return;
-        if (!echo.hasAttribute(bubble_rise_styles_1.SUBMISSION_ECHO_ATTRIBUTE) || echo.hasAttribute(bubble_rise_styles_1.PENDING_STEERING_ATTRIBUTE))
+        const scroller = echo.closest(dom_contract_1.CONVERSATION_SCROLL_SELECTOR);
+        if (scroller === null)
             return;
-        watchRows(echo);
+        // 插话的回声会一直等在运行指示后面，直到那一轮走到下一个 Step 才转正
+        expectRow(scroller, echo.hasAttribute(bubble_rise_styles_1.PENDING_STEERING_ATTRIBUTE));
+    };
+    // 回声没渲染出来时探针不会响：会话闲着、durable 行与回声同一帧到齐，回声被 dsh 抑制掉。
+    // 所以提交这个动作本身也当通知用——回车，以及点了输入区里的按钮之后输入面被清空
+    const onComposerKey = (event) => {
+        if (event.key !== "Enter" || event.shiftKey || event.isComposing)
+            return;
+        // 提问卡片的作答框也是回车换行，不算提交
+        if (event.target instanceof HTMLTextAreaElement)
+            return;
+        const scroller = scrollerOf(event.target);
+        if (scroller !== null)
+            expectRow(scroller, false);
+    };
+    const onComposerClick = (event) => {
+        const target = event.target;
+        if (!(target instanceof Element) || target.closest("button") === null)
+            return;
+        const scroller = scrollerOf(target);
+        if (scroller === null)
+            return;
+        // 点的是不是发送得看结果：停一拍，输入面空了才算提交，加号、模型选择那些不会清空
+        window.setTimeout(() => {
+            if (readComposerText(scroller) !== "")
+                return;
+            expectRow(scroller, false);
+        }, SEND_CLICK_PROBE_MS);
     };
     document.addEventListener("animationstart", onEchoAppear, true);
+    document.addEventListener("keydown", onComposerKey, true);
+    document.addEventListener("click", onComposerClick, true);
     return () => {
         document.removeEventListener("animationstart", onEchoAppear, true);
+        document.removeEventListener("keydown", onComposerKey, true);
+        document.removeEventListener("click", onComposerClick, true);
         closeWindow();
         for (const finish of [...active])
             finish();
@@ -405,7 +501,7 @@ function installBubbleRise(readTuning) {
  * 这一条气泡从输入框里冒出来再落回去
  * @param row 真实那一行
  * @param active 正在跑的清理函数，卸载时一并收掉
- * @param tuning 这一次用的十个参数
+ * @param tuning 这一次用的四个旋钮与那一条曲线
  * @returns 播没播；没播时调用方要把回声放出来
  */
 function playRise(row, active, tuning) {
@@ -423,21 +519,22 @@ function playRise(row, active, tuning) {
     const column = row.closest(dom_contract_1.CHAT_FLOW_SELECTOR);
     // 跟随开着才有 data-chat-following-tail，那个元素也正是纵向裁剪气泡的那一层
     const chatRoot = row.closest(dom_contract_1.FOLLOWING_TAIL_SELECTOR);
-    if (scroller === null || bubble === null || seat === null || column === null || chatRoot === null)
+    // 跟随关着的时候没有 data-chat-following-tail，照样播：只是少一层纵向裁剪，气泡仍落在它该在的位置
+    if (scroller === null || bubble === null || seat === null || column === null)
         return false;
     const bubbleRect = bubble.getBoundingClientRect();
     const seatRect = seat.getBoundingClientRect();
     const columnRect = column.getBoundingClientRect();
-    const rootRect = chatRoot.getBoundingClientRect();
+    const rootRect = chatRoot?.getBoundingClientRect() ?? null;
     if (bubbleRect.height === 0 || seatRect.height === 0)
         return false;
-    const { poseAt, stageEnd, totalMs } = createTimeline(tuning);
+    const { travelAt, totalMs } = createTimeline(tuning);
     // 聊天列的底就是输入区的顶时，它自己的纵向裁剪正好把气泡切在那一格，这是要的遮挡。
     // 内容还没铺满一屏的会话里这条线远在上方，气泡会整块画不出来，这时把裁剪让开，
     // 交由输入区座位那 36px 的渐变去遮
-    const croppedAtSeat = Math.abs(rootRect.bottom - seatRect.top) <= CLIP_TOLERANCE_PX;
-    const previousOverflowY = chatRoot.style.overflowY;
-    if (!croppedAtSeat)
+    const croppedAtSeat = rootRect !== null && Math.abs(rootRect.bottom - seatRect.top) <= CLIP_TOLERANCE_PX;
+    const previousOverflowY = chatRoot?.style.overflowY ?? "";
+    if (chatRoot !== null && !croppedAtSeat)
         chatRoot.style.overflowY = "visible";
     // 落点是气泡自己的矩形，不含下面那一行时间与复制
     const startScrollTop = scroller.scrollTop;
@@ -445,29 +542,42 @@ function playRise(row, active, tuning) {
     const endBottom = bubbleRect.bottom;
     const bubbleHeight = bubbleRect.height;
     const columnRight = columnRect.right;
+    /**
+     * 行程走到多少时气泡正好露出 reveal 那么一截
+     * 露出量随行程是线性的：起手时底边在输入区上沿往下 emergeScale 个气泡高的地方，气泡整个被挡着；
+     * 尺寸又同时从 emergeScale 长到 1，于是每多走一成行程，露出来的高度都是同一个数
+     */
+    const emergeAt = (travel, startBottom, endBottomNow) => {
+        const span = endBottomNow - startBottom;
+        const perUnit = bubbleHeight * (1 - tuning.emergeScale) - span;
+        if (!(perUnit > 0) || !(tuning.reveal > 0))
+            return 1;
+        return clamp01(travel / Math.min(0.9, tuning.reveal / perUnit));
+    };
     const draw = (elapsed) => {
-        const pose = poseAt(elapsed);
-        const emerged = clamp01(pose.emerge);
-        const travel = clamp01(pose.travel);
-        // 冒出阶段只露一截：底边被输入区挡住，露出多少由这一段的进度决定，不靠尺寸顺带露出
+        // 行程允许冲过 1：曲线末尾那点过冲就靠它，钳掉就看不见了
+        const travel = travelAt(elapsed);
+        const scale = tuning.emergeScale + (1 - tuning.emergeScale) * travel;
+        // 起手底边钉在输入区上沿往下 emergeScale 个气泡高的地方
         const seatTop = seat.getBoundingClientRect().top;
-        const startRight = columnRight + Math.min(tuning.outdent, SIDE_CLEARANCE_PX) * emerged;
-        const startBottom = seatTop + bubbleHeight * pose.scale - tuning.reveal * emerged;
-        // 落点跟着滚动走，起手点钉在输入区上
+        const startBottom = seatTop + bubbleHeight * tuning.emergeScale;
+        // 落点跟着滚动走：起手点钉在输入区，落点在聊天流里
         const endBottomNow = endBottom - (scroller.scrollTop - startScrollTop);
+        // 冒出那一下的横向外探只给到「露出一整截」为止，之后横向只往落点收
+        const emerged = emergeAt(travel, startBottom, endBottomNow);
+        const startRight = columnRight + Math.min(tuning.outdent, SIDE_CLEARANCE_PX) * emerged;
         const right = startRight + (endRight - startRight) * travel;
         const bottom = startBottom + (endBottomNow - startBottom) * travel;
         // 缩放圆心在右下角（transform-origin 写在下面），所以右下角就是这两个点
         const dx = right - endRight;
         const dy = bottom - endBottomNow;
-        bubble.style.transform = `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale(${pose.scale.toFixed(4)})`;
+        bubble.style.transform = `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale(${scale.toFixed(4)})`;
     };
     bubble.style.transformOrigin = "100% 100%";
     bubble.style.willChange = "transform";
     draw(0);
     let startedAt = null;
     let frameId = 0;
-    let overshot = false;
     let finished = false;
     const finish = () => {
         if (finished)
@@ -478,7 +588,8 @@ function playRise(row, active, tuning) {
         bubble.style.transform = "";
         bubble.style.transformOrigin = "";
         bubble.style.willChange = "";
-        chatRoot.style.overflowY = previousOverflowY;
+        if (chatRoot !== null)
+            chatRoot.style.overflowY = previousOverflowY;
         active.delete(finish);
     };
     const tick = (now) => {
@@ -489,122 +600,29 @@ function playRise(row, active, tuning) {
         if (startedAt === null)
             startedAt = now;
         const elapsed = now - startedAt;
-        draw(elapsed);
-        const pose = poseAt(elapsed);
-        // 判据挂在行程上：尺寸那一条这时候已经收敛到 1 了，行程还在动
-        if (elapsed > stageEnd && pose.travel > 1.001)
-            overshot = true;
-        if ((overshot && pose.travel <= 1) || elapsed >= totalMs + SETTLE_SLACK_MS) {
+        // 行程在这一刻正好回到 1：末一帧按整段时长画，清掉 transform 不会跳
+        if (elapsed >= totalMs) {
+            draw(totalMs);
             finish();
             return;
         }
+        draw(elapsed);
         frameId = view.requestAnimationFrame(tick);
     };
     active.add(finish);
     frameId = view.requestAnimationFrame(tick);
     return true;
 }
-// 按一份参数封出一段时间轴：两条弹簧的角频率与两段的分界都只算一次
+// 按一份参数封出一段时间轴：整段多长与那条曲线都只算一次
 function createTimeline(tuning) {
-    // 卡片上的段长可以调到 0，而 0 会让每一帧的进度都变成 NaN，所以这里兜到至少 1 ms
-    const emergeMs = Math.max(1, tuning.emergeMs);
-    const riseMs = Math.max(1, tuning.riseMs);
-    // 阻尼比贴着 1 时那条根式退化成 0，角频率会除零
-    const riseDamping = Math.min(tuning.riseDamping, 0.999);
-    const sizeDamping = Math.min(tuning.sizeDamping, 0.999);
-    const stageEnd = emergeMs + tuning.hold;
-    const totalMs = stageEnd + riseMs;
-    const riseOmega = omegaFor(riseMs, riseDamping);
-    const sizeOmega = omegaFor(riseMs / SIZE_SPEED, sizeDamping);
-    const ease = cubicBezierEase(tuning.emergeBezierX1, tuning.emergeBezierY1, tuning.emergeBezierX2, tuning.emergeBezierY2);
-    const poseAt = (elapsed) => {
-        const emerge = ease(elapsed / emergeMs);
-        const holdAt = tuning.hold <= 0 ? 1 : (elapsed - emergeMs) / tuning.hold;
-        const drift = tuning.holdDrift * smoothstep(holdAt);
-        const riseAt = Math.max(0, elapsed - stageEnd) / 1000;
-        const rise = spring(riseAt, riseOmega, riseDamping);
-        const size = spring(riseAt, sizeOmega, sizeDamping);
-        const grow = tuning.emergeScale + (tuning.oversize - tuning.emergeScale) * emerge;
-        const scale = elapsed < emergeMs ? grow : 1 + (tuning.oversize - 1) * (1 - size);
-        return { emerge, scale, travel: drift + (1 - drift) * rise };
-    };
-    return { poseAt, stageEnd, totalMs };
+    // 卡片上的总时长可以调到 0，而 0 会让每一帧的进度都变成 NaN，所以这里兜到至少 1 ms
+    const totalMs = Math.max(1, tuning.totalMs);
+    const travel = (0, bubble_curve_1.createTravelCurve)(tuning.curveX, tuning.curveY);
+    return { travelAt: elapsed => travel.at(elapsed / totalMs), totalMs };
 }
-// 欠阻尼弹簧的阶跃响应：起步速度为 0，冲过 1 再落回来
-function spring(seconds, omega, damping) {
-    if (seconds <= 0)
-        return 0;
-    const dampedOmega = omega * Math.sqrt(1 - damping * damping);
-    const decay = Math.exp(-damping * omega * seconds);
-    return 1 - decay * (Math.cos(dampedOmega * seconds) + (damping * omega / dampedOmega) * Math.sin(dampedOmega * seconds));
-}
-/**
- * 把「冲过终点、回落穿过终点」这一刻钉在这一段末尾
- * @param ms 这一段多长
- * @param damping 阻尼比；越小过冲越多
- * @returns 角频率，段长与过冲因此互相牵住，尾巴不留到总时长之后
- */
-function omegaFor(ms, damping) {
-    const dampedRatio = Math.sqrt(1 - damping * damping);
-    const cross = 2 * Math.PI - Math.atan(dampedRatio / damping);
-    return cross / ((ms / 1000) * dampedRatio);
-}
-/**
- * 三次贝塞尔缓动：两个控制点的横坐标限制在 0 到 1，纵坐标可以出界，于是曲线能先退后进或先冲过头。
- * 先用牛顿法从横坐标反解参数，解不出来再退回二分——与浏览器画 cubic-bezier() 用的那套相同
- * @param x1 第一控制点横坐标，0 到 1
- * @param y1 第一控制点纵坐标，可以出界
- * @param x2 第二控制点横坐标，0 到 1
- * @param y2 第二控制点纵坐标，可以出界
- * @returns 把 0 到 1 的进度映射成曲线上的值
- */
-function cubicBezierEase(x1, y1, x2, y2) {
-    const ax = 3 * x1 - 3 * x2 + 1;
-    const bx = 3 * x2 - 6 * x1;
-    const cx = 3 * x1;
-    const ay = 3 * y1 - 3 * y2 + 1;
-    const by = 3 * y2 - 6 * y1;
-    const cy = 3 * y1;
-    const sampleX = (t) => ((ax * t + bx) * t + cx) * t;
-    const sampleY = (t) => ((ay * t + by) * t + cy) * t;
-    const slopeX = (t) => (3 * ax * t + 2 * bx) * t + cx;
-    return (progress) => {
-        const target = clamp01(progress);
-        if (target <= 0)
-            return 0;
-        if (target >= 1)
-            return 1;
-        let t = target;
-        for (let step = 0; step < 8; step++) {
-            const diff = sampleX(t) - target;
-            if (Math.abs(diff) < 1e-6)
-                return sampleY(t);
-            const slope = slopeX(t);
-            if (Math.abs(slope) < 1e-6)
-                break;
-            t -= diff / slope;
-            if (t < 0 || t > 1)
-                break;
-        }
-        let low = 0;
-        let high = 1;
-        t = target;
-        for (let step = 0; step < 24; step++) {
-            const value = sampleX(t);
-            if (Math.abs(value - target) < 1e-6)
-                break;
-            if (value < target)
-                low = t;
-            else
-                high = t;
-            t = (low + high) / 2;
-        }
-        return sampleY(t);
-    };
-}
-function smoothstep(value) {
-    const x = clamp01(value);
-    return x * x * (3 - 2 * x);
+// 输入面现在写着什么：提交之后它一定被清空，点按钮与按回车最后都落到这一步
+function readComposerText(scroller) {
+    return (scroller.querySelector(dom_contract_1.COMPOSER_INPUT_SELECTOR)?.textContent ?? "").trim();
 }
 function clamp01(value) {
     return Math.min(1, Math.max(0, value));
@@ -620,7 +638,7 @@ function clamp01(value) {
  * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 // 聊天列
 exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
 // 每一行思考行；它的阶段看 data-state
@@ -655,6 +673,13 @@ exports.FOLLOW_THRESHOLD_PX = 25;
 exports.COMPOSER_SELECTOR = "[data-composer-seat]";
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
+// 输入卡片（那条胶囊）。落在它里面的点击可能是提交
+exports.COMPOSER_CARD_SELECTOR = "[data-composer-card]";
+/**
+ * 提交之后 dsh 立刻挂上来的那条「即发即显」回显行；发送气泡的落点就是它。
+ * 排队的那一条落在队列坞里、也带这个属性，所以要飞的那条必须连同聊天列一起认
+ */
+exports.SUBMISSION_ECHO_SELECTOR = "[data-submission-echo]";
 /**
  * 输入区里的纯文本框：提问卡片的作答框，以及排队消息的行内编辑框（子智能体跑着时追加的那几条在这里改）。
  * 两者都是 textarea，都住在输入区座位里，主会话与侧栏里的子智能体会话都一样
@@ -697,19 +722,188 @@ exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
 exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
     };
 
+    __registry["settings/bubble-curve.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CURVE_GAP = void 0;
+exports.bernsteinWeight = bernsteinWeight;
+exports.createTravelCurve = createTravelCurve;
+/**
+ * 冒头那一条行程曲线：八个控制点的七次贝塞尔
+ *
+ * 动效那边按时间进度取行程；卡片上的曲线图用同一份算法画线，拖曲线时也从这里把横坐标反解成参数。
+ * 首尾两个控制点钉在 (0,0) 与 (1,1)，中间六个横纵都能动，横坐标保持递增
+ */
+const settings_scope_1 = require("./settings-scope");
+// 七次贝塞尔的二项式系数：1, 7, 21, 35, 35, 21, 7, 1
+const BINOMIAL_SEVEN = [1, 7, 21, 35, 35, 21, 7, 1];
+// 相邻两个控制点的横坐标至少留这么宽：贴在一起时按横坐标反解时间会跳
+exports.CURVE_GAP = 0.02;
+/**
+ * 第 index 个控制点在参数 param 处的权重
+ * @param index 控制点序号，0 到 7
+ * @param param 贝塞尔参数，0 到 1
+ */
+function bernsteinWeight(index, param) {
+    return atPoint(BINOMIAL_SEVEN, index) * param ** index * (1 - param) ** (settings_scope_1.BUBBLE_CURVE_POINTS - 1 - index);
+}
+/**
+ * 把八个控制点封成一条行程曲线
+ * 横坐标先反解出参数，再取纵坐标——与浏览器画 cubic-bezier() 用的是同一套办法
+ * @param curveX 八个控制点横坐标，首尾钉在 0 与 1
+ * @param curveY 八个控制点纵坐标，首尾钉在 0 与 1，中间可以出界
+ */
+function createTravelCurve(curveX, curveY) {
+    const xs = normalizeCurveX(curveX);
+    const ys = normalizeCurveY(curveY);
+    // 七次贝塞尔在某一参数下的取值：八个控制点各按权重摊一次
+    const sample = (param, points) => {
+        let sum = 0;
+        for (let index = 0; index < settings_scope_1.BUBBLE_CURVE_POINTS; index++) {
+            sum += bernsteinWeight(index, param) * atPoint(points, index);
+        }
+        return sum;
+    };
+    // 横坐标随参数单调递增，二分就够了
+    const paramAt = (progress) => {
+        const target = clamp01(progress);
+        if (target <= 0)
+            return 0;
+        if (target >= 1)
+            return 1;
+        let low = 0;
+        let high = 1;
+        for (let step = 0; step < 24; step++) {
+            const middle = (low + high) / 2;
+            if (sample(middle, xs) < target)
+                low = middle;
+            else
+                high = middle;
+        }
+        return (low + high) / 2;
+    };
+    return {
+        at: (progress) => {
+            const target = clamp01(progress);
+            if (target <= 0)
+                return atPoint(ys, 0);
+            if (target >= 1)
+                return atPoint(ys, settings_scope_1.BUBBLE_CURVE_POINTS - 1);
+            return sample(paramAt(target), ys);
+        },
+        paramAt,
+    };
+}
+// 点只在那八个里取，越界只可能是数据本身坏了：一律当成 0，不让 NaN 一路传到 transform
+function atPoint(points, index) {
+    return points[index] ?? 0;
+}
+// 曲线那两个数组什么形状都可能：点数不对，或者混进了不是数字的东西，就整条退回默认那一条
+function normalizePoints(values, fallback) {
+    if (values.length !== settings_scope_1.BUBBLE_CURVE_POINTS)
+        return fallback;
+    const points = values.slice();
+    return points.every(value => Number.isFinite(value)) ? points : fallback;
+}
+// 横坐标必须严格递增，否则按它反解时间会有多个解：首尾钉死，相邻两点之间至少留 CURVE_GAP
+function normalizeCurveX(values) {
+    const xs = normalizePoints(values, settings_scope_1.DEFAULT_BUBBLE_CURVE_X).slice();
+    xs[0] = 0;
+    xs[settings_scope_1.BUBBLE_CURVE_POINTS - 1] = 1;
+    for (let index = 1; index < settings_scope_1.BUBBLE_CURVE_POINTS - 1; index++) {
+        const lowest = atPoint(xs, index - 1) + exports.CURVE_GAP;
+        const highest = 1 - (settings_scope_1.BUBBLE_CURVE_POINTS - 1 - index) * exports.CURVE_GAP;
+        xs[index] = Math.min(highest, Math.max(lowest, atPoint(xs, index)));
+    }
+    return xs;
+}
+// 纵坐标同样首尾钉死：起点是 0（还整个藏着），终点是 1（正好落在落点），落定那一帧清掉 transform 不跳
+function normalizeCurveY(values) {
+    const ys = normalizePoints(values, settings_scope_1.DEFAULT_BUBBLE_CURVE_Y).slice();
+    ys[0] = 0;
+    ys[settings_scope_1.BUBBLE_CURVE_POINTS - 1] = 1;
+    return ys;
+}
+function clamp01(value) {
+    return Math.min(1, Math.max(0, value));
+}
+    };
+
+    __registry["settings/settings-scope.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_BUBBLE_TUNING = exports.DEFAULT_BUBBLE_CURVE_Y = exports.DEFAULT_BUBBLE_CURVE_X = exports.BUBBLE_CURVE_POINTS = exports.DEFAULT_BUBBLE_RISE = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.readBubbleTuning = readBubbleTuning;
+// 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
+// 思考行与过程组自己开合，这是本插件的主要效果
+exports.DEFAULT_AUTO_FOLD = true;
+// 凡是会挪位置的地方都给过渡
+exports.DEFAULT_CARET_MOTION = "typing";
+// 读数只在每次模型结算时才变，一天也滚不了几次
+exports.DEFAULT_HIT_REEL = true;
+// 关掉时这一处整块不装，看到的是 dsh 原来那圈环
+exports.DEFAULT_CONTEXT_PIE = true;
+// 关掉时前端不往 body 上挂属性，那一整张规则表一条都不命中
+exports.DEFAULT_COMPOSER_GLASS = true;
+// 只对直接调用的 write 与 edit 有意义：run_code 里派发的子调用没有准备态
+exports.DEFAULT_LIVE_DIFF = true;
+// dsh 自己的跟随在结构时刻会掉队，实测一次 run_code 执行里落后到一百四十像素上下，正好把新出现的行推出视野
+exports.DEFAULT_FOLLOW_ON_APPEAR = true;
+// 发送那一下，整张输入卡片收成落点那条气泡。关掉时气泡直接出现在那里
+exports.DEFAULT_SEND_FLIGHT = true;
+// 发出之后那一条从输入框里探出来再升到落点；关掉时气泡直接出现在那里
+exports.DEFAULT_BUBBLE_RISE = true;
+// 曲线一共八个控制点：首尾不动，中间六个可以拖
+exports.BUBBLE_CURVE_POINTS = 8;
+// 默认那一条：一下探出近一半行程，再缓缓沉回去，末了冲过落点落定
+exports.DEFAULT_BUBBLE_CURVE_X = [0, 0.02, 0.245, 0.462, 0.539, 0.559, 0.579, 1];
+exports.DEFAULT_BUBBLE_CURVE_Y = [0, 0.485, 0.438, 0.314, 0.162, 1.15, 1.15, 1];
+// 一份完整的冒头参数，缺字段时按这一份补齐
+exports.DEFAULT_BUBBLE_TUNING = {
+    emergeScale: 0.8,
+    reveal: 16,
+    outdent: 0,
+    totalMs: 800,
+    curveX: exports.DEFAULT_BUBBLE_CURVE_X,
+    curveY: exports.DEFAULT_BUBBLE_CURVE_Y,
+};
+// 从表单值里拼出一份完整的冒头参数，缺的按默认值补齐
+function readBubbleTuning(value) {
+    return {
+        emergeScale: value?.bubbleEmergeScale ?? exports.DEFAULT_BUBBLE_TUNING.emergeScale,
+        reveal: value?.bubbleReveal ?? exports.DEFAULT_BUBBLE_TUNING.reveal,
+        outdent: value?.bubbleOutdent ?? exports.DEFAULT_BUBBLE_TUNING.outdent,
+        totalMs: value?.bubbleTotalMs ?? exports.DEFAULT_BUBBLE_TUNING.totalMs,
+        curveX: readCurve(value?.bubbleCurveX, exports.DEFAULT_BUBBLE_CURVE_X),
+        curveY: readCurve(value?.bubbleCurveY, exports.DEFAULT_BUBBLE_CURVE_Y),
+    };
+}
+// 存下来的曲线什么形状都可能：点数不对，或者里面混进了不是数字的东西，就整条退回默认那一条
+function readCurve(value, fallback) {
+    if (value === undefined || value.length !== exports.BUBBLE_CURVE_POINTS)
+        return fallback;
+    if (!value.every(item => Number.isFinite(item)))
+        return fallback;
+    return value;
+}
+    };
+
     __registry["chat/bubble-rise/bubble-rise-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BUBBLE_RISE_CSS = exports.PENDING_STEERING_ATTRIBUTE = exports.SUBMISSION_ECHO_ATTRIBUTE = exports.RISE_ECHO_HELD_ATTRIBUTE = exports.RISE_ECHO_PROBE_NAME = exports.RISE_ATTRIBUTE = void 0;
 /**
- * 发送气泡的冒头：样式表这半边只有两条，一条探针、一条先把回声藏起来。
+ * 发送气泡的冒头：样式表这半边只有三条，两条探针、一条先把回声藏起来。
  *
  * 探针是「提交了」这通通知：回声行第一次被渲染时响一次 animationstart，画面上没有任何变化。
  * 它是 1 ms 而不是 0，因为零时长的动画根本不会开始；两帧都写 opacity: 0，于是它与下面那条隐藏规则
  * 叠在同一处，任何时候都不会把回声放出来
  *
- * 隐藏只认 dsh 的两个语义属性：[data-submission-echo] 是提交后本地的回声，
- * [data-pending-steering] 是运行中追加的排队消息，那些照旧显示
+ * 插话的回声另有一条探针：它要等在跑的那一轮走到下一个 Step 才转正，可能等几分钟，
+ * 脚本那边给它开的是长窗口；显示照旧，隐藏规则把它排除在外
+ *
+ * 隐藏只认 dsh 的语义属性：[data-submission-echo] 是提交后本地的回声，
+ * [data-pending-steering] 是运行中插话与排队消息，那些照旧显示
  */
 const dom_contract_1 = require("../../dom-contract");
 // 门控属性：在，说明这一处在工作；摘掉它，下面每一条规则都不命中
@@ -721,7 +915,7 @@ exports.RISE_ECHO_HELD_ATTRIBUTE = "data-dsh-chat-ux-rise-held";
 // 回声行的那两个语义属性，样式与脚本读同一组字符串
 exports.SUBMISSION_ECHO_ATTRIBUTE = "data-submission-echo";
 exports.PENDING_STEERING_ATTRIBUTE = "data-pending-steering";
-// 这一处的全部 CSS：一条探针、一条隐藏
+// 这一处的全部 CSS：两条探针、一条隐藏
 exports.BUBBLE_RISE_CSS = `
 /* 回声出现的通知：从 0 到 0，只为一个 animationstart，不留任何可见痕迹 */
 @keyframes ${exports.RISE_ECHO_PROBE_NAME} {
@@ -730,6 +924,11 @@ exports.BUBBLE_RISE_CSS = `
 }
 
 [${exports.RISE_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} [${exports.SUBMISSION_ECHO_ATTRIBUTE}]:not([${exports.PENDING_STEERING_ATTRIBUTE}]) {
+  animation: ${exports.RISE_ECHO_PROBE_NAME} 1ms linear;
+}
+
+/* 插话的回声：同样只为一个 animationstart，显示不动 */
+[${exports.RISE_ATTRIBUTE}] ${dom_contract_1.CHAT_FLOW_SELECTOR} [${exports.PENDING_STEERING_ATTRIBUTE}] {
   animation: ${exports.RISE_ECHO_PROBE_NAME} 1ms linear;
 }
 
@@ -1474,67 +1673,6 @@ function createSettingMirror(initial, pick) {
 const usageModeMirror = createSettingMirror(DEFAULT_PERFORMANCE_USAGE, section => section?.performanceUsage ?? DEFAULT_PERFORMANCE_USAGE);
 // 命中率数字滚动那个开关的镜像
 const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, section => section?.hitReel ?? settings_scope_1.DEFAULT_HIT_REEL);
-    };
-
-    __registry["settings/settings-scope.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_BUBBLE_TUNING = exports.DEFAULT_BUBBLE_RISE = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
-exports.readBubbleTuning = readBubbleTuning;
-// 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
-// 思考行与过程组自己开合，这是本插件的主要效果
-exports.DEFAULT_AUTO_FOLD = true;
-// 凡是会挪位置的地方都给过渡
-exports.DEFAULT_CARET_MOTION = "typing";
-// 读数只在每次模型结算时才变，一天也滚不了几次
-exports.DEFAULT_HIT_REEL = true;
-// 关掉时这一处整块不装，看到的是 dsh 原来那圈环
-exports.DEFAULT_CONTEXT_PIE = true;
-// 关掉时前端不往 body 上挂属性，那一整张规则表一条都不命中
-exports.DEFAULT_COMPOSER_GLASS = true;
-// 只对直接调用的 write 与 edit 有意义：run_code 里派发的子调用没有准备态
-exports.DEFAULT_LIVE_DIFF = true;
-// dsh 自己的跟随在结构时刻会掉队，实测一次 run_code 执行里落后到一百四十像素上下，正好把新出现的行推出视野
-exports.DEFAULT_FOLLOW_ON_APPEAR = true;
-// 发出之后那一条从输入框里探出来再升到落点；关掉时气泡直接出现在那里
-exports.DEFAULT_BUBBLE_RISE = true;
-// 一份完整的冒头参数，缺字段时按这一份补齐
-exports.DEFAULT_BUBBLE_TUNING = {
-    emergeMs: 210,
-    emergeScale: 1.43,
-    reveal: 35,
-    outdent: 12,
-    hold: 100,
-    holdDrift: 0.06,
-    riseMs: 360,
-    oversize: 1.34,
-    riseDamping: 0.62,
-    sizeDamping: 0.55,
-    // 压到最后的缓入：大半程贴地，临了才冲上去
-    emergeBezierX1: 0.66,
-    emergeBezierY1: 0,
-    emergeBezierX2: 0.96,
-    emergeBezierY2: 0.17,
-};
-// 从表单值里拼出一份完整的冒头参数，缺的按默认值补齐
-function readBubbleTuning(value) {
-    return {
-        emergeMs: value?.bubbleEmergeMs ?? exports.DEFAULT_BUBBLE_TUNING.emergeMs,
-        emergeScale: value?.bubbleEmergeScale ?? exports.DEFAULT_BUBBLE_TUNING.emergeScale,
-        reveal: value?.bubbleReveal ?? exports.DEFAULT_BUBBLE_TUNING.reveal,
-        outdent: value?.bubbleOutdent ?? exports.DEFAULT_BUBBLE_TUNING.outdent,
-        hold: value?.bubbleHold ?? exports.DEFAULT_BUBBLE_TUNING.hold,
-        holdDrift: value?.bubbleHoldDrift ?? exports.DEFAULT_BUBBLE_TUNING.holdDrift,
-        riseMs: value?.bubbleRiseMs ?? exports.DEFAULT_BUBBLE_TUNING.riseMs,
-        oversize: value?.bubbleOversize ?? exports.DEFAULT_BUBBLE_TUNING.oversize,
-        riseDamping: value?.bubbleRiseDamping ?? exports.DEFAULT_BUBBLE_TUNING.riseDamping,
-        sizeDamping: value?.bubbleSizeDamping ?? exports.DEFAULT_BUBBLE_TUNING.sizeDamping,
-        emergeBezierX1: value?.bubbleEmergeBezierX1 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierX1,
-        emergeBezierY1: value?.bubbleEmergeBezierY1 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierY1,
-        emergeBezierX2: value?.bubbleEmergeBezierX2 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierX2,
-        emergeBezierY2: value?.bubbleEmergeBezierY2 ?? exports.DEFAULT_BUBBLE_TUNING.emergeBezierY2,
-    };
-}
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -4777,6 +4915,1409 @@ function installReasoningFold() {
 }
     };
 
+    __registry["chat/send-flight/send-flight.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FLYING_ATTRIBUTE = void 0;
+exports.installSendFlight = installSendFlight;
+/**
+ * 发送气泡的起飞与落地。
+ *
+ * 提交时抓下输入卡片，等 dsh 的即发即显行出现后挂上替身并藏起真实行；落定时摘属性、移除替身。
+ * 起点抓不到、起终点跨屏或用户关闭开关时一次都不动手。
+ *
+ * 真实行必须在本帧绘制前藏住；后台标签页 rAF 会停，所以另设兜底定时器保证消息一定被放出来。
+ */
+const dom_contract_1 = require("../../dom-contract");
+const send_morph_1 = require("./send-morph");
+/** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
+exports.FLYING_ATTRIBUTE = 'data-chat-ux-send-flight';
+/** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
+const ORIGIN_TTL_MS = 1500;
+/**
+ * 位移上限的兜底值：一屏比它窄时按它算（见 `sameScreen`）。
+ *
+ * 聊天列的横向距离天生接近 900px，纵向又随窗口高度增长，不能用一个固定的像素上限判断要不要飞。
+ */
+const FLIGHT_LIMIT_FLOOR_PX = 900;
+/** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
+const RESCUE_MARGIN_MS = 400;
+/**
+ * 起播前先等几帧，让新子树完成第一次 raster。
+ *
+ * 否则合成器时间轴照走、屏幕还没有像素，读者第一眼就会看到替身已经在半路。预热期间替身停在
+ * 与真卡片重合的起手格，看不出停顿。
+ */
+const WARMUP_FRAMES = 2;
+/** 预热折算的时长（毫秒）。按六十帧算，误差不到一帧；兜底定时器要把它一起算进去。 */
+const WARMUP_MS = WARMUP_FRAMES * (1000 / 60);
+/** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
+const ECHO_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' ' + dom_contract_1.SUBMISSION_ECHO_SELECTOR;
+/** 已经落定的用户行。它和回显行是同一个组件的两副面孔，结构差一层。 */
+const USER_ROW_SELECTOR = dom_contract_1.CHAT_FLOW_SELECTOR + ' [data-chat-flow-kind="user"]';
+/** 飞行期间要认的两种行，合成一句查：正式的用户行，以及它前面那条回显。 */
+const ROW_SELECTOR = USER_ROW_SELECTOR + ', ' + ECHO_SELECTOR;
+/**
+ * 给整页装上发送气泡的起飞。
+ */
+function installSendFlight(readEnabled) {
+    // 读者的系统偏好说了先。dsh 自己在滚动那一侧也是这么办的（`use-scroll-follow.ts` 的 `toBottom`）。
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+        return () => {
+        };
+    /** 最近一次抓到的草稿起点。 */
+    let origin = null;
+    /** 已经认过的回显行。安装时先把页面里躺着的那些认下来——恢复会话时它们也在。 */
+    const handled = new WeakSet();
+    /** 正在飞的那一段。读者连发时，最后一段说了算。 */
+    let flight = null;
+    /** 定时器兜底。 */
+    let rescue = 0;
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR))
+        handled.add(echo);
+    /**
+     * 飞行期间盯行：回显被正式那一行换掉，是唯一一件要当场知道的事。
+     *
+     * 它在本帧渲染**之前**回调，所以同步认一次就够；但只在真有行进出时才认——预筛只看增删节点
+     * **自己**，两个属性都挂在行元素身上，认行不必往下找子树。
+     */
+    const rowWatcher = new MutationObserver((records) => {
+        const activeFlight = flight;
+        if (activeFlight === null || !touchesUserRow(records))
+            return;
+        const row = currentRow(activeFlight.previous);
+        if (row === null || row === activeFlight.hidden)
+            return;
+        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        row.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        activeFlight.hidden = row;
+        activeFlight.bubble = findBubble(row);
+        followTarget(activeFlight);
+    });
+    /** 落定：先把真实行放出来，再扔掉替身。顺序反了会闪一下空白。 */
+    const settle = () => {
+        const activeFlight = flight;
+        if (activeFlight === null)
+            return;
+        flight = null;
+        rowWatcher.disconnect();
+        window.clearTimeout(rescue);
+        rescue = 0;
+        activeFlight.hidden?.removeAttribute(exports.FLYING_ATTRIBUTE);
+        activeFlight.card.removeAttribute(exports.FLYING_ATTRIBUTE);
+        // 兜底：卡片若在这一段里被换过节点，标记跟着旧节点一起走了，新的那一张按选择器再摘一次
+        for (const stale of document.querySelectorAll('[' + exports.FLYING_ATTRIBUTE + ']')) {
+            if (stale.matches(dom_contract_1.COMPOSER_CARD_SELECTOR))
+                stale.removeAttribute(exports.FLYING_ATTRIBUTE);
+        }
+        // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
+        // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
+        // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
+        // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
+        activeFlight.morph.wrapper.remove();
+        for (const animation of activeFlight.morph.animations)
+            animation.cancel();
+    };
+    /**
+     * 帧里三件事：认出「形变段走完了」并把壳归一、补一次终点的移动、约下一帧。
+     * 认行交给上面那个 observer——它不是每帧都有新答案的事。
+     *
+     * **位移与形状都不在这里写**：两条关键帧同一条时间轴，dsh 占住主线程时它们照样一起走，右边缘
+     * 始终在起点和终点之间。若把形状留在主线程，卡顿时未收窄的卡片会先飞到终点。
+     *
+     * 帧里剩下的两件都是主线程的事：`compact` 是一次性的样式写、`followTarget` 读的是当前布局。
+     */
+    const tick = () => {
+        const activeFlight = flight;
+        if (activeFlight === null)
+            return;
+        // 起播后第一帧核对一次时间轴：预热之后才起跑，这一格还没画出来（见 `Morph.alignStart`）。
+        activeFlight.morph.alignStart();
+        const u = activeFlight.morph.progress();
+        if (u >= 1) {
+            settle();
+            return;
+        }
+        activeFlight.morph.compact(u);
+        followTarget(activeFlight);
+        requestAnimationFrame(tick);
+    };
+    /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+    const startFlight = (echo, draft) => {
+        // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
+        // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
+        settle();
+        const bubble = findBubble(echo);
+        if (bubble === null)
+            return;
+        const box = bubble.getBoundingClientRect();
+        const startBox = draft.snapshot.box;
+        const onSameScreen = sameScreen(startBox.left, box.left, window.innerWidth)
+            && sameScreen(startBox.top, box.top, window.innerHeight);
+        if (!onSameScreen)
+            return;
+        const morph = (0, send_morph_1.startMorph)(draft.snapshot, bubble, box);
+        if (morph === null)
+            return;
+        echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        // 真输入卡片一起藏起来：提交之后它已经换成会话态停在底部，而替身是从提交那一刻它还在的位置起的
+        // 飞——两份内容一样的东西同时画着，就是工具栏、字、发送按钮各两套。只藏可见性，盒子仍在布局里，
+        // 下一段提交量起点照样准。
+        draft.card.setAttribute(exports.FLYING_ATTRIBUTE, '');
+        flight = {
+            morph,
+            targetAt: { left: box.left, top: box.top },
+            shiftedX: 0,
+            shiftedY: 0,
+            previous: lastUserRow(),
+            hidden: echo,
+            bubble,
+            card: draft.card,
+        };
+        rowWatcher.observe(document.body, { childList: true, subtree: true });
+        rescue = window.setTimeout(settle, send_morph_1.FLIGHT_MS + RESCUE_MARGIN_MS + WARMUP_MS);
+        requestAnimationFrame(tick);
+        // 预热：替身先在屏幕上静止这两帧，等它被光栅化过再放开动画。中途连发时 `flight` 已经换成新的
+        // 一段，旧的那一轮在这里自然停掉（新的一段自己有自己的预热）。
+        const warmUp = (left) => {
+            if (flight?.morph !== morph)
+                return;
+            if (left > 0) {
+                requestAnimationFrame(() => warmUp(left - 1));
+                return;
+            }
+            morph.play();
+        };
+        requestAnimationFrame(() => warmUp(WARMUP_FRAMES));
+    };
+    /**
+     * 等这一次提交的回显。
+     *
+     * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
+     */
+    const echoWatcher = new MutationObserver(() => {
+        const draft = origin;
+        if (draft === null) {
+            echoWatcher.disconnect();
+            return;
+        }
+        if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
+            origin = null;
+            echoWatcher.disconnect();
+            return;
+        }
+        const echo = takeFreshEcho(handled);
+        if (echo === null)
+            return;
+        origin = null;
+        echoWatcher.disconnect();
+        startFlight(echo, draft);
+    });
+    /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
+    const captureOrigin = () => {
+        if (!readEnabled())
+            return;
+        const input = document.querySelector(dom_contract_1.COMPOSER_INPUT_SELECTOR);
+        if (!(input instanceof HTMLElement))
+            return;
+        const card = input.closest(dom_contract_1.COMPOSER_CARD_SELECTOR);
+        if (!(card instanceof HTMLElement))
+            return;
+        // 空草稿不会提交出一条消息；量它只是白花一次克隆。
+        if ((input.textContent ?? '').trim() === '')
+            return;
+        const snapshot = (0, send_morph_1.snapshotComposer)(input, card);
+        if (snapshot === null)
+            return;
+        origin = {
+            capturedAt: performance.now(),
+            snapshot,
+            card,
+        };
+        echoWatcher.observe(document.body, { childList: true, subtree: true });
+    };
+    /**
+     * 提交的两条手动路径：回车，和点输入卡片里的按钮。两个都早于 React 清空草稿，所以起点量得到。
+     * 点了没提交也不亏——没有回显就没有动画。
+     */
+    const onKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)
+            return;
+        if (event.isComposing)
+            return;
+        captureOrigin();
+    };
+    const onClick = (event) => {
+        if (!(event.target instanceof Element))
+            return;
+        if (event.target.closest(dom_contract_1.COMPOSER_CARD_SELECTOR) === null)
+            return;
+        captureOrigin();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('click', onClick, true);
+    return () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('click', onClick, true);
+        echoWatcher.disconnect();
+        rowWatcher.disconnect();
+        origin = null;
+        settle();
+    };
+}
+/**
+ * 把终点动了多少补到替身的最外层上。
+ *
+ * 这是每帧唯一的 JS：一次矩形读、至多一次样式写。飞行期间终点通常只动几十像素（提交后 dsh 自己会
+ * 滚到底、回显会被正式行换掉），所以「整体补差」与「每帧按曲线重算位置」看起来是同一件事。
+ *
+ * 真实行的 rect 带着 `[data-chat-flow]` 的 `translateY`，但这一版不做落点让位，那一项恒为 0。
+ */
+function followTarget(value) {
+    const bubble = value.bubble;
+    if (bubble === null)
+        return;
+    const box = bubble.getBoundingClientRect();
+    // 行被摘走、新的还没挂上时，量到的是一个已经不在文档里的盒子（全 0）。停住不补，
+    // 比把替身甩到左上角强——下一帧 observer 认到新行就接上了。
+    if (box.width === 0)
+        return;
+    const shiftX = box.left - value.targetAt.left;
+    const shiftY = box.top - value.targetAt.top;
+    if (shiftX === value.shiftedX && shiftY === value.shiftedY)
+        return;
+    value.shiftedX = shiftX;
+    value.shiftedY = shiftY;
+    value.morph.wrapper.style.transform = 'translate(' + shiftX + 'px, ' + shiftY + 'px)';
+}
+/**
+ * 取一条还没认过的回显行。
+ *
+ * 一批里只认最新的一条（`querySelectorAll` 是文档序），其余的也一并记下——否则它们会在后面的帧
+ * 里被当成新的，跟着再飞一次。
+ */
+function takeFreshEcho(handled) {
+    const fresh = [];
+    for (const echo of document.querySelectorAll(ECHO_SELECTOR)) {
+        if (!handled.has(echo))
+            fresh.push(echo);
+    }
+    if (fresh.length === 0)
+        return null;
+    for (const echo of fresh)
+        handled.add(echo);
+    const latest = fresh.at(-1);
+    return latest instanceof HTMLElement ? latest : null;
+}
+/** 此刻该藏的那一条：回显还在就是它，回显被换掉之后就是正式那一行。 */
+function currentRow(previous) {
+    const echo = document.querySelector(ECHO_SELECTOR);
+    if (echo instanceof HTMLElement && echo !== previous)
+        return echo;
+    const row = lastUserRow();
+    return row === previous ? null : row;
+}
+/** 聊天流里最后一条用户行。 */
+function lastUserRow() {
+    const rows = document.querySelectorAll(USER_ROW_SELECTOR);
+    const last = rows.item(rows.length - 1);
+    return last instanceof HTMLElement ? last : null;
+}
+/**
+ * 一行用户消息里真正画了底色的那一个元素，也就是气泡。
+ *
+ * 不能认死层数：回显行自己就是气泡那一行（`data-submission-echo` 挂在 `.userRow` 上），而正式行
+ * 外面还套着一层流块容器——两边的深度差一层。所以从这一行往下按层找，谁先画了底色就是谁；附件行
+ * 与引用摘要都没有底色，会被跳过。
+ */
+function findBubble(row) {
+    const queue = Array.from(row.children);
+    while (queue.length > 0) {
+        const node = queue.shift();
+        if (node === undefined)
+            break;
+        if (node instanceof HTMLElement && (0, send_morph_1.alphaOf)(getComputedStyle(node).backgroundColor) > 0)
+            return node;
+        for (const child of node.children)
+            queue.push(child);
+    }
+    return null;
+}
+/**
+ * 这一批 DOM 变化里有没有碰用户行或回显行。
+ *
+ * 只看增删节点**自己**：两个属性都挂在行元素身上，认行不必往下找子树——长会话里往下找一次
+ * 就是几千个节点。
+ */
+function touchesUserRow(records) {
+    for (const record of records) {
+        for (const node of record.addedNodes) {
+            if (isRowNode(node))
+                return true;
+        }
+        for (const node of record.removedNodes) {
+            if (isRowNode(node))
+                return true;
+        }
+    }
+    return false;
+}
+/** 一个节点自己、或者它带进来的那棵子树里，有没有用户行或回显行。 */
+function isRowNode(node) {
+    return node instanceof HTMLElement
+        && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null);
+}
+/**
+ * 起终点还在同一屏里吗。
+ *
+ * 一屏的尺度现读视口的那一维（兜底见 `FLIGHT_LIMIT_FLOOR_PX`）：两个盒子还落在同一屏里，这段飞行
+ * 就看得见；有一头已经飞出屏外，替身会消失在屏幕边上、读者只看到消息凭空出现——那就不飞。
+ */
+function sameScreen(start, end, viewportExtent) {
+    return Math.abs(start - end) <= Math.max(FLIGHT_LIMIT_FLOOR_PX, viewportExtent);
+}
+    };
+
+    __registry["chat/send-flight/send-morph.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 发送气泡的形变：把输入卡片克隆、预先算好形状与文字层，再交给合成器从卡片收成气泡。
+ *
+ * 位移、形状、颜色和字层必须共用一条时间轴：任何一条单独跑快，卡顿时右边缘都会越出消息列。
+ * clip-path 与 background-color 上不了合成器；形状走壳的 scale，内容用反向 scale 抵消。
+ *
+ * 替身靠克隆、计算样式、卡片与子树的绘制面、祖先链共同还原；祖先链只抄 class，不抄 data-*。
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RISE_DELAY = exports.RISE_OMEGA = exports.FLIGHT_MS = void 0;
+exports.snapshotComposer = snapshotComposer;
+exports.pixel = pixel;
+exports.alphaOf = alphaOf;
+exports.startMorph = startMorph;
+exports.timeAtRise = timeAtRise;
+exports.springProgress = springProgress;
+/**
+ * 整段飞行时长（毫秒）。只留开关，不开放时长。
+ *
+ * 改它时同步重算 `文档/业务/发送动效.md` 的一帧对照表；兜底定时器按 FLIGHT_MS + RESCUE_MARGIN_MS 走。
+ */
+exports.FLIGHT_MS = 350;
+/**
+ * 位移与形变共用的角频率。
+ *
+ * 两者必须同一条曲线、同一条时间轴，右边缘才始终落在起点和终点之间；单独调快位移会让未收窄的
+ * 卡片越出消息列。取 7 是为了压住首帧位移，同时避免形变收尾时出现可见顿挫。
+ */
+const ACROSS_OMEGA = 7;
+/**
+ * 纵向弹簧的阻尼比，临界是 1。**落定那一下弹多少，全看这一个数**：过冲量是
+ * `exp(-πζ/√(1-ζ²))`，所以越大越收敛，取 1 就完全不弹。
+ */
+const RISE_DAMPING = 0.8;
+/**
+ * 纵向弹簧的角频率。落点让位复用它，只另配阻尼比和时间窗。
+ */
+exports.RISE_OMEGA = 7.5;
+/**
+ * 纵向起步的延迟，占整段的比例。
+ *
+ * 延迟段只横移、不上升，接缝处弹簧速度为零；落点让位用同一延迟对齐两边进度。
+ */
+exports.RISE_DELAY = 0.15;
+/**
+ * 形变收尾的位置，占整段的比例。
+ *
+ * 越早收完，宽度越早退进列内，右边缘越安全；剩下的时间只留给上升与落定。
+ */
+const MORPH_END = 0.45;
+/** 上面那几条常量的合订本：`readTuning` 的兜底值，也是每段飞行默认用的那一套。 */
+const DEFAULT_TUNING = {
+    acrossOmega: ACROSS_OMEGA,
+    riseDelay: exports.RISE_DELAY,
+    riseOmega: exports.RISE_OMEGA,
+    riseDamping: RISE_DAMPING,
+    morphEnd: MORPH_END,
+};
+/** 覆盖曲线参数用的 `localStorage` 键（见 `readTuning`）。 */
+const TUNING_KEY = 'dsh-chat-ux:send-flight';
+/** 这一段飞行正在用的参数；每段起飞前由 `readTuning()` 现读一次。 */
+let tuning = DEFAULT_TUNING;
+/**
+ * 内容反向缩放的除数下限（**像素**）。`visible` 被右边缘那道夹子夹到 0 时，倒数会算出 `Infinity`——
+ * 那几帧壳本来就什么都看不见（缩放是 0），给个半像素的下限只为让关键帧里是一个有限数。
+ */
+const MIN_REVERSE_DIVISOR = 0.5;
+/**
+ * 圆角补偿里的缩放下限（**比值**）。和上面那个不是一回事，别拿来顶替：壳收到最窄时纵轴缩放约 0.45，
+ * 拿 0.5 当比例下限会把补偿算少，圆角在竖直方向被压扁——实测视觉半径从 20 掉到 17.96px，归一那一帧
+ * 再跳回 20（`morph-probe` 逐帧读数）。这里只需要挡住 0，取一个远小于任何真实缩放的数。
+ */
+const MIN_CORNER_SCALE = 0.02;
+/**
+ * 归一那一帧，画面上的圆角与终态差多少（水平 + 垂直，像素）才值得补一段过渡。
+ *
+ * 没卡过时两者本来就相等，剩下的是浮点噪声；卡过才差得出几像素到十几像素。
+ */
+const CORNER_SNAP_PX = 2;
+/** 卡顿留下的那个椭圆收回正圆用的时长。短到看不出「角在动」，长到不像一帧的跳。 */
+const CORNER_RECOVER_MS = 110;
+/**
+ * 相邻两次帧回调之间进度差多少才算「主线程卡过」。
+ *
+ * 摊到 300 ms 的整段上：60 fps 一帧是 0.056、**30 fps 一帧就到了 0.111**。阈值取 0.15（45 ms）——
+ * 低于它只当是帧率低或抖动，不补过渡，否则那段收拢会在低帧率的机器上每一次飞行都播一遍。
+ */
+const CORNER_STALL_GAP = 0.15;
+/**
+ * 起播后第一帧，动画的时间比墙钟快多少（毫秒）才值得把时间轴退回去（见 `Morph.alignStart`）。
+ *
+ * 一帧是十六点七毫秒，正常起跑两边最多差一帧的零头；取 24（一帧半）留出抖动，又不至于把真错位漏掉。
+ */
+const ALIGN_TOLERANCE_MS = 24;
+/** 采样段数。弹簧与形变都是连续曲线，拿折线去逼近——段数够密就看不出折点，每段五毫秒。 */
+const SAMPLES = 60;
+/** 工具栏在形变进度走到这里时收完、淡完（五十五毫秒上下）。比形状早：多出来的东西先走，剩下的才是气泡。 */
+const CHROME_GONE_AT = 0.8;
+/** 工具栏收到最小时的缩放。不收到零：它是淡掉的，缩放只负责「往角里退」的那个方向感。 */
+const CHROME_MIN_SCALE = 0.55;
+/** 光晕（卡片的阴影与描边）在形变进度走到这里时淡完。气泡没有阴影，比工具栏晚一点走。 */
+const HALO_GONE_AT = 0.9;
+/** 输入框那份草稿克隆最晚亮到这里就换成气泡的写法：引用、技能那些小块在两边的样式不一样。 */
+const DRAFT_HANDOFF_AT = 0.5;
+/** 行高分档的粒度。多行时行距从 24 走到 22，每半像素一档。 */
+const LINE_HEIGHT_STEP = 0.5;
+/**
+ * 字最多分几层。折行在一串离散的宽度上变化，一段很长的正文可能变上几十次，每一层都是一张合成层
+ * 纹理；超过这个数就把最短的那些段并进前一段——少几次重排，读者看不出来。
+ */
+const MAX_TEXT_LAYERS = 14;
+/**
+ * 从卡片那里继承下来、克隆必须带上的普通属性。自定义属性在 `snapshotComposer` 里另取一遍。
+ *
+ * **`font-size` 与 `line-height` 必须在。** dsh 给输入区定的字号挂在**祖先**的选择器上（hero 态一条、
+ * 会话态一条），克隆一离开那条链，这两项就直接掉回 body 的 16px：实测逐路径对齐 37 对元素，有
+ * **26 对字号对不上**（卡片 15px 对替身 16px，输入面 14px/24px 对 16px/26px）。这一条不需要任何人
+ * 动样式，**每一段飞行都在发生**。
+ *
+ * 抄在外壳上不会夺走克隆里自己写死的字号：直接命中的规则赢过继承，所以只有那些**没写死**、本来
+ * 靠祖先传下来的元素会被兜住——正是要兜的那批。
+ */
+const INHERITED_PROPERTIES = [
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'line-height', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction',
+];
+/** 字层要从气泡身上抄的排字属性：少抄一条，折行或字形就会和真实气泡对不上。 */
+const TEXT_PROPERTIES = [
+    'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'font-stretch', 'font-feature-settings',
+    'font-variation-settings', 'font-kerning', 'letter-spacing', 'word-spacing', 'text-rendering',
+    '-webkit-font-smoothing', 'direction', 'text-align', 'text-transform', 'text-indent', 'tab-size',
+    'white-space', 'word-break', 'overflow-wrap', 'line-break', 'hyphens',
+];
+/**
+ * 插入符那一层。`scrub` 会把它整块从克隆里摘掉：替身里没有 Lexical 的运行时，留着只会多一个会动的框。
+ */
+const CARET_LAYER_SELECTOR = '[data-chat-ux-caret-layer]';
+/**
+ * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
+ *
+ * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
+ * 没有第二条路——留或不留，就是它命中或不命中。留下的代价量过：
+ *
+ *   `document.querySelector` 取**文档序第一个**，而替身永远挂在文档最后（见 `startMorph`），
+ *   真卡片与真输入框都在它前面；dsh 自己那几处认卡片（`ModelSelect`、`MenuView`、
+ *   `FeedbackDialog`、`AgentPresetSeat`）要么从真节点往上 `closest`，要么取文档序第一个，
+ *   两条路都够不到替身。而替身只活 `FLIGHT_MS`，`wrapper` 上还写着 `inert`：里面的东西既拿不到
+ *   焦点，也进不了无障碍树。收益是 dsh 与同页别的插件写在这几个属性上的规则在替身上照常生效。
+ *
+ * 所以下面留下的三个是**样式钩子**：`data-composer-card`、`data-composer-input`、
+ * `data-input-scroll`（它们从清单里删掉了，不是被忽略）。而 `id` 必须摘——文档里多一个同 id 的
+ * 节点，`getElementById`、`label[for]`、页内锚点全会认错人，这是兜不了底的坏；`contenteditable`
+ * 与 `tabindex` / `autofocus` 是可编辑性与焦点序，不是外观；`data-lexical-editor` 与
+ * `data-chat-ux-caret` 是两套运行时的把手（Lexical 的编辑器根、本插件插入符的让位标记），替身
+ * 里没有对应的运行时，留着只会让找的人认错。
+ */
+const IDENTITY_ATTRIBUTES = [
+    'id', 'contenteditable', 'data-lexical-editor', 'data-chat-ux-caret', 'tabindex', 'autofocus',
+];
+/**
+ * 抓一次输入卡片：几何、底色、以及整张克隆。
+ *
+ * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
+ * `cloneNode`，放在读者按下回车的那一刻不会让它等。
+ */
+function snapshotComposer(input, card) {
+    const box = card.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0)
+        return null;
+    const scroll = input.closest('[data-input-scroll]');
+    if (scroll === null || scroll.parentElement !== card)
+        return null;
+    const cardStyle = getComputedStyle(card);
+    // 卡片背后第一个不透明的底色。卡片自己往往是透明的（玻璃的底画在 ::before 上），替身不抄那一层，
+    // 起手那个色块就落到这里的实色上。
+    const behind = behindColorOf(card);
+    const inputStyle = getComputedStyle(input);
+    const inputBox = input.getBoundingClientRect();
+    const text = {
+        left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
+        top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
+        right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
+        lineHeight: pixel(inputStyle.lineHeight),
+    };
+    // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
+    // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
+    const paths = [];
+    const rectOf = (element) => {
+        const r = element.getBoundingClientRect();
+        return [r.left - box.left, r.top - box.top, r.width, r.height];
+    };
+    const collect = (element, path) => {
+        const [, , width, height] = rectOf(element);
+        if (width * height === 0) {
+            if (getComputedStyle(element).display !== 'contents')
+                return;
+            Array.from(element.children).forEach((child, index) => {
+                collect(child, [...path, index]);
+            });
+            return;
+        }
+        const groups = Array.from(element.children).filter((child) => {
+            const [, , w, h] = rectOf(child);
+            return w * h > 0;
+        });
+        if (width >= box.width * 0.9 && groups.length >= 2) {
+            Array.from(element.children).forEach((child, index) => {
+                const rect = rectOf(child);
+                if (rect[2] * rect[3] > 0)
+                    paths.push({ path: [...path, index], rect });
+            });
+            return;
+        }
+        paths.push({ path, rect: rectOf(element) });
+    };
+    Array.from(card.children).forEach((child, index) => {
+        if (child !== scroll)
+            collect(child, [index]);
+    });
+    // 继承环境：字体、字号、颜色，以及卡片身上那些自定义属性。克隆离开原来的父链，这些得跟着走，
+    // 否则字号掉回 body 的 16px、`var(--x)` 掉进 fallback。
+    const context = [];
+    for (const name of INHERITED_PROPERTIES)
+        context.push([name, cardStyle.getPropertyValue(name)]);
+    for (let index = 0; index < cardStyle.length; index += 1) {
+        const name = cardStyle[index];
+        if (name === undefined || !name.startsWith('--'))
+            continue;
+        context.push([name, cardStyle.getPropertyValue(name)]);
+    }
+    const clone = card.cloneNode(true);
+    if (!(clone instanceof HTMLElement))
+        return null;
+    scrub(clone);
+    // 这几条必须带 `!important`：克隆带着卡片自己的 class 与 `data-*`，dsh 自己的规则会命中它，
+    // 其中就有 `!important` 的定位那一类。行内 + `!important` 把定位与尺寸钉在起飞那一刻量到的值上。
+    pin(clone, [
+        ['position', 'absolute'],
+        ['left', '0px'],
+        ['top', '0px'],
+        ['right', 'auto'],
+        ['bottom', 'auto'],
+        ['margin', '0px'],
+        ['width', box.width + 'px'],
+        ['max-width', 'none'],
+        ['height', box.height + 'px'],
+        ['box-sizing', 'border-box'],
+        ['transform', 'none'],
+        ['float', 'none'],
+        ['background', 'transparent'],
+        ['box-shadow', 'none'],
+    ]);
+    const draft = clone.children[Array.from(card.children).indexOf(scroll)];
+    if (!(draft instanceof HTMLElement))
+        return null;
+    // 草稿区的高度钉死：hero 态的最小高度挂在祖先选择器上，克隆离开那条链就会塌，工具栏会跟着往上跑。
+    const scrollBox = scroll.getBoundingClientRect();
+    draft.style.height = scrollBox.height + 'px';
+    draft.style.minHeight = '0px';
+    draft.style.maxHeight = 'none';
+    const chrome = [];
+    for (const { path, rect } of paths) {
+        let element = clone;
+        for (const index of path)
+            element = element?.children[index];
+        if (element instanceof HTMLElement)
+            chrome.push({ element, rect });
+    }
+    return {
+        box,
+        behind,
+        radius: pixel(cardStyle.borderTopLeftRadius),
+        shadow: cardStyle.boxShadow,
+        clone,
+        draft,
+        draftScrollTop: scroll.scrollTop,
+        chrome,
+        text,
+        context,
+    };
+}
+/** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
+function pixel(value) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+/** 一个计算后的颜色有多不透明。不认得的写法当 0：宁可不飞，也不画一块来路不明的色。 */
+function alphaOf(color) {
+    const parts = colorParts(color);
+    if (parts === null)
+        return 0;
+    return parts[3] ?? 1;
+}
+/**
+ * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
+ */
+function startMorph(snapshot, bubble, end) {
+    if (end.width === 0 || end.height === 0)
+        return null;
+    const start = snapshot.box;
+    const style = getComputedStyle(bubble);
+    const W0 = start.width;
+    const H0 = start.height;
+    const W1 = end.width;
+    const H1 = end.height;
+    const R0 = snapshot.radius;
+    const R1 = pixel(style.borderTopLeftRadius);
+    const from = snapshot.text;
+    const to = {
+        left: bubble.clientLeft + pixel(style.paddingLeft),
+        top: bubble.clientTop + pixel(style.paddingTop),
+        right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
+        lineHeight: pixel(style.lineHeight),
+    };
+    const boxWidth = Math.max(W0, W1);
+    const boxHeight = Math.max(H0, H1);
+    const dx = end.left - start.left;
+    const dy = end.top - start.top;
+    // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
+    // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
+    const reach = end.right - start.left;
+    // 这一段用哪一套参数：默认值，或者浏览器里那一份覆盖（见 `readTuning`）。现读一次，所以调完参数
+    // 发下一条消息就是新的，不必刷新页面。
+    tuning = readTuning();
+    // 整段时间线：每个采样点上的形变进度与横向进度，以及由它们推出来的外框、内边距、行高、可排字的宽度。
+    const samples = [];
+    for (let step = 0; step <= SAMPLES; step += 1) {
+        const u = step / SAMPLES;
+        const m = morphProgress(u);
+        const width = W0 + (W1 - W0) * m;
+        const left = from.left + (to.left - from.left) * m;
+        const right = from.right + (to.right - from.right) * m;
+        samples.push({
+            u,
+            m,
+            width,
+            // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
+            // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
+            visible: Math.max(0, Math.min(width, reach - dx * m)),
+            height: H0 + (H1 - H0) * m,
+            // 圆角要等字撑高的那几格落定之后再算（见 `textWindows` 调用之后那段），这里先占个位。
+            radius: 0,
+            left,
+            top: from.top + (to.top - from.top) * m,
+            content: Math.max(1, width - left - right),
+            lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
+        });
+    }
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute(GHOST_ATTRIBUTE, '');
+    wrapper.setAttribute('aria-hidden', 'true');
+    wrapper.inert = true;
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000';
+    wrapper.style.left = start.left + 'px';
+    wrapper.style.top = start.top + 'px';
+    const mover = document.createElement('div');
+    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform';
+    const halo = document.createElement('div');
+    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity';
+    halo.style.width = W0 + 'px';
+    halo.style.height = H0 + 'px';
+    halo.style.borderRadius = R0 + 'px';
+    halo.style.boxShadow = snapshot.shadow;
+    const shell = document.createElement('div');
+    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform';
+    shell.style.width = boxWidth + 'px';
+    shell.style.height = boxHeight + 'px';
+    for (const [name, value] of snapshot.context)
+        shell.style.setProperty(name, value);
+    // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
+    // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
+    // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
+    const scaler = document.createElement('div');
+    scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform';
+    scaler.style.width = boxWidth + 'px';
+    scaler.style.height = boxHeight + 'px';
+    // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
+    // 半径补偿见下面那段动画。
+    shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight);
+    shell.appendChild(scaler);
+    // 底是一层实色，全程不变：气泡自己的颜色可能是半透明的，落到卡片背后那个不透明的底色上再画，
+    // 替身飞过消息列时才不会透出下面滚过的字（那正是起手那一截闪烁的来源）。不做毛玻璃：替身没有
+    // ::before 那一层，`backdrop-filter` 一挂就要每帧重新采样背后的模糊，飞起来又贵又抖。
+    const cardFill = document.createElement('div');
+    cardFill.style.cssText = 'position:absolute;inset:0';
+    cardFill.style.backgroundColor = flattenColor(style.backgroundColor, snapshot.behind);
+    scaler.appendChild(cardFill);
+    const cloneHost = scaler;
+    cloneHost.appendChild(snapshot.clone);
+    // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
+    // 自己，其余每段一层。
+    const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth);
+    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding);
+    // 半径 = **可见区短边的一半 × 圆度**，圆度从 `2R0/短边` 走到 `2R1/短边`；半径因此总是跟着区域
+    // 一起收，两端精确还原真实值（起手与真卡片逐点一致，落定就是气泡自己的圆角）。
+    //
+    // **圆度用进度的平方根插值，不是线性。** 这是一次量出来的取舍：卡顿冻住的是 `border-radius` 的
+    // 写入值，形状却在合成器上继续收——而**圆度在冻结期间保持不变**（写入值除以缩放，分子分母按两个
+    // 方向各自的缩放比走，正好约掉）。所以冻结那一刻圆度越高，回来时看到的那个椭圆就越接近气泡自己
+    // 的角。平方根让圆度在前段抬得快：30 ms 时 75%（线性只有 64%）。四种卡顿跨度逐一比过，平方根
+    // 的「离 20×20 差多少」都比线性小一到两成——30 ms 冻到 90 ms 是 14.7 对 18.3，60 ms 冻到 90 ms
+    // 给的是 13.4×20.4，垂直方向正好贴上气泡的圆弧。中段仍是圆角矩形（75% 圆度），不是胶囊。
+    //
+    // 把半径压成一个恒定值会让卡顿椭圆更小，但离终点的角更远、跳变更大；这里优先保留终点形状。
+    //
+    // **两端都夹在短边的一半以内**：圆度不超过 1，半径就不会撞上浏览器那条「半径之和超过边长就等比
+    // 缩小所有角」的静默规则——那条规则一接管，这条曲线说什么都不算了，极窄的气泡上还会连水平方向
+    // 一起缩。
+    //
+    // **必须在 `textWindows` 之后算**：多行时字会把外框撑高（那里写 `sample.height`），短边跟着变，
+    // 早算一步就会在归一那一帧对不上。
+    const shortStart = Math.min(W0, H0);
+    const shortEnd = Math.min(W1, H1);
+    const shareStart = shortStart > 0 ? Math.min(1, (2 * R0) / shortStart) : 0;
+    const shareEnd = shortEnd > 0 ? Math.min(1, (2 * R1) / shortEnd) : 0;
+    for (const sample of samples) {
+        const shortSide = Math.min(sample.visible, sample.height);
+        const share = shareStart + (shareEnd - shareStart) * Math.sqrt(sample.m);
+        sample.radius = (shortSide / 2) * share;
+    }
+    const layers = bubbleWindows.map((window) => {
+        const layer = textLayer(bubble, style);
+        layer.style.width = window.width + 'px';
+        layer.style.lineHeight = window.lineHeight + 'px';
+        scaler.appendChild(layer);
+        return { layer, window };
+    });
+    mover.appendChild(halo);
+    mover.appendChild(shell);
+    wrapper.appendChild(mover);
+    // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
+    // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
+    ghostHost().appendChild(wrapper);
+    // 克隆要进了文档才能滚到原来的位置。
+    if (snapshot.draftScrollTop > 0)
+        snapshot.draft.scrollTop = snapshot.draftScrollTop;
+    const timing = { duration: exports.FLIGHT_MS, easing: 'linear', fill: 'forwards' };
+    const animations = [];
+    const run = (element, frames) => {
+        const animation = element.animate(frames, timing);
+        animations.push(animation);
+        return animation;
+    };
+    // 只在 [windowFrom, windowUntil] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
+    // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
+    const between = (windowFrom, windowUntil, frame, stride = 1) => {
+        const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil);
+        const frames = [];
+        inside.forEach((sample, index) => {
+            // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
+            // 看不出来，省下的关键帧换的是实打实的建动画时间。**形状与内容那两段必须同格**，一错格两层就
+            // 不再互为倒数，中段会看见偏移。
+            if (index % stride !== 0)
+                return;
+            frames.push({ ...frame(sample), offset: sample.u });
+        });
+        // 末尾那一格永远补上：它是定形的值，缺了它会停在上一格上。
+        const final = inside.at(-1);
+        if (final !== undefined && (frames.at(-1)?.offset ?? -1) !== final.u) {
+            frames.push({ ...frame(final), offset: final.u });
+        }
+        const first = frames[0];
+        const last = frames.at(-1);
+        if (first !== undefined && (first.offset ?? 0) > 0)
+            frames.unshift({ ...first, offset: 0 });
+        if (last !== undefined && (last.offset ?? 1) < 1)
+            frames.push({ ...last, offset: 1 });
+        return frames;
+    };
+    // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
+    // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
+    // 左边，右边由宽度决定，两条边都单调。
+    // 纵向就是弹簧本身，**不补任何下限**：过冲幅度 = 行程 × 1.52%，只由 `RISE_DAMPING` 决定
+    // 窄气泡、短行程弹得少，长行程弹得多；补下限会让每次飞行都弹同样一段。
+    const travel = run(mover, samples.map(sample => ({
+        offset: sample.u,
+        transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px)',
+    })));
+    // 形状：壳缩到这一刻真正画得出来的那一段。原来这里是 `clip-path: inset(...)`，它**上不了合成器**
+    // ——读者在慢机器上抓到过「位移在合成器上继续走、裁剪冻在主线程」，一整张卡片被平移出消息列。
+    // `sample.visible` 是右边缘那道夹子，`sample.m` 与位移逐格同源，右边缘的等式因此成立。
+    const shape = run(shell, between(0, tuning.morphEnd, sample => ({
+        transform: 'scale(' + sample.visible / boxWidth + ', ' + sample.height / boxHeight + ')',
+    })));
+    // 内容的反向缩放：与壳逐格互为倒数，视觉上正好抵消。下限 `MIN_REVERSE_DIVISOR` 挡住 `visible` 被
+    // 夹到 0 时的除零——那几帧壳本来就什么都看不见。
+    const inverse = run(scaler, between(0, tuning.morphEnd, sample => ({
+        transform: 'scale(' + boxWidth / Math.max(sample.visible, MIN_REVERSE_DIVISOR) + ', '
+            + boxHeight / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
+    })));
+    // 圆角**必须长在壳上**，不能挂到里面那层：可见区的右边缘是壳裁出来的，挂在内层就只有左边圆、
+    // 右边缘是直角（读者一眼就看出来了）。它不可合成，所以单独一段动画、留在主线程——和几何那段分开，
+    // 壳的 `transform` 照样在合成器上。卡顿时半径停在旧值、形状却继续在合成器上收，两者的比例会散
+    // （宽收到 404 px 时圆角冻在 23.5 px，等缩到 44 高，那 23.5 px 就是满圆）。这是留在主线程的固有
+    // 代价，只能靠「半径本身跟着短边走」把错拍压到最小。
+    // 壳是**非均匀**缩放的（宽收得比高快），半径不补的话会被压成椭圆，所以逐格按缩放除回去。
+    //
+    // **采样密度要与形状同格**：半径现在随短边逐格变，隔一格取一格会让这条折线与缩放那条错开，
+    // 中段能看见角比轮廓早一格到位。
+    const corners = run(shell, between(0, tuning.morphEnd, sample => ({
+        borderRadius: cornerRadius(sample.radius, sample.visible / boxWidth, sample.height / boxHeight),
+    })));
+    /**
+     * 这一刻的进度（0 到 1），取自**位移那条动画**自己的 `currentTime`。
+     *
+     * 位移与形状现在由同一条时间轴驱动，本来就不会互相领先；读动画自己的时间而不是墙上时钟，为的是起手
+     * 那一两帧：WAAPI 动画那时还是 pending（`startTime` 没定），按 offset 0 画——也就是**整张输入卡片**，
+     * 而墙上时钟已经走了十几毫秒。实测抓到的屏幕帧：替身左边缘还是 317（卡片左边），右边缘已经从 1030
+     * 拉到视口最右 1073。读动画自己的时间，两边就永远落在同一格上：动画 pending 时它读 0，替身也停在
+     * 起手那一格。
+     */
+    const progress = () => {
+        const raw = travel.currentTime;
+        if (typeof raw !== 'number')
+            return 0;
+        const u = raw / exports.FLIGHT_MS;
+        if (!(u > 0))
+            return 0;
+        return u > 1 ? 1 : u;
+    };
+    /** 壳归一了没有（见 `compact`）。 */
+    let normalized = false;
+    /**
+     * 上一次帧回调看到的进度。
+     *
+     * 主线程被占住时 `tick` 不跑，这个值就停在卡顿前那一格上——而圆角的写入值也正是冻在那一格。
+     * `compact` 靠它与当前 `u` 的差认出「这一帧之前卡了多久」。
+     */
+    let lastTickU = null;
+    /**
+     * 形变段走完之后把壳**归一**：布局尺寸换成那一刻的可视尺寸，两级缩放一起归 1。
+     *
+     * 不归一的话，内容会长期留在「放大再缩回」的路径上（结尾处反向放大到 5.9 倍），光栅化按放大后的
+     * 尺寸做，字就越发虚。归一那一帧里「宽度从 `boxWidth` 改成 `visible`」与「缩放从 `visible / boxWidth`
+     * 归到 1」是等价的（`boxWidth × visible / boxWidth = visible`），所以视觉不跳。
+     *
+     * **必须把两条动画 `cancel` 掉**：它们 `fill: forwards`，会一直按最后一帧写着 `transform`，行内那两条
+     * 归 1 压不过动画。取消之后属性回落到行内，正好是归一后的样子。
+     *
+     * 取的是形变段末尾那一格，不是最后一个采样点：形变收尾之后宽度不再变，但字撑高的那几格可能把外框
+     * 改高，拿整段末尾去比就会在归一时跳一下。
+     *
+     * 圆角在这之前已经是**视觉半径**（按那一格的可见短边算出来的，见 `textWindows` 之后那段）；归一
+     * 之后壳的布局尺寸就是可见尺寸，同一把尺子，直接写回去即可。
+     */
+    const compact = (u) => {
+        if (normalized)
+            return;
+        const stalledAt = lastTickU;
+        lastTickU = u;
+        if (u < tuning.morphEnd)
+            return;
+        const final = samples.find(sample => sample.u >= tuning.morphEnd) ?? samples.at(-1);
+        const before = samples.find(sample => sample.u >= (stalledAt ?? 0)) ?? samples[0];
+        if (final === undefined || before === undefined)
+            return;
+        normalized = true;
+        // 卡顿跨过这一帧时，圆角停在**上一帧**那一格的补偿值上，而形状已经收到终点——直接换成
+        // `final.radius` 就是一次硬跳（读者报的「快落地时突然变成正确圆角」）。要补的正是这一下。
+        //
+        // **不读样式**：`getComputedStyle` 会按动画的 `currentTime` 采样，读到的永远是「这一帧该有的
+        // 值」，读不回冻结的那个。改成用进度差推算——卡顿时`tick` 不跑，`lastTickU` 就停在卡顿前那一格。
+        const stalled = stalledAt !== null && u - stalledAt > CORNER_STALL_GAP;
+        // 冻结那一格的补偿值换算到终点的尺寸上，就是此刻画面上那个椭圆。
+        const frozenHorizontal = before.radius * (final.visible / Math.max(before.visible, 1));
+        const frozenVertical = before.radius * (final.height / Math.max(before.height, 1));
+        shape.cancel();
+        inverse.cancel();
+        corners.cancel();
+        shell.style.width = final.visible + 'px';
+        shell.style.height = final.height + 'px';
+        shell.style.transform = 'none';
+        scaler.style.transform = 'none';
+        shell.style.borderRadius = final.radius + 'px';
+        if (!stalled)
+            return;
+        const off = Math.abs(frozenHorizontal - final.radius) + Math.abs(frozenVertical - final.radius);
+        if (off < CORNER_SNAP_PX)
+            return;
+        // 归一之后壳的缩放是 1，`border-radius` 就是视觉半径：先摆回卡顿留下的那个椭圆，再用一小段收回
+        // 正圆。一帧的跳变成一瞬的舒展，而且**只在真卡过的时候才播**。
+        shell.animate([
+            { borderRadius: frozenHorizontal + 'px / ' + frozenVertical + 'px' },
+            { borderRadius: final.radius + 'px' },
+        ], { duration: CORNER_RECOVER_MS, easing: 'ease-out' });
+    };
+    // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
+    // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
+    const shadow = shadowSpread(snapshot.shadow);
+    run(halo, between(0, tuning.morphEnd, sample => ({
+        transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
+        opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
+    }), 2));
+    for (const piece of snapshot.chrome) {
+        const [x, y, width, height] = piece.rect;
+        // 贴着最近的那个角走：右半边的跟着右边，下半边的跟着底边，缩放也以那个角为原点。
+        const anchorRight = x + width / 2 > W0 / 2;
+        const anchorBottom = y + height / 2 > H0 / 2;
+        piece.element.style.transformOrigin = (anchorRight ? '100%' : '0%') + ' ' + (anchorBottom ? '100%' : '0%');
+        run(piece.element, between(0, tuning.morphEnd, (sample) => {
+            const gone = Math.min(1, sample.m / CHROME_GONE_AT);
+            const shiftX = anchorRight ? sample.visible - W0 : 0;
+            const shiftY = anchorBottom ? sample.height - H0 : 0;
+            return {
+                transform: 'translate(' + shiftX + 'px, ' + shiftY + 'px) scale(' + (1 - (1 - CHROME_MIN_SCALE) * gone) + ')',
+                opacity: String(1 - gone),
+            };
+        }, 2));
+    }
+    // 第一段字是输入框里那份草稿自己：它在克隆的卡片里原地待着，跟着内容区的起点平移。
+    const draftUntil = draftWindow === undefined ? 1 : draftWindow.until;
+    run(snapshot.draft, between(0, draftUntil, sample => ({
+        transform: 'translate(' + (sample.left - from.left) + 'px, '
+            + (sample.top - from.top + (sample.lineHeight - from.lineHeight) / 2) + 'px)',
+    })));
+    run(snapshot.draft, stepOpacity(0, draftUntil));
+    for (const { layer, window } of layers) {
+        run(layer, between(window.from, window.until, sample => ({
+            transform: 'translate(' + sample.left + 'px, ' + (sample.top + (sample.lineHeight - window.lineHeight) / 2) + 'px)',
+        })));
+        run(layer, stepOpacity(window.from, window.until));
+    }
+    // 预热：全部动画先停在起手那一格（见 `Morph.play`）。替身刚插进文档，第一次 raster 要跨一两个
+    // 合成器帧；这期间合成器上的时间轴照走、屏幕上却还没有它的像素，等 `send-flight` 的预热帧走完
+    // 再起跑，第一眼才落在起手格上。
+    for (const animation of animations) {
+        animation.pause();
+        animation.currentTime = 0;
+    }
+    /** 起跑了没有（见 `Morph.play`）。 */
+    let started = false;
+    /** 起跑那一刻的墙钟；没起跑时为 null。起首对齐拿它当尺子（见 `alignStart`）。 */
+    let playedAt = null;
+    /** 首帧对齐做过没有（见 `Morph.alignStart`）。 */
+    let aligned = false;
+    /** 见 `Morph.play`。 */
+    const play = () => {
+        if (started)
+            return;
+        started = true;
+        playedAt = performance.now();
+        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程被长任务拖住时这一格会晚出几十毫秒
+        // （动画还没起跑，屏幕上却该动了）。
+        const now = document.timeline.currentTime;
+        for (const animation of animations) {
+            animation.play();
+            if (typeof now === 'number')
+                animation.startTime = now;
+        }
+    };
+    /** 见 `Morph.alignStart`。 */
+    const alignStart = () => {
+        if (aligned)
+            return;
+        const raw = travel.currentTime;
+        if (typeof raw !== 'number' || raw <= 0)
+            return;
+        aligned = true;
+        if (playedAt === null)
+            return;
+        const ahead = raw - (performance.now() - playedAt);
+        if (ahead <= ALIGN_TOLERANCE_MS)
+            return;
+        for (const animation of animations) {
+            const start = animation.startTime;
+            if (typeof start === 'number')
+                animation.startTime = start + ahead;
+        }
+    };
+    return { wrapper, compact, progress, play, alignStart, animations };
+}
+/** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
+const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
+/**
+ * 替身挂在哪儿，以及**它从谁那里继承**。
+ *
+ * 一处两用是刻意的：`snapshotComposer` 拿它当自定义属性的差值基准（替身继承到的就是它的值），
+ * `startMorph` 拿它当挂载点。两处各写一个 `document.body` 也跑得起来，可那样这件耦合就只活在
+ * 注释里了——哪天换挂载点（挂进某个 portal 容器）而漏掉基准那一处，症状是「一部分变量悄悄抄错
+ * 值」，从外观反推回挂载点几乎不可能。
+ *
+ * 挂载点还必须是文档的**最后一个**子节点，理由见 `startMorph` 里那句注释。
+ */
+function ghostHost() {
+    return document.body;
+}
+/**
+ * 把几条声明钉在行内、并带上 `!important`。
+ *
+ * 克隆带着卡片自己的 class 与 `data-*`，dsh 的规则照样命中它，其中就有 `!important` 的定位那一类。
+ * 普通行内样式压不住 `!important`：一条居中的规则就足以让克隆飞到屏幕正中再掉回来。行内 + `!important`
+ * 是样式层级的顶格，把定位与尺寸定死在起飞那一刻量到的值上。
+ *
+ * 钉的时候要留意别把替身自己那几段动画驱动的属性一起钉死——`opacity` 就不在钉的名单里。
+ */
+function pin(element, declarations) {
+    for (const [name, value] of declarations)
+        element.style.setProperty(name, value, 'important');
+}
+/**
+ * 把形变沿途的每一个宽度都排一遍，折行一样（多行时再加上行高同档）的归成一段。
+ *
+ * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
+ * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
+ * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
+ */
+function textWindows(bubble, style, samples, finalLineHeight, bottomPadding) {
+    const probeHost = document.createElement('div');
+    probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none';
+    const probe = textLayer(bubble, style);
+    probe.style.position = 'static';
+    probeHost.appendChild(probe);
+    document.body.appendChild(probeHost);
+    const layouts = new Map();
+    const layoutAt = (width) => {
+        // 宽度原样用，不取整：气泡是按字的宽度收缩的，它的内容区就是最长那一行的宽度，往下舍哪怕
+        // 零点几像素，最后那一行都会被挤到下一行去。
+        const key = width;
+        const known = layouts.get(key);
+        if (known !== undefined)
+            return known;
+        probe.style.width = key + 'px';
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        const tops = new Set();
+        const parts = [];
+        for (const rect of range.getClientRects()) {
+            tops.add(Math.round(rect.top));
+            parts.push(Math.round(rect.top) + ':' + Math.round(rect.right));
+        }
+        const layout = { signature: parts.join(','), lines: tops.size };
+        layouts.set(key, layout);
+        return layout;
+    };
+    // 每一格按这一格里最窄的那一刻排：外框在这五毫秒里还在收，按起点排的话，字会在这一格的后半截
+    // 顶进右边的内边距、甚至顶出外框（实测形变最快那一段，一格能收十几像素）。第一格按卡片自己的
+    // 宽度排——它就是输入框里原样的折行，而弹簧起手的那一格几乎没动。
+    const widths = samples.map((sample, index) => {
+        const next = samples[index + 1];
+        return index === 0 || next === undefined ? sample.content : Math.min(sample.content, next.content);
+    });
+    // 不必每一格都排：默认的折行是贪心的，两个宽度排出来一模一样，夹在中间的每一个宽度也一样
+    // （每一行能放下的，至少是窄的那边放下的、至多是宽的那边放下的，两边相同就只能是它）。所以只在
+    // 两头不一样的地方二分下去——一段长正文从四十来次排版降到十来次。
+    const perSample = new Array(widths.length);
+    const fill = (from, to) => {
+        if (to - from <= 1)
+            return;
+        const left = perSample[from];
+        const right = perSample[to];
+        if (left !== undefined && right !== undefined && left.signature === right.signature) {
+            for (let index = from + 1; index < to; index += 1)
+                perSample[index] = left;
+            return;
+        }
+        const middle = (from + to) >> 1;
+        perSample[middle] = layoutAt(widths[middle] ?? 0);
+        fill(from, middle);
+        fill(middle, to);
+    };
+    const lastIndex = widths.length - 1;
+    perSample[0] = layoutAt(widths[0] ?? 0);
+    perSample[lastIndex] = layoutAt(widths[lastIndex] ?? 0);
+    fill(0, lastIndex);
+    const windows = [];
+    samples.forEach((sample, index) => {
+        const width = widths[index] ?? sample.content;
+        const layout = perSample[index] ?? layoutAt(width);
+        // 窄下来之后行数变多，字要是比外框还高，外框跟着长——自适应高度的气泡本来就是这样。
+        const needed = sample.top + layout.lines * sample.lineHeight + bottomPadding;
+        if (needed > sample.height)
+            sample.height = needed;
+        // 单行时行高不影响字形的位置（上下的差由平移补上），不必为它分层。
+        const lineHeight = layout.lines > 1
+            ? Math.round(sample.lineHeight / LINE_HEIGHT_STEP) * LINE_HEIGHT_STEP
+            : finalLineHeight;
+        const key = layout.signature + '|' + lineHeight;
+        const last = windows.at(-1);
+        if (last !== undefined)
+            last.until = sample.u;
+        if (last !== undefined && last.key === key)
+            return;
+        windows.push({ key, from: sample.u, until: sample.u, width, lineHeight });
+    });
+    probeHost.remove();
+    const lastWindow = windows.at(-1);
+    if (lastWindow !== undefined)
+        lastWindow.until = 1;
+    // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
+    const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1;
+    const first = windows[0];
+    if (first !== undefined && first.until > handoff) {
+        windows.splice(1, 0, { key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight });
+        first.until = handoff;
+    }
+    // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
+    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
+    while (windows.length > MAX_TEXT_LAYERS) {
+        let shortest = 2;
+        for (let index = 3; index < windows.length - 1; index += 1) {
+            const window = windows[index];
+            const best = windows[shortest];
+            if (window === undefined || best === undefined)
+                continue;
+            if (window.until - window.from < best.until - best.from)
+                shortest = index;
+        }
+        const removed = windows[shortest];
+        const following = windows[shortest + 1];
+        if (removed === undefined || following === undefined)
+            break;
+        following.from = removed.from;
+        windows.splice(shortest, 1);
+    }
+    return windows;
+}
+/**
+ * 一层预先排好的正文：气泡里的内容原样克隆，排字属性从气泡上抄。
+ */
+function textLayer(bubble, style) {
+    const layer = document.createElement('div');
+    layer.style.cssText = 'position:absolute;left:0;top:0;margin:0;padding:0;border:0;box-sizing:content-box;will-change:transform,opacity';
+    for (const name of TEXT_PROPERTIES)
+        layer.style.setProperty(name, style.getPropertyValue(name));
+    for (const node of bubble.childNodes) {
+        const copy = node.cloneNode(true);
+        if (copy instanceof Element)
+            scrub(copy);
+        layer.appendChild(copy);
+    }
+    return layer;
+}
+/**
+ * 一段只在 `[from, until)` 里亮着的透明度：两头是阶跃，合成器上切换。
+ */
+function stepOpacity(from, until) {
+    const frames = [];
+    if (from > 0)
+        frames.push({ offset: 0, opacity: '0' }, { offset: from, opacity: '0' });
+    frames.push({ offset: from, opacity: '1' }, { offset: until, opacity: '1' });
+    if (until < 1)
+        frames.push({ offset: until, opacity: '0' }, { offset: 1, opacity: '0' });
+    return frames;
+}
+/**
+ * 把一棵克隆里的身份标记全部摘掉：替身不能被 dsh 或本插件找成输入框、也不能拿到焦点。
+ * 摘哪些、为什么样式钩子不摘，见 `IDENTITY_ATTRIBUTES`。
+ */
+function scrub(root) {
+    const all = [root, ...root.querySelectorAll('*')];
+    for (const element of all) {
+        for (const name of IDENTITY_ATTRIBUTES)
+            element.removeAttribute(name);
+    }
+    for (const layer of root.querySelectorAll(CARET_LAYER_SELECTOR))
+        layer.remove();
+}
+/**
+ * 形变进度：一条临界阻尼的弹簧，压进前 `tuning.morphEnd` 段。弹簧在窗口末端还差一点点没到，整条按
+ * 末端的值归一，终点严丝合缝、中间也不跳。
+ */
+function morphProgress(u) {
+    if (u >= tuning.morphEnd)
+        return 1;
+    return springProgress(u / tuning.morphEnd, 1, tuning.acrossOmega) / springProgress(1, 1, tuning.acrossOmega);
+}
+/**
+ * 纵向上升的进度：还是那条弹簧，只是起步先让给横向（见 `RISE_DELAY`）。
+ */
+function riseProgress(u) {
+    const shifted = (u - tuning.riseDelay) / (1 - tuning.riseDelay);
+    if (!(shifted > 0))
+        return 0;
+    return springProgress(shifted, tuning.riseDamping, tuning.riseOmega);
+}
+/**
+ * 反解纵向进度：气泡在视觉上走到 `progress` 那一刻，占整段飞行的多少。
+ *
+ * 让位要收在「气泡底边越过输入框上沿」那一刻，而那是一个**位移比例**、不是时间；纵向弹簧又不是
+ * 匀速的，所以要反解一次。二分 24 次，误差压在一帧以下（0.06 的进度差在 60 fps 里就是两帧）。
+ */
+function timeAtRise(progress) {
+    if (!(progress > 0))
+        return 0;
+    let low = 0;
+    let high = 1;
+    for (let step = 0; step < 24; step += 1) {
+        const mid = (low + high) / 2;
+        if (riseProgress(mid) < progress)
+            low = mid;
+        else
+            high = mid;
+    }
+    return (low + high) / 2;
+}
+/**
+ * 一条阻尼弹簧的位移响应：从 0 走到 1，`u` 是已经走完的时间占比。
+ *
+ * 起手从零加速、中段最快、尾段收住；阻尼比小于 1 时它会冲过 1 一点再回来——落定那一下的弹性
+ * 就是它。`u` 超出 1 的部分由调用方夹住。
+ *
+ * **导出给落点让位用**：它借的是形状（同一个函数、同一个 `RISE_OMEGA`），阻尼比与时间窗按自己那一段定
+ * （见 `send-reveal.ts` 的 `springFrames`）。
+ */
+function springProgress(u, damping, omega) {
+    if (damping >= 1)
+        return 1 - (1 + omega * u) * Math.exp(-omega * u);
+    const damped = omega * Math.sqrt(1 - damping * damping);
+    return 1 - Math.exp(-damping * omega * u)
+        * (Math.cos(damped * u) + (damping * omega / damped) * Math.sin(damped * u));
+}
+/**
+ * 这一段飞行要用的曲线参数：默认值，加上浏览器里那一份覆盖。
+ *
+ * **这是给开发期试参数的口子。** 在控制台里写
+ *
+ *     localStorage.setItem('dsh-chat-ux:send-flight', '{"acrossOmega":7,"riseDelay":0.15}')
+ *
+ * 然后发一条消息就能看到新的一套：每段起飞前现读一次，不必重新构建、也不必刷新页面。
+ * `localStorage.removeItem('dsh-chat-ux:send-flight')` 就回到默认值。能覆盖的键就是 `FlightTuning`
+ * 那五个——`acrossOmega`（越大开局越快、横向越早走完）、`riseDelay`（越大开头那段水平滑行越长）、
+ * `riseOmega`、`riseDamping`、`morphEnd`。它不进配置：卡片上没有这一行，schema 里也没有。
+ *
+ * **只认说得通的值**：不是有限数、或越界（`morphEnd` 要在 0 与 1 之间、阻尼比夹在 0.05~1）就退回
+ * 默认——一次笔误不该把动画钉死在半路。读不到 `localStorage`（隐私模式会直接抛）时同样退默认。
+ */
+function readTuning() {
+    let raw = null;
+    try {
+        raw = window.localStorage.getItem(TUNING_KEY);
+    }
+    catch {
+        return DEFAULT_TUNING;
+    }
+    if (raw === null || raw === '')
+        return DEFAULT_TUNING;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch {
+        return DEFAULT_TUNING;
+    }
+    if (parsed === null || typeof parsed !== 'object')
+        return DEFAULT_TUNING;
+    const source = parsed;
+    const read = (key) => {
+        const value = source[key];
+        return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_TUNING[key];
+    };
+    const acrossOmega = read('acrossOmega');
+    const riseOmega = read('riseOmega');
+    const morphEnd = read('morphEnd');
+    return {
+        acrossOmega: acrossOmega > 0 ? acrossOmega : DEFAULT_TUNING.acrossOmega,
+        riseDelay: Math.min(0.9, Math.max(0, read('riseDelay'))),
+        riseOmega: riseOmega > 0 ? riseOmega : DEFAULT_TUNING.riseOmega,
+        riseDamping: Math.min(1, Math.max(0.05, read('riseDamping'))),
+        morphEnd: morphEnd > 0 && morphEnd < 1 ? morphEnd : DEFAULT_TUNING.morphEnd,
+    };
+}
+/**
+ * 一个圆角半径在非均匀缩放的壳上该怎么写。
+ *
+ * 壳的宽按 `sx` 收、高按 `sy` 收（详情见 `MORPH_END`：宽收得比高快），圆角会跟着被压成椭圆。CSS 的
+ * `border-radius` 支持两个轴各写一个半径（`水平 / 垂直`），所以把缩放除回去，视觉上就还是正圆。
+ */
+function cornerRadius(radius, sx, sy) {
+    return (radius / Math.max(sx, MIN_CORNER_SCALE)) + 'px / ' + (radius / Math.max(sy, MIN_CORNER_SCALE)) + 'px';
+}
+/**
+ * 一条 box-shadow 向外扩多少：取各层里最大的 `模糊半径 + 扩散半径`。颜色函数里的数字先剔掉。
+ *
+ * 光晕那一层要用它把阴影的外沿收回可见右边缘以内（见 `startMorph` 里 halo 的缩放）。
+ */
+function shadowSpread(shadow) {
+    if (shadow === '' || shadow === 'none')
+        return 0;
+    let spread = 0;
+    for (const part of shadow.split(/,(?![^()]*\))/)) {
+        const clean = part.replace(/[a-z-]+\([^)]*\)/gi, ' ');
+        const found = clean.match(/-?\d*\.?\d+px/g);
+        if (found === null)
+            continue;
+        const values = found.map(Number.parseFloat);
+        spread = Math.max(spread, (values[2] ?? 0) + (values[3] ?? 0));
+    }
+    return spread;
+}
+/**
+ * 卡片背后第一个不透明的底色。
+ *
+ * 一路往上找第一个 `background-color` 不透明的节点——多半是画布。到 `body` 都没找到就给 `transparent`：
+ * 落到透明上等于没落，但至少不会画一块来路不明的色。
+ */
+function behindColorOf(card) {
+    for (let node = card; node !== null; node = node.parentElement) {
+        const color = getComputedStyle(node).backgroundColor;
+        if (alphaOf(color) >= 1)
+            return color;
+    }
+    return 'transparent';
+}
+/**
+ * 把一层可能半透明的颜色落到一个实色底上，得到一个不透明的颜色。
+ *
+ * 读得出来的只有 `rgb()` / `rgba()`（`getComputedStyle` 给的就是这两种）；别的写法原样返回，
+ * 宁可透一点，也不画一块猜出来的色。
+ */
+function flattenColor(color, behind) {
+    const front = colorParts(color);
+    if (front === null)
+        return color;
+    const alpha = front[3] ?? 1;
+    if (alpha >= 1)
+        return color;
+    const back = colorParts(behind);
+    if (back === null)
+        return color;
+    const mix = (index) => Math.round((front[index] ?? 0) * alpha + (back[index] ?? 0) * (1 - alpha));
+    return 'rgb(' + mix(0) + ', ' + mix(1) + ', ' + mix(2) + ')';
+}
+/** 拆 `rgb()` / `rgba()` 里的数。认不出来给 null。 */
+function colorParts(color) {
+    const match = /^rgba?\(([^)]+)\)$/.exec(color.trim());
+    if (match === null)
+        return null;
+    const raw = match[1];
+    if (raw === undefined)
+        return null;
+    const parts = raw.split(',').map(part => Number.parseFloat(part));
+    if (parts.length < 3 || parts.some(part => !Number.isFinite(part)))
+        return null;
+    return parts;
+}
+    };
+
     __registry["settings/settings-card.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -4797,6 +6338,7 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  */
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
+const bubble_curve_1 = require("./bubble-curve");
 const config_card_styles_1 = require("./config-card-styles");
 const settings_scope_1 = require("./settings-scope");
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
@@ -4807,55 +6349,34 @@ const CONTEXT_PIE_FIELD = "contextPie";
 const COMPOSER_GLASS_FIELD = "composerGlass";
 const LIVE_DIFF_FIELD = "liveDiff";
 const FOLLOW_FIELD = "followOnAppear";
+const SEND_FLIGHT_FIELD = "sendFlight";
 const BUBBLE_RISE_FIELD = "bubbleRise";
-const BUBBLE_EMERGE_MS_FIELD = "bubbleEmergeMs";
 const BUBBLE_EMERGE_SCALE_FIELD = "bubbleEmergeScale";
 const BUBBLE_REVEAL_FIELD = "bubbleReveal";
 const BUBBLE_OUTDENT_FIELD = "bubbleOutdent";
-const BUBBLE_EMERGE_BEZIER_X1_FIELD = "bubbleEmergeBezierX1";
-const BUBBLE_EMERGE_BEZIER_Y1_FIELD = "bubbleEmergeBezierY1";
-const BUBBLE_EMERGE_BEZIER_X2_FIELD = "bubbleEmergeBezierX2";
-const BUBBLE_EMERGE_BEZIER_Y2_FIELD = "bubbleEmergeBezierY2";
-const BUBBLE_HOLD_FIELD = "bubbleHold";
-const BUBBLE_HOLD_DRIFT_FIELD = "bubbleHoldDrift";
-const BUBBLE_RISE_MS_FIELD = "bubbleRiseMs";
-const BUBBLE_OVERSIZE_FIELD = "bubbleOversize";
-const BUBBLE_RISE_DAMPING_FIELD = "bubbleRiseDamping";
-const BUBBLE_SIZE_DAMPING_FIELD = "bubbleSizeDamping";
+const BUBBLE_TOTAL_MS_FIELD = "bubbleTotalMs";
+const BUBBLE_CURVE_X_FIELD = "bubbleCurveX";
+const BUBBLE_CURVE_Y_FIELD = "bubbleCurveY";
 // 拖动之后停手这么久就写一次；写盘太频繁没有意义，松手那一刻还会立刻补一次
 const TUNING_WRITE_DELAY_MS = 220;
 // 参数键到 host 字段名的翻译表：滑杆与曲线图都按它写盘，被拒时也按它找回草稿
 const BUBBLE_TUNING_FIELDS = {
-    emergeMs: BUBBLE_EMERGE_MS_FIELD,
     emergeScale: BUBBLE_EMERGE_SCALE_FIELD,
     reveal: BUBBLE_REVEAL_FIELD,
     outdent: BUBBLE_OUTDENT_FIELD,
-    hold: BUBBLE_HOLD_FIELD,
-    holdDrift: BUBBLE_HOLD_DRIFT_FIELD,
-    riseMs: BUBBLE_RISE_MS_FIELD,
-    oversize: BUBBLE_OVERSIZE_FIELD,
-    riseDamping: BUBBLE_RISE_DAMPING_FIELD,
-    sizeDamping: BUBBLE_SIZE_DAMPING_FIELD,
-    emergeBezierX1: BUBBLE_EMERGE_BEZIER_X1_FIELD,
-    emergeBezierY1: BUBBLE_EMERGE_BEZIER_Y1_FIELD,
-    emergeBezierX2: BUBBLE_EMERGE_BEZIER_X2_FIELD,
-    emergeBezierY2: BUBBLE_EMERGE_BEZIER_Y2_FIELD,
+    totalMs: BUBBLE_TOTAL_MS_FIELD,
+    curveX: BUBBLE_CURVE_X_FIELD,
+    curveY: BUBBLE_CURVE_Y_FIELD,
 };
-// 曲线图纵轴能拖到的范围：0 到 1 之外是回弹那一段，两头都留一点看得见的余量
-const CURVE_Y_MIN = -0.6;
-const CURVE_Y_MAX = 1.6;
-// 顺序照那份 demo 的面板：先第一段四个，再中间两个，最后第二段四个；缓动那一段在曲线图上，不占滑杆
+// 曲线图纵轴能拖到的范围：0 到 1 之外各留一点看得见的余量，负值是退回输入区里，越过 1 就是冲过落点
+const CURVE_Y_MIN = -0.15;
+const CURVE_Y_MAX = 1.3;
+// 顺序照那份 demo 的面板：先起手那三个，再整段多长；曲线在那张图上，不占滑杆
 const BUBBLE_TUNERS = [
-    { key: "emergeMs", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms" },
     { key: "emergeScale", min: 0.2, max: 2, step: 0.01, digits: 2, suffix: "×" },
     { key: "reveal", min: 0, max: 120, step: 1, digits: 0, suffix: " px" },
     { key: "outdent", min: 0, max: 40, step: 1, digits: 0, suffix: " px" },
-    { key: "hold", min: 0, max: 2000, step: 10, digits: 0, suffix: " ms" },
-    { key: "holdDrift", min: 0, max: 1, step: 0.01, digits: 2, suffix: "" },
-    { key: "riseMs", min: 0, max: 3000, step: 10, digits: 0, suffix: " ms" },
-    { key: "oversize", min: 0.5, max: 3, step: 0.01, digits: 2, suffix: "×" },
-    { key: "riseDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: "" },
-    { key: "sizeDamping", min: 0.05, max: 0.99, step: 0.01, digits: 2, suffix: "" },
+    { key: "totalMs", min: 100, max: 3000, step: 10, digits: 0, suffix: " ms" },
 ];
 const ZH_COPY = {
     summary: () => "光标动效、读数、输入框玻璃与发送气泡都在这里调。",
@@ -4883,34 +6404,26 @@ const ZH_COPY = {
     liveDiffLabel: "实时改动行数",
     liveDiffHint: "直接调用写入或编辑时，行尾那两个 +n -m 在内容还在流进来时就开始长，不必等整段写完才一起跳出来。"
         + "数字一变，变了的那一位会像读数那样在原地弹到新值。",
+    sendFlightLabel: "发送气泡形变",
+    sendFlightHint: "发出之后整张输入卡片收成落点那条气泡：越收越窄、圆角跟着收，草稿的字换成气泡里的字。"
+        + "关掉就回到 dsh 原来的样子；这一项开着时「冒头」不生效。",
     bubbleLabel: "发送气泡冒头",
-    bubbleHint: "发出之后，那一条先只探出输入框上沿一小截，微顿一下，再升到它该在的位置——落下时还会冲过一点再弹回来。"
+    bubbleHint: "发出之后，那一条先从输入框上沿探出来一点、微微一沉，再冲上去落到它该在的位置——落下时还冲过一点再收回来。"
         + "关掉就直接出现在落点。",
     tuningSummary: "动效参数",
-    tuningHint: "拖完就生效，不用保存，也不用刷新；下一次发送按新的走。区间给得很宽，两头都能拖到底："
-        + "段长 0 就是那一段不停，阻尼越小回弹越明显，0.99 几乎不弹。「冒出」「停顿」「升起」三段相加就是整段多长。"
+    tuningHint: "拖完就生效，不用保存，也不用刷新；下一次发送按新的走。整段只有一条曲线：起手多小、一开始露出多高一截、"
+        + "往右探多少、整段多长都在上面调，形状在那张图上拖。"
         + "「右探出」超过 16 像素之后不再往外——那是滚动器给的内边距，再远就被裁掉了。",
-    curveLabel: "冒出缓动",
-    curveHint: "拖那两个圆点。横轴是冒出这一段走了几成，纵轴是冒到哪；虚线是匀速，曲线压在它下面就是先慢后快，"
-        + "举在它上面就是先冲过去。圆点拖到方框上下之外，那一段就会先退一下、或者先冲过头再回来。",
-    curvePointOne: "缓动控制点 1",
-    curvePointTwo: "缓动控制点 2",
+    curveLabel: "行程曲线",
+    curveHint: "横轴是整段走了几成，纵轴是行程：贴底是还整个藏在输入区后面，顶边那条线是落点，浅虚线是「露出一整截」的高度。"
+        + "曲线在那条虚线附近压平就是微顿，越过顶边就是冲过落点再落回来。六个白点横竖都能拖，曲线本身也能按住拖。",
+    curveHandle: (index) => "第 " + index + " 个控制点",
     tuningReset: "全部恢复默认",
     tuners: {
-        emergeMs: "冒出时长",
         emergeScale: "起点大小",
         reveal: "露出高度",
         outdent: "右探出",
-        emergeBezierX1: "缓动 X1",
-        emergeBezierY1: "缓动 Y1",
-        emergeBezierX2: "缓动 X2",
-        emergeBezierY2: "缓动 Y2",
-        hold: "停顿",
-        holdDrift: "停顿外送",
-        riseMs: "升起时长",
-        oversize: "放大",
-        riseDamping: "位置回弹",
-        sizeDamping: "尺寸回弹",
+        totalMs: "总时长",
     },
     overridden: "已覆盖",
     reset: "重置",
@@ -4949,36 +6462,30 @@ const EN_COPY = {
     liveDiffHint: "When you write or edit a file directly, the +n -m at the end of the row starts growing while the content "
         + "is still streaming, instead of appearing only once it finishes. A digit that changes pops to its new value "
         + "the way the readouts do.",
+    sendFlightLabel: "Send bubble morph",
+    sendFlightHint: "Once sent, the whole composer card shrinks into the bubble that lands in the chat: it narrows, its corners "
+        + "close up, and the draft text hands over to the message text. Off restores dsh's own behaviour; while this "
+        + "is on, the rise below does not run.",
     bubbleLabel: "Send bubble rises",
-    bubbleHint: "Once sent, the message first shows just a sliver above the composer, holds for a moment, then rises to "
-        + "where it belongs — overshooting a little before it settles. Off puts it straight at its place.",
+    bubbleHint: "Once sent, the message first shows a sliver above the composer, sinks a touch, then rushes up to where it "
+        + "belongs — overshooting a little before it settles. Off puts it straight at its place.",
     tuningSummary: "Motion tuning",
-    tuningHint: "Changes apply as you drag them — no save, no reload; the next send uses them. The ranges are deliberately "
-        + "wide, so both ends are reachable: a zero span means that stage does not pause at all, a smaller damping "
-        + "bounces more, and 0.99 barely moves. Emerge plus hold plus rise is the length of the whole animation. "
-        + "Outdent stops moving past 16px — that is the inner padding of the scroller, and anything further is clipped.",
-    curveLabel: "Emerge easing",
-    curveHint: "Drag the two dots. Across is how far the emerge stage has got, up is how far it has risen; the dashed "
-        + "line is even speed, so a curve below it starts slow and a curve above it rushes ahead. Pull a dot "
-        + "outside the box and that stage backs up first, or overshoots before it settles.",
-    curvePointOne: "Easing control point 1",
-    curvePointTwo: "Easing control point 2",
+    tuningHint: "Changes apply as you drag them — no save, no reload; the next send uses them. The whole rise is one curve: "
+        + "start size, how much shows at first, how far it leans out and total length are the sliders here, and the "
+        + "shape is dragged on the plot. Outdent stops moving past 16px — that is the inner padding of the scroller, "
+        + "and anything further is clipped.",
+    curveLabel: "Travel curve",
+    curveHint: "Across is how far the animation has got, up is how far the bubble has travelled: the bottom is still hidden "
+        + "behind the composer, the top line is its landing spot, and the dashed line is where a full sliver shows. "
+        + "Flat near that line is the pause; above the top line is the overshoot. The six dots move both ways, and the "
+        + "curve itself can be dragged too.",
+    curveHandle: (index) => "Control point " + index,
     tuningReset: "Restore all defaults",
     tuners: {
-        emergeMs: "Emerge time",
         emergeScale: "Start size",
         reveal: "Reveal",
         outdent: "Outdent",
-        emergeBezierX1: "Ease X1",
-        emergeBezierY1: "Ease Y1",
-        emergeBezierX2: "Ease X2",
-        emergeBezierY2: "Ease Y2",
-        hold: "Hold",
-        holdDrift: "Hold drift",
-        riseMs: "Rise time",
-        oversize: "Oversize",
-        riseDamping: "Position damping",
-        sizeDamping: "Size damping",
+        totalMs: "Total length",
     },
     overridden: "Overridden",
     reset: "Reset",
@@ -5013,8 +6520,9 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setDraft(current => {
             const kept = {};
             for (const key of Object.keys(current)) {
-                if (current[key] !== host[key])
-                    kept[key] = current[key];
+                if (current[key] === host[key])
+                    continue;
+                keepEntry(kept, key, current[key]);
             }
             return Object.keys(kept).length === Object.keys(current).length ? current : kept;
         });
@@ -5026,6 +6534,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const glassOn = storedGlass(snapshot.value);
     const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
+    const sendFlightOn = storedSendFlight(snapshot.value);
     const bubbleRiseOn = storedBubbleRise(snapshot.value);
     const tuning = { ...(0, settings_scope_1.readBubbleTuning)(snapshot.value), ...draft };
     const unavailable = snapshot.status === "unavailable";
@@ -5119,24 +6628,41 @@ function ChatUxConfigCard({ scope, locale, view }) {
     };
     // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(BUBBLE_RISE_FIELD, copy.bubbleLabel, copy.bubbleHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: bubbleRiseOn, disabled: controlsDisabled, label: copy.bubbleLabel, onChange: (next) => void writeField(BUBBLE_RISE_FIELD, next, storedBubbleRise) }))), (0, jsx_runtime_1.jsxs)("details", { className: config_card_styles_1.CARD_CLASS.tuning, children: [(0, jsx_runtime_1.jsx)("summary", { className: config_card_styles_1.CARD_CLASS.tuningSummary, children: copy.tuningSummary }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: copy.tuningHint }), (0, jsx_runtime_1.jsx)(BubbleCurveEditor, { tuning: tuning, disabled: controlsDisabled, label: copy.curveLabel, hint: copy.curveHint, pointLabels: [copy.curvePointOne, copy.curvePointTwo], onChange: previewValues, onCommit: flushNow }), BUBBLE_TUNERS.map(spec => {
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), rowChrome(BUBBLE_RISE_FIELD, copy.bubbleLabel, copy.bubbleHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: bubbleRiseOn, disabled: controlsDisabled, label: copy.bubbleLabel, onChange: (next) => void writeField(BUBBLE_RISE_FIELD, next, storedBubbleRise) }))), (0, jsx_runtime_1.jsxs)("details", { className: config_card_styles_1.CARD_CLASS.tuning, children: [(0, jsx_runtime_1.jsx)("summary", { className: config_card_styles_1.CARD_CLASS.tuningSummary, children: copy.tuningSummary }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: copy.tuningHint }), (0, jsx_runtime_1.jsx)(BubbleCurveEditor, { tuning: tuning, disabled: controlsDisabled, label: copy.curveLabel, hint: copy.curveHint, handleLabel: copy.curveHandle, onChange: previewValues, onCommit: flushNow }), BUBBLE_TUNERS.map(spec => {
                         const value = tuning[spec.key];
                         const label = copy.tuners[spec.key];
                         return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.tuner, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.tunerLabel, children: label }), (0, jsx_runtime_1.jsx)("input", { type: "range", className: config_card_styles_1.CARD_CLASS.tunerInput, min: spec.min, max: spec.max, step: spec.step, value: value, disabled: controlsDisabled, "aria-label": label, onChange: (event) => previewTuning(spec, Number(event.currentTarget.value)), onPointerUp: flushNow, onKeyUp: flushNow }), (0, jsx_runtime_1.jsx)("output", { className: config_card_styles_1.CARD_CLASS.tunerValue, children: formatTuned(value, spec) })] }, spec.key));
                     }), (0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.tuningActions, children: (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetTuning(), children: copy.tuningReset }) })] }), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
-function BubbleCurveEditor({ tuning, disabled, label, hint, pointLabels, onChange, onCommit }) {
+// 曲线图现在能不能拖：开发阶段开着随时调；打包给读者时置成 false，图上只剩一条只读的曲线
+const CURVE_EDITABLE = true;
+// 画那条线取多少个点：够平滑，又不至于每帧算太多
+const CURVE_SAMPLES = 48;
+// 拖曲线时离拖动处越远的把手越少动：窗宽这么宽，远到两端基本不动
+const CURVE_BEND_WIDTH = 0.3;
+// 指针纵向离曲线这么近才算按住了它，像素
+const CURVE_PICK_PX = 10;
+// 曲线坐标写进配置时留三位小数：浮点尾巴不必带进配置里
+const CURVE_DIGITS = 3;
+// 首尾两点钉死，只有中间这六个可以拖
+const CURVE_HANDLES = [1, 2, 3, 4, 5, 6];
+function BubbleCurveEditor({ tuning, disabled, label, hint, handleLabel, onChange, onCommit }) {
     const plot = (0, react_1.useRef)(null);
-    // 正在拖哪个圆点：只决定下一次 move 改谁，不参与渲染
-    const dragging = (0, react_1.useRef)(null);
-    // 一个圆点的两维一起交出去，越界与步进都收在这里，拖得再野也不会写出范围
-    const writePoint = (which, point) => {
-        const x = roundToStep(clampRange(point.x, 0, 1), 0.01);
-        const y = roundToStep(clampRange(point.y, CURVE_Y_MIN, CURVE_Y_MAX), 0.01);
-        onChange(which === "first"
-            ? { emergeBezierX1: x, emergeBezierY1: y }
-            : { emergeBezierX2: x, emergeBezierY2: y });
-    };
+    // 正在拖哪个把手：只决定下一次 move 改谁，不参与渲染
+    const draggingHandle = (0, react_1.useRef)(null);
+    // 正在拖曲线本身：按各把手在拖动处的权重把纵向偏移摊下去
+    const bendingCurve = (0, react_1.useRef)(false);
+    // 这一份卡片现在能不能改：卡片本身不可写、或者发布版关掉了曲线编辑，都拖不动
+    const editable = CURVE_EDITABLE && !disabled;
+    const curve = (0, react_1.useMemo)(() => (0, bubble_curve_1.createTravelCurve)(tuning.curveX, tuning.curveY), [tuning.curveX, tuning.curveY]);
+    const outline = (0, react_1.useMemo)(() => {
+        let path = "";
+        for (let step = 0; step <= CURVE_SAMPLES; step++) {
+            const progress = step / CURVE_SAMPLES;
+            path += (step === 0 ? "M " : " L ") + plotCurveX(progress) + " " + plotCurveY(curve.at(progress));
+        }
+        return path;
+    }, [curve]);
     // 指针位置换算回曲线坐标：横轴铺满整张图，纵轴从下往上
     const readPoint = (event) => {
         const rect = plot.current?.getBoundingClientRect();
@@ -5144,40 +6670,95 @@ function BubbleCurveEditor({ tuning, disabled, label, hint, pointLabels, onChang
             return null;
         const ratio = (event.clientY - rect.top) / rect.height;
         return {
-            x: (event.clientX - rect.left) / rect.width,
+            x: clampRange((event.clientX - rect.left) / rect.width, 0, 1),
             y: CURVE_Y_MAX - ratio * (CURVE_Y_MAX - CURVE_Y_MIN),
         };
     };
-    const startDrag = (which) => (event) => {
-        if (disabled)
+    // 一个把手的两维一起交出去：横坐标不越过相邻两点，纵坐标不出图的上下边
+    const writeHandle = (index, point) => {
+        const lowest = (tuning.curveX[index - 1] ?? 0) + bubble_curve_1.CURVE_GAP;
+        const highest = (tuning.curveX[index + 1] ?? 1) - bubble_curve_1.CURVE_GAP;
+        const nextX = tuning.curveX.slice();
+        const nextY = tuning.curveY.slice();
+        nextX[index] = roundToDigits(clampRange(point.x, lowest, highest));
+        nextY[index] = roundToDigits(clampRange(point.y, CURVE_Y_MIN, CURVE_Y_MAX));
+        onChange({ curveX: nextX, curveY: nextY });
+    };
+    // 拖曲线本身：这一点要挪多少，就按各把手在这里的权重摊下去，改动最小的那种分法
+    const bendAt = (position, target) => {
+        const param = curve.paramAt(position);
+        const share = [];
+        let norm = 0;
+        for (const index of CURVE_HANDLES) {
+            const distance = (tuning.curveX[index] ?? position) - position;
+            const weight = (0, bubble_curve_1.bernsteinWeight)(index, param) * Math.exp(-((distance / CURVE_BEND_WIDTH) ** 2));
+            share[index] = weight;
+            norm += weight * weight;
+        }
+        if (!(norm > 0))
             return;
-        dragging.current = which;
+        const delta = target - curve.at(position);
+        const nextY = tuning.curveY.slice();
+        for (const index of CURVE_HANDLES) {
+            const moved = (nextY[index] ?? 0) + delta * (share[index] ?? 0) / norm;
+            nextY[index] = roundToDigits(clampRange(moved, CURVE_Y_MIN, CURVE_Y_MAX));
+        }
+        onChange({ curveY: nextY });
+    };
+    const startHandle = (index) => (event) => {
+        if (!editable)
+            return;
+        // 别让这一下冒泡到图上，否则同一次按下会又被当成「拖曲线」
+        event.stopPropagation();
+        event.preventDefault();
+        draggingHandle.current = index;
         // 捕获挂在图上：指针拖到卡片外面也还能收到 move 与 up
         plot.current?.setPointerCapture(event.pointerId);
         const point = readPoint(event);
         if (point !== null)
-            writePoint(which, point);
+            writeHandle(index, point);
     };
-    const moveDrag = (event) => {
-        const which = dragging.current;
-        if (which === null)
+    // 按在曲线那一带上也是拖曲线：先把纵向偏差算出来，够近才开始
+    const startBend = (event) => {
+        if (!editable)
             return;
         const point = readPoint(event);
-        if (point !== null)
-            writePoint(which, point);
+        if (point === null)
+            return;
+        const rect = plot.current?.getBoundingClientRect();
+        if (rect === undefined || rect.height === 0)
+            return;
+        const tolerance = (CURVE_PICK_PX / rect.height) * (CURVE_Y_MAX - CURVE_Y_MIN);
+        if (Math.abs(point.y - curve.at(point.x)) > tolerance)
+            return;
+        event.preventDefault();
+        bendingCurve.current = true;
+        plot.current?.setPointerCapture(event.pointerId);
+        bendAt(point.x, point.y);
+    };
+    const moveDrag = (event) => {
+        const point = readPoint(event);
+        if (point === null)
+            return;
+        const handle = draggingHandle.current;
+        if (handle !== null) {
+            writeHandle(handle, point);
+            return;
+        }
+        if (bendingCurve.current)
+            bendAt(point.x, point.y);
     };
     const endDrag = () => {
-        if (dragging.current === null)
+        if (draggingHandle.current === null && !bendingCurve.current)
             return;
-        dragging.current = null;
+        draggingHandle.current = null;
+        bendingCurve.current = false;
         onCommit();
     };
-    // 键盘也能挪：方向键一次 0.01，按住 Shift 一次 0.1
-    const keyPoint = (which) => (event) => {
-        const delta = event.shiftKey ? 0.1 : 0.01;
-        const point = which === "first"
-            ? { x: tuning.emergeBezierX1, y: tuning.emergeBezierY1 }
-            : { x: tuning.emergeBezierX2, y: tuning.emergeBezierY2 };
+    // 键盘也能挪：方向键一次 0.01，按住 Shift 一次 0.05
+    const keyHandle = (index) => (event) => {
+        const delta = event.shiftKey ? 0.05 : 0.01;
+        const point = { x: tuning.curveX[index] ?? 0, y: tuning.curveY[index] ?? 0 };
         if (event.key === "ArrowLeft")
             point.x -= delta;
         else if (event.key === "ArrowRight")
@@ -5189,27 +6770,29 @@ function BubbleCurveEditor({ tuning, disabled, label, hint, pointLabels, onChang
         else
             return;
         event.preventDefault();
-        writePoint(which, point);
+        writeHandle(index, point);
         onCommit();
     };
-    const first = { x: curveX(tuning.emergeBezierX1), y: curveY(tuning.emergeBezierY1) };
-    const second = { x: curveX(tuning.emergeBezierX2), y: curveY(tuning.emergeBezierY2) };
-    const start = { x: curveX(0), y: curveY(0) };
-    const end = { x: curveX(1), y: curveY(1) };
-    const curve = "M " + start.x + " " + start.y
-        + " C " + first.x + " " + first.y + " " + second.x + " " + second.y + " " + end.x + " " + end.y;
-    const readout = "cubic-bezier(" + [tuning.emergeBezierX1, tuning.emergeBezierY1, tuning.emergeBezierX2, tuning.emergeBezierY2]
-        .map(value => value.toFixed(2))
-        .join(", ") + ")";
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezier, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.tunerLabel, children: label }), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezierPlot, ref: plot, onPointerMove: moveDrag, onPointerUp: endDrag, onPointerCancel: endDrag, children: [(0, jsx_runtime_1.jsxs)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", "aria-hidden": "true", children: [(0, jsx_runtime_1.jsx)("rect", { className: config_card_styles_1.CARD_CLASS.bezierFrame, x: 0, y: end.y, width: 100, height: start.y - end.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierRule, d: "M " + start.x + " " + start.y + " L " + end.x + " " + end.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierArm, d: "M " + start.x + " " + start.y + " L " + first.x + " " + first.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierArm, d: "M " + end.x + " " + end.y + " L " + second.x + " " + second.y }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierCurve, d: curve })] }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.bezierHandle, style: { left: first.x + "%", top: first.y + "%" }, disabled: disabled, "aria-label": pointLabels[0], onPointerDown: startDrag("first"), onKeyDown: keyPoint("first") }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.bezierHandle, style: { left: second.x + "%", top: second.y + "%" }, disabled: disabled, "aria-label": pointLabels[1], onPointerDown: startDrag("second"), onKeyDown: keyPoint("second") })] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint }), (0, jsx_runtime_1.jsx)("output", { className: config_card_styles_1.CARD_CLASS.bezierReadout, children: readout })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezier, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.tunerLabel, children: label }), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezierPlot, ref: plot, onPointerDown: startBend, onPointerMove: moveDrag, onPointerUp: endDrag, onPointerCancel: endDrag, children: [(0, jsx_runtime_1.jsxs)("svg", { viewBox: "0 0 100 100", preserveAspectRatio: "none", "aria-hidden": "true", children: [(0, jsx_runtime_1.jsx)("rect", { className: config_card_styles_1.CARD_CLASS.bezierFrame, x: 0, y: plotCurveY(1), width: 100, height: plotCurveY(0) - plotCurveY(1) }), (0, jsx_runtime_1.jsx)("path", { className: config_card_styles_1.CARD_CLASS.bezierCurve, d: outline })] }), CURVE_HANDLES.map(index => ((0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.bezierHandle, style: {
+                            left: plotCurveX(tuning.curveX[index] ?? 0) + "%",
+                            top: plotCurveY(tuning.curveY[index] ?? 0) + "%",
+                        }, disabled: !editable, "aria-label": handleLabel(index), onPointerDown: startHandle(index), onKeyDown: keyHandle(index) }, index)))] }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint }), (0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.bezierReadout, children: [(0, jsx_runtime_1.jsx)("div", { children: "X " + tuning.curveX.map(value => value.toFixed(CURVE_DIGITS)).join(", ") }), (0, jsx_runtime_1.jsx)("div", { children: "Y " + tuning.curveY.map(value => value.toFixed(CURVE_DIGITS)).join(", ") })] })] }));
 }
 // 横轴只认 0..1：这里就是时间进度，越界没有意义
-function curveX(value) {
+function plotCurveX(value) {
     return clampRange(value, 0, 1) * 100;
 }
 // 纵轴按 CURVE_Y_MIN..CURVE_Y_MAX 铺满整张图，0 与 1 于是落在方框的上下边
-function curveY(value) {
+function plotCurveY(value) {
     return ((CURVE_Y_MAX - clampRange(value, CURVE_Y_MIN, CURVE_Y_MAX)) / (CURVE_Y_MAX - CURVE_Y_MIN)) * 100;
+}
+// 曲线坐标收到三位小数，写进配置的数不带浮点尾巴
+function roundToDigits(value) {
+    return Number(value.toFixed(CURVE_DIGITS));
+}
+// 一列一列地把草稿搬过去：键是联合类型，直接索引赋值会要求两条分支的值同时成立
+function keepEntry(target, key, value) {
+    target[key] = value;
 }
 function clampRange(value, min, max) {
     if (!Number.isFinite(value))
@@ -5244,6 +6827,9 @@ function storedGlass(value) {
 }
 function storedCaret(value) {
     return value?.caretMotion ?? settings_scope_1.DEFAULT_CARET_MOTION;
+}
+function storedSendFlight(value) {
+    return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
 }
 function storedBubbleRise(value) {
     return value?.bubbleRise ?? settings_scope_1.DEFAULT_BUBBLE_RISE;
@@ -5605,6 +7191,7 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
  */
 const bubble_rise_styles_1 = require("./chat/bubble-rise/bubble-rise-styles");
+const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
 const ramp_1 = require("./chat/ramp");
 const reel_styles_1 = require("./chat/reel/reel-styles");
@@ -5708,7 +7295,27 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, bubble_rise_styles_1.BUBBLE_RISE_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, bubble_rise_styles_1.BUBBLE_RISE_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
+    };
+
+    __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 发送气泡起飞时的样式。
+ *
+ * 只有一条：飞行期间那一条真实行先藏着，而且**只藏**它——盒子仍然参与布局，替身靠它逐帧量终点。
+ * 替身自己那几层是行内写死的（见 `send-morph.ts`），样式表里一条都不挂。
+ *
+ * 那个属性由 `send-flight.ts` 的 `FLYING_ATTRIBUTE` 挂上，两边必须一字不差。
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SEND_FLIGHT_CSS = void 0;
+/** 整份样式，由 `styles.ts` 拼进那张 `<style>`。 */
+exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
+[data-chat-ux-send-flight] {
+  visibility: hidden;
+}
+`;
     };
 
     __registry["chat/caret/caret-motion-styles.js"] = function (module, exports, require) {
