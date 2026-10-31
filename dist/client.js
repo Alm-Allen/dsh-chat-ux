@@ -4938,29 +4938,30 @@ const TUNING_KEY = 'dsh-chat-ux:send-flight';
 /** 这一段飞行正在用的参数；每段起飞前由 `readTuning()` 现读一次。 */
 let tuning = DEFAULT_TUNING;
 /**
- * 起手格那块底：chat-ux 玻璃卡片落到实色之后的样子（浅色主题）。
+ * 起手格那块底的**变量名**，不是色值：chat-ux 玻璃卡片落到实色之后的样子，深浅两档各一份。
  *
- * **硬编码，不读 DOM。** 玻璃是「七成透明的底 + `backdrop-filter: blur(22px) saturate(130%)`」，
- * 读一遍还要合成背后那层颜色，读错一次就是一块色差明显的补丁；而这套东西本来就不打算兼容别人的
- * 输入框样式。换主题、换版本时改这三行（`SLAB_FILL` / `SLAB_BACKING` / `SLAB_SHEEN`）。
+ * 深浅两档写在样式表里（见 `send-flight-styles.ts` 的 `SLAB_FILL_VARIABLE` / `SLAB_SHEEN_VARIABLE`），由 dsh 自己的
+ * `body[data-ds-dark-theme]` 切开。替身挂在 `ghostHost()` 也就是 `body` 下，变量直接继承得到，切主题
+ * 时 CSS 自己重算——这里不读 DOM、不装观察器，也就不必为没开毛玻璃的页面准备兜底。
+ *
+ * **写变量名而不是色值的原因**在浅色里看不出来：挂上时 `opacity` 只有 `SLAB_HOLD_OPACITY`，读者看不见；
+ * 起飞那一刻显形，同一帧 `tint` 还是全透明，屏幕上是整块底本身——底色要是浅白，深色模式下就是一道白闪。
  */
-const SLAB_FILL = 'rgba(247, 247, 250, 0.85)';
-/** 同一块底的不透明版本。`flattenColor` 合成气泡色时要一个实底，半透明的底会把结果算错。 */
-const SLAB_BACKING = 'rgb(247, 247, 250)';
+const SLAB_FILL_VAR = 'var(--dsh-chat-ux-slab-fill, rgba(247, 247, 250, 0.85))';
 /**
- * 玻璃两端那两片极淡的色，横着铺：左端偏蓝、右端偏紫，中间完全透明。
+ * 玻璃两端那两片极淡的色，横着铺：左端偏蓝、右端偏紫，中间完全透明。同样只认变量。
  *
  * 照抄 chat-ux 玻璃卡片 `::before` 上那条四停渐变。卡片又宽又扁，横向的两端色读起来就是它的「对角」，
- * 少了这一层，起手格会是一块平涂的灰白。
+ * 少了这一层，起手格会是一块平涂的灰白。括号外那个兜底是空的：变量缺席时整层渐变作废，底还在。
  */
-const SLAB_SHEEN = 'linear-gradient(to right, rgb(122 155 240 / 0.022) 0%, rgb(122 155 240 / 0) 38%, rgb(143 137 184 / 0) 64%, rgb(143 137 184 / 0.018) 100%)';
+const SLAB_SHEEN_VAR = 'var(--dsh-chat-ux-slab-sheen, none)';
 /**
  * 起手格为什么不做真玻璃。
  *
  * 替身这里要还三笔账：它**在动**，背后那片像素每帧都得重新采样；圆角动画每帧在主线程改值，整层的
  * 绘制记录跟着每帧重录，模糊也只能回到主线程；`none` 与 `blur()` 之间还不可插值，结尾只能硬切。
  * 350 ms 的一段飞行换来的是把整段动画从纯合成拖回逐帧 raster——读者其实来不及看那点模糊。
- * 所以用一层八成半透的白加卡片自己那几笔内阴影模拟，七八成像，主线程一点不碰。
+ * 所以用卡片自己那块玻璃的底色加它那几笔内阴影模拟，七八成像，主线程一点不碰。
  */
 /**
  * 色块挂着等回显时的不透明度。
@@ -5657,8 +5658,9 @@ function mountSlab(snapshot, origin) {
     mover.style.height = snapshot.box.height + 'px';
     mover.style.boxSizing = 'border-box';
     mover.style.borderRadius = snapshot.radius + 'px';
-    mover.style.backgroundColor = SLAB_FILL;
-    mover.style.backgroundImage = SLAB_SHEEN;
+    // 底色与那两片渐变走 CSS 变量：深浅两档由 dsh 挂在 body 上的主题属性切开，JS 一个色值都不认
+    mover.style.backgroundColor = SLAB_FILL_VAR;
+    mover.style.backgroundImage = SLAB_SHEEN_VAR;
     mover.style.opacity = SLAB_HOLD_OPACITY;
     if (snapshot.border !== '')
         mover.style.border = snapshot.border;
@@ -5704,7 +5706,10 @@ function startSlab(frame, bubble, end) {
     tuning = readTuning();
     // 起飞这一刻才显形：气泡从输入框里长出来，就是从这一帧开始的（理由见 `SLAB_HOLD_OPACITY`）。
     mover.style.opacity = '1';
-    tint.style.background = flattenColor(style.backgroundColor, SLAB_BACKING);
+    // 气泡色原样交出去，**不合成到实色底上**：`tint` 本来就不透明地盖在 `mover` 上，透出来的还是同一块底。
+    // 深色的气泡色常常是半透明的提亮（`rgb(255 255 255 / 0.06)` 这一类），拿一块浅底去合成会把它整块提亮，
+    // 落定接上真气泡时再跳一下。
+    tint.style.background = style.backgroundColor;
     // 每一格：外框、位移、圆角，外加**字的站位与可排字宽度**。字那几项与克隆那条同源（`Sample`）。
     const samples = Array.from({ length: SAMPLES + 1 }, (_, step) => {
         const u = step / SAMPLES;
@@ -6760,18 +6765,63 @@ exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS
 /**
  * 发送气泡起飞时的样式。
  *
- * 只有一条：飞行期间那条回显行先藏着，而且**只藏**它——盒子仍然参与布局，替身靠它逐帧量终点。
- * 输入卡片不在这条规则的范围里：它自始至终都在，气泡就是从它上面升起来的。
- * 替身自己那几层是行内写死的（见 `send-morph.ts`），样式表里一条都不挂。
+ * 两件事：
  *
- * 那个属性由 `send-flight.ts` 的 `FLYING_ATTRIBUTE` 挂上，两边必须一字不差。
+ * 1. 飞行期间那条回显行先藏着，而且**只藏**它——盒子仍然参与布局，替身靠它逐帧量终点。输入卡片不在
+ *    这条规则的范围里：它自始至终都在，气泡就是从它上面升起来的。那个属性由 `send-flight.ts` 的
+ *    `FLYING_ATTRIBUTE` 挂上，两边必须一字不差。
+ * 2. 色块替身那块底的**两个变量**，深浅两档各一份。替身自己的结构仍是行内写死的（见 `send-morph.ts`），
+ *    但底色与那两片渐变只认变量名——这样主题一切，CSS 自己重算，飞行中途切也不掉队，JS 那边不必读 DOM、
+ *    也不必知道当前是哪一档。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SEND_FLIGHT_CSS = void 0;
-/** 整份样式，由 `styles.ts` 拼进那张 `<style>`。 */
+exports.SEND_FLIGHT_CSS = exports.SLAB_SHEEN_VARIABLE = exports.SLAB_FILL_VARIABLE = void 0;
+const composer_glass_styles_1 = require("../composer-glass/composer-glass-styles");
+/** 色块替身的底色变量，挂在 `body` 上由替身继承（见 `send-morph.ts` 的 `SLAB_FILL_VAR`）。 */
+exports.SLAB_FILL_VARIABLE = '--dsh-chat-ux-slab-fill';
+/** 色块替身那两片渐变的变量（见 `SLAB_SHEEN_VAR`）。 */
+exports.SLAB_SHEEN_VARIABLE = '--dsh-chat-ux-slab-sheen';
+/**
+ * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
+ *
+ * **起手色不另抄一遍数**：它要的就是「chat-ux 玻璃卡片落到实色之后的样子」，玻璃那边已经按主题备好了
+ * `--dsh-chat-ux-glass-base`（浅色压过一点灰，深色换成 neutral-bluish-850 那一档）与让出多少的
+ * `--dsh-chat-ux-glass-alpha`。直接引用它们，以后调玻璃不必再回来改一遍色块。
+ *
+ * 浅色这一档同时是**兜底**：读者关掉毛玻璃时那两个变量不在，`var()` 里的字面值接上（与旧版写死的
+ * 那三条逐字相同），于是起手块与以前一模一样。
+ *
+ * 深色那两片渐变比浅色浓一档（0.035 / 0.03 对 0.022 / 0.018）：同样的透明度叠在深底上几乎看不见。
+ * 括号里是空兜底的那条——变量缺席时整层渐变作废，底还在，不会算出一块黑。
+ */
 exports.SEND_FLIGHT_CSS = `/* dsh-chat-ux —— 发送气泡的起飞 */
 [data-chat-ux-send-flight] {
   visibility: hidden;
+}
+
+body {
+  ${exports.SLAB_FILL_VARIABLE}: rgba(247, 247, 250, 0.85);
+  ${exports.SLAB_SHEEN_VARIABLE}: linear-gradient(to right, rgb(122 155 240 / 0.022) 0%, rgb(122 155 240 / 0) 38%, rgb(143 137 184 / 0) 64%, rgb(143 137 184 / 0.018) 100%);
+}
+
+/* 有毛玻璃就走它那块底：深浅两档、让出多少都由那边定，色块跟着走 */
+@supports (color: color-mix(in srgb, white 50%, transparent)) {
+  body[${composer_glass_styles_1.GLASS_ATTRIBUTE}] {
+    ${exports.SLAB_FILL_VARIABLE}: color-mix(in srgb, var(--dsh-chat-ux-glass-base, #f7f7fa) var(--dsh-chat-ux-glass-alpha, 70%), transparent);
+  }
+}
+
+/* 深色这一档两层：底先取 dsh 自己的输入面色（没开毛玻璃时就是它），开了毛玻璃再由下面那条压过去。
+   两片渐变也跟着浓一档——同样的透明度叠在深底上几乎看不见 */
+body[data-ds-dark-theme] {
+  ${exports.SLAB_FILL_VARIABLE}: color-mix(in srgb, var(--dsw-specific-input-major, #1b2028) 88%, transparent);
+  ${exports.SLAB_SHEEN_VARIABLE}: linear-gradient(to right, rgb(122 155 240 / 0.035) 0%, rgb(122 155 240 / 0) 38%, rgb(143 137 184 / 0) 64%, rgb(143 137 184 / 0.03) 100%);
+}
+
+@supports (color: color-mix(in srgb, white 50%, transparent)) {
+  body[${composer_glass_styles_1.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
+    ${exports.SLAB_FILL_VARIABLE}: color-mix(in srgb, var(--dsh-chat-ux-glass-base, #0e1117) var(--dsh-chat-ux-glass-alpha, 70%), transparent);
+  }
 }
 `;
     };
