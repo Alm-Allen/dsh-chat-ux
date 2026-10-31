@@ -53,6 +53,7 @@ const context_meter_pie_1 = require("./chat/context-meter/context-meter-pie");
 const file_mutation_row_1 = require("./chat/file-mutation/file-mutation-row");
 const call_appeared_1 = require("./chat/follow/call-appeared");
 const fold_glide_1 = require("./chat/fold/fold-glide");
+const fold_observers_1 = require("./chat/fold/fold-observers");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
 const send_flight_1 = require("./chat/send-flight/send-flight");
@@ -127,11 +128,17 @@ function apply(ctx) {
         }
         if (autoFoldDispose !== null)
             return;
-        const disposeReasoning = (0, reasoning_fold_1.installReasoningFold)();
-        const disposeProcess = (0, process_fold_1.installProcessFold)(defersCollapse);
+        const reasoning = (0, reasoning_fold_1.installReasoningFold)();
+        const process = (0, process_fold_1.installProcessFold)(defersCollapse);
+        // 两块共用同一个观察者：哪一行、哪一组被碰到由它一处认出来，再分给两块各自的收敛
+        const unwatch = (0, fold_observers_1.createFoldWatch)((rows, groups) => {
+            reasoning.sync(rows);
+            process.sync(groups);
+        });
         autoFoldDispose = () => {
-            disposeReasoning();
-            disposeProcess();
+            unwatch();
+            reasoning.dispose();
+            process.dispose();
         };
     };
     // 输入框玻璃：属性在，样式表里那一整块才命中，量卡片位置的那个观察者也只有这时候才装。
@@ -191,7 +198,8 @@ function apply(ctx) {
     ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), "dsh-chat-ux: work details default");
     // 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
     // 简洁与标准两档下，运行中的过程组体初始也是收起的。两处都在过程还在跑时开着、这一段结束再收回去
-    // （模块里写明了按阶段让开，读者自己动过手的不被覆盖）。装与卸都在 syncAutoFold 里
+    // （模块里写明了按阶段让开，读者自己动过手的不被覆盖）。装与卸都在 syncAutoFold 里。
+    // 两块共用 fold-observers 的那一个观察者：同一批变化只遍历一次、只排一帧
     ctx.effect(() => {
         syncAutoFold();
         return () => {
@@ -788,7 +796,7 @@ function surfaceOf(element) {
  * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_ATTRIBUTE = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 // 聊天列
 exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
 // 每一行思考行；它的阶段看 data-state
@@ -805,6 +813,8 @@ exports.RUNNING_STATE = "running";
  * 2026-09 起这个属性叫 data-shimmer，2026-10-17 起不再认旧名 data-text-shimmer
  */
 exports.SHIMMER_SELECTOR = "[data-shimmer]";
+// 同一个契约的属性名形式，喂 attributeFilter 用
+exports.SHIMMER_ATTRIBUTE = "data-shimmer";
 // 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
 exports.CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]";
 /**
@@ -855,6 +865,11 @@ exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode";
  * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
  */
 exports.MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`;
+/**
+ * 同一个契约的属性名形式。列上那个空值标记（data-chat-motion=""）表示「这一轮的开合动效归 dsh 管」，
+ * 与上面那两个值不是一回事：认行上的动效请用 MOTION_ROW_SELECTOR
+ */
+exports.MOTION_ATTRIBUTE = "data-chat-motion";
 // 过程组体；收起时带 hidden
 exports.PROCESS_BODY_SELECTOR = "[data-step-process-body]";
 // 过程组体里的内容层；组体滚的就是它
@@ -1695,10 +1710,8 @@ function installComposerGlass() {
                 observedSeatSet.add(seat);
                 resizeObserver.observe(seat);
             }
-            // 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的
-            const card = seat.querySelector(CARD_SELECTOR);
-            if (card !== null)
-                resizeObserver.observe(card);
+            // 只观察座位，不观察卡片：卡片在座位里是正常流，卡片长高座位就长高，那条多出来的观察记录
+            // 换不来新信息。卡片换节点由下面那次 measureSeat 重新认一次
             measureSeat(seat);
         }
         for (const seat of observedSeatSet) {
@@ -2128,13 +2141,22 @@ function installContextMeterPie() {
     };
     // 真正的形状判据在 paintContextMeter 里，认不出就什么都不做
     const paintDockChildren = () => {
+        // 坞里除比例圆以外的孩子都是 conversation.composer.dock 的座位，各自带着自己的座位 id；
+        // 比例圆是 InputBar 直接渲染的，没有座位、不带这个属性。所以先按属性把它排掉，形状判据只当兜底
+        const candidates = [];
         for (const candidate of readDockChildren()) {
             if (!(candidate instanceof HTMLSpanElement))
                 continue;
             if (candidate.hasAttribute(STAT_ATTRIBUTE))
                 continue;
-            paintContextMeter(candidate);
+            candidates.push(candidate);
         }
+        if (candidates.length !== 1)
+            return;
+        const only = candidates[0];
+        if (only === undefined)
+            return;
+        paintContextMeter(only);
     };
     paintDockChildren();
     // 流式期间每一次字符变化都会叫到这里，所以只登记一帧：一帧最多认一次
@@ -2146,7 +2168,9 @@ function installContextMeterPie() {
             paintDockChildren();
         });
     });
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    // 不盯 characterData：流式输出每一批都会往思考行里加字，那是这条链路里最密的一路，而读数只在
+    // 百分比真的翻一格时才变，那时 dsh 会重设读数那一截的 textContent，也就是一次 childList
+    observer.observe(document.body, { subtree: true, childList: true });
     return () => {
         observer.disconnect();
         if (frameHandle !== 0)
@@ -2287,8 +2311,10 @@ function paintContextMeter(root) {
 function startPieGrow(trigger, target, reading) {
     // 扇形色就是 color-mix 算出来的那一份（常常是 oklch(...) 写法），直接拼进图片文档即可：图片文档认它，
     // 与 rgb 字面值画出同一个像素
-    const tone = getComputedStyle(reading).color;
-    const rest = getComputedStyle(trigger).getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
+    const readingStyle = getComputedStyle(reading);
+    const tone = readingStyle.color;
+    // 底色与扇形色都从读数那一截取，两个数一次样式结算拿到
+    const rest = readingStyle.getPropertyValue(context_meter_styles_1.CONTEXT_REST_VAR).trim();
     if (tone === "" || rest === "")
         return false;
     const previous = paintedPies.get(trigger);
@@ -2466,7 +2492,7 @@ const ramp_1 = require("../ramp");
 const reel_styles_1 = require("../reel/reel-styles");
 // 挂在这个比例圆的根上：在，就说明这一处已经接管
 exports.CONTEXT_PIE_ATTRIBUTE = "data-dsh-chat-ux-context-pie";
-// 按钮上的未占用底色；浏览器半区读它来涂底
+// 未占用那一角的底色；浏览器半区读它来涂底
 exports.CONTEXT_REST_VAR = "--dsh-chat-ux-context-rest";
 /**
  * 整张样式表，由浏览器半区在安装时拼进那张 <style>
@@ -2475,11 +2501,17 @@ exports.CONTEXT_REST_VAR = "--dsh-chat-ux-context-rest";
  */
 exports.CONTEXT_METER_CSS = `
 body {
-  --dsh-chat-ux-context-rest: rgba(127, 127, 127, 0.3);
+  --dsh-chat-ux-context-rest-plain: rgba(127, 127, 127, 0.3);
 }
 
 body[data-ds-dark-theme] {
-  --dsh-chat-ux-context-rest: rgba(255, 255, 255, 0.16);
+  --dsh-chat-ux-context-rest-plain: rgba(255, 255, 255, 0.16);
+}
+
+/* 底色与扇形色都从读数那一截取：半区读它的 color 当扇形色、读它的这个属性当底色，两个数一次样式结算拿到。
+   挂在读数上而不是按钮上，正是为了让主题切换（body 上的属性）走同一次继承 */
+[${exports.CONTEXT_PIE_ATTRIBUTE}] button > span {
+  --dsh-chat-ux-context-rest: var(--dsh-chat-ux-context-rest-plain);
 }
 
 /* 原环让开但不塌格：图标那一格还在原处，饼就是按那一格画的 */
@@ -4029,6 +4061,157 @@ exports.FOLLOW_PROBE_CSS = `
 `;
     };
 
+    __registry["chat/fold/fold-observers.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 「自动开合」那两块的观察者：思考行与过程组共用同一份。
+ *
+ * 两处原先各开一个观察整篇文档的 observer，同一批变化被遍历两遍、各排一帧。合成一处之后，
+ * 一条 record 只跑一次 closest 就同时认出「这是哪一行」与「这是哪个组」，排帧也只有一个。
+ *
+ * 这里不替两块判断该不该动手，只回答「这一批变化碰到了谁」。认元素从 record 里拿引用、不回头查文档：
+ * closest 只是几层祖先的事，querySelectorAll 要遍历整篇文档，同样的活差着一个量级
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LIVE_DETAIL_ATTRIBUTE = void 0;
+exports.createFoldWatch = createFoldWatch;
+const dom_contract_1 = require("../../dom-contract");
+/**
+ * 组根上的标记：这个组的组头此刻带着实时细节（标准或详细两档，且这一段过程还没结束）。
+ * 观察者要知道它，因为组头文本的逐字变化只在这个标记还没写上时才有用
+ */
+exports.LIVE_DETAIL_ATTRIBUTE = "data-chat-ux-live-detail";
+/**
+ * 装上两块共用的观察者。sync 每帧最多跑一次，拿到的是这一批变化碰到的行与组
+ *
+ * @param sync - 把给到的这些行与组各自拉到当前阶段该有的样子
+ * @returns 卸载函数
+ */
+function createFoldWatch(sync) {
+    // 这一批变化碰到的行与组
+    const touchedRows = new Set();
+    const touchedGroups = new Set();
+    // 这一帧里文字变过、但组头还没挂上替代标签的组。每帧清空：下一帧的第一次变化照样算数
+    const labelPendingGroups = new Set();
+    // 是否已经排了一次收敛
+    let syncQueued = false;
+    // 卸下之后，已经排上的那一帧不必再跑
+    let disposed = false;
+    const observer = new MutationObserver((records) => {
+        const knownRowCount = touchedRows.size;
+        const knownGroupCount = touchedGroups.size;
+        for (const record of records) {
+            // 本插件自己写上去的标记不算数：它们一变，两块的结论一分都不变
+            const attributeName = record.attributeName;
+            if (attributeName !== null && attributeName.startsWith(OWN_ATTRIBUTE_PREFIX))
+                continue;
+            // 变化落在哪个节点上，就顺着它往上找一次，行与组一次问出来
+            const target = record.target;
+            const changedElement = target instanceof Element ? target : target.parentElement;
+            const anchor = changedElement?.closest(ANCHOR_SELECTOR) ?? null;
+            const row = anchor !== null && anchor.matches(dom_contract_1.THINK_ROW_SELECTOR) ? anchor : null;
+            const group = anchor !== null && anchor.matches(dom_contract_1.PROCESS_GROUP_SELECTOR) ? anchor : null;
+            // 组头里的实时细节随流式逐字变，而 React 更新文本走的是 nodeValue，也就是 characterData。
+            // 它只有一个用处：细节从空变成非空，而那一刻组根上还没有替代标签。标记写上之后，替不替文本
+            // 由组体开不开决定，再变也不改结论；思考行的阶段看的是 data-state，与它里面正出的字无关。
+            // 所以同一段逐字流式里，一个组只因为它排第一帧，后面的字不再各排一帧
+            if (record.type === "characterData") {
+                if (group === null || group.hasAttribute(exports.LIVE_DETAIL_ATTRIBUTE))
+                    continue;
+                if (labelPendingGroups.has(group))
+                    continue;
+                labelPendingGroups.add(group);
+                touchedGroups.add(group);
+                continue;
+            }
+            // 纯文本节点的增删翻不了任何一行：阶段与开合都是属性，而新挂上来的行与组在 addedNodes 里。
+            // 流式逐字追加正好全是纯文本节点，这一条把它们整批挡在 closest 之外
+            if (record.type === "childList" && !hasElement(record.addedNodes))
+                continue;
+            if (row !== null)
+                touchedRows.add(row);
+            if (group !== null)
+                touchedGroups.add(group);
+            for (const node of record.addedNodes) {
+                if (!(node instanceof HTMLElement))
+                    continue;
+                if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
+                    touchedGroups.add(node);
+                if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
+                    touchedRows.add(node);
+                // 新挂上来的子树里可能连着行或组：组头是晚于组根挂上来的（dsh 先是 data 未到、渲染空），
+                // 所以非锚点的节点也要往下看一眼
+                for (const found of node.querySelectorAll(ANCHOR_SELECTOR)) {
+                    // 锚点选择器只有这两支，不是组就是行
+                    if (found.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
+                        touchedGroups.add(found);
+                    else
+                        touchedRows.add(found);
+                }
+            }
+        }
+        // 跟这两块无关的变化（侧栏、插件管理页、组里的工具行出字……）不值得排一帧
+        if (touchedRows.size === knownRowCount && touchedGroups.size === knownGroupCount)
+            return;
+        if (syncQueued)
+            return;
+        syncQueued = true;
+        requestAnimationFrame(() => {
+            syncQueued = false;
+            if (disposed)
+                return;
+            const rows = [...touchedRows];
+            const groups = [...touchedGroups];
+            touchedRows.clear();
+            touchedGroups.clear();
+            labelPendingGroups.clear();
+            sync(rows, groups);
+        });
+    });
+    observer.observe(document.body ?? document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        // 只盯会改变某一行或某个组阶段的那几个属性名
+        attributeFilter: WATCHED_ATTRIBUTES,
+        characterData: true,
+    });
+    return () => {
+        disposed = true;
+        observer.disconnect();
+        touchedRows.clear();
+        touchedGroups.clear();
+        labelPendingGroups.clear();
+    };
+}
+// 认行与认组一次问出来：两块的锚点在同一条祖先链上，分两次 closest 就是两趟
+const ANCHOR_SELECTOR = `${dom_contract_1.THINK_ROW_SELECTOR}, ${dom_contract_1.PROCESS_GROUP_SELECTOR}`;
+// 本插件自己写在页面上的属性。它们在 attributeFilter 之外、本来就不会产生 record，这条判据只是兜底
+const OWN_ATTRIBUTE_PREFIX = "data-chat-ux-";
+/**
+ * 这两块认得的那几个属性名。dsh 的折叠动效在官方批量折叠期间会往行上写 data-chat-motion，
+ * 那时这一行的开合归它管，摘掉之后还要再扫一遍，所以它也在这个范围里
+ */
+const WATCHED_ATTRIBUTES = [
+    "data-state",
+    "data-expanded",
+    dom_contract_1.SHIMMER_ATTRIBUTE,
+    // 组头那个控件上的活动名。它一变，组头的标签就整段换掉，而 React 换文本可能是替换整个文本节点，
+    // 那条路不会走 characterData，也就绕过了下面那条「逐字变化只扫一次」的收敛
+    "data-process-activity",
+    "hidden",
+    dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE,
+    dom_contract_1.MOTION_ATTRIBUTE,
+];
+// 这一批新挂上来的节点里有没有元素
+function hasElement(nodes) {
+    for (const node of nodes)
+        if (node instanceof Element)
+            return true;
+    return false;
+}
+    };
+
     __registry["chat/fold/process-fold.js"] = function (module, exports, require) {
 "use strict";
 /**
@@ -4039,17 +4222,19 @@ exports.FOLLOW_PROBE_CSS = `
  * 收起时是 hidden="until-found"，展开时整个摘掉。组内的命令卡片也用 shimmer，所以阶段只在组头里查
  *
  * 读者碰过的组按阶段让开；dsh 的折叠动效正在驱动这一行、或读者把「收起时机」选成「下次发送时收起」时也让开
+ *
+ * 哪一组变了由 fold-observers 一处盯着，与思考行共用同一个观察者；这一份只负责把这些组拉回该有的样子。
+ * 组头与组体两个元素在第一次认出来之后记在这个模块里，扫描帧就不必每次再查一遍
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installProcessFold = installProcessFold;
 const dom_contract_1 = require("../../dom-contract");
+const fold_observers_1 = require("./fold-observers");
 const programmatic_toggle_1 = require("./programmatic-toggle");
 // 组头那个开合控件
 const HEADER_SELECTOR = "button[data-process-activity]";
 // dsh 把组头标签与实时细节接起来用的分隔符，中英文都是它（message.turnProcess.separator）
 const DETAIL_SEPARATOR = " · ";
-// 组根上的标记：这个组的组头此刻带着实时细节（标准或详细档，且这一段过程还没结束）
-const LIVE_DETAIL_ATTRIBUTE = "data-chat-ux-live-detail";
 // 组根上的标记：这个组的组体此刻是展开的
 const OPEN_ATTRIBUTE = "data-chat-ux-open";
 // 组头控件上的属性：标题里只含标签的那半截，供样式表在组体展开时替上
@@ -4065,14 +4250,32 @@ const LABEL_NAME_ATTRIBUTE = "aria-label";
 const SHIMMER_PIXELS_PER_CHARACTER = 8;
 // 这一段过程已经结束，最终正文该出来了
 const CLOSED = "closed";
-// 给整页安装过程组的自动展开与收起。deferCollapse 现读、不缓存：读者是否选了「下次发送时收起」
+/**
+ * 给整页安装过程组的自动展开与收起。deferCollapse 现读、不缓存：读者是否选了「下次发送时收起」。
+ * sync 把给到的这些组拉回该有的样子，由共用的观察者每帧调一次；dispose 撤掉这一块的监听与收敛
+ */
 function installProcessFold(deferCollapse) {
     // 读者最后一次碰某个组时，那个组处在哪个阶段
     const touchedPhaseMap = new WeakMap();
     // 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
     const attemptedPhaseMap = new WeakMap();
-    // 是否已经排了一次扫描
-    let scanQueued = false;
+    // 组根到它那两个部件：组头控件（要点的那个）与组体（判开合的那个）
+    const partsMap = new WeakMap();
+    // 组头与组体查一次就记住：它们的父子关系在组的生死期里不变，而扫描帧每帧都要问。
+    // 组里还没有这两样时返回 null，等下一批变化再试
+    const partsOf = (group) => {
+        // 缓存只在两样都还挂在这个组里时才算数
+        const known = partsMap.get(group) ?? null;
+        if (known !== null && group.contains(known.header) && group.contains(known.body))
+            return known;
+        const header = group.querySelector(HEADER_SELECTOR);
+        const body = group.querySelector(dom_contract_1.PROCESS_BODY_SELECTOR);
+        if (!(header instanceof HTMLElement) || body === null)
+            return null;
+        const parts = { header, body };
+        partsMap.set(group, parts);
+        return parts;
+    };
     // 把给到的这些组拉到它们当前阶段该有的样子。收集与收敛之间隔着一帧，其中可能已经有被摘掉的
     const syncGroups = (groups) => {
         for (const group of groups) {
@@ -4085,10 +4288,10 @@ function installProcessFold(deferCollapse) {
             // 点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到
             if (group.hasAttribute(dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE))
                 continue;
-            const header = group.querySelector(HEADER_SELECTOR);
-            const body = group.querySelector(dom_contract_1.PROCESS_BODY_SELECTOR);
-            if (!(header instanceof HTMLElement) || body === null)
+            const parts = partsOf(group);
+            if (parts === null)
                 continue;
+            const { header, body } = parts;
             const phase = header.querySelector(dom_contract_1.SHIMMER_SELECTOR) === null ? CLOSED : dom_contract_1.RUNNING_STATE;
             // 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收，那一次留给官方
             if (phase === CLOSED && deferCollapse())
@@ -4099,7 +4302,7 @@ function installProcessFold(deferCollapse) {
             const headerText = header.textContent ?? "";
             const separatorAt = headerText.indexOf(DETAIL_SEPARATOR);
             const detailed = separatorAt >= 0;
-            group.toggleAttribute(LIVE_DETAIL_ATTRIBUTE, detailed);
+            group.toggleAttribute(fold_observers_1.LIVE_DETAIL_ATTRIBUTE, detailed);
             group.toggleAttribute(OPEN_ATTRIBUTE, !body.hasAttribute("hidden"));
             if (detailed) {
                 const label = headerText.slice(0, separatorAt);
@@ -4170,57 +4373,16 @@ function installProcessFold(deferCollapse) {
         const header = group.querySelector(HEADER_SELECTOR);
         touchedPhaseMap.set(group, header !== null && header.querySelector(dom_contract_1.SHIMMER_SELECTOR) !== null ? dom_contract_1.RUNNING_STATE : CLOSED);
     };
-    // 这一批变化涉及哪些组。从 records 里拿引用、不回头查文档，理由同 reasoning-fold：
-    // 组头里的实时细节随流式逐字变，所以 characterData 也在观察范围里，不盯着它，组头那半截标签就会停在旧值上
-    const touchedGroups = new Set();
-    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
-    const observer = new MutationObserver((records) => {
-        const knownCount = touchedGroups.size;
-        for (const record of records) {
-            // 与思考行那份同一套做法，多一条：characterData 的 target 是文本节点，得先退到它的父元素上
-            const target = record.target;
-            const changedElement = target instanceof Element ? target : target.parentElement;
-            const group = changedElement?.closest(dom_contract_1.PROCESS_GROUP_SELECTOR) ?? null;
-            if (group !== null)
-                touchedGroups.add(group);
-            for (const node of record.addedNodes) {
-                if (!(node instanceof HTMLElement))
-                    continue;
-                if (node.matches(dom_contract_1.PROCESS_GROUP_SELECTOR))
-                    touchedGroups.add(node);
-                for (const foundGroup of node.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR))
-                    touchedGroups.add(foundGroup);
-            }
-        }
-        // 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧
-        if (touchedGroups.size === knownCount)
-            return;
-        if (scanQueued)
-            return;
-        scanQueued = true;
-        requestAnimationFrame(() => {
-            scanQueued = false;
-            const groupList = [...touchedGroups];
-            touchedGroups.clear();
-            syncGroups(groupList);
-        });
-    });
-    observer.observe(document.body ?? document.documentElement, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        // 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍
-        attributeFilter: ["data-shimmer", "hidden", dom_contract_1.PROCESS_EXPANDED_MODE_ATTRIBUTE, "data-chat-motion"],
-        characterData: true,
-    });
     document.addEventListener("click", rememberReaderTouched, true);
     document.addEventListener("keydown", rememberReaderTouched, true);
     // 装好之后先全量收敛一遍：页面里躺着的那些组也要归位
     syncGroups(document.querySelectorAll(dom_contract_1.PROCESS_GROUP_SELECTOR));
-    return () => {
-        observer.disconnect();
-        document.removeEventListener("click", rememberReaderTouched, true);
-        document.removeEventListener("keydown", rememberReaderTouched, true);
+    return {
+        sync: syncGroups,
+        dispose: () => {
+            document.removeEventListener("click", rememberReaderTouched, true);
+            document.removeEventListener("keydown", rememberReaderTouched, true);
+        },
     };
 }
     };
@@ -4235,19 +4397,22 @@ function installProcessFold(deferCollapse) {
  * 不碰那些跟着 dsh 每次构建变化的带 hash 类名
  *
  * 读者在某个阶段碰过的行，这个阶段之内不再动它；阶段一变（思考结束）该收还是收
+ *
+ * 哪一行变了由 fold-observers 一处盯着，与过程组共用同一个观察者；这一份只负责把这些行拉回该有的样子
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.installReasoningFold = installReasoningFold;
 const dom_contract_1 = require("../../dom-contract");
 const programmatic_toggle_1 = require("./programmatic-toggle");
-// 给整页安装思考行展开；返回值是卸载函数
+/**
+ * 给整页安装思考行展开。sync 把给到的这些行拉回该有的样子，由共用的观察者每帧调一次；
+ * dispose 撤掉这一块的监听与收敛
+ */
 function installReasoningFold() {
     // 读者最后一次碰某一行时，那一行处在哪个阶段
     const touchedPhaseMap = new WeakMap();
     // 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
     const attemptedPhaseMap = new WeakMap();
-    // 是否已经排了一次扫描
-    let scanQueued = false;
     // 把给到的这些行拉到它们当前阶段该有的样子
     const syncRows = (rows) => {
         for (const row of rows) {
@@ -4293,57 +4458,16 @@ function installReasoningFold() {
             return;
         touchedPhaseMap.set(row, row.getAttribute("data-state") ?? "");
     };
-    // 这一批变化涉及哪些行。从 records 里拿引用、不回头查文档：record.target 是浏览器直接递过来的元素，
-    // 顺着它往上找一行只是几层祖先的事，而 querySelectorAll 要遍历整篇文档，同样的活差着一个量级
-    const touchedRows = new Set();
-    // 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
-    const observer = new MutationObserver((records) => {
-        const knownCount = touchedRows.size;
-        for (const record of records) {
-            // 两条路都要走：属性变化时 record.target 就是那一行或行内的某个元素，子节点增删时它是父容器，
-            // 两条都能顺着祖先链找到行；addedNodes 则覆盖「新挂上来一行」，那时行自己就在新增的子树里
-            const target = record.target;
-            if (target instanceof Element) {
-                const row = target.closest(dom_contract_1.THINK_ROW_SELECTOR);
-                if (row !== null)
-                    touchedRows.add(row);
-            }
-            for (const node of record.addedNodes) {
-                if (!(node instanceof HTMLElement))
-                    continue;
-                if (node.matches(dom_contract_1.THINK_ROW_SELECTOR))
-                    touchedRows.add(node);
-                for (const foundRow of node.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR))
-                    touchedRows.add(foundRow);
-            }
-        }
-        // 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧
-        if (touchedRows.size === knownCount)
-            return;
-        if (scanQueued)
-            return;
-        scanQueued = true;
-        requestAnimationFrame(() => {
-            scanQueued = false;
-            const rowList = [...touchedRows];
-            touchedRows.clear();
-            syncRows(rowList);
-        });
-    });
-    observer.observe(document.body ?? document.documentElement, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ["data-state", "data-expanded"],
-    });
     document.addEventListener("click", rememberReaderTouched, true);
     document.addEventListener("keydown", rememberReaderTouched, true);
     // 装好之后先全量收敛一遍：页面里躺着的那些行也要归位
     syncRows(document.querySelectorAll(dom_contract_1.THINK_ROW_SELECTOR));
-    return () => {
-        observer.disconnect();
-        document.removeEventListener("click", rememberReaderTouched, true);
-        document.removeEventListener("keydown", rememberReaderTouched, true);
+    return {
+        sync: syncRows,
+        dispose: () => {
+            document.removeEventListener("click", rememberReaderTouched, true);
+            document.removeEventListener("keydown", rememberReaderTouched, true);
+        },
     };
 }
     };
