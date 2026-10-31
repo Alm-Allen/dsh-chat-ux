@@ -117,11 +117,18 @@ export function installContextMeterPie(): () => void {
 
 	// 真正的形状判据在 paintContextMeter 里，认不出就什么都不做
 	const paintDockChildren = (): void => {
+		// 坞里除比例圆以外的孩子都是 conversation.composer.dock 的座位，各自带着自己的座位 id；
+		// 比例圆是 InputBar 直接渲染的，没有座位、不带这个属性。所以先按属性把它排掉，形状判据只当兜底
+		const candidates: HTMLSpanElement[] = []
 		for (const candidate of readDockChildren()) {
 			if (!(candidate instanceof HTMLSpanElement)) continue
 			if (candidate.hasAttribute(STAT_ATTRIBUTE)) continue
-			paintContextMeter(candidate)
+			candidates.push(candidate)
 		}
+		if (candidates.length !== 1) return
+		const only = candidates[0]
+		if (only === undefined) return
+		paintContextMeter(only)
 	}
 
 	paintDockChildren()
@@ -133,7 +140,9 @@ export function installContextMeterPie(): () => void {
 			paintDockChildren()
 		})
 	})
-	observer.observe(document.body, {subtree: true, childList: true, characterData: true})
+	// 不盯 characterData：流式输出每一批都会往思考行里加字，那是这条链路里最密的一路，而读数只在
+	// 百分比真的翻一格时才变，那时 dsh 会重设读数那一截的 textContent，也就是一次 childList
+	observer.observe(document.body, {subtree: true, childList: true})
 
 	return () => {
 		observer.disconnect()
@@ -277,8 +286,10 @@ function paintContextMeter(root: HTMLSpanElement): void {
 function startPieGrow(trigger: HTMLElement, target: number, reading: HTMLElement): boolean {
 	// 扇形色就是 color-mix 算出来的那一份（常常是 oklch(...) 写法），直接拼进图片文档即可：图片文档认它，
 	// 与 rgb 字面值画出同一个像素
-	const tone = getComputedStyle(reading).color
-	const rest = getComputedStyle(trigger).getPropertyValue(CONTEXT_REST_VAR).trim()
+	const readingStyle = getComputedStyle(reading)
+	const tone = readingStyle.color
+	// 底色与扇形色都从读数那一截取，两个数一次样式结算拿到
+	const rest = readingStyle.getPropertyValue(CONTEXT_REST_VAR).trim()
 	if (tone === "" || rest === "") return false
 
 	const previous = paintedPies.get(trigger)

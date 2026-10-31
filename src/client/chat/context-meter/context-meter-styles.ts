@@ -16,7 +16,7 @@ import {REEL_TAKEOVER_ATTRIBUTE} from "../reel/reel-styles"
 // 挂在这个比例圆的根上：在，就说明这一处已经接管
 export const CONTEXT_PIE_ATTRIBUTE = "data-dsh-chat-ux-context-pie"
 
-// 按钮上的未占用底色；浏览器半区读它来涂底
+// 未占用那一角的底色；浏览器半区读它来涂底
 export const CONTEXT_REST_VAR = "--dsh-chat-ux-context-rest"
 
 /**
@@ -26,11 +26,17 @@ export const CONTEXT_REST_VAR = "--dsh-chat-ux-context-rest"
  */
 export const CONTEXT_METER_CSS = `
 body {
-  --dsh-chat-ux-context-rest: rgba(127, 127, 127, 0.3);
+  --dsh-chat-ux-context-rest-plain: rgba(127, 127, 127, 0.3);
 }
 
 body[data-ds-dark-theme] {
-  --dsh-chat-ux-context-rest: rgba(255, 255, 255, 0.16);
+  --dsh-chat-ux-context-rest-plain: rgba(255, 255, 255, 0.16);
+}
+
+/* 底色与扇形色都从读数那一截取：半区读它的 color 当扇形色、读它的这个属性当底色，两个数一次样式结算拿到。
+   挂在读数上而不是按钮上，正是为了让主题切换（body 上的属性）走同一次继承 */
+[${CONTEXT_PIE_ATTRIBUTE}] button > span {
+  --dsh-chat-ux-context-rest: var(--dsh-chat-ux-context-rest-plain);
 }
 
 /* 原环让开但不塌格：图标那一格还在原处，饼就是按那一格画的 */

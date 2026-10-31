@@ -61,9 +61,8 @@ export function installComposerGlass(): () => void {
 				observedSeatSet.add(seat)
 				resizeObserver.observe(seat)
 			}
-			// 卡片可能是刚换上的新节点，所以每次都重新认一次；observe 对同一个元素是幂等的
-			const card = seat.querySelector<HTMLElement>(CARD_SELECTOR)
-			if (card !== null) resizeObserver.observe(card)
+			// 只观察座位，不观察卡片：卡片在座位里是正常流，卡片长高座位就长高，那条多出来的观察记录
+			// 换不来新信息。卡片换节点由下面那次 measureSeat 重新认一次
 			measureSeat(seat)
 		}
 		for (const seat of observedSeatSet) {
