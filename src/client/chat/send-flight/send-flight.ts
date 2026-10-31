@@ -87,7 +87,6 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         const activeFlight = flight
         if (activeFlight === null) return
         flight = null
-        reportFlight(activeFlight.probe)
         rowWatcher.disconnect()
         window.clearTimeout(rescue)
         rescue = 0
@@ -143,7 +142,6 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             return
         }
         activeFlight.morph.compact(u)
-        recordFlightFrame(activeFlight.probe, performance.now(), u)
         followTarget(activeFlight)
         requestAnimationFrame(tick)
     }
@@ -167,18 +165,15 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             dropHold(draft)
             return
         }
-        const buildStart = performance.now()
         const morph = draft.frame.launch(bubble, box)
         if (morph === null) {
             dropHold(draft)
             return
         }
-        const probe = createFlightProbe(draft.capturedAt, performance.now() - buildStart, morph)
         // **只藏回显行。** 输入卡片不藏：它一直在读者眼皮底下，气泡就是从它上面升起来的。
         echo.setAttribute(FLYING_ATTRIBUTE, '')
         flight = {
             morph,
-            probe,
             targetAt: {left: box.left, top: box.top},
             shiftedX: 0,
             shiftedY: 0,
@@ -193,7 +188,6 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         morph.finished.then(() => {
             if (flight?.morph === morph) settle()
         })
-        probe.playedAt = Math.round(performance.now() - probe.at)
         // 起跑：只放开动画，起点由浏览器在下一次渲染更新时定（见 `Morph.play`）。
         morph.play()
     }
@@ -249,7 +243,7 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         const frame = mountDraft(input, card)
         if (frame === null) return
         // 卡片不藏、也不动：替身挂着的时候几乎透明，读者看到的还是原来那张输入框。
-        origin = {capturedAt: performance.now(), frame}
+        origin = {frame}
         holdTimer = window.setTimeout(releaseHold, HOLD_MS)
         echoWatcher.observe(document.body, {childList: true, subtree: true})
     }
@@ -284,7 +278,6 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
 
 /** 提交那一刻：替身已经挂在页面上、停在起手格。 */
 interface DraftOrigin {
-    readonly capturedAt: number
     /** 已经挂好的替身。 */
     readonly frame: HoldFrame
 }
@@ -293,8 +286,6 @@ interface DraftOrigin {
 interface Flight {
     /** 替身与它身上跑着的全部合成动画。 */
     readonly morph: Morph
-    /** 这一段飞行的帧率与长任务记录（临时诊断）。 */
-    readonly probe: FlightProbe
     /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
     readonly targetAt: { readonly left: number; readonly top: number }
     /** 已经补到外层上的差值；没变就不写样式。 */
@@ -305,111 +296,6 @@ interface Flight {
     hidden: HTMLElement | null
     /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
     bubble: HTMLElement | null
-}
-
-/**
- * 掉帧诊断（临时，查完就删）。
- *
- * 起飞时记下替身的规模（克隆元素数、will-change 层数、玻璃有没有生效、动画条数），逐帧只做一次
- * 数组 push；落定时打一张汇总：帧间隔的分位、超过一帧与两帧的帧、以及长动画帧（LoAF）。
- * 判断口径：LoAF 多且阻塞时长大，是主线程被占；LoAF 干净但帧间隔大，问题在合成器与光栅化。
- */
-interface FlightProbe {
-    /** 起飞时刻。 */
-    readonly at: number
-    /** 抓起点到起飞的间隔。 */
-    readonly captureGap: number
-    /** 建替身与建动画花了多久，主线程。 */
-    readonly buildMs: number
-    /** 每帧：距起飞多少毫秒、与上一帧隔了多久、形变进度。 */
-    readonly frames: {readonly t: number; readonly dt: number; readonly u: number}[]
-    /** 上一帧的时刻。 */
-    last: number
-    /** 动画真正起跑的时刻（距起飞多少毫秒）；没起跑时为 null。 */
-    playedAt: number | null
-    /** 长动画帧：总时长、阻塞时长、渲染时长、样式与布局时长。 */
-    readonly loaf: {readonly duration: number; readonly block: number; readonly render: number; readonly layout: number}[]
-    /** 浏览器支持才有的观察器，收尾时断开。 */
-    observer: PerformanceObserver | null
-}
-
-/** 建一次诊断：打印起飞时替身的规模，再挂上长动画帧的观察器。 */
-function createFlightProbe(capturedAt: number, buildMs: number, morph: Morph): FlightProbe {
-    const at = performance.now()
-    const probe: FlightProbe = {
-        at,
-        captureGap: Math.round(at - capturedAt),
-        buildMs,
-        frames: [],
-        last: at,
-        playedAt: null,
-        loaf: [],
-        observer: null,
-    }
-    const card = morph.wrapper.querySelector<HTMLElement>('[data-composer-card]')
-    const info = {
-        抓起点到起飞ms: probe.captureGap,
-        建替身ms: Math.round(buildMs * 10) / 10,
-        克隆元素: morph.wrapper.querySelectorAll('*').length,
-        合成层标记: morph.wrapper.querySelectorAll('[style*="will-change"]').length,
-        动画条数: morph.animations.length,
-        玻璃: card === null ? '找不到卡片' : getComputedStyle(card, '::before').backdropFilter,
-    }
-    console.log('[dsh-chat-ux/send-flight] 起飞 ' + JSON.stringify(info))
-    try {
-        const observer = new PerformanceObserver((list) => {
-            for (const entry of list.getEntries()) {
-                const loaf = entry as PerformanceEntry & {
-                    blockingDuration?: number
-                    renderStart?: number
-                    styleAndLayoutStart?: number
-                }
-                const end = loaf.startTime + loaf.duration
-                probe.loaf.push({
-                    duration: Math.round(loaf.duration),
-                    block: Math.round(loaf.blockingDuration ?? 0),
-                    render: loaf.renderStart === undefined ? 0 : Math.round(end - loaf.renderStart),
-                    layout: loaf.styleAndLayoutStart === undefined ? 0 : Math.round(end - loaf.styleAndLayoutStart),
-                })
-            }
-        })
-        observer.observe({type: 'long-animation-frame'})
-        probe.observer = observer
-    } catch {
-        // 没有 LoAF 的浏览器：只留帧间隔那一半
-    }
-    return probe
-}
-
-/** 记一帧。 */
-function recordFlightFrame(probe: FlightProbe, now: number, u: number): void {
-    probe.frames.push({t: Math.round(now - probe.at), dt: Math.round(now - probe.last), u: Math.round(u * 100) / 100})
-    probe.last = now
-}
-
-/** 落定时打一张汇总。 */
-function reportFlight(probe: FlightProbe): void {
-    probe.observer?.disconnect()
-    const gaps = probe.frames.map(frame => frame.dt).sort((left, right) => left - right)
-    const at = (share: number): number => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * share))] ?? 0
-    const slow = probe.frames.filter(frame => frame.dt > 25)
-    const summary = {
-        帧数: probe.frames.length,
-        间隔p50: at(0.5),
-        间隔p90: at(0.9),
-        间隔max: gaps.at(-1) ?? 0,
-        超过25ms: slow.length,
-        超过40ms: probe.frames.filter(frame => frame.dt > 40).length,
-        抓起点到起飞ms: probe.captureGap,
-        建替身ms: Math.round(probe.buildMs * 10) / 10,
-        起跑ms: probe.playedAt,
-        整段ms: Math.round(performance.now() - probe.at),
-        长动画帧: probe.loaf.length,
-        阻塞合计ms: probe.loaf.reduce((sum, loaf) => sum + loaf.block, 0),
-    }
-    console.log('[dsh-chat-ux/send-flight] 汇总 ' + JSON.stringify(summary))
-    if (slow.length > 0) console.table(slow.slice(0, 16))
-    if (probe.loaf.length > 0) console.table(probe.loaf.slice(0, 16))
 }
 
 /**

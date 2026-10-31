@@ -38,5 +38,5 @@ export const Config = Schema.object({
 });
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写
 export function apply() {
-    console.log("[dsh-chat-ux] host 侧已加载");
+    // 这里刻意什么都不做：这一半只声明 schema，投影由设置服务自己按 volatile 字段完成
 }

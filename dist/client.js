@@ -248,12 +248,6 @@ function apply(ctx) {
             return { scope, locale: locale == null ? undefined : locale };
         },
     }, settings_card_1.ChatUxConfigCard));
-    // 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台就知道
-    // 浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来
-    const boot = window.__DSH_BOOT__;
-    console.log("[dsh-chat-ux] client 侧已加载", {
-        rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? "unknown",
-    });
 }
 // dsh 的聊天设置条目 id；工作步骤展示与收起时机都住在它里面
 const CHAT_SETTINGS_NAMESPACE = "ui-chat";
@@ -4558,7 +4552,6 @@ function installSendFlight(readEnabled) {
         if (activeFlight === null)
             return;
         flight = null;
-        reportFlight(activeFlight.probe);
         rowWatcher.disconnect();
         window.clearTimeout(rescue);
         rescue = 0;
@@ -4614,7 +4607,6 @@ function installSendFlight(readEnabled) {
             return;
         }
         activeFlight.morph.compact(u);
-        recordFlightFrame(activeFlight.probe, performance.now(), u);
         followTarget(activeFlight);
         requestAnimationFrame(tick);
     };
@@ -4637,18 +4629,15 @@ function installSendFlight(readEnabled) {
             dropHold(draft);
             return;
         }
-        const buildStart = performance.now();
         const morph = draft.frame.launch(bubble, box);
         if (morph === null) {
             dropHold(draft);
             return;
         }
-        const probe = createFlightProbe(draft.capturedAt, performance.now() - buildStart, morph);
         // **只藏回显行。** 输入卡片不藏：它一直在读者眼皮底下，气泡就是从它上面升起来的。
         echo.setAttribute(exports.FLYING_ATTRIBUTE, '');
         flight = {
             morph,
-            probe,
             targetAt: { left: box.left, top: box.top },
             shiftedX: 0,
             shiftedY: 0,
@@ -4664,7 +4653,6 @@ function installSendFlight(readEnabled) {
             if (flight?.morph === morph)
                 settle();
         });
-        probe.playedAt = Math.round(performance.now() - probe.at);
         // 起跑：只放开动画，起点由浏览器在下一次渲染更新时定（见 `Morph.play`）。
         morph.play();
     };
@@ -4723,7 +4711,7 @@ function installSendFlight(readEnabled) {
         if (frame === null)
             return;
         // 卡片不藏、也不动：替身挂着的时候几乎透明，读者看到的还是原来那张输入框。
-        origin = { capturedAt: performance.now(), frame };
+        origin = { frame };
         holdTimer = window.setTimeout(releaseHold, HOLD_MS);
         echoWatcher.observe(document.body, { childList: true, subtree: true });
     };
@@ -4754,81 +4742,6 @@ function installSendFlight(readEnabled) {
         rowWatcher.disconnect();
         settle();
     };
-}
-/** 建一次诊断：打印起飞时替身的规模，再挂上长动画帧的观察器。 */
-function createFlightProbe(capturedAt, buildMs, morph) {
-    const at = performance.now();
-    const probe = {
-        at,
-        captureGap: Math.round(at - capturedAt),
-        buildMs,
-        frames: [],
-        last: at,
-        playedAt: null,
-        loaf: [],
-        observer: null,
-    };
-    const card = morph.wrapper.querySelector('[data-composer-card]');
-    const info = {
-        抓起点到起飞ms: probe.captureGap,
-        建替身ms: Math.round(buildMs * 10) / 10,
-        克隆元素: morph.wrapper.querySelectorAll('*').length,
-        合成层标记: morph.wrapper.querySelectorAll('[style*="will-change"]').length,
-        动画条数: morph.animations.length,
-        玻璃: card === null ? '找不到卡片' : getComputedStyle(card, '::before').backdropFilter,
-    };
-    console.log('[dsh-chat-ux/send-flight] 起飞 ' + JSON.stringify(info));
-    try {
-        const observer = new PerformanceObserver((list) => {
-            for (const entry of list.getEntries()) {
-                const loaf = entry;
-                const end = loaf.startTime + loaf.duration;
-                probe.loaf.push({
-                    duration: Math.round(loaf.duration),
-                    block: Math.round(loaf.blockingDuration ?? 0),
-                    render: loaf.renderStart === undefined ? 0 : Math.round(end - loaf.renderStart),
-                    layout: loaf.styleAndLayoutStart === undefined ? 0 : Math.round(end - loaf.styleAndLayoutStart),
-                });
-            }
-        });
-        observer.observe({ type: 'long-animation-frame' });
-        probe.observer = observer;
-    }
-    catch {
-        // 没有 LoAF 的浏览器：只留帧间隔那一半
-    }
-    return probe;
-}
-/** 记一帧。 */
-function recordFlightFrame(probe, now, u) {
-    probe.frames.push({ t: Math.round(now - probe.at), dt: Math.round(now - probe.last), u: Math.round(u * 100) / 100 });
-    probe.last = now;
-}
-/** 落定时打一张汇总。 */
-function reportFlight(probe) {
-    probe.observer?.disconnect();
-    const gaps = probe.frames.map(frame => frame.dt).sort((left, right) => left - right);
-    const at = (share) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * share))] ?? 0;
-    const slow = probe.frames.filter(frame => frame.dt > 25);
-    const summary = {
-        帧数: probe.frames.length,
-        间隔p50: at(0.5),
-        间隔p90: at(0.9),
-        间隔max: gaps.at(-1) ?? 0,
-        超过25ms: slow.length,
-        超过40ms: probe.frames.filter(frame => frame.dt > 40).length,
-        抓起点到起飞ms: probe.captureGap,
-        建替身ms: Math.round(probe.buildMs * 10) / 10,
-        起跑ms: probe.playedAt,
-        整段ms: Math.round(performance.now() - probe.at),
-        长动画帧: probe.loaf.length,
-        阻塞合计ms: probe.loaf.reduce((sum, loaf) => sum + loaf.block, 0),
-    };
-    console.log('[dsh-chat-ux/send-flight] 汇总 ' + JSON.stringify(summary));
-    if (slow.length > 0)
-        console.table(slow.slice(0, 16));
-    if (probe.loaf.length > 0)
-        console.table(probe.loaf.slice(0, 16));
 }
 /**
  * 把终点动了多少补到替身的最外层上。
@@ -5065,7 +4978,7 @@ const MIN_REVERSE_DIVISOR = 0.5;
 /**
  * 圆角补偿里的缩放下限（**比值**）。和上面那个不是一回事，别拿来顶替：壳收到最窄时纵轴缩放约 0.45，
  * 拿 0.5 当比例下限会把补偿算少，圆角在竖直方向被压扁——实测视觉半径从 20 掉到 17.96px，归一那一帧
- * 再跳回 20（`morph-probe` 逐帧读数）。这里只需要挡住 0，取一个远小于任何真实缩放的数。
+ * 再跳回 20。这里只需要挡住 0，取一个远小于任何真实缩放的数。
  */
 const MIN_CORNER_SCALE = 0.02;
 /**

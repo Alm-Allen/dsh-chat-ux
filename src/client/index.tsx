@@ -244,17 +244,6 @@ export function apply(ctx: ClientContext): void {
 			ChatUxConfigCard,
 		),
 	)
-
-	// 启动图里这条 entry 的 rev 就是浏览器拿到的产物哈希：产物一改它就变，刷新页面看一眼控制台就知道
-	// 浏览器拿到的是不是刚构建的那一份。没有启动图的场合问不出来
-	const boot = (window as unknown as {
-		__DSH_BOOT__?: {
-			entries?: readonly { id?: string | undefined; rev?: string | undefined }[] | undefined
-		} | undefined
-	}).__DSH_BOOT__
-	console.log("[dsh-chat-ux] client 侧已加载", {
-		rev: boot?.entries?.find(entry => entry.id === PACKAGE_NAME)?.rev ?? "unknown",
-	})
 }
 
 // 这一半读到的配置，镜像在一份可变对象里：文件变更行由自己的模块现读，其余几项都由 syncSettings 重落
