@@ -1,20 +1,28 @@
 /**
  * 发送气泡的起飞与落地。
  *
- * 提交时抓下输入卡片，等 dsh 的即发即显行出现后挂上替身并藏起真实行；落定时摘属性、移除替身。
- * 起点抓不到、起终点跨屏或用户关闭开关时一次都不动手。
+ * 提交那一刻抓下输入卡片、挂上与它逐像素重合的替身；等 dsh 的即发即显行出现后起飞；落定时移除替身、
+ * 把回显行放出来。起点抓不到、起终点跨屏或用户关闭开关时一次都不动手。
  *
- * 真实行必须在本帧绘制前藏住；后台标签页 rAF 会停，所以另设兜底定时器保证消息一定被放出来。
+ * **输入卡片自始至终不藏。** 它一直在读者眼皮底下，气泡是从它上面升起来的；藏了它，读者会以为
+ * 输入框连同草稿一起没了。替身挂着等回显时几乎透明（见 `SLAB_HOLD_OPACITY`），起飞那一刻才显形。
+ *
+ * 回显行必须在起飞那一帧绘制前藏住；后台标签页 rAF 会停，所以另设兜底定时器保证消息一定被放出来。
  */
 import {CHAT_FLOW_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, SUBMISSION_ECHO_SELECTOR} from '../../dom-contract'
-import {alphaOf, FLIGHT_MS, snapshotComposer, startMorph} from './send-morph'
-import type {ComposerSnapshot, Morph} from './send-morph'
+import {alphaOf, FLIGHT_MS, mountGhost, mountSlab, snapshotComposer, snapshotSlab} from './send-morph'
+import type {HoldFrame, Morph} from './send-morph'
 
-/** 挂在真实行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
+/** 挂在回显行上的标记：有它，那一行就先藏着。规则在 `send-flight-styles.ts`，两边必须一字不差。 */
 export const FLYING_ATTRIBUTE = 'data-chat-ux-send-flight'
 
-/** 起点只认这么久。抓完超过它才出现的回显，不算这一次提交的。 */
-const ORIGIN_TTL_MS = 1500
+/**
+ * 替身挂上之后等回显的上限（毫秒）。
+ *
+ * 超过就把替身撤掉、把卡片还给读者。正常提交到回显是 79 到 116 ms，留到 500 是给网络与一次重排的
+ * 余量；排队那种「这条消息压根不会出现在聊天流里」的提交，最坏就是卡片消失这 500 ms。
+ */
+const HOLD_MS = 500
 
 /**
  * 位移上限的兜底值：一屏比它窄时按它算（见 `sameScreen`）。
@@ -25,17 +33,6 @@ const FLIGHT_LIMIT_FLOOR_PX = 900
 
 /** 兜底比飞行本身多留一点：定时器在后台被节流，也要赶在读者切回来之前把消息放出来。 */
 const RESCUE_MARGIN_MS = 400
-
-/**
- * 起播前先等几帧，让新子树完成第一次 raster。
- *
- * 否则合成器时间轴照走、屏幕还没有像素，读者第一眼就会看到替身已经在半路。预热期间替身停在
- * 与真卡片重合的起手格，看不出停顿。
- */
-const WARMUP_FRAMES = 2
-
-/** 预热折算的时长（毫秒）。按六十帧算，误差不到一帧；兜底定时器要把它一起算进去。 */
-const WARMUP_MS = WARMUP_FRAMES * (1000 / 60)
 
 /** 只认聊天流里的回显：排队的那条落在队列坞里，飞过去是另一种转场，本期不做。 */
 const ECHO_SELECTOR = CHAT_FLOW_SELECTOR + ' ' + SUBMISSION_ECHO_SELECTOR
@@ -62,6 +59,8 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     let flight: Flight | null = null
     /** 定时器兜底。 */
     let rescue = 0
+    /** 替身挂着等回显的超时。 */
+    let holdTimer = 0
 
     for (const echo of document.querySelectorAll(ECHO_SELECTOR)) handled.add(echo)
 
@@ -88,21 +87,38 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
         const activeFlight = flight
         if (activeFlight === null) return
         flight = null
+        reportFlight(activeFlight.probe)
         rowWatcher.disconnect()
         window.clearTimeout(rescue)
         rescue = 0
         activeFlight.hidden?.removeAttribute(FLYING_ATTRIBUTE)
-        activeFlight.card.removeAttribute(FLYING_ATTRIBUTE)
-        // 兜底：卡片若在这一段里被换过节点，标记跟着旧节点一起走了，新的那一张按选择器再摘一次
-        for (const stale of document.querySelectorAll('[' + FLYING_ATTRIBUTE + ']')) {
-            if (stale.matches(COMPOSER_CARD_SELECTOR)) stale.removeAttribute(FLYING_ATTRIBUTE)
-        }
         // **先让替身从文档里消失，再取消动画**，不能反过来。取消会让光晕回到「还没动过」的尺寸（整张
         // 输入卡片那么大），而光晕那条把 scale 与 opacity 合在一起，是**可合成**的动画——取消要经合成器，
         // 节点移除也要经合成器，两者顺序一错就会多画一帧：读者看到的是「宽度被瞬间拉长又闪回」。
         // 节点一离开文档，它身上的动画随之失效，下面那次 cancel 只是显式清掉引用。
         activeFlight.morph.wrapper.remove()
         for (const animation of activeFlight.morph.animations) animation.cancel()
+    }
+
+    /** 这一下飞不起来：把替身拆掉。输入卡片一直没藏过，不用还。 */
+    const dropHold = (draft: DraftOrigin): void => {
+        draft.frame.wrapper.remove()
+    }
+
+    /**
+     * 撤回还挂着的替身。
+     *
+     * 没等到回显（超时、认不到、跨屏、或者上一段还挂着又来了一次）时走这里。**先移除替身再放出卡片**，
+     * 反过来会让两份内容在同一帧里同时画着。
+     */
+    const releaseHold = (): void => {
+        const draft = origin
+        if (draft === null) return
+        origin = null
+        window.clearTimeout(holdTimer)
+        holdTimer = 0
+        echoWatcher.disconnect()
+        dropHold(draft)
     }
 
     /**
@@ -117,67 +133,76 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     const tick = (): void => {
         const activeFlight = flight
         if (activeFlight === null) return
-        // 起播后第一帧核对一次时间轴：预热之后才起跑，这一格还没画出来（见 `Morph.alignStart`）。
+        // 起播后第一帧核对一次时间轴（见 `Morph.alignStart`）。
         activeFlight.morph.alignStart()
         const u = activeFlight.morph.progress()
         if (u >= 1) {
-            settle()
+            // 走完了：把壳按最后一格归一，然后停掉这条链。**落定不在这里做**——动画自己的 `finished`
+            // 比这一帧早知道结果，主线程被长任务占住时也不会让替身停在终态上多停一格（见 `startFlight`）。
+            activeFlight.morph.compact(1)
             return
         }
         activeFlight.morph.compact(u)
+        recordFlightFrame(activeFlight.probe, performance.now(), u)
         followTarget(activeFlight)
         requestAnimationFrame(tick)
     }
 
-    /** 起一段飞行：立替身、藏真实行。全部同步做完——晚一帧读者就会看到真实气泡闪一下。 */
+    /** 起一段飞行：把落点、采样、字层与动画补上，然后起跑。 */
     const startFlight = (echo: HTMLElement, draft: DraftOrigin): void => {
         // 上一段还在飞就先收掉它。不收的话旧替身会永远留在页面上（连发一次多一个幽灵），旧的那条真实行
         // 也永远带着「先藏起来」的标记——读者再也看不见那条消息。读者连发时「最后一段说了算」，这一步就是它。
         settle()
         const bubble = findBubble(echo)
-        if (bubble === null) return
+        if (bubble === null) {
+            dropHold(draft)
+            return
+        }
         const box = bubble.getBoundingClientRect()
-        const startBox = draft.snapshot.box
-        const onSameScreen = sameScreen(startBox.left, box.left, window.innerWidth)
-            && sameScreen(startBox.top, box.top, window.innerHeight)
-        if (!onSameScreen) return
-        const morph = startMorph(draft.snapshot, bubble, box)
-        if (morph === null) return
+        // 起点是替身挂上那一刻卡片的位置：它已经在屏幕上停在那了，这里只判它还能不能飞到终点。
+        const startAt = draft.frame.origin
+        const onSameScreen = sameScreen(startAt.left, box.left, window.innerWidth)
+            && sameScreen(startAt.top, box.top, window.innerHeight)
+        if (!onSameScreen) {
+            dropHold(draft)
+            return
+        }
+        const buildStart = performance.now()
+        const morph = draft.frame.launch(bubble, box)
+        if (morph === null) {
+            dropHold(draft)
+            return
+        }
+        const probe = createFlightProbe(draft.capturedAt, performance.now() - buildStart, morph)
+        // **只藏回显行。** 输入卡片不藏：它一直在读者眼皮底下，气泡就是从它上面升起来的。
         echo.setAttribute(FLYING_ATTRIBUTE, '')
-        // 真输入卡片一起藏起来：提交之后它已经换成会话态停在底部，而替身是从提交那一刻它还在的位置起的
-        // 飞——两份内容一样的东西同时画着，就是工具栏、字、发送按钮各两套。只藏可见性，盒子仍在布局里，
-        // 下一段提交量起点照样准。
-        draft.card.setAttribute(FLYING_ATTRIBUTE, '')
         flight = {
             morph,
+            probe,
             targetAt: {left: box.left, top: box.top},
             shiftedX: 0,
             shiftedY: 0,
             previous: lastUserRow(),
             hidden: echo,
             bubble,
-            card: draft.card,
         }
         rowWatcher.observe(document.body, {childList: true, subtree: true})
-        rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS + WARMUP_MS)
+        rescue = window.setTimeout(settle, FLIGHT_MS + RESCUE_MARGIN_MS)
         requestAnimationFrame(tick)
-        // 预热：替身先在屏幕上静止这两帧，等它被光栅化过再放开动画。中途连发时 `flight` 已经换成新的
-        // 一段，旧的那一轮在这里自然停掉（新的一段自己有自己的预热）。
-        const warmUp = (left: number): void => {
-            if (flight?.morph !== morph) return
-            if (left > 0) {
-                requestAnimationFrame(() => warmUp(left - 1))
-                return
-            }
-            morph.play()
-        }
-        requestAnimationFrame(() => warmUp(WARMUP_FRAMES))
+        // 落定交给位移那条动画自己。连发时 `flight` 已经换成新的一段，旧的那一轮比对不上、自然不落。
+        morph.finished.then(() => {
+            if (flight?.morph === morph) settle()
+        })
+        probe.playedAt = Math.round(performance.now() - probe.at)
+        // 起跑：只放开动画，起点由浏览器在下一次渲染更新时定（见 `Morph.play`）。
+        morph.play()
     }
 
     /**
      * 等这一次提交的回显。
      *
-     * 只在抓过起点之后才挂上（平时一次回调都不会有），认到、超时或者被放弃时立刻摘掉。
+     * 替身已经挂在页面上了（见 `captureOrigin`），这里只认新冒出来的回显；超时由挂替身时设的那个
+     * 定时器兜底，不再在这里判时间。
      */
     const echoWatcher = new MutationObserver(() => {
         const draft = origin
@@ -185,34 +210,47 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
             echoWatcher.disconnect()
             return
         }
-        if (performance.now() - draft.capturedAt > ORIGIN_TTL_MS) {
-            origin = null
-            echoWatcher.disconnect()
-            return
-        }
         const echo = takeFreshEcho(handled)
         if (echo === null) return
         origin = null
+        window.clearTimeout(holdTimer)
+        holdTimer = 0
         echoWatcher.disconnect()
         startFlight(echo, draft)
     })
 
-    /** 抓一次草稿起点。抓不到就当这一下不是提交——不动手永远安全。 */
+    /**
+     * 挂上这一次的替身：色块（默认），或者整张卡片的克隆。
+     *
+     * 色块那条只量两次矩形、读几次样式，不克隆任何东西——提交那一帧主线程本来就被 dsh 占着，
+     * 一次整卡克隆加一次子树布局量在这里是要还的（见 `SlabSnapshot`）。
+     */
+    const mountDraft = (input: HTMLElement, card: HTMLElement): HoldFrame | null => {
+        if (readSlab()) {
+            const slab = snapshotSlab(card)
+            return slab === null ? null : mountSlab(slab, slab.box)
+        }
+        const snapshot = snapshotComposer(input, card)
+        return snapshot === null ? null : mountGhost(snapshot, snapshot.box)
+    }
+
+    /** 抓一次草稿起点：挂上替身。抓不到就当这一下不是提交——不动手永远安全。 */
     const captureOrigin = (): void => {
         if (!readEnabled()) return
         const input = document.querySelector(COMPOSER_INPUT_SELECTOR)
         if (!(input instanceof HTMLElement)) return
         const card = input.closest(COMPOSER_CARD_SELECTOR)
         if (!(card instanceof HTMLElement)) return
-        // 空草稿不会提交出一条消息；量它只是白花一次克隆。
+        // 空草稿不会提交出一条消息；量它只是白花一次快照。
         if ((input.textContent ?? '').trim() === '') return
-        const snapshot = snapshotComposer(input, card)
-        if (snapshot === null) return
-        origin = {
-            capturedAt: performance.now(),
-            snapshot,
-            card,
-        }
+        // 上一段还挂着（连按两次回车，或者上一次没等到回显）：先收掉再挂新的。**要在量快照之前**：
+        // 收掉的那一份正盖在卡片上，留着它量到的是叠了两层的样子。
+        releaseHold()
+        const frame = mountDraft(input, card)
+        if (frame === null) return
+        // 卡片不藏、也不动：替身挂着的时候几乎透明，读者看到的还是原来那张输入框。
+        origin = {capturedAt: performance.now(), frame}
+        holdTimer = window.setTimeout(releaseHold, HOLD_MS)
         echoWatcher.observe(document.body, {childList: true, subtree: true})
     }
 
@@ -238,25 +276,25 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
     return () => {
         document.removeEventListener('keydown', onKeyDown, true)
         document.removeEventListener('click', onClick, true)
-        echoWatcher.disconnect()
+        releaseHold()
         rowWatcher.disconnect()
-        origin = null
         settle()
     }
 }
 
-/** 草稿起飞前的那一刻：整张输入卡片的快照。 */
+/** 提交那一刻：替身已经挂在页面上、停在起手格。 */
 interface DraftOrigin {
     readonly capturedAt: number
-    readonly snapshot: ComposerSnapshot
-    /** 提交时那张输入卡片：飞行期间要跟着一起藏。 */
-    readonly card: HTMLElement
+    /** 已经挂好的替身。 */
+    readonly frame: HoldFrame
 }
 
 /** 一段正在飞的动画。`hidden` 会在回显被换掉时改指新来的那一行。 */
 interface Flight {
     /** 替身与它身上跑着的全部合成动画。 */
     readonly morph: Morph
+    /** 这一段飞行的帧率与长任务记录（临时诊断）。 */
+    readonly probe: FlightProbe
     /** 起飞那一刻量到的终点位置。终点之后每动一下，差值都从这里算。 */
     readonly targetAt: { readonly left: number; readonly top: number }
     /** 已经补到外层上的差值；没变就不写样式。 */
@@ -267,8 +305,111 @@ interface Flight {
     hidden: HTMLElement | null
     /** 终点那条气泡。跟着 `hidden` 一起换；量不到时留 null，这一帧就不补。 */
     bubble: HTMLElement | null
-    /** 真输入卡片：飞行期间一起藏着，落定时放出来。 */
-    readonly card: HTMLElement
+}
+
+/**
+ * 掉帧诊断（临时，查完就删）。
+ *
+ * 起飞时记下替身的规模（克隆元素数、will-change 层数、玻璃有没有生效、动画条数），逐帧只做一次
+ * 数组 push；落定时打一张汇总：帧间隔的分位、超过一帧与两帧的帧、以及长动画帧（LoAF）。
+ * 判断口径：LoAF 多且阻塞时长大，是主线程被占；LoAF 干净但帧间隔大，问题在合成器与光栅化。
+ */
+interface FlightProbe {
+    /** 起飞时刻。 */
+    readonly at: number
+    /** 抓起点到起飞的间隔。 */
+    readonly captureGap: number
+    /** 建替身与建动画花了多久，主线程。 */
+    readonly buildMs: number
+    /** 每帧：距起飞多少毫秒、与上一帧隔了多久、形变进度。 */
+    readonly frames: {readonly t: number; readonly dt: number; readonly u: number}[]
+    /** 上一帧的时刻。 */
+    last: number
+    /** 动画真正起跑的时刻（距起飞多少毫秒）；没起跑时为 null。 */
+    playedAt: number | null
+    /** 长动画帧：总时长、阻塞时长、渲染时长、样式与布局时长。 */
+    readonly loaf: {readonly duration: number; readonly block: number; readonly render: number; readonly layout: number}[]
+    /** 浏览器支持才有的观察器，收尾时断开。 */
+    observer: PerformanceObserver | null
+}
+
+/** 建一次诊断：打印起飞时替身的规模，再挂上长动画帧的观察器。 */
+function createFlightProbe(capturedAt: number, buildMs: number, morph: Morph): FlightProbe {
+    const at = performance.now()
+    const probe: FlightProbe = {
+        at,
+        captureGap: Math.round(at - capturedAt),
+        buildMs,
+        frames: [],
+        last: at,
+        playedAt: null,
+        loaf: [],
+        observer: null,
+    }
+    const card = morph.wrapper.querySelector<HTMLElement>('[data-composer-card]')
+    const info = {
+        抓起点到起飞ms: probe.captureGap,
+        建替身ms: Math.round(buildMs * 10) / 10,
+        克隆元素: morph.wrapper.querySelectorAll('*').length,
+        合成层标记: morph.wrapper.querySelectorAll('[style*="will-change"]').length,
+        动画条数: morph.animations.length,
+        玻璃: card === null ? '找不到卡片' : getComputedStyle(card, '::before').backdropFilter,
+    }
+    console.log('[dsh-chat-ux/send-flight] 起飞 ' + JSON.stringify(info))
+    try {
+        const observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+                const loaf = entry as PerformanceEntry & {
+                    blockingDuration?: number
+                    renderStart?: number
+                    styleAndLayoutStart?: number
+                }
+                const end = loaf.startTime + loaf.duration
+                probe.loaf.push({
+                    duration: Math.round(loaf.duration),
+                    block: Math.round(loaf.blockingDuration ?? 0),
+                    render: loaf.renderStart === undefined ? 0 : Math.round(end - loaf.renderStart),
+                    layout: loaf.styleAndLayoutStart === undefined ? 0 : Math.round(end - loaf.styleAndLayoutStart),
+                })
+            }
+        })
+        observer.observe({type: 'long-animation-frame'})
+        probe.observer = observer
+    } catch {
+        // 没有 LoAF 的浏览器：只留帧间隔那一半
+    }
+    return probe
+}
+
+/** 记一帧。 */
+function recordFlightFrame(probe: FlightProbe, now: number, u: number): void {
+    probe.frames.push({t: Math.round(now - probe.at), dt: Math.round(now - probe.last), u: Math.round(u * 100) / 100})
+    probe.last = now
+}
+
+/** 落定时打一张汇总。 */
+function reportFlight(probe: FlightProbe): void {
+    probe.observer?.disconnect()
+    const gaps = probe.frames.map(frame => frame.dt).sort((left, right) => left - right)
+    const at = (share: number): number => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * share))] ?? 0
+    const slow = probe.frames.filter(frame => frame.dt > 25)
+    const summary = {
+        帧数: probe.frames.length,
+        间隔p50: at(0.5),
+        间隔p90: at(0.9),
+        间隔max: gaps.at(-1) ?? 0,
+        超过25ms: slow.length,
+        超过40ms: probe.frames.filter(frame => frame.dt > 40).length,
+        抓起点到起飞ms: probe.captureGap,
+        建替身ms: Math.round(probe.buildMs * 10) / 10,
+        起跑ms: probe.playedAt,
+        整段ms: Math.round(performance.now() - probe.at),
+        长动画帧: probe.loaf.length,
+        阻塞合计ms: probe.loaf.reduce((sum, loaf) => sum + loaf.block, 0),
+    }
+    console.log('[dsh-chat-ux/send-flight] 汇总 ' + JSON.stringify(summary))
+    if (slow.length > 0) console.table(slow.slice(0, 16))
+    if (probe.loaf.length > 0) console.table(probe.loaf.slice(0, 16))
 }
 
 /**
@@ -366,6 +507,18 @@ function touchesUserRow(records: MutationRecord[]): boolean {
 function isRowNode(node: Node): boolean {
     return node instanceof HTMLElement
         && (node.matches(ROW_SELECTOR) || node.querySelector(ROW_SELECTOR) !== null)
+}
+
+/** 色块替身的开关键：值为 `0` 时退回克隆整张卡片。 */
+const SLAB_KEY = 'dsh-chat-ux:send-slab'
+
+/** 色块替身开着没有。读不到 localStorage（隐私模式会抛）时按开着算。 */
+function readSlab(): boolean {
+    try {
+        return window.localStorage.getItem(SLAB_KEY) !== '0'
+    } catch {
+        return true
+    }
 }
 
 /**

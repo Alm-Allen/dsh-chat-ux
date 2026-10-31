@@ -33,44 +33,7 @@ export const DEFAULT_FOLLOW_ON_APPEAR = true
 // 发送那一下，整张输入卡片收成落点那条气泡。关掉时气泡直接出现在那里
 export const DEFAULT_SEND_FLIGHT = true
 
-// 发出之后那一条从输入框里探出来再升到落点；关掉时气泡直接出现在那里
-export const DEFAULT_BUBBLE_RISE = true
 
-/**
- * 冒头那一条动效的参数，与 host 侧 schema 的字段一一对应。
- * 这一套是在 .probe/想实现的气泡动效.html 里调出来的：四个旋钮加一条七次贝塞尔的行程曲线
- */
-export interface BubbleRiseTuning {
-	// 冒头起手时气泡缩到多大
-	emergeScale: number
-	// 冒头那一刻露出输入区上沿多高一截，像素
-	reveal: number
-	// 起手比聊天列右缘再往外探多少，像素
-	outdent: number
-	// 整段多长，毫秒
-	totalMs: number
-	// 行程曲线的八个控制点横坐标：首尾钉在 0 与 1，中间六个保持递增
-	curveX: readonly number[]
-	// 行程曲线的八个控制点纵坐标：0 是还整个藏着，1 是落点，越过 1 就是冲过落点
-	curveY: readonly number[]
-}
-
-// 曲线一共八个控制点：首尾不动，中间六个可以拖
-export const BUBBLE_CURVE_POINTS = 8
-
-// 默认那一条：一下探出近一半行程，再缓缓沉回去，末了冲过落点落定
-export const DEFAULT_BUBBLE_CURVE_X: readonly number[] = [0, 0.02, 0.245, 0.462, 0.539, 0.559, 0.579, 1]
-export const DEFAULT_BUBBLE_CURVE_Y: readonly number[] = [0, 0.485, 0.438, 0.314, 0.162, 1.15, 1.15, 1]
-
-// 一份完整的冒头参数，缺字段时按这一份补齐
-export const DEFAULT_BUBBLE_TUNING: BubbleRiseTuning = {
-	emergeScale: 0.8,
-	reveal: 16,
-	outdent: 0,
-	totalMs: 800,
-	curveX: DEFAULT_BUBBLE_CURVE_X,
-	curveY: DEFAULT_BUBBLE_CURVE_Y,
-}
 
 // host 解析出来的、本插件占用的那个配置条目
 export interface ChatUxSection {
@@ -88,42 +51,10 @@ export interface ChatUxSection {
 	liveDiff?: boolean
 	// 工具调用与思考行第一次出现时是否把滚动位置补到底，关掉时门控属性不挂，检测规则一条都不命中
 	followOnAppear?: boolean
-	// 发送之后那一条气泡是否从输入框里冒出来（冒头）
-	bubbleRise?: boolean
 	// 发送那一下是否整张输入卡片收成落点那条气泡（形变）
 	sendFlight?: boolean
-	// 冒头起手时气泡缩到多大
-	bubbleEmergeScale?: number
-	// 冒头那一刻露出输入区上沿多高一截
-	bubbleReveal?: number
-	// 起手比聊天列右缘再往外探多少
-	bubbleOutdent?: number
-	// 整段多长
-	bubbleTotalMs?: number
-	// 行程曲线的八个控制点横坐标
-	bubbleCurveX?: number[]
-	// 行程曲线的八个控制点纵坐标
-	bubbleCurveY?: number[]
 }
 
-// 从表单值里拼出一份完整的冒头参数，缺的按默认值补齐
-export function readBubbleTuning(value: ChatUxSection | undefined): BubbleRiseTuning {
-	return {
-		emergeScale: value?.bubbleEmergeScale ?? DEFAULT_BUBBLE_TUNING.emergeScale,
-		reveal: value?.bubbleReveal ?? DEFAULT_BUBBLE_TUNING.reveal,
-		outdent: value?.bubbleOutdent ?? DEFAULT_BUBBLE_TUNING.outdent,
-		totalMs: value?.bubbleTotalMs ?? DEFAULT_BUBBLE_TUNING.totalMs,
-		curveX: readCurve(value?.bubbleCurveX, DEFAULT_BUBBLE_CURVE_X),
-		curveY: readCurve(value?.bubbleCurveY, DEFAULT_BUBBLE_CURVE_Y),
-	}
-}
-
-// 存下来的曲线什么形状都可能：点数不对，或者里面混进了不是数字的东西，就整条退回默认那一条
-function readCurve(value: number[] | undefined, fallback: readonly number[]): readonly number[] {
-	if (value === undefined || value.length !== BUBBLE_CURVE_POINTS) return fallback
-	if (!value.every(item => Number.isFinite(item))) return fallback
-	return value
-}
 
 /**
  * 一份表单在浏览器侧的同步状态，对映平台的 ConfigFormSnapshot，收窄到本插件会读的那些字段

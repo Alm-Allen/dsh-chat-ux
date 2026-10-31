@@ -4,7 +4,9 @@
  * 位移、形状、颜色和字层必须共用一条时间轴：任何一条单独跑快，卡顿时右边缘都会越出消息列。
  * clip-path 与 background-color 上不了合成器；形状走壳的 scale，内容用反向 scale 抵消。
  *
- * 替身靠克隆、计算样式、卡片与子树的绘制面、祖先链共同还原；祖先链只抄 class，不抄 data-*。
+ * 替身就是真卡片那一棵子树：克隆带着它自己的 class 与 `data-*`，dsh 与玻璃的规则照样命中，只补一层
+ * 阶段属性（见 `STAGE_ATTRIBUTES`）让那几条以祖先为条件的规则也成立。真卡片在飞行期间整个藏着，
+ * 所以替身不必退而求其次去画一份平替：底色、`::before` 上的玻璃与盒内阴影全都由克隆自己画。
  */
 
 /**
@@ -82,6 +84,44 @@ const TUNING_KEY = 'dsh-chat-ux:send-flight'
 let tuning: FlightTuning = DEFAULT_TUNING
 
 /**
+ * 起手格那块底：chat-ux 玻璃卡片落到实色之后的样子（浅色主题）。
+ *
+ * **硬编码，不读 DOM。** 玻璃是「七成透明的底 + `backdrop-filter: blur(22px) saturate(130%)`」，
+ * 读一遍还要合成背后那层颜色，读错一次就是一块色差明显的补丁；而这套东西本来就不打算兼容别人的
+ * 输入框样式。换主题、换版本时改这三行（`SLAB_FILL` / `SLAB_BACKING` / `SLAB_SHEEN`）。
+ */
+const SLAB_FILL = 'rgba(247, 247, 250, 0.85)'
+
+/** 同一块底的不透明版本。`flattenColor` 合成气泡色时要一个实底，半透明的底会把结果算错。 */
+const SLAB_BACKING = 'rgb(247, 247, 250)'
+
+/**
+ * 玻璃两端那两片极淡的色，横着铺：左端偏蓝、右端偏紫，中间完全透明。
+ *
+ * 照抄 chat-ux 玻璃卡片 `::before` 上那条四停渐变。卡片又宽又扁，横向的两端色读起来就是它的「对角」，
+ * 少了这一层，起手格会是一块平涂的灰白。
+ */
+const SLAB_SHEEN = 'linear-gradient(to right, rgb(122 155 240 / 0.022) 0%, rgb(122 155 240 / 0) 38%, rgb(143 137 184 / 0) 64%, rgb(143 137 184 / 0.018) 100%)'
+
+/**
+ * 起手格为什么不做真玻璃。
+ *
+ * 替身这里要还三笔账：它**在动**，背后那片像素每帧都得重新采样；圆角动画每帧在主线程改值，整层的
+ * 绘制记录跟着每帧重录，模糊也只能回到主线程；`none` 与 `blur()` 之间还不可插值，结尾只能硬切。
+ * 350 ms 的一段飞行换来的是把整段动画从纯合成拖回逐帧 raster——读者其实来不及看那点模糊。
+ * 所以用一层八成半透的白加卡片自己那几笔内阴影模拟，七八成像，主线程一点不碰。
+ */
+
+/**
+ * 色块挂着等回显时的不透明度。
+ *
+ * 那一百来毫秒里读者盯着的应该是**输入框本身**——占位文字、按钮、描边一样不少。替身不透明地盖在
+ * 上面，看起来就是「输入框没了」。所以它挂上时几乎透明（不取 0：真为 0 时浏览器会把这一层整个
+ * 跳过绘制，起飞那一刻又要重新栅格化），起飞时才显形（见 `startSlab`）。
+ */
+const SLAB_HOLD_OPACITY = '0.01'
+
+/**
  * 内容反向缩放的除数下限（**像素**）。`visible` 被右边缘那道夹子夹到 0 时，倒数会算出 `Infinity`——
  * 那几帧壳本来就什么都看不见（缩放是 0），给个半像素的下限只为让关键帧里是一个有限数。
  */
@@ -147,11 +187,24 @@ const MAX_TEXT_LAYERS = 14
 export interface ComposerSnapshot {
     /** 卡片的视口矩形：替身的起点。 */
     readonly box: DOMRect
-    /** 卡片背后第一个不透明的底色：半透明的前景要落到它上面，才不会透出飞行中滚过的内容。 */
-    readonly behind: string
     readonly radius: number
-    readonly shadow: string
-    /** 整张卡片的克隆：底色、阴影与插入符已经摘掉，草稿区的高度钉死。 */
+    /** 卡片底落到背后那个不透明底色上的结果：色块替身的起手色，永远不透明。 */
+    readonly fill: string
+    /**
+     * 卡片的阴影，按「画在盒内」与「画在盒外」拆开。
+     *
+     * 盒内那几笔（玻璃的三笔质感）由克隆自己画；盒外那些归壳外的光晕层——壳的 `overflow: hidden` 只裁得到
+     * 盒外那一半，两层各管一半，既齐又不叠。
+     */
+    readonly shadowInside: string
+    readonly shadowOutside: string
+    /**
+     * 卡片祖先链上的阶段属性（见 `STAGE_ATTRIBUTES`）。
+     *
+     * 玻璃那几组选择器拿它当祖先条件，替身离开真实祖先链之后得自己把它补到一层上。
+     */
+    readonly stage: readonly (readonly [string, string])[]
+    /** 整张卡片的克隆：只摘掉插入符，底色与阴影留给它自己画，草稿区的高度钉死。 */
     readonly clone: HTMLElement
     /** 克隆里那一块草稿滚动区——第一段字就是它。 */
     readonly draft: HTMLElement
@@ -192,11 +245,12 @@ export interface Morph {
     /** 位移那条动画此刻的进度（0 到 1）；位移与形状同轴，拿它判「整段走完了没有」。 */
     readonly progress: () => number
     /**
-     * 起跑：把预热期间停在起手格的那批动画放开。
+     * 起跑：放开停在起手格的那批动画。由 `send-flight` 把落点补好之后调一次。
      *
-     * **由 `send-flight` 在预热帧走完之后调一次**。替身是刚插进文档的新子树，第一次 raster 要跨一两个
-     * 合成器帧，这段时间里合成器上的时间轴照走、屏幕上却一个像素都没有——读者第一眼看到的就是半路
-     * （见 `send-flight.ts` 的 `WARMUP_FRAMES`）。停住等它画得出来再起跑，起手那一段就落在可见之后。
+     * **不钉 `startTime`**，让动画 pending 到下一次渲染更新。这一条是整段飞行的关键：提交那一帧本身
+     * 就要画一百多毫秒（实测 128 ms 与 115 ms），把起跑时刻钉在「这一帧」的话，屏幕第一次出现替身时
+     * 动画已经走了同样长的一段——读者从来看不到起手格，第一眼就在半路，画面直接跳到后半段。
+     * pending 把起点落在「起手格已经画到屏幕上」之后的那一帧，那一帧花了多久都不影响。
      */
     readonly play: () => void
     /**
@@ -207,6 +261,13 @@ export interface Morph {
      * 第一眼就还是起手格。
      */
     readonly alignStart: () => void
+    /**
+     * 位移那条动画跑完（被取消时同样结算，永远不拒绝）。
+     *
+     * `send-flight` 靠它落定，不逐帧轮询：主线程被长任务占住时轮询要等下一帧才认得出「走完了」，
+     * 画面就停在终态上多停一格。
+     */
+    readonly finished: Promise<void>
     /** 位移、形状、底色、光晕、工具栏与字层的动画，收尾时一起取消。 */
     readonly animations: readonly Animation[]
 }
@@ -242,6 +303,16 @@ const TEXT_PROPERTIES = [
 const CARET_LAYER_SELECTOR = '[data-chat-ux-caret-layer]'
 
 /**
+ * 卡片祖先链上的阶段属性。玻璃那几组选择器（见 `composer-glass-styles.ts`）把自己挂在
+ * `[data-phase='active'] [data-composer-card]`、`[data-content-phase='active'] ...` 这样的条件上，
+ * 替身离开真实祖先链之后就得自己补一层，否则克隆卡片交出底色之后背后什么都没有。
+ *
+ * 两个属性在 dsh 那里只跟自己的 class 配对（`.root[data-phase='active']`、`.embeddedBody[data-content-phase=...]`），
+ * 所以单把属性补到替身的某一层上不会顺带命中 dsh 的规则，命中的只有本插件那几组玻璃。
+ */
+const STAGE_ATTRIBUTES = ['data-phase', 'data-content-phase'] as const
+
+/**
  * 克隆里要摘掉的标记：它们是 dsh（和本插件）拿来找输入框的，替身不能被找成输入框。
  *
  * **样式钩子不摘。** 属性选择器是精确匹配属性名的，`[data-composer-card]` 这样的规则除了留属性
@@ -265,7 +336,7 @@ const IDENTITY_ATTRIBUTES = [
 ] as const
 
 /**
- * 抓一次输入卡片：几何、底色、以及整张克隆。
+ * 抓一次输入卡片：几何、阴影、阶段属性，以及整张克隆。
  *
  * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
  * `cloneNode`，放在读者按下回车的那一刻不会让它等。
@@ -276,9 +347,8 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     const scroll = input.closest<HTMLElement>('[data-input-scroll]')
     if (scroll === null || scroll.parentElement !== card) return null
     const cardStyle = getComputedStyle(card)
-    // 卡片背后第一个不透明的底色。卡片自己往往是透明的（玻璃的底画在 ::before 上），替身不抄那一层，
-    // 起手那个色块就落到这里的实色上。
-    const behind = behindColorOf(card)
+    const fill = flattenColor(cardStyle.backgroundColor, behindColorOf(card))
+    const shadow = splitShadow(cardStyle.boxShadow)
     const inputStyle = getComputedStyle(input)
     const inputBox = input.getBoundingClientRect()
     const text: TextFrame = {
@@ -331,6 +401,13 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
         context.push([name, cardStyle.getPropertyValue(name)])
     }
 
+    // 阶段属性：取最近的那一层就够了，等于真卡片此刻看到的值。
+    const stage: [string, string][] = []
+    for (const name of STAGE_ATTRIBUTES) {
+        const value = card.closest('[' + name + ']')?.getAttribute(name)
+        if (value !== null && value !== undefined) stage.push([name, value])
+    }
+
     const clone = card.cloneNode(true)
     if (!(clone instanceof HTMLElement)) return null
     scrub(clone)
@@ -349,8 +426,10 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
         ['box-sizing', 'border-box'],
         ['transform', 'none'],
         ['float', 'none'],
-        ['background', 'transparent'],
-        ['box-shadow', 'none'],
+        // 底与阴影交给克隆自己：它带着卡片自己的 class 与 `data-*`，dsh 与玻璃那几套规则在它身上照常
+        // 命中——真卡片在飞行期间藏着，替身画的就是它本身，不必再凑一份实色底的平替。盒内那几笔写进行内，
+        // 盒外那些留给光晕层（见 `halo`）。
+        ['box-shadow', shadow.inside === '' ? 'none' : shadow.inside],
     ])
     const draft = clone.children[Array.from(card.children).indexOf(scroll)]
     if (!(draft instanceof HTMLElement)) return null
@@ -367,9 +446,11 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     }
     return {
         box,
-        behind,
         radius: pixel(cardStyle.borderTopLeftRadius),
-        shadow: cardStyle.boxShadow,
+        fill,
+        shadowInside: shadow.inside,
+        shadowOutside: shadow.outside,
+        stage,
         clone,
         draft,
         draftScrollTop: scroll.scrollTop,
@@ -377,6 +458,16 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
         text,
         context,
     }
+}
+
+/**
+ * 把一条动画的 `finished` 变成「永远结算、永不拒绝」的 `Promise<void>`。
+ *
+ * 动画被 `cancel` 掉时 `finished` 是拒绝的，而取消在这里是正常收尾（落定、连发时收掉上一段）。
+ * 不接住的话控制台里每次取消都留一条 unhandled rejection。
+ */
+function settled(animation: Animation): Promise<void> {
+    return animation.finished.then(() => undefined, () => undefined)
 }
 
 /** 读一个长度值。读不出来当 0——位移偏一点点，也比整段不做要轻。 */
@@ -393,14 +484,153 @@ export function alphaOf(color: string): number {
 }
 
 /**
- * 起一段形变：把替身挂到页面上、把全部动画交给合成器。
+ * 挂在页面上的那一份替身。
+ *
+ * 不管里面是克隆出来的整张卡片，还是一块只复刻尺寸与圆角的色块，`send-flight` 只认这一个接口。
  */
-export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end: DOMRect): Morph | null {
+export interface HoldFrame {
+    /** 最外层：终点补差写在它身上。 */
+    readonly wrapper: HTMLElement
+    /** 起手位置：挂上替身时卡片的矩形。 */
+    readonly origin: DOMRect
+    /** 起飞：把落点、采样与动画补上。 */
+    readonly launch: (bubble: HTMLElement, end: DOMRect) => Morph | null
+}
+
+/**
+ * 色块替身要的那点东西：尺寸、圆角、底色。
+ *
+ * 和 `ComposerSnapshot` 分开是为了**省掉那次克隆**。整卡克隆要 `cloneNode` 一整棵子树、再逐个子元素
+ * `getBoundingClientRect` 一次（`collect` 会强制布局），而色块一个元素都用不上。提交那一帧主线程本来
+ * 就被 dsh 占着，这笔账不该再记在它头上。
+ */
+export interface SlabSnapshot {
+    readonly box: DOMRect
+    readonly radius: number
+    /**
+     * 卡片的描边与阴影，原样的 `border` / `box-shadow`。
+     *
+     * 底色写死（见 `SLAB_FILL`），这两笔留在快照里：起飞之后色块要自己认得出形状，而阴影是卡片
+     * 在浅色背景上唯一看得出来的一笔。它们跟着 `mover` 一起缩放，落定时正好贴到气泡边上。
+     */
+    readonly border: string
+    readonly shadow: string
+}
+
+/** 抓一次色块快照：两次布局读、几次样式读，没有克隆、没有子树遍历。 */
+export function snapshotSlab(card: HTMLElement): SlabSnapshot | null {
+    const box = card.getBoundingClientRect()
+    if (box.width === 0 || box.height === 0) return null
+    const style = getComputedStyle(card)
+    const borderWidth = pixel(style.borderTopWidth)
+    return {
+        box,
+        radius: pixel(style.borderTopLeftRadius),
+        border: borderWidth > 0 ? borderWidth + 'px ' + style.borderTopStyle + ' ' + style.borderTopColor : '',
+        shadow: style.boxShadow === 'none' ? '' : style.boxShadow,
+    }
+}
+
+/**
+ * 已经挂好的替身骨架：停在起手格，一条动画都还没有。
+ */
+export interface GhostFrame {
+    /** 最外层：终点补差写在它身上。 */
+    readonly wrapper: HTMLElement
+    /** 位移那一层。 */
+    readonly mover: HTMLElement
+    /** 壳外的光晕层。 */
+    readonly halo: HTMLElement
+    /** 做缩放与裁剪的壳。 */
+    readonly shell: HTMLElement
+    /** 与壳互为倒数的内容层，字层也挂在它里面。 */
+    readonly scaler: HTMLElement
+    /** 提交那一刻抓到的卡片。 */
+    readonly snapshot: ComposerSnapshot
+    /** 起手位置：挂上替身时卡片的矩形。 */
+    readonly origin: DOMRect
+}
+
+/**
+ * 把替身挂到页面上，停在起手格，动画一条都不建。
+ *
+ * 这一步要发生在**提交那一刻**，而不是回声出现时：替身是刚插进文档的新子树，第一次栅格化要好几百
+ * 毫秒（实测闲时提交时开头那两帧是 128 与 115 ms）。先挂上、让它在「按下回车到回声出现」这段空档里
+ * 画完，起飞时就没有首次绘制那笔账。
+ *
+ * 位置与尺寸都取快照：那时真卡片正好停在那里，而它随即被藏起来，由替身接替它。
+ */
+export function mountGhost(snapshot: ComposerSnapshot, origin: DOMRect): HoldFrame {
+    const W0 = snapshot.box.width
+    const H0 = snapshot.box.height
+    const R0 = snapshot.radius
+    const wrapper = document.createElement('div')
+    wrapper.setAttribute(GHOST_ATTRIBUTE, '')
+    wrapper.setAttribute('aria-hidden', 'true')
+    wrapper.inert = true
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
+    wrapper.style.left = origin.left + 'px'
+    wrapper.style.top = origin.top + 'px'
+    const mover = document.createElement('div')
+    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform'
+    const halo = document.createElement('div')
+    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity'
+    halo.style.width = W0 + 'px'
+    halo.style.height = H0 + 'px'
+    halo.style.borderRadius = R0 + 'px'
+    // 只画盒外那一半：盒内那几笔（玻璃的三笔质感）长在克隆卡片自己身上，两层叠在同一处会加深。
+    halo.style.boxShadow = snapshot.shadowOutside
+    const shell = document.createElement('div')
+    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform'
+    shell.style.width = W0 + 'px'
+    shell.style.height = H0 + 'px'
+    for (const [name, value] of snapshot.context) shell.style.setProperty(name, value)
+    // 壳既做**缩放**（形状）又做**裁**（overflow: hidden）。下面这层 scaler 与它逐格互为倒数
+    // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
+    // 全是纯 transform，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
+    const scaler = document.createElement('div')
+    scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
+    scaler.style.width = W0 + 'px'
+    scaler.style.height = H0 + 'px'
+    // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
+    shell.style.borderRadius = R0 + 'px'
+    shell.appendChild(scaler)
+    // 阶段层：display: contents 不生成盒子，只把真卡片祖先链上的阶段属性带进来。玻璃那几组
+    // [data-phase='active'] [data-composer-card]::before 因此在替身里也命中，克隆卡片于是自己画那份底
+    // ——半透明、背后模糊、三笔质感，与读者刚按过的那张卡片是同一个样子。
+    //
+    // 飞过消息列时也不会再透出下面滚过的字：玻璃把它们糊掉，没有玻璃时克隆的底本来就不透明。
+    const stage = document.createElement('div')
+    stage.style.display = 'contents'
+    for (const [name, value] of snapshot.stage) stage.setAttribute(name, value)
+    stage.appendChild(snapshot.clone)
+    scaler.appendChild(stage)
+    mover.appendChild(halo)
+    mover.appendChild(shell)
+    wrapper.appendChild(mover)
+    // 替身永远落在文档最后：document.querySelector 取文档序第一个，排在后面，认卡片、认输入框的
+    // 人才始终拿到真的那两个（留下的样式钩子见 IDENTITY_ATTRIBUTES）。
+    ghostHost().appendChild(wrapper)
+    // 克隆要进了文档才能滚到原来的位置。
+    if (snapshot.draftScrollTop > 0) snapshot.draft.scrollTop = snapshot.draftScrollTop
+    const frame: GhostFrame = {wrapper, mover, halo, shell, scaler, snapshot, origin}
+    return {wrapper, origin, launch: (bubble, end) => startMorph(frame, bubble, end)}
+}
+
+/**
+ * 起一段形变：把终点、采样、字层与全部动画补上。
+ *
+ * 起点是 frame.origin——替身挂上那一刻卡片所在的位置，此刻它已经在屏幕上停在那，**不能再挪**：
+ * 再挪一次就是读者看到的那一下跳。
+ *
+ * 尺寸仍取快照：克隆就是按它排好的，外壳、草稿区、工具栏的相对位置全以它为尺子。
+ */
+export function startMorph(frame: GhostFrame, bubble: HTMLElement, end: DOMRect): Morph | null {
     if (end.width === 0 || end.height === 0) return null
-    const start = snapshot.box
+    const {snapshot, origin, mover, halo, shell, scaler, wrapper} = frame
     const style = getComputedStyle(bubble)
-    const W0 = start.width
-    const H0 = start.height
+    const W0 = snapshot.box.width
+    const H0 = snapshot.box.height
     const W1 = end.width
     const H1 = end.height
     const R0 = snapshot.radius
@@ -414,12 +644,19 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     }
     const boxWidth = Math.max(W0, W1)
     const boxHeight = Math.max(H0, H1)
+    // 壳挂载时按快照的尺寸建（起手格要与真卡片逐像素重合），这里按落点一次改到位；改动发生在起飞
+    // 那一帧、动画还没起跑，读者看不到。
+    shell.style.width = boxWidth + 'px'
+    shell.style.height = boxHeight + 'px'
+    shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight)
+    scaler.style.width = boxWidth + 'px'
+    scaler.style.height = boxHeight + 'px'
 
-    const dx = end.left - start.left
-    const dy = end.top - start.top
+    const dx = end.left - origin.left
+    const dy = end.top - origin.top
     // 右边缘的硬上限：终点那条气泡的右边。曲线本身已经保证走不到它外头（见 `ACROSS_OMEGA`），这一道
     // 夹子是留给「主线程卡住时形变落后于位移」这类意外的——真夹到了，也只是起点那几帧少画一条边。
-    const reach = end.right - start.left
+    const reach = end.right - origin.left
     // 这一段用哪一套参数：默认值，或者浏览器里那一份覆盖（见 `readTuning`）。现读一次，所以调完参数
     // 发下一条消息就是新的，不必刷新页面。
     tuning = readTuning()
@@ -437,7 +674,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
             m,
             width,
             // 位移把外框推到上限之外时，多出来的那一段不画。位移与形变走同一个 `m`（见 `travel`），
-            // 所以曲线本身已经把右边缘钉在 `[start.right, end.right]` 里，这一项只是保险。
+            // 所以曲线本身已经把右边缘钉在 `[origin.right, end.right]` 里，这一项只是保险。
             visible: Math.max(0, Math.min(width, reach - dx * m)),
             height: H0 + (H1 - H0) * m,
             // 圆角要等字撑高的那几格落定之后再算（见 `textWindows` 调用之后那段），这里先占个位。
@@ -449,46 +686,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
         })
     }
 
-    const wrapper = document.createElement('div')
-    wrapper.setAttribute(GHOST_ATTRIBUTE, '')
-    wrapper.setAttribute('aria-hidden', 'true')
-    wrapper.inert = true
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
-    wrapper.style.left = start.left + 'px'
-    wrapper.style.top = start.top + 'px'
-    const mover = document.createElement('div')
-    mover.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform'
-    const halo = document.createElement('div')
-    halo.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;background:transparent;will-change:transform,opacity'
-    halo.style.width = W0 + 'px'
-    halo.style.height = H0 + 'px'
-    halo.style.borderRadius = R0 + 'px'
-    halo.style.boxShadow = snapshot.shadow
-    const shell = document.createElement('div')
-    shell.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;transform-origin:0 0;will-change:transform'
-    shell.style.width = boxWidth + 'px'
-    shell.style.height = boxHeight + 'px'
-    for (const [name, value] of snapshot.context) shell.style.setProperty(name, value)
-    // 壳只做两件事：**缩放**（形状）与**裁**（`overflow: hidden`）。下面这层 `scaler` 与它逐格互为倒数
-    // ——壳缩小多少、内容就放大多少，内容的视觉尺寸与位置一个像素都不变，变的只有裁剪框。两层加位移
-    // 全是纯 `transform`，走同一条时间轴、同一块合成器：主线程被 dsh 占住时它们一起停在同一格上。
-    const scaler = document.createElement('div')
-    scaler.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
-    scaler.style.width = boxWidth + 'px'
-    scaler.style.height = boxHeight + 'px'
-    // 起手显式写一次圆角：动画还 pending 的那一两帧按 offset 0 画，慢机器上不写会先露一次方盒子。
-    // 半径补偿见下面那段动画。
-    shell.style.borderRadius = cornerRadius(R0, W0 / boxWidth, H0 / boxHeight)
-    shell.appendChild(scaler)
-    // 底是一层实色，全程不变：气泡自己的颜色可能是半透明的，落到卡片背后那个不透明的底色上再画，
-    // 替身飞过消息列时才不会透出下面滚过的字（那正是起手那一截闪烁的来源）。不做毛玻璃：替身没有
-    // ::before 那一层，`backdrop-filter` 一挂就要每帧重新采样背后的模糊，飞起来又贵又抖。
-    const cardFill = document.createElement('div')
-    cardFill.style.cssText = 'position:absolute;inset:0'
-    cardFill.style.backgroundColor = flattenColor(style.backgroundColor, snapshot.behind)
-    scaler.appendChild(cardFill)
-    const cloneHost: HTMLElement = scaler
-    cloneHost.appendChild(snapshot.clone)
+
 
     // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
     // 自己，其余每段一层。
@@ -529,14 +727,6 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
         return {layer, window}
     })
 
-    mover.appendChild(halo)
-    mover.appendChild(shell)
-    wrapper.appendChild(mover)
-    // 替身永远落在文档最后：`document.querySelector` 取文档序第一个，排在后面，认卡片、认输入框的
-    // 人才始终拿到真的那两个（留下的样式钩子见 `IDENTITY_ATTRIBUTES`）。
-    ghostHost().appendChild(wrapper)
-    // 克隆要进了文档才能滚到原来的位置。
-    if (snapshot.draftScrollTop > 0) snapshot.draft.scrollTop = snapshot.draftScrollTop
 
     const timing: KeyframeAnimationOptions = {duration: FLIGHT_MS, easing: 'linear', fill: 'forwards'}
     const animations: Animation[] = []
@@ -683,7 +873,7 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
     }
     // 光晕挂在壳**外面**，壳的 `overflow: hidden` 裁不到它——它的阴影会画到可见右边缘之外（实测每一帧
     // 都越过列右 24 px）。缩放按「外框 + 阴影扩散」算，阴影的外沿正好落在可见右边缘上。
-    const shadow = shadowSpread(snapshot.shadow)
+    const shadow = shadowSpread(snapshot.shadowOutside)
     run(halo, between(0, tuning.morphEnd, sample => ({
         transform: 'scale(' + sample.visible / (W0 + shadow) + ', ' + sample.height / (H0 + shadow) + ')',
         opacity: String(Math.max(0, 1 - sample.m / HALO_GONE_AT)),
@@ -736,13 +926,9 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
         if (started) return
         started = true
         playedAt = performance.now()
-        // 起跑时刻显式钉在「现在」：等 pending 自己定的话，主线程被长任务拖住时这一格会晚出几十毫秒
-        // （动画还没起跑，屏幕上却该动了）。
-        const now = document.timeline.currentTime
-        for (const animation of animations) {
-            animation.play()
-            if (typeof now === 'number') animation.startTime = now
-        }
+        // 只 play，不写 startTime：让浏览器在**下一次渲染更新**时自己定起点。见 `Morph.play` 的文档
+        // ——把起点钉在这一帧，这一帧画了多久，屏幕第一次看见替身时动画就已经走了多久。
+        for (const animation of animations) animation.play()
     }
     /** 见 `Morph.alignStart`。 */
     const alignStart = (): void => {
@@ -758,7 +944,158 @@ export function startMorph(snapshot: ComposerSnapshot, bubble: HTMLElement, end:
             if (typeof start === 'number') animation.startTime = start + ahead
         }
     }
-    return {wrapper, compact, progress, play, alignStart, animations}
+    return {wrapper, compact, progress, play, alignStart, animations, finished: settled(travel)}
+}
+
+/**
+ * 色块替身：只复刻卡片的尺寸、圆角与底色，一个内容元素都不复制。
+ *
+ * 这一版把「形变要画的东西」压到最低：一个方块加一层渐入的气泡色。它没有克隆子树，首次栅格化几乎
+ * 不用花钱；全程只有 transform、opacity 与 border-radius 三条动画，前两条在合成器上。
+ *
+ * **两层，各管一件事**：外层只承接 `followTarget` 的补差平移（飞行期间落点自己会动几十像素），
+ * 内层负责整段位移与形变。两层分开是必须的——补差每帧往行内写 `transform`，飞行那条是动画，
+ * 写在同一个元素上时谁压谁全看动画处于 pending、running 还是刚结束，位置会在两处之间跳。
+ */
+export function mountSlab(snapshot: SlabSnapshot, origin: DOMRect): HoldFrame {
+    const wrapper = document.createElement('div')
+    wrapper.setAttribute(GHOST_ATTRIBUTE, '')
+    wrapper.setAttribute('aria-hidden', 'true')
+    wrapper.inert = true
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
+    wrapper.style.left = origin.left + 'px'
+    wrapper.style.top = origin.top + 'px'
+    const mover = document.createElement('div')
+    mover.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
+    mover.style.width = snapshot.box.width + 'px'
+    mover.style.height = snapshot.box.height + 'px'
+    mover.style.boxSizing = 'border-box'
+    mover.style.borderRadius = snapshot.radius + 'px'
+    mover.style.backgroundColor = SLAB_FILL
+    mover.style.backgroundImage = SLAB_SHEEN
+    mover.style.opacity = SLAB_HOLD_OPACITY
+    if (snapshot.border !== '') mover.style.border = snapshot.border
+    if (snapshot.shadow !== '') mover.style.boxShadow = snapshot.shadow
+    const tint = document.createElement('div')
+    tint.style.cssText = 'position:absolute;inset:0;border-radius:inherit;opacity:0'
+    mover.appendChild(tint)
+    wrapper.appendChild(mover)
+    ghostHost().appendChild(wrapper)
+    return {
+        wrapper,
+        origin,
+        launch: (bubble, end) => startSlab(wrapper, mover, tint, snapshot, origin, bubble, end),
+    }
+}
+
+/**
+ * 色块替身的起飞：位置、缩放与圆角共用一条时间轴，颜色靠那层气泡色的不透明度渐入。
+ *
+ * 没有采样字层、没有折行探针、没有逐元素动画——每一帧要变的只有一个元素的几条属性。
+ */
+function startSlab(
+    wrapper: HTMLElement,
+    mover: HTMLElement,
+    tint: HTMLElement,
+    snapshot: SlabSnapshot,
+    origin: DOMRect,
+    bubble: HTMLElement,
+    end: DOMRect,
+): Morph | null {
+    if (end.width === 0 || end.height === 0) return null
+    const style = getComputedStyle(bubble)
+    const W0 = snapshot.box.width
+    const H0 = snapshot.box.height
+    const W1 = end.width
+    const H1 = end.height
+    const R0 = snapshot.radius
+    const R1 = pixel(style.borderTopLeftRadius)
+    const dx = end.left - origin.left
+    const dy = end.top - origin.top
+    tuning = readTuning()
+    // 起飞这一刻才显形：气泡从输入框里长出来，就是从这一帧开始的（理由见 `SLAB_HOLD_OPACITY`）。
+    mover.style.opacity = '1'
+    tint.style.background = flattenColor(style.backgroundColor, SLAB_BACKING)
+
+    const samples = Array.from({length: SAMPLES + 1}, (_, step) => {
+        const u = step / SAMPLES
+        const m = morphProgress(u)
+        return {
+            u,
+            m,
+            width: W0 + (W1 - W0) * m,
+            height: H0 + (H1 - H0) * m,
+            x: dx * m,
+            y: dy * riseProgress(u),
+            radius: 0,
+        }
+    })
+    // 圆度与克隆那一版同一套：从卡片自己的走到气泡自己的，按进度的平方根插值。
+    const shortStart = Math.min(W0, H0)
+    const shortEnd = Math.min(W1, H1)
+    const shareStart = shortStart > 0 ? Math.min(1, (2 * R0) / shortStart) : 0
+    const shareEnd = shortEnd > 0 ? Math.min(1, (2 * R1) / shortEnd) : 0
+    for (const sample of samples) {
+        const short = Math.min(sample.width, sample.height)
+        const share = shareStart + (shareEnd - shareStart) * Math.sqrt(sample.m)
+        sample.radius = (short / 2) * share
+    }
+
+    const timing: KeyframeAnimationOptions = {duration: FLIGHT_MS, easing: 'linear', fill: 'forwards'}
+    const animations: Animation[] = []
+    const run = (element: HTMLElement, frames: Keyframe[]): Animation => {
+        const animation = element.animate(frames, timing)
+        animations.push(animation)
+        return animation
+    }
+    const travel = run(mover, samples.map(sample => ({
+        offset: sample.u,
+        transform: 'translate(' + sample.x + 'px, ' + sample.y + 'px) scale('
+            + (sample.width / W0) + ', ' + (sample.height / H0) + ')',
+    })))
+    run(mover, samples.map(sample => ({
+        offset: sample.u,
+        borderRadius: cornerRadius(sample.radius, sample.width / W0, sample.height / H0),
+    })))
+    run(tint, samples.map(sample => ({
+        offset: sample.u,
+        opacity: String(Math.min(1, sample.m * 1.6)),
+    })))
+
+    const progress = (): number => {
+        const raw = travel.currentTime
+        if (typeof raw !== 'number') return 0
+        const u = raw / FLIGHT_MS
+        if (!(u > 0)) return 0
+        return u > 1 ? 1 : u
+    }
+    for (const animation of animations) {
+        animation.pause()
+        animation.currentTime = 0
+    }
+    let started = false
+    let playedAt: number | null = null
+    let aligned = false
+    const play = (): void => {
+        if (started) return
+        started = true
+        playedAt = performance.now()
+        for (const animation of animations) animation.play()
+    }
+    const alignStart = (): void => {
+        if (aligned) return
+        const raw = travel.currentTime
+        if (typeof raw !== 'number' || raw <= 0) return
+        aligned = true
+        if (playedAt === null) return
+        const ahead = raw - (performance.now() - playedAt)
+        if (ahead <= ALIGN_TOLERANCE_MS) return
+        for (const animation of animations) {
+            const start = animation.startTime
+            if (typeof start === 'number') animation.startTime = start + ahead
+        }
+    }
+    return {wrapper, compact: () => {}, progress, play, alignStart, animations, finished: settled(travel)}
 }
 
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
@@ -1103,10 +1440,27 @@ function shadowSpread(shadow: string): number {
 }
 
 /**
+ * 把一条 `box-shadow` 拆成「画在盒内」与「画在盒外」两串。
+ *
+ * 盒内那几笔（`inset`）跟着卡片走，盒外那些归壳外的光晕层——壳把盒子外面的东西裁掉。逗号只在层与层
+ * 之间才是分隔符，颜色函数里的逗号要跳过，所以按括号层级切。`none` 拆出来两边都是空串。
+ */
+function splitShadow(shadow: string): { inside: string; outside: string } {
+    const inside: string[] = []
+    const outside: string[] = []
+    for (const layer of shadow.split(/,(?![^()]*\))/)) {
+        const trimmed = layer.trim()
+        if (trimmed === '') continue
+        if (/\binset\b/.test(trimmed)) inside.push(trimmed)
+        else outside.push(trimmed)
+    }
+    return {inside: inside.join(', '), outside: outside.join(', ')}
+}
+
+/**
  * 卡片背后第一个不透明的底色。
  *
- * 一路往上找第一个 `background-color` 不透明的节点——多半是画布。到 `body` 都没找到就给 `transparent`：
- * 落到透明上等于没落，但至少不会画一块来路不明的色。
+ * 一路往上找第一个 background-color 不透明的节点——多半是画布。到 body 都没找到就给 transparent。
  */
 function behindColorOf(card: HTMLElement): string {
     for (let node: HTMLElement | null = card; node !== null; node = node.parentElement) {
@@ -1119,8 +1473,7 @@ function behindColorOf(card: HTMLElement): string {
 /**
  * 把一层可能半透明的颜色落到一个实色底上，得到一个不透明的颜色。
  *
- * 读得出来的只有 `rgb()` / `rgba()`（`getComputedStyle` 给的就是这两种）；别的写法原样返回，
- * 宁可透一点，也不画一块猜出来的色。
+ * 读得出来的只有 rgb() / rgba()（getComputedStyle 给的就是这两种）；别的写法原样返回。
  */
 function flattenColor(color: string, behind: string): string {
     const front = colorParts(color)

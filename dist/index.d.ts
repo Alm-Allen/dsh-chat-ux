@@ -17,13 +17,6 @@ export declare const DEFAULT_COMPOSER_GLASS = true;
 export declare const DEFAULT_LIVE_DIFF = true;
 export declare const DEFAULT_FOLLOW_ON_APPEAR = true;
 export declare const DEFAULT_SEND_FLIGHT = true;
-export declare const DEFAULT_BUBBLE_RISE = true;
-export declare const DEFAULT_BUBBLE_EMERGE_SCALE = 0.8;
-export declare const DEFAULT_BUBBLE_REVEAL = 16;
-export declare const DEFAULT_BUBBLE_OUTDENT = 0;
-export declare const DEFAULT_BUBBLE_TOTAL_MS = 800;
-export declare const DEFAULT_BUBBLE_CURVE_X: number[];
-export declare const DEFAULT_BUBBLE_CURVE_Y: number[];
 export interface Config {
     autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
@@ -32,14 +25,7 @@ export interface Config {
     composerGlass: Volatile<boolean>;
     liveDiff: Volatile<boolean>;
     followOnAppear: Volatile<boolean>;
-    bubbleRise: Volatile<boolean>;
     sendFlight: Volatile<boolean>;
-    bubbleEmergeScale: Volatile<number>;
-    bubbleReveal: Volatile<number>;
-    bubbleOutdent: Volatile<number>;
-    bubbleTotalMs: Volatile<number>;
-    bubbleCurveX: Volatile<number[]>;
-    bubbleCurveY: Volatile<number[]>;
 }
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     autoFold: Schema<boolean, boolean, "volatile-defined">;
@@ -49,14 +35,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
     followOnAppear: Schema<boolean, boolean, "volatile-defined">;
-    bubbleRise: Schema<boolean, boolean, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
-    bubbleEmergeScale: Schema<number, number, "volatile-defined">;
-    bubbleReveal: Schema<number, number, "volatile-defined">;
-    bubbleOutdent: Schema<number, number, "volatile-defined">;
-    bubbleTotalMs: Schema<number, number, "volatile-defined">;
-    bubbleCurveX: Schema<NoInfer<number[]>, NoInfer<number[]>, "volatile-defined">;
-    bubbleCurveY: Schema<NoInfer<number[]>, NoInfer<number[]>, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
@@ -65,13 +44,6 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     composerGlass: Schema<boolean, boolean, "volatile-defined">;
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
     followOnAppear: Schema<boolean, boolean, "volatile-defined">;
-    bubbleRise: Schema<boolean, boolean, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
-    bubbleEmergeScale: Schema<number, number, "volatile-defined">;
-    bubbleReveal: Schema<number, number, "volatile-defined">;
-    bubbleOutdent: Schema<number, number, "volatile-defined">;
-    bubbleTotalMs: Schema<number, number, "volatile-defined">;
-    bubbleCurveX: Schema<NoInfer<number[]>, NoInfer<number[]>, "volatile-defined">;
-    bubbleCurveY: Schema<NoInfer<number[]>, NoInfer<number[]>, "volatile-defined">;
 }>>, "plain">;
 export declare function apply(): void;

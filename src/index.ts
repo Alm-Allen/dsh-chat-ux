@@ -45,27 +45,8 @@ export const DEFAULT_LIVE_DIFF = true
 // 实测一次 run_code 执行里有两回落后到一百四十像素上下，正好把新出现的思考推出视野
 export const DEFAULT_FOLLOW_ON_APPEAR = true
 
-// 发送气泡的形变：提交那一下整张输入卡片收成落点那条气泡。默认开着。
-// 它与下面那一套冒头互斥：这个开着时冒头不装
+// 发送气泡的形变：提交那一下整张输入卡片收成落点那条气泡。默认开着
 export const DEFAULT_SEND_FLIGHT = true
-
-// 发送气泡的冒头。默认开着：发出之后那一条从输入框里探出来再升到落点，而不是直接出现在那里。
-// 关掉时这一处整块不装，气泡就是 dsh 原来的样子
-export const DEFAULT_BUBBLE_RISE = true
-
-// 冒头那一条动效：四个旋钮加一条行程曲线。这一套是在 .probe/想实现的气泡动效.html 里调出来的
-// （2026-10-30 那一版）：起手缩到 0.8 倍，一下探出输入框、微微一沉，再冲过落点落回来
-// 它们只在气泡动画播一次时读一次，所以卡片上改完，下一次发送就按新的走
-export const DEFAULT_BUBBLE_EMERGE_SCALE = 0.8
-export const DEFAULT_BUBBLE_REVEAL = 16
-export const DEFAULT_BUBBLE_OUTDENT = 0
-export const DEFAULT_BUBBLE_TOTAL_MS = 800
-
-// 行程曲线是一条七次贝塞尔：八个控制点，首尾钉在 (0,0) 与 (1,1)，中间六个横纵都能动。
-// 横轴是整段走了几成，纵轴是行程——0 还整个藏在输入区后面，1 是落点，越过 1 就是冲过落点。
-// 这一条是先快、再往后沉一点、末了猛冲上去的写法
-export const DEFAULT_BUBBLE_CURVE_X = [0, 0.02, 0.245, 0.462, 0.539, 0.559, 0.579, 1]
-export const DEFAULT_BUBBLE_CURVE_Y = [0, 0.485, 0.438, 0.314, 0.162, 1.15, 1.15, 1]
 
 // 这个插件拥有的配置字段
 export interface Config {
@@ -83,22 +64,8 @@ export interface Config {
 	liveDiff: Volatile<boolean>
 	// 工具调用与思考行第一次出现时是否把滚动位置补到底
 	followOnAppear: Volatile<boolean>
-	// 发送之后那一条气泡是否从输入框里冒出来（冒头）
-	bubbleRise: Volatile<boolean>
 	// 发送那一下是否整张输入卡片收成落点那条气泡（形变）
 	sendFlight: Volatile<boolean>
-	// 冒头起手时气泡缩到多大
-	bubbleEmergeScale: Volatile<number>
-	// 冒头那一刻露出输入区上沿多高一截
-	bubbleReveal: Volatile<number>
-	// 起手比聊天列右缘再往外探多少
-	bubbleOutdent: Volatile<number>
-	// 整段多长
-	bubbleTotalMs: Volatile<number>
-	// 行程曲线的八个控制点横坐标
-	bubbleCurveX: Volatile<number[]>
-	// 行程曲线的八个控制点纵坐标
-	bubbleCurveY: Volatile<number[]>
 }
 
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
@@ -110,20 +77,7 @@ export const Config = Schema.object({
 	composerGlass: Schema.boolean().default(DEFAULT_COMPOSER_GLASS).volatile(),
 	liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
 	followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
-	bubbleRise: Schema.boolean().default(DEFAULT_BUBBLE_RISE).volatile(),
 	sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
-	// 下面这几个数不设 min / max / step。它们只在本地调手感，可拖的范围由卡片上那几根滑杆卡住；
-	// 而 schema 一旦收紧，读者存过的旧值就会让整份配置判成非法，插件在管理页上直接变成「异常」——
-	// 右探出的上限从 40 收到 16 时就是这么坏掉的（invalid config: expected number <= 16 but got 40），
-	// 一个滑块的历史值能把整个插件锁在外面，代价远大于那点约束力。运行时的兜底在 bubble-rise：
-	// 段长兜到至少 1 ms，右探出再大也只按滚动器的内边距（16px）算，曲线点数不对就退回默认那一条
-	bubbleEmergeScale: Schema.number().default(DEFAULT_BUBBLE_EMERGE_SCALE).volatile(),
-	bubbleReveal: Schema.number().default(DEFAULT_BUBBLE_REVEAL).volatile(),
-	bubbleOutdent: Schema.number().default(DEFAULT_BUBBLE_OUTDENT).volatile(),
-	bubbleTotalMs: Schema.number().default(DEFAULT_BUBBLE_TOTAL_MS).volatile(),
-	// 曲线那两个数组同样不校验长度：长度与单调性都归 bubble-rise 兜底
-	bubbleCurveX: Schema.array(Schema.number()).default(DEFAULT_BUBBLE_CURVE_X).volatile(),
-	bubbleCurveY: Schema.array(Schema.number()).default(DEFAULT_BUBBLE_CURVE_Y).volatile(),
 })
 
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写

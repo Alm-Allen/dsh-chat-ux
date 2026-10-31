@@ -9,7 +9,6 @@
  * 它还读 dsh-chat-ux 这一行的共享 config form，这一页上改的值就是这样到达效果里的，不用刷新
  */
 import type {Context as ClientContext} from "@deepseek-ai/cordis"
-import {installBubbleRise} from "./chat/bubble-rise/bubble-rise"
 import {installCaretMotion} from "./chat/caret/caret-motion"
 import type {CaretMotionMode} from "./chat/caret/caret-motion"
 import {installCacheHitPill} from "./chat/cache-hit/cache-hit-pill"
@@ -25,10 +24,10 @@ import {installReasoningFold} from "./chat/fold/reasoning-fold"
 import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
-	DEFAULT_AUTO_FOLD, DEFAULT_BUBBLE_RISE, DEFAULT_BUBBLE_TUNING, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT, readBubbleTuning,
+	DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
+	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
-import type {BubbleRiseTuning, ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
+import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
 import {ALL_CSS, STYLE_ID} from "./styles"
 
@@ -74,8 +73,6 @@ export function apply(ctx: ClientContext): void {
 		liveDiff: DEFAULT_LIVE_DIFF,
 		followOn: DEFAULT_FOLLOW_ON_APPEAR,
 		sendFlight: DEFAULT_SEND_FLIGHT,
-		bubbleRise: DEFAULT_BUBBLE_RISE,
-		bubbleTuning: DEFAULT_BUBBLE_TUNING,
 	}
 
 	// 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -136,19 +133,6 @@ export function apply(ctx: ClientContext): void {
 		if (followDispose !== null) return
 		followDispose = installCallAppearFollow()
 	}
-	// 气泡冒头也是一装一卸的一处：开关关掉时整块不装，回声的隐藏规则与探针一起失效，气泡就是 dsh 原来的样子。
-	// 参数不重装：动画每次播之前现读一份，所以卡片上拖完滑杆不必重落，下一次发送就按新的走
-	let bubbleRiseDispose: (() => void) | null = null
-	const syncBubbleRise = (): void => {
-		// 形变开着时冒头不装：两套都盯着同一条真实行，同一帧上叠两套位移只会互相追
-		if (!settings.bubbleRise || settings.sendFlight) {
-			bubbleRiseDispose?.()
-			bubbleRiseDispose = null
-			return
-		}
-		if (bubbleRiseDispose !== null) return
-		bubbleRiseDispose = installBubbleRise(() => settings.bubbleTuning)
-	}
 	const syncSettings = (): void => {
 		const value = scope.getSnapshot().value
 		settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
@@ -158,14 +142,11 @@ export function apply(ctx: ClientContext): void {
 		settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
 		settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
 		settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
-		settings.bubbleRise = value?.bubbleRise ?? DEFAULT_BUBBLE_RISE
-		settings.bubbleTuning = readBubbleTuning(value)
 		syncGlass()
 		caret.resync()
 		syncPie()
 		syncAutoFold()
 		syncFollow()
-		syncBubbleRise()
 	}
 	syncSettings()
 	ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror")
@@ -215,22 +196,8 @@ export function apply(ctx: ClientContext): void {
 	ctx.effect(() => installFoldGlide(), "dsh-chat-ux: fold glide")
 
 	// 发送气泡的形变：读者按下发送以后，整张输入卡片（连工具栏与草稿）收成落点那条气泡。开关关掉时
-	// 连起点都不量。它与下面那一处冒头盯着同一个位置，所以冒头那边会先看这个开关
+	// 连起点都不量
 	ctx.effect(() => installSendFlight(() => settings.sendFlight), "dsh-chat-ux: send flight")
-
-	// 发送气泡的冒头：读者按下发送以后，那一条从输入框里探出来再升到落点。动的是聊天列里真实那一行
-	// 里的气泡，不克隆替身；行本身仍在布局里占位。提交后本地的回声由这一处先藏起来，真实行到达时
-	// 才把它摆出来，所以同一条消息只会出现一次。常驻，没有开关
-	ctx.effect(
-		() => {
-			syncBubbleRise()
-			return () => {
-				bubbleRiseDispose?.()
-				bubbleRiseDispose = null
-			}
-		},
-		"dsh-chat-ux: bubble rise",
-	)
 
 	// 内置的文件变更行只给根调用画 diff 卡片（diff-card-model 第一行就按 parentCallId 排除），
 	// 所以 run_code 的程序里派发出去的 write 与 edit 拿不到行尾那截 +n -m。这一处用 -1 的遮挡等级
@@ -299,10 +266,6 @@ interface ChatUxSettings {
 	followOn: boolean
 	// 发送气泡是否走形变（整张卡片收成气泡），改一次就得重落一次
 	sendFlight: boolean
-	// 发送气泡是否冒头，改一次就得重落一次（装或卸）
-	bubbleRise: boolean
-	// 冒头那十个参数，每次播放前现读
-	bubbleTuning: BubbleRiseTuning
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input
