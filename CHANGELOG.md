@@ -7,6 +7,23 @@
 
 ## [Unreleased]
 
+### 自动开合：两块合并成一个观察者
+
+- 思考行与过程组原先各开一个观察整篇文档的 `MutationObserver`，同一批变化被遍历两遍、各排一帧 rAF。现在合成 `src/client/chat/fold/fold-observers.ts` 一处：一条 record 只跑一次 `closest`（`[data-variant="think"], [data-step-process]`）就同时问出「这是哪一行、哪个组」，排帧最多一次。两个模块各回自己的 `sync` / `dispose`，装与卸由 `index.tsx` 的 `syncAutoFold` 主持。
+- 观察者新增三道筛：本插件自己写的 `data-chat-ux-*` 属性变化一律跳过；`addedNodes` 里一个元素都没有的 `childList` 跳过（流式逐字全是纯文本节点）；`characterData` 只让「组头还没挂上替代标签」的组排一次，同一个组在一帧里只因第一次文字变化排帧。兜底加 `data-process-activity` 进 `attributeFilter`——活动名整段换掉时 React 可能连文本节点一起替换。
+- 过程组把「组根 → 组头 + 组体」的对应存进 `WeakMap`，扫描帧不再每组查两遍 `querySelector`。
+- **没有测量数据**：这一轮是静态收敛，不是针对某个已复现的卡顿。
+
+### 上下文占用饼：认法、观察范围与配色
+
+- 认法改成「先排除、再兜底」：坞里除比例圆以外的孩子全是 `conversation.composer.dock` 的座位，各自带 `data-composer-stat`；先把带属性的排掉，剩下**恰好一个**才交给原来的形状判据。dsh 换掉那枚 svg 或改掉读数写法时，失效的是形状那一层，不是整套判据。
+- 观察者不再盯 `characterData`：读数只在百分比翻一格时才变，那时 dsh 重设 `textContent` 就是一次 `childList`；而 `characterData` 每批流式都会响。
+- 未占用底色与扇形色改成**都从读数那一截取**，一次样式结算拿两个。样式表里深浅两份字面值改名为 `--dsh-chat-ux-context-rest-plain`，再由读数上一层的规则转发成 `--dsh-chat-ux-context-rest`，主题切换时两个数一起变。
+
+### 输入框毛玻璃：去掉卡片上那条多余的尺寸观察
+
+- `ResizeObserver` 只 `observe` 座位，不再 `observe` 卡片：卡片在座位里是正常流，卡片长高座位必然跟着长高，那条观察记录换不来新信息。卡片换节点由下一次 `measureSeat` 重新认。
+
 ### 发送气泡：方块里带上刚发出去的那句话
 
 - 飞行的方块不再是一块纯色，**里面就是读者刚敲的那句话**。形变过程中它跟着一起收窄，宽度变了就重新折行。
