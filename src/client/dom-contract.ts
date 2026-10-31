@@ -26,6 +26,9 @@ export const RUNNING_STATE = "running"
  */
 export const SHIMMER_SELECTOR = "[data-shimmer]"
 
+// 同一个契约的属性名形式，喂 attributeFilter 用
+export const SHIMMER_ATTRIBUTE = "data-shimmer"
+
 // 聊天列的滚动容器。dsh 的跟随逻辑挂在它身上，程序化焦点不该把它带动
 export const CONVERSATION_SCROLL_SELECTOR = "[data-conversation-scroll]"
 
@@ -89,6 +92,12 @@ export const PROCESS_EXPANDED_MODE_ATTRIBUTE = "data-group-expanded-mode"
  * 列上的作用域标记（data-chat-motion=""）不算，只认这两个值
  */
 export const MOTION_ROW_SELECTOR = `[data-chat-motion="collapse"], [data-chat-motion="reveal"]`
+
+/**
+ * 同一个契约的属性名形式。列上那个空值标记（data-chat-motion=""）表示「这一轮的开合动效归 dsh 管」，
+ * 与上面那两个值不是一回事：认行上的动效请用 MOTION_ROW_SELECTOR
+ */
+export const MOTION_ATTRIBUTE = "data-chat-motion"
 
 // 过程组体；收起时带 hidden
 export const PROCESS_BODY_SELECTOR = "[data-step-process-body]"

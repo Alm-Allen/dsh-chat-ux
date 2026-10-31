@@ -6,6 +6,9 @@
  * 收起时是 hidden="until-found"，展开时整个摘掉。组内的命令卡片也用 shimmer，所以阶段只在组头里查
  *
  * 读者碰过的组按阶段让开；dsh 的折叠动效正在驱动这一行、或读者把「收起时机」选成「下次发送时收起」时也让开
+ *
+ * 哪一组变了由 fold-observers 一处盯着，与思考行共用同一个观察者；这一份只负责把这些组拉回该有的样子。
+ * 组头与组体两个元素在第一次认出来之后记在这个模块里，扫描帧就不必每次再查一遍
  */
 
 import {
@@ -18,6 +21,7 @@ import {
 	RUNNING_STATE,
 	SHIMMER_SELECTOR,
 } from "../../dom-contract"
+import {LIVE_DETAIL_ATTRIBUTE} from "./fold-observers"
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from "./programmatic-toggle"
 
 // 组头那个开合控件
@@ -25,9 +29,6 @@ const HEADER_SELECTOR = "button[data-process-activity]"
 
 // dsh 把组头标签与实时细节接起来用的分隔符，中英文都是它（message.turnProcess.separator）
 const DETAIL_SEPARATOR = " · "
-
-// 组根上的标记：这个组的组头此刻带着实时细节（标准或详细档，且这一段过程还没结束）
-const LIVE_DETAIL_ATTRIBUTE = "data-chat-ux-live-detail"
 
 // 组根上的标记：这个组的组体此刻是展开的
 const OPEN_ATTRIBUTE = "data-chat-ux-open"
@@ -50,14 +51,34 @@ const SHIMMER_PIXELS_PER_CHARACTER = 8
 // 这一段过程已经结束，最终正文该出来了
 const CLOSED = "closed"
 
-// 给整页安装过程组的自动展开与收起。deferCollapse 现读、不缓存：读者是否选了「下次发送时收起」
-export function installProcessFold(deferCollapse: () => boolean): () => void {
+/**
+ * 给整页安装过程组的自动展开与收起。deferCollapse 现读、不缓存：读者是否选了「下次发送时收起」。
+ * sync 把给到的这些组拉回该有的样子，由共用的观察者每帧调一次；dispose 撤掉这一块的监听与收敛
+ */
+export function installProcessFold(deferCollapse: () => boolean): {
+	sync: (groups: readonly HTMLElement[]) => void
+	dispose: () => void
+} {
 	// 读者最后一次碰某个组时，那个组处在哪个阶段
 	const touchedPhaseMap = new WeakMap<Element, string>()
 	// 某个组最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
 	const attemptedPhaseMap = new WeakMap<Element, string>()
-	// 是否已经排了一次扫描
-	let scanQueued = false
+	// 组根到它那两个部件：组头控件（要点的那个）与组体（判开合的那个）
+	const partsMap = new WeakMap<Element, {header: HTMLElement; body: Element}>()
+
+	// 组头与组体查一次就记住：它们的父子关系在组的生死期里不变，而扫描帧每帧都要问。
+	// 组里还没有这两样时返回 null，等下一批变化再试
+	const partsOf = (group: HTMLElement): {header: HTMLElement; body: Element} | null => {
+		// 缓存只在两样都还挂在这个组里时才算数
+		const known = partsMap.get(group) ?? null
+		if (known !== null && group.contains(known.header) && group.contains(known.body)) return known
+		const header = group.querySelector(HEADER_SELECTOR)
+		const body = group.querySelector(PROCESS_BODY_SELECTOR)
+		if (!(header instanceof HTMLElement) || body === null) return null
+		const parts = {header, body}
+		partsMap.set(group, parts)
+		return parts
+	}
 
 	// 把给到的这些组拉到它们当前阶段该有的样子。收集与收敛之间隔着一帧，其中可能已经有被摘掉的
 	const syncGroups = (groups: Iterable<HTMLElement>): void => {
@@ -68,9 +89,9 @@ export function installProcessFold(deferCollapse: () => boolean): () => void {
 			// 「详细」与「完全展开」两档不收纳组体，而这两档里组头仍在 DOM，只是被裹进一个带 hidden 的壳，
 			// 点它一次只会白白翻一次 dsh 自己的 open 状态，读者什么都看不到
 			if (group.hasAttribute(PROCESS_EXPANDED_MODE_ATTRIBUTE)) continue
-			const header = group.querySelector(HEADER_SELECTOR)
-			const body = group.querySelector(PROCESS_BODY_SELECTOR)
-			if (!(header instanceof HTMLElement) || body === null) continue
+			const parts = partsOf(group)
+			if (parts === null) continue
+			const {header, body} = parts
 			const phase = header.querySelector(SHIMMER_SELECTOR) === null ? CLOSED : RUNNING_STATE
 			// 读者选了「下次发送时收起」：运行中照旧展开，结束后不抢收，那一次留给官方
 			if (phase === CLOSED && deferCollapse()) continue
@@ -140,52 +161,16 @@ export function installProcessFold(deferCollapse: () => boolean): () => void {
 		touchedPhaseMap.set(group, header !== null && header.querySelector(SHIMMER_SELECTOR) !== null ? RUNNING_STATE : CLOSED)
 	}
 
-	// 这一批变化涉及哪些组。从 records 里拿引用、不回头查文档，理由同 reasoning-fold：
-	// 组头里的实时细节随流式逐字变，所以 characterData 也在观察范围里，不盯着它，组头那半截标签就会停在旧值上
-	const touchedGroups = new Set<HTMLElement>()
-
-	// 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
-	const observer = new MutationObserver((records) => {
-		const knownCount = touchedGroups.size
-		for (const record of records) {
-			// 与思考行那份同一套做法，多一条：characterData 的 target 是文本节点，得先退到它的父元素上
-			const target = record.target
-			const changedElement = target instanceof Element ? target : target.parentElement
-			const group = changedElement?.closest<HTMLElement>(PROCESS_GROUP_SELECTOR) ?? null
-			if (group !== null) touchedGroups.add(group)
-			for (const node of record.addedNodes) {
-				if (!(node instanceof HTMLElement)) continue
-				if (node.matches(PROCESS_GROUP_SELECTOR)) touchedGroups.add(node)
-				for (const foundGroup of node.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR)) touchedGroups.add(foundGroup)
-			}
-		}
-		// 跟过程组无关的变化（侧栏、插件管理页……）不值得排一帧
-		if (touchedGroups.size === knownCount) return
-		if (scanQueued) return
-		scanQueued = true
-		requestAnimationFrame(() => {
-			scanQueued = false
-			const groupList = [...touchedGroups]
-			touchedGroups.clear()
-			syncGroups(groupList)
-		})
-	})
-	observer.observe(document.body ?? document.documentElement, {
-		subtree: true,
-		childList: true,
-		attributes: true,
-		// 组根那个「展开模式」属性也在观察范围里：切档时它增删一次，这一批变化就该重扫一遍
-		attributeFilter: ["data-shimmer", "hidden", PROCESS_EXPANDED_MODE_ATTRIBUTE, "data-chat-motion"],
-		characterData: true,
-	})
 	document.addEventListener("click", rememberReaderTouched, true)
 	document.addEventListener("keydown", rememberReaderTouched, true)
 	// 装好之后先全量收敛一遍：页面里躺着的那些组也要归位
 	syncGroups(document.querySelectorAll<HTMLElement>(PROCESS_GROUP_SELECTOR))
 
-	return () => {
-		observer.disconnect()
-		document.removeEventListener("click", rememberReaderTouched, true)
-		document.removeEventListener("keydown", rememberReaderTouched, true)
+	return {
+		sync: syncGroups,
+		dispose: () => {
+			document.removeEventListener("click", rememberReaderTouched, true)
+			document.removeEventListener("keydown", rememberReaderTouched, true)
+		},
 	}
 }

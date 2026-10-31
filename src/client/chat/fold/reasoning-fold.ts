@@ -6,19 +6,25 @@
  * 不碰那些跟着 dsh 每次构建变化的带 hash 类名
  *
  * 读者在某个阶段碰过的行，这个阶段之内不再动它；阶段一变（思考结束）该收还是收
+ *
+ * 哪一行变了由 fold-observers 一处盯着，与过程组共用同一个观察者；这一份只负责把这些行拉回该有的样子
  */
 
 import {RUNNING_STATE, THINK_ROW_SELECTOR} from "../../dom-contract"
 import {beginProgrammaticToggle, endProgrammaticToggle, isProgrammaticToggle} from "./programmatic-toggle"
 
-// 给整页安装思考行展开；返回值是卸载函数
-export function installReasoningFold(): () => void {
+/**
+ * 给整页安装思考行展开。sync 把给到的这些行拉回该有的样子，由共用的观察者每帧调一次；
+ * dispose 撤掉这一块的监听与收敛
+ */
+export function installReasoningFold(): {
+	sync: (rows: readonly HTMLElement[]) => void
+	dispose: () => void
+} {
 	// 读者最后一次碰某一行时，那一行处在哪个阶段
 	const touchedPhaseMap = new WeakMap<Element, string>()
 	// 某一行最后一次被尝试切换时处在哪个阶段，所以没引起变化的点击不会被反复重试
 	const attemptedPhaseMap = new WeakMap<Element, string>()
-	// 是否已经排了一次扫描
-	let scanQueued = false
 
 	// 把给到的这些行拉到它们当前阶段该有的样子
 	const syncRows = (rows: Iterable<HTMLElement>): void => {
@@ -57,52 +63,16 @@ export function installReasoningFold(): () => void {
 		touchedPhaseMap.set(row, row.getAttribute("data-state") ?? "")
 	}
 
-	// 这一批变化涉及哪些行。从 records 里拿引用、不回头查文档：record.target 是浏览器直接递过来的元素，
-	// 顺着它往上找一行只是几层祖先的事，而 querySelectorAll 要遍历整篇文档，同样的活差着一个量级
-	const touchedRows = new Set<HTMLElement>()
-
-	// 流式输出改 DOM 的速度远快于这件事需要跑的速度，所以每帧最多扫一次
-	const observer = new MutationObserver((records) => {
-		const knownCount = touchedRows.size
-		for (const record of records) {
-			// 两条路都要走：属性变化时 record.target 就是那一行或行内的某个元素，子节点增删时它是父容器，
-			// 两条都能顺着祖先链找到行；addedNodes 则覆盖「新挂上来一行」，那时行自己就在新增的子树里
-			const target = record.target
-			if (target instanceof Element) {
-				const row = target.closest<HTMLElement>(THINK_ROW_SELECTOR)
-				if (row !== null) touchedRows.add(row)
-			}
-			for (const node of record.addedNodes) {
-				if (!(node instanceof HTMLElement)) continue
-				if (node.matches(THINK_ROW_SELECTOR)) touchedRows.add(node)
-				for (const foundRow of node.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR)) touchedRows.add(foundRow)
-			}
-		}
-		// 跟思考行无关的变化（工具行翻状态、插件管理页刷新……）不值得排一帧
-		if (touchedRows.size === knownCount) return
-		if (scanQueued) return
-		scanQueued = true
-		requestAnimationFrame(() => {
-			scanQueued = false
-			const rowList = [...touchedRows]
-			touchedRows.clear()
-			syncRows(rowList)
-		})
-	})
-	observer.observe(document.body ?? document.documentElement, {
-		subtree: true,
-		childList: true,
-		attributes: true,
-		attributeFilter: ["data-state", "data-expanded"],
-	})
 	document.addEventListener("click", rememberReaderTouched, true)
 	document.addEventListener("keydown", rememberReaderTouched, true)
 	// 装好之后先全量收敛一遍：页面里躺着的那些行也要归位
 	syncRows(document.querySelectorAll<HTMLElement>(THINK_ROW_SELECTOR))
 
-	return () => {
-		observer.disconnect()
-		document.removeEventListener("click", rememberReaderTouched, true)
-		document.removeEventListener("keydown", rememberReaderTouched, true)
+	return {
+		sync: syncRows,
+		dispose: () => {
+			document.removeEventListener("click", rememberReaderTouched, true)
+			document.removeEventListener("keydown", rememberReaderTouched, true)
+		},
 	}
 }

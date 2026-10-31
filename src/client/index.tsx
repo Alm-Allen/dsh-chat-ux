@@ -19,6 +19,7 @@ import {installFileMutationRow} from "./chat/file-mutation/file-mutation-row"
 import type {SlotsService} from "./chat/file-mutation/file-mutation-row"
 import {installCallAppearFollow} from "./chat/follow/call-appeared"
 import {installFoldGlide} from "./chat/fold/fold-glide"
+import {createFoldWatch} from "./chat/fold/fold-observers"
 import {installProcessFold} from "./chat/fold/process-fold"
 import {installReasoningFold} from "./chat/fold/reasoning-fold"
 import {installSendFlight} from "./chat/send-flight/send-flight"
@@ -101,11 +102,17 @@ export function apply(ctx: ClientContext): void {
 			return
 		}
 		if (autoFoldDispose !== null) return
-		const disposeReasoning = installReasoningFold()
-		const disposeProcess = installProcessFold(defersCollapse)
+		const reasoning = installReasoningFold()
+		const process = installProcessFold(defersCollapse)
+		// 两块共用同一个观察者：哪一行、哪一组被碰到由它一处认出来，再分给两块各自的收敛
+		const unwatch = createFoldWatch((rows, groups) => {
+			reasoning.sync(rows)
+			process.sync(groups)
+		})
 		autoFoldDispose = () => {
-			disposeReasoning()
-			disposeProcess()
+			unwatch()
+			reasoning.dispose()
+			process.dispose()
 		}
 	}
 	// 输入框玻璃：属性在，样式表里那一整块才命中，量卡片位置的那个观察者也只有这时候才装。
@@ -169,7 +176,8 @@ export function apply(ctx: ClientContext): void {
 
 	// 思考行与过程组归同一个开关：dsh 把每一行思考行都发成收起的，也没有为它暴露任何设置；
 	// 简洁与标准两档下，运行中的过程组体初始也是收起的。两处都在过程还在跑时开着、这一段结束再收回去
-	// （模块里写明了按阶段让开，读者自己动过手的不被覆盖）。装与卸都在 syncAutoFold 里
+	// （模块里写明了按阶段让开，读者自己动过手的不被覆盖）。装与卸都在 syncAutoFold 里。
+	// 两块共用 fold-observers 的那一个观察者：同一批变化只遍历一次、只排一帧
 	ctx.effect(() => {
 		syncAutoFold()
 		return () => {
