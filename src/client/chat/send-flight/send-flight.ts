@@ -227,7 +227,7 @@ export function installSendFlight(readEnabled: () => boolean): () => void {
      */
     const mountDraft = (input: HTMLElement, card: HTMLElement): HoldFrame | null => {
         if (readSlab()) {
-            const slab = snapshotSlab(card)
+            const slab = snapshotSlab(input, card)
             return slab === null ? null : mountSlab(slab, slab.box)
         }
         const snapshot = snapshotComposer(input, card)

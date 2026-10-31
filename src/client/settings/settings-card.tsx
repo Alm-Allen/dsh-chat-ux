@@ -95,8 +95,8 @@ const ZH_COPY: Copy = {
 		+ "数字一变，变了的那一位会像读数那样在原地弹到新值。",
 	sendFlightLabel: "发送气泡形变",
 	sendFlightHint:
-		"发出之后，一块与输入框同形同色的方块从输入框上沿升起，一边收窄一边换成气泡的颜色，落成落点那条气泡。"
-		+ "关掉就回到 dsh 原来的样子。",
+		"发出之后，一块与输入框同形同色的方块从输入框上沿升起，带在里面的就是刚发的那句话，一边收窄一边折行、"
+		+ "换成气泡的颜色，落成落点那条气泡。关掉就回到 dsh 原来的样子。",
 
 	overridden: "已覆盖",
 	reset: "重置",
@@ -145,8 +145,9 @@ const EN_COPY: Copy = {
 		+ "the way the readouts do.",
 	sendFlightLabel: "Send bubble morph",
 	sendFlightHint:
-		"Once sent, a slab the size and colour of the composer lifts off its top edge, narrowing as it goes and "
-		+ "turning into the colour of the bubble it lands on. Off restores dsh's own behaviour.",
+		"Once sent, a slab the size and colour of the composer lifts off its top edge carrying the text you just typed. "
+		+ "It narrows and re-wraps as it goes, then turns into the colour of the bubble it lands on. "
+		+ "Off restores dsh's own behaviour.",
 
 	overridden: "Overridden",
 	reset: "Reset",

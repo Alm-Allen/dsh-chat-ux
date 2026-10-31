@@ -336,6 +336,23 @@ const IDENTITY_ATTRIBUTES = [
 ] as const
 
 /**
+ * 输入框里那块字站在哪儿：相对卡片边框盒的左、上、右各多远，行高多少。
+ *
+ * 两条替身路线共用它。色块那条**没有草稿克隆**，起手格的文字是气泡自己的写法，但站位仍取输入框的——
+ * 读者按下回车时，字看起来还长在原地，只是换了一套排字。
+ */
+export function textFrameOf(input: HTMLElement, box: DOMRect): TextFrame {
+    const style = getComputedStyle(input)
+    const inputBox = input.getBoundingClientRect()
+    return {
+        left: inputBox.left - box.left + input.clientLeft + pixel(style.paddingLeft),
+        top: inputBox.top - box.top + input.clientTop + pixel(style.paddingTop),
+        right: box.right - (inputBox.right - pixel(style.borderRightWidth) - pixel(style.paddingRight)),
+        lineHeight: pixel(style.lineHeight),
+    }
+}
+
+/**
  * 抓一次输入卡片：几何、阴影、阶段属性，以及整张克隆。
  *
  * 必须在提交的捕获阶段调——那时草稿还在。量的都是布局已经结算好的东西，克隆也只是一次
@@ -349,14 +366,7 @@ export function snapshotComposer(input: HTMLElement, card: HTMLElement): Compose
     const cardStyle = getComputedStyle(card)
     const fill = flattenColor(cardStyle.backgroundColor, behindColorOf(card))
     const shadow = splitShadow(cardStyle.boxShadow)
-    const inputStyle = getComputedStyle(input)
-    const inputBox = input.getBoundingClientRect()
-    const text: TextFrame = {
-        left: inputBox.left - box.left + input.clientLeft + pixel(inputStyle.paddingLeft),
-        top: inputBox.top - box.top + input.clientTop + pixel(inputStyle.paddingTop),
-        right: box.right - (inputBox.right - pixel(inputStyle.borderRightWidth) - pixel(inputStyle.paddingRight)),
-        lineHeight: pixel(inputStyle.lineHeight),
-    }
+    const text = textFrameOf(input, box)
 
     // 卡片里哪几块是要收走的：有面积、又不是草稿区。横跨整张卡片、里面分成好几组的那一块是工具栏，
     // 按组拆开——左右两组要各自贴着自己那一边的角走。`display: contents` 的座位自己没有盒子，往里找。
@@ -498,7 +508,7 @@ export interface HoldFrame {
 }
 
 /**
- * 色块替身要的那点东西：尺寸、圆角、底色。
+ * 色块替身要的那点东西：尺寸、圆角、底色，以及字站在哪儿。
  *
  * 和 `ComposerSnapshot` 分开是为了**省掉那次克隆**。整卡克隆要 `cloneNode` 一整棵子树、再逐个子元素
  * `getBoundingClientRect` 一次（`collect` 会强制布局），而色块一个元素都用不上。提交那一帧主线程本来
@@ -515,10 +525,12 @@ export interface SlabSnapshot {
      */
     readonly border: string
     readonly shadow: string
+    /** 字站在哪儿：相对卡片边框盒的四条边与行高。色块的文字层拿它当起手站位（见 `textFrameOf`）。 */
+    readonly text: TextFrame
 }
 
-/** 抓一次色块快照：两次布局读、几次样式读，没有克隆、没有子树遍历。 */
-export function snapshotSlab(card: HTMLElement): SlabSnapshot | null {
+/** 抓一次色块快照：四次布局读、几次样式读，没有克隆、没有子树遍历。 */
+export function snapshotSlab(input: HTMLElement, card: HTMLElement): SlabSnapshot | null {
     const box = card.getBoundingClientRect()
     if (box.width === 0 || box.height === 0) return null
     const style = getComputedStyle(card)
@@ -528,6 +540,7 @@ export function snapshotSlab(card: HTMLElement): SlabSnapshot | null {
         radius: pixel(style.borderTopLeftRadius),
         border: borderWidth > 0 ? borderWidth + 'px ' + style.borderTopStyle + ' ' + style.borderTopColor : '',
         shadow: style.boxShadow === 'none' ? '' : style.boxShadow,
+        text: textFrameOf(input, box),
     }
 }
 
@@ -691,7 +704,7 @@ export function startMorph(frame: GhostFrame, bubble: HTMLElement, end: DOMRect)
     // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
     // 自己，其余每段一层。
     const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
-    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding)
+    const [draftWindow, ...bubbleWindows] = textWindows(bubble, style, samples, to.lineHeight, bottomPadding, true)
     // 半径 = **可见区短边的一半 × 圆度**，圆度从 `2R0/短边` 走到 `2R1/短边`；半径因此总是跟着区域
     // 一起收，两端精确还原真实值（起手与真卡片逐点一致，落定就是气泡自己的圆角）。
     //
@@ -735,29 +748,8 @@ export function startMorph(frame: GhostFrame, bubble: HTMLElement, end: DOMRect)
         animations.push(animation)
         return animation
     }
-    // 只在 [windowFrom, windowUntil] 里逐格采样，两头各补一帧定住。形变收尾之后那些属性不再变，一层字只在它亮着的
-    // 那一段里才看得见——窗口外的关键帧只是让起飞那一帧多解析几百条（实测建动画占了建替身的一半）。
-    const between = (windowFrom: number, windowUntil: number, frame: (sample: Sample) => Keyframe, stride = 1): Keyframe[] => {
-        const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil)
-        const frames: Keyframe[] = []
-        inside.forEach((sample, index) => {
-            // `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格
-            // 看不出来，省下的关键帧换的是实打实的建动画时间。**形状与内容那两段必须同格**，一错格两层就
-            // 不再互为倒数，中段会看见偏移。
-            if (index % stride !== 0) return
-            frames.push({...frame(sample), offset: sample.u})
-        })
-        // 末尾那一格永远补上：它是定形的值，缺了它会停在上一格上。
-        const final = inside.at(-1)
-        if (final !== undefined && (frames.at(-1)?.offset ?? -1) !== final.u) {
-            frames.push({...frame(final), offset: final.u})
-        }
-        const first = frames[0]
-        const last = frames.at(-1)
-        if (first !== undefined && (first.offset ?? 0) > 0) frames.unshift({...first, offset: 0})
-        if (last !== undefined && (last.offset ?? 1) < 1) frames.push({...last, offset: 1})
-        return frames
-    }
+    const between = (windowFrom: number, windowUntil: number, frame: (sample: Sample) => Keyframe, stride = 1): Keyframe[] =>
+        betweenFrames(samples, windowFrom, windowUntil, frame, stride)
 
     // 位移交给**合成器**：一整段 `transform` 关键帧。它与形状走同一条时间轴（同一个 `FLIGHT_MS`、同一批
     // `offset`），所以「一起走、一起停」是时间轴的保证，不是时序上的巧合。左边从卡片的左边走到气泡的
@@ -979,30 +971,43 @@ export function mountSlab(snapshot: SlabSnapshot, origin: DOMRect): HoldFrame {
     const tint = document.createElement('div')
     tint.style.cssText = 'position:absolute;inset:0;border-radius:inherit;opacity:0'
     mover.appendChild(tint)
+    // 字层挂在**色块里面**，跟着它一起被缩放：mover 是非均匀缩放的，字要视觉不变形就得再乘一层
+    // 倒数（见 `slabPlate`）。字是起飞那一刻才补的——那时才知道气泡排成什么样。
+    const frame: SlabFrame = {wrapper, mover, tint, snapshot, origin}
     wrapper.appendChild(mover)
     ghostHost().appendChild(wrapper)
-    return {
-        wrapper,
-        origin,
-        launch: (bubble, end) => startSlab(wrapper, mover, tint, snapshot, origin, bubble, end),
-    }
+    return {wrapper, origin, launch: (bubble, end) => startSlab(frame, bubble, end)}
 }
 
 /**
- * 色块替身的起飞：位置、缩放与圆角共用一条时间轴，颜色靠那层气泡色的不透明度渐入。
+ * 已经挂好的色块骨架：停在起手格，除了那块底什么都没有。
  *
- * 没有采样字层、没有折行探针、没有逐元素动画——每一帧要变的只有一个元素的几条属性。
+ * 与 `GhostFrame` 分开是因为两边挂的东西不一样：色块这边起飞时才补字层（那时才知道气泡排成什么样），
+ * 克隆那边字层在挂载时就跟着克隆一起在了。
  */
-function startSlab(
-    wrapper: HTMLElement,
-    mover: HTMLElement,
-    tint: HTMLElement,
-    snapshot: SlabSnapshot,
-    origin: DOMRect,
-    bubble: HTMLElement,
-    end: DOMRect,
-): Morph | null {
+interface SlabFrame {
+    /** 最外层：终点补差写在它身上。 */
+    readonly wrapper: HTMLElement
+    /** 位移与形状那一层：色块的底，以及它的描边与阴影。 */
+    readonly mover: HTMLElement
+    /** 气泡色的渐入层。 */
+    readonly tint: HTMLElement
+    /** 提交那一刻按输入框抓到的快照。 */
+    readonly snapshot: SlabSnapshot
+    /** 起手位置：挂上替身时卡片的矩形。 */
+    readonly origin: DOMRect
+}
+
+/**
+ * 色块替身的起飞：位置、形状、圆角、颜色与字层共用一条时间轴。
+ *
+ * **字是起飞这一刻现排的**（见 `slabWindows`）：沿途每个宽度排一遍，折行/行高一样的归成一段，每段一层，
+ * 宽度写死。动画期间只动 `transform` 与 `opacity`，主线程一格都不碰；换行是"提前算好"的，不是
+ * "让浏览器逐帧重排"。
+ */
+function startSlab(frame: SlabFrame, bubble: HTMLElement, end: DOMRect): Morph | null {
     if (end.width === 0 || end.height === 0) return null
+    const {wrapper, mover, tint, snapshot, origin} = frame
     const style = getComputedStyle(bubble)
     const W0 = snapshot.box.width
     const H0 = snapshot.box.height
@@ -1012,24 +1017,43 @@ function startSlab(
     const R1 = pixel(style.borderTopLeftRadius)
     const dx = end.left - origin.left
     const dy = end.top - origin.top
+    const from = snapshot.text
+    const to: TextFrame = {
+        left: bubble.clientLeft + pixel(style.paddingLeft),
+        top: bubble.clientTop + pixel(style.paddingTop),
+        right: pixel(style.borderRightWidth) + pixel(style.paddingRight),
+        lineHeight: pixel(style.lineHeight),
+    }
     tuning = readTuning()
     // 起飞这一刻才显形：气泡从输入框里长出来，就是从这一帧开始的（理由见 `SLAB_HOLD_OPACITY`）。
     mover.style.opacity = '1'
     tint.style.background = flattenColor(style.backgroundColor, SLAB_BACKING)
 
-    const samples = Array.from({length: SAMPLES + 1}, (_, step) => {
+    // 每一格：外框、位移、圆角，外加**字的站位与可排字宽度**。字那几项与克隆那条同源（`Sample`）。
+    const samples: Sample[] = Array.from({length: SAMPLES + 1}, (_, step) => {
         const u = step / SAMPLES
         const m = morphProgress(u)
+        const width = W0 + (W1 - W0) * m
+        const left = from.left + (to.left - from.left) * m
+        const right = from.right + (to.right - from.right) * m
         return {
             u,
             m,
-            width: W0 + (W1 - W0) * m,
+            width,
+            visible: width,
             height: H0 + (H1 - H0) * m,
-            x: dx * m,
-            y: dy * riseProgress(u),
             radius: 0,
+            left,
+            top: from.top + (to.top - from.top) * m,
+            content: Math.max(1, width - left - right),
+            lineHeight: from.lineHeight + (to.lineHeight - from.lineHeight) * m,
         }
     })
+    // 字：沿途每个宽度排一遍，折行一样、行高一档的归段。行数变多时字会把外框撑高，`slabWindows` 顺手
+    // 把 `sample.height` 改掉——否则多行的正文会顶出气泡的底边。
+    const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
+    // `draft` 传 false：色块这条没有草稿克隆，第一段就是气泡自己的写法，不必在 `DRAFT_HANDOFF_AT` 拆一次。
+    const windows = textWindows(bubble, style, samples, to.lineHeight, bottomPadding, false)
     // 圆度与克隆那一版同一套：从卡片自己的走到气泡自己的，按进度的平方根插值。
     const shortStart = Math.min(W0, H0)
     const shortEnd = Math.min(W1, H1)
@@ -1043,14 +1067,20 @@ function startSlab(
 
     const timing: KeyframeAnimationOptions = {duration: FLIGHT_MS, easing: 'linear', fill: 'forwards'}
     const animations: Animation[] = []
+    /**
+     * 一条动画。`between` 的关键帧只在字层窗口里采样，那几段两头都补了 0 与 1 的定格（见 `between`），
+     * 所以每层只要在自己的窗口外全透明即可——窗口顺序在这里无关紧要，靠 `opacity` 的阶跃切开。
+     */
     const run = (element: HTMLElement, frames: Keyframe[]): Animation => {
         const animation = element.animate(frames, timing)
         animations.push(animation)
         return animation
     }
+    // 位移与形状**必须同一条动画、同一条时间轴**：任何一条单独跑快，卡顿时未收窄的色块就会先飞到终点。
+    // 形状走 scale 而不是 width/height——后者是布局属性，逐帧改它等于逐帧重排整棵子树。
     const travel = run(mover, samples.map(sample => ({
         offset: sample.u,
-        transform: 'translate(' + sample.x + 'px, ' + sample.y + 'px) scale('
+        transform: 'translate(' + dx * sample.m + 'px, ' + dy * riseProgress(sample.u) + 'px) scale('
             + (sample.width / W0) + ', ' + (sample.height / H0) + ')',
     })))
     run(mover, samples.map(sample => ({
@@ -1061,6 +1091,22 @@ function startSlab(
         offset: sample.u,
         opacity: String(Math.min(1, sample.m * 1.6)),
     })))
+    // 字层：每层只在自己的窗口里亮，窗口外完全透明。一层字是两个元素——`plate` 抵消 mover 的缩放、
+    // `layer` 在自己窗口的宽度上排好只做平移（见 `slabLayer`）。
+    for (const window of windows) {
+        const plate = slabPlate(bubble, style, window, W0, H0)
+        // 挂在 tint 之后：字的上面没有别的东西了。
+        mover.appendChild(plate)
+        const layer = plate.firstElementChild as HTMLElement
+        run(plate, betweenFrames(samples, window.from, window.until, sample => ({
+            transform: 'scale(' + W0 / Math.max(sample.width, MIN_REVERSE_DIVISOR) + ', '
+                + H0 / Math.max(sample.height, MIN_REVERSE_DIVISOR) + ')',
+        })))
+        run(layer, betweenFrames(samples, window.from, window.until, sample => ({
+            transform: slabShift(sample, window),
+        })))
+        run(plate.firstElementChild as HTMLElement, stepOpacity(window.from, window.until))
+    }
 
     const progress = (): number => {
         const raw = travel.currentTime
@@ -1150,6 +1196,41 @@ interface Sample {
     readonly lineHeight: number
 }
 
+/**
+ * 只在一段窗口里逐格采样，两头各补一帧定住。
+ *
+ * 形变收尾之后那些属性不再变，一层字也只在它亮着的那一段里才看得见——窗口外的关键帧只是让起飞那一帧
+ * 多解析几百条（实测建动画占了建替身的一半）。
+ *
+ * `stride` 只给不参与几何抵消的那几段用（圆角、底色、光晕、工具栏）：它们的曲线平缓，隔一格取一格看不
+ * 出来，省下的关键帧换的是实打实的建动画时间。**形状与内容那两段必须同格**，一错格两层就不再互为倒数，
+ * 中段会看见偏移。
+ */
+function betweenFrames(
+    samples: readonly Sample[],
+    windowFrom: number,
+    windowUntil: number,
+    frame: (sample: Sample) => Keyframe,
+    stride = 1,
+): Keyframe[] {
+    const inside = samples.filter(sample => sample.u >= windowFrom && sample.u <= windowUntil)
+    const frames: Keyframe[] = []
+    inside.forEach((sample, index) => {
+        if (index % stride !== 0) return
+        frames.push({...frame(sample), offset: sample.u})
+    })
+    // 末尾那一格永远补上：它是定形的值，缺了它会停在上一格上。
+    const final = inside.at(-1)
+    if (final !== undefined && (frames.at(-1)?.offset ?? -1) !== final.u) {
+        frames.push({...frame(final), offset: final.u})
+    }
+    const first = frames[0]
+    const last = frames.at(-1)
+    if (first !== undefined && (first.offset ?? 0) > 0) frames.unshift({...first, offset: 0})
+    if (last !== undefined && (last.offset ?? 1) < 1) frames.push({...last, offset: 1})
+    return frames
+}
+
 /** 一段字：从哪一刻亮到哪一刻，按多宽排、行高多少。 */
 interface TextWindow {
     from: number
@@ -1162,8 +1243,10 @@ interface TextWindow {
  * 把形变沿途的每一个宽度都排一遍，折行一样（多行时再加上行高同档）的归成一段。
  *
  * 排的是气泡自己的正文，量的是每一行的行盒。探针挂在视口外、自成一块布局区域，改它的宽度只重排它
- * 自己。第一段让给输入框那份草稿克隆，但最晚在 `DRAFT_HANDOFF_AT` 交出去；最后一段就是气泡本身。
- * 顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
+ * 自己。最后一段就是气泡本身。顺带把字撑高的那几格的外框高度补上（`samples` 里的高度会被改写）。
+ *
+ * `draft` 说的是**第一段让不让给输入框那份草稿克隆**。克隆那条替身里有草稿，第一段就该是它；色块那条
+ * 没有草稿，从头到尾都是气泡自己的写法，拆那一刀只会多一层看不见的字。
  */
 function textWindows(
     bubble: HTMLElement,
@@ -1171,6 +1254,7 @@ function textWindows(
     samples: readonly Sample[],
     finalLineHeight: number,
     bottomPadding: number,
+    draft: boolean,
 ): TextWindow[] {
     const probeHost = document.createElement('div')
     probeHost.style.cssText = 'position:fixed;left:-100000px;top:0;visibility:hidden;contain:layout style;pointer-events:none'
@@ -1249,17 +1333,22 @@ function textWindows(
     const lastWindow = windows.at(-1)
     if (lastWindow !== undefined) lastWindow.until = 1
     // 第一段由草稿克隆负责，但最晚在 DRAFT_HANDOFF_AT 交出去：那之后同样的折行改用气泡的写法。
-    const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1
+    // 色块那条没有草稿，这一刀不切（见 `draft` 参数）。
     const first = windows[0]
-    if (first !== undefined && first.until > handoff) {
-        windows.splice(1, 0, {key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight})
-        first.until = handoff
+    if (draft && first !== undefined) {
+        const handoff = samples.find(sample => sample.m >= DRAFT_HANDOFF_AT)?.u ?? 1
+        if (first.until > handoff) {
+            windows.splice(1, 0, {key: first.key, from: handoff, until: first.until, width: first.width, lineHeight: first.lineHeight})
+            first.until = handoff
+        }
     }
     // 太多段就把最短的那些并进**后一段**：后一段排得更窄，提前亮出来只是早折一行；并进前一段的话，
-    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。前两段（草稿与它交出去的那一段）不参与。
+    // 更宽的那份排版会在外框已经收窄之后还亮着，字就顶出去了。有草稿时前两段（草稿与它交出去的那一段）
+    // 不参与；没有草稿时前一段就是普通的一段。
+    const guard = draft ? 2 : 1
     while (windows.length > MAX_TEXT_LAYERS) {
-        let shortest = 2
-        for (let index = 3; index < windows.length - 1; index += 1) {
+        let shortest = guard
+        for (let index = guard + 1; index < windows.length - 1; index += 1) {
             const window = windows[index]
             const best = windows[shortest]
             if (window === undefined || best === undefined) continue
@@ -1272,6 +1361,44 @@ function textWindows(
         windows.splice(shortest, 1)
     }
     return windows
+}
+
+/**
+ * 色块里的一层字：`plate` 抵消 mover 的缩放，里面那层按窗口宽度排好、只做平移。
+ *
+ * 与 `textLayer` 的区别只有一处——**它挂在被非均匀缩放的 `mover` 里面**。mover 宽收得比高快，字要视觉
+ * 不变形就得再乘一层倒数；而倒数不能写在层自己身上（那会连平移一起放大），所以多一层壳：
+ *
+ *     mover（缩放 S）> plate（缩放 1/S）> layer（按窗口宽度排好，只平移）
+ *
+ * 两层都取**起手格**（卡片）的尺寸，也就是 mover 的布局尺寸：坐标原点、单位长度都一致，倒数才对得上。
+ */
+function slabPlate(
+    bubble: HTMLElement,
+    style: CSSStyleDeclaration,
+    window: TextWindow,
+    width: number,
+    height: number,
+): HTMLElement {
+    const plate = document.createElement('div')
+    plate.style.cssText = 'position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform'
+    plate.style.width = width + 'px'
+    plate.style.height = height + 'px'
+    const layer = textLayer(bubble, style)
+    layer.style.width = window.width + 'px'
+    layer.style.lineHeight = window.lineHeight + 'px'
+    plate.appendChild(layer)
+    return plate
+}
+
+/**
+ * 一层字在这一格平移到哪儿：内容区的左上角，行高差的一半补在竖直方向。
+ *
+ * `plate` 与 mover 同尺寸同原点，所以直接就用外框坐标，不必再减去内边距。
+ */
+function slabShift(sample: Sample, window: TextWindow): string {
+    const y = sample.top + (sample.lineHeight - window.lineHeight) / 2
+    return 'translate(' + sample.left + 'px, ' + y + 'px)'
 }
 
 /**
