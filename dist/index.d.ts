@@ -19,6 +19,8 @@ export declare const DEFAULT_COMPOSER_GLASS = true;
 export declare const DEFAULT_LIVE_DIFF = true;
 export declare const DEFAULT_FOLLOW_ON_APPEAR = true;
 export declare const DEFAULT_SEND_FLIGHT = true;
+export type AskNotifyMode = "off" | "unfocused" | "always";
+export declare const DEFAULT_ASK_NOTIFY: AskNotifyMode;
 export interface Config {
     paperOn: Volatile<boolean>;
     paperFont: Volatile<boolean>;
@@ -30,6 +32,7 @@ export interface Config {
     liveDiff: Volatile<boolean>;
     followOnAppear: Volatile<boolean>;
     sendFlight: Volatile<boolean>;
+    notifyAsk: Volatile<AskNotifyMode>;
 }
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     paperOn: Schema<boolean, boolean, "volatile-defined">;
@@ -42,6 +45,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
     followOnAppear: Schema<boolean, boolean, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
+    notifyAsk: Schema<"off" | "unfocused" | "always", "off" | "unfocused" | "always", "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     paperOn: Schema<boolean, boolean, "volatile-defined">;
     paperFont: Schema<boolean, boolean, "volatile-defined">;
@@ -53,5 +57,6 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     liveDiff: Schema<boolean, boolean, "volatile-defined">;
     followOnAppear: Schema<boolean, boolean, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
+    notifyAsk: Schema<"off" | "unfocused" | "always", "off" | "unfocused" | "always", "volatile-defined">;
 }>>, "plain">;
 export declare function apply(): void;

@@ -11,6 +11,8 @@
 import type {Context as ClientContext} from "@deepseek-ai/cordis"
 import {installCaretMotion} from "./chat/caret/caret-motion"
 import type {CaretMotionMode} from "./chat/caret/caret-motion"
+import {installAskNotify} from "./chat/notify/ask-notify"
+import type {AskNotifyMode} from "./chat/notify/ask-notify"
 import {installCacheHitPill} from "./chat/cache-hit/cache-hit-pill"
 import {installComposerGlass} from "./chat/composer-glass/composer-glass"
 import {GLASS_ATTRIBUTE} from "./chat/composer-glass/composer-glass-styles"
@@ -27,7 +29,7 @@ import type {PaperHandle, PaperSettingsInput} from "./chat/paper/install"
 import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
+    DEFAULT_ASK_NOTIFY, DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
     DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT,
     DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
@@ -79,6 +81,7 @@ export function apply(ctx: ClientContext): void {
         sendFlight: DEFAULT_SEND_FLIGHT,
         paperOn: DEFAULT_PAPER_ON,
         paperFont: DEFAULT_PAPER_FONT,
+        notifyAsk: DEFAULT_ASK_NOTIFY,
     }
 
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -159,6 +162,19 @@ export function apply(ctx: ClientContext): void {
         paper = installPaperLayer(paperSettings)
     }
 
+    // 等读者动手时的系统通知。关掉时整块卸下；unfocused 与 always 两档都由模块现读，
+    // 所以档位一变不必重新安装——换了档之后的第一条请求才用得上新值
+    let notifyDispose: (() => void) | null = null
+    const syncNotify = (): void => {
+        if (settings.notifyAsk === "off") {
+            notifyDispose?.()
+            notifyDispose = null
+            return
+        }
+        if (notifyDispose !== null) return
+        notifyDispose = installAskNotify(() => settings.notifyAsk).dispose
+    }
+
     let followDispose: (() => void) | null = null
     const syncFollow = (): void => {
         if (!settings.followOn) {
@@ -180,7 +196,9 @@ export function apply(ctx: ClientContext): void {
         settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
         settings.paperFont = value?.paperFont ?? DEFAULT_PAPER_FONT
+        settings.notifyAsk = value?.notifyAsk ?? DEFAULT_ASK_NOTIFY
         syncGlass()
+        syncNotify()
         caret.resync()
         syncPie()
         syncAutoFold()
@@ -210,6 +228,18 @@ export function apply(ctx: ClientContext): void {
             }
         },
         "dsh-chat-ux: composer glass",
+    )
+
+    // 通知这一块自己管观察器与监听，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
+    ctx.effect(
+        () => {
+            syncNotify()
+            return () => {
+                notifyDispose?.()
+                notifyDispose = null
+            }
+        },
+        "dsh-chat-ux: ask notifications",
     )
 
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
@@ -310,6 +340,8 @@ interface ChatUxSettings {
     paperOn: boolean
     // 纸感要不要接管字族。挂在前一项底下：纸关掉时它不起作用
     paperFont: boolean
+    // 等读者动手时的系统通知档位。关掉时整块卸下，其余两档现读，改档位不必重装
+    notifyAsk: AskNotifyMode
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input

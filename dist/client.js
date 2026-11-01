@@ -46,6 +46,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.inject = void 0;
 exports.apply = apply;
 const caret_motion_1 = require("./chat/caret/caret-motion");
+const ask_notify_1 = require("./chat/notify/ask-notify");
 const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
 const composer_glass_1 = require("./chat/composer-glass/composer-glass");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
@@ -102,6 +103,7 @@ function apply(ctx) {
         sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
         paperOn: settings_scope_1.DEFAULT_PAPER_ON,
         paperFont: settings_scope_1.DEFAULT_PAPER_FONT,
+        notifyAsk: settings_scope_1.DEFAULT_ASK_NOTIFY,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
@@ -182,6 +184,19 @@ function apply(ctx) {
         }
         paper = (0, install_1.installPaperLayer)(paperSettings);
     };
+    // 等读者动手时的系统通知。关掉时整块卸下；unfocused 与 always 两档都由模块现读，
+    // 所以档位一变不必重新安装——换了档之后的第一条请求才用得上新值
+    let notifyDispose = null;
+    const syncNotify = () => {
+        if (settings.notifyAsk === "off") {
+            notifyDispose?.();
+            notifyDispose = null;
+            return;
+        }
+        if (notifyDispose !== null)
+            return;
+        notifyDispose = (0, ask_notify_1.installAskNotify)(() => settings.notifyAsk).dispose;
+    };
     let followDispose = null;
     const syncFollow = () => {
         if (!settings.followOn) {
@@ -204,7 +219,9 @@ function apply(ctx) {
         settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
         settings.paperFont = value?.paperFont ?? settings_scope_1.DEFAULT_PAPER_FONT;
+        settings.notifyAsk = value?.notifyAsk ?? settings_scope_1.DEFAULT_ASK_NOTIFY;
         syncGlass();
+        syncNotify();
         caret.resync();
         syncPie();
         syncAutoFold();
@@ -229,6 +246,14 @@ function apply(ctx) {
             document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
         };
     }, "dsh-chat-ux: composer glass");
+    // 通知这一块自己管观察器与监听，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
+    ctx.effect(() => {
+        syncNotify();
+        return () => {
+            notifyDispose?.();
+            notifyDispose = null;
+        };
+    }, "dsh-chat-ux: ask notifications");
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
     // 是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」；读者选过之后一次都不再动手
     ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), "dsh-chat-ux: work details default");
@@ -1237,6 +1262,263 @@ function placeQuillCaret(element, caretHeight) {
 }
     };
 
+    __registry["chat/notify/ask-notify.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 等读者动手时弹一条系统通知。
+ *
+ * dsh 把「等读者动手」的请求交给输入区座位接管，三种形态各带一条语义属性：
+ *
+ *   [data-question-key]         提问；计划审阅在它里面再套一层 [data-plan-review-key]
+ *   [data-approval-key]         工具审批
+ *
+ * 只认这些属性，不认 class 名：class 带构建期 hash。
+ *
+ * 观察器只盯输入区座位，不盯整棵文档。聊天流每吐一个字都在变，而座位里只有输入框与这几张面板；
+ * 回调本身只置一个标记，真正的扫描合到下一帧做一次，那一帧里也只有两次座位内的 querySelector。
+ * 失焦与聚焦各自补一次扫描——「仅在未聚焦时」这一档要的正是那一刻。
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installAskNotify = installAskNotify;
+// 输入区座位。dsh 把提问、计划审阅与审批的面板都渲染在它里面
+const SEAT_SELECTOR = "[data-composer-seat]";
+// 座位在会话内容里，切会话时整块可能重挂。盯它的父容器（只看直接子元素）就能重新定位，
+// 而不必去看聊天流那一整棵树
+const SCROLL_SELECTOR = "[data-conversation-scroll]";
+// 三种请求各自的语义属性名
+const QUESTION_ATTRIBUTE = "data-question-key";
+const PLAN_REVIEW_ATTRIBUTE = "data-plan-review-key";
+const APPROVAL_ATTRIBUTE = "data-approval-key";
+// 正文截断：Windows 的通知卡片两行就折了，写更多也读不完
+const BODY_LIMIT = 140;
+// 座位一开始还没渲染出来时用的探针上限，与纸那边同一个理由：静置之后没有别的时机再来问一次
+const SEAT_PROBE_LIMIT = 180;
+// 「这一块在跑」的回执，挂在根元素上。与那两片样式表同一个用途：出问题时先看它在不在
+const ROOT_ATTRIBUTE = "data-dsh-chat-ux-ask-notify";
+// 手动重扫的口子，给排查用：document.dispatchEvent(new Event("dsh-chat-ux:notify-now"))
+const RESCAN_EVENT = "dsh-chat-ux:notify-now";
+const ZH_COPY = {
+    question: "DSH 正在等待你回答",
+    plan: "DSH 正在等待你确认计划",
+    approval: "DSH 正在等待你确认",
+};
+const EN_COPY = {
+    question: "DSH is waiting for your answer",
+    plan: "DSH is waiting for you to approve the plan",
+    approval: "DSH is waiting for your approval",
+};
+// 这一页的文案跟着浏览器语言走。dsh 的语言服务不在这里注入：通知只有三行标题，
+// 为它拉一份必须依赖会让没有那个服务的部署整块不加载
+function noticeCopy() {
+    const language = typeof navigator === "undefined" ? "" : navigator.language;
+    return language.toLowerCase().split("-")[0] === "en" ? EN_COPY : ZH_COPY;
+}
+// 把一段文案压成一行并截断。面板里拿到的 textContent 带着换行与缩进
+function plainTextOf(element, limit) {
+    if (element === null)
+        return "";
+    const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+    return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+/**
+ * 装上通知。
+ *
+ * @param readMode - 现读的档位。每次要弹之前读一次，所以插件管理页上改完不必重新安装
+ * @returns 卸下这一块，把还开着的通知一起关掉
+ */
+function installAskNotify(readMode) {
+    // 这个环境没有通知能力（普通浏览器里被策略关掉），什么都不装
+    if (typeof Notification === "undefined")
+        return { dispose: () => undefined };
+    const copy = noticeCopy();
+    document.documentElement.setAttribute(ROOT_ATTRIBUTE, "");
+    // 通知过的请求。同一个请求只弹一次：面板被收起又展开不该再弹一遍
+    const notified = new Set();
+    // 还开着的通知，按请求 id。请求消失（读者答了）就关掉它
+    const open = new Map();
+    let seat = null;
+    let observer = null;
+    let host = null;
+    let hostObserver = null;
+    let probeHandle = 0;
+    let probeFrames = 0;
+    let scheduled = false;
+    let disposed = false;
+    // 窗口此刻在不在读者眼前。最小化、切到别的应用、页面被隐藏都算不在
+    const windowInSight = () => document.hasFocus() && document.visibilityState === "visible";
+    // 此刻座位里有哪些还在等读者的请求。只看座位内部，不扫整棵文档
+    const pendingRequests = () => {
+        const root = seat;
+        if (root === null)
+            return [];
+        const found = [];
+        const question = root.querySelector("[" + QUESTION_ATTRIBUTE + "]");
+        const plan = question === null ? null : question.querySelector("[" + PLAN_REVIEW_ATTRIBUTE + "]");
+        if (question !== null) {
+            const key = question.getAttribute(QUESTION_ATTRIBUTE) ?? "";
+            // 计划审阅借用同一张请求：里面套了那一层就说明这次要读者点的是计划，不是答题
+            if (key !== "") {
+                found.push(plan === null
+                    ? { key, title: copy.question, body: plainTextOf(question, BODY_LIMIT) }
+                    : { key, title: copy.plan, body: plainTextOf(plan.querySelector("h3") ?? plan, BODY_LIMIT) });
+            }
+        }
+        const approval = root.querySelector("[" + APPROVAL_ATTRIBUTE + "]");
+        if (approval !== null) {
+            const key = approval.getAttribute(APPROVAL_ATTRIBUTE) ?? "";
+            if (key !== "")
+                found.push({ key, title: copy.approval, body: plainTextOf(approval, BODY_LIMIT) });
+        }
+        return found;
+    };
+    const closeNotice = (key) => {
+        const notice = open.get(key);
+        if (notice === undefined)
+            return;
+        open.delete(key);
+        notice.close();
+    };
+    // 一次扫描：没通知过的补一条，已经不在座位里的关掉。所有的判断都发生在这里，
+    // 也就是一帧里的一次调用，不在每次 DOM 变更上
+    const flush = () => {
+        scheduled = false;
+        if (disposed)
+            return;
+        // 座位被整块换下来（切会话、轨迹页切换）：重新定位并换观察器
+        if (seat !== null && !seat.isConnected) {
+            seat = null;
+            watchSeat();
+        }
+        const mode = readMode();
+        if (mode === "off") {
+            for (const key of [...open.keys()])
+                closeNotice(key);
+            return;
+        }
+        const requests = pendingRequests();
+        const live = new Set(requests.map(request => request.key));
+        for (const key of [...open.keys()]) {
+            if (!live.has(key))
+                closeNotice(key);
+        }
+        if (mode === "unfocused" && windowInSight())
+            return;
+        for (const request of requests) {
+            if (notified.has(request.key))
+                continue;
+            notified.add(request.key);
+            try {
+                const notice = new Notification(request.title, {
+                    body: request.body,
+                    tag: request.key,
+                    silent: false,
+                });
+                notice.onclick = () => {
+                    window.focus();
+                };
+                open.set(request.key, notice);
+            }
+            catch (error) {
+                // 系统通知被策略挡掉时只丢这一条，不要影响读者继续用页面
+                notified.delete(request.key);
+                console.warn("dsh-chat-ux: ask notification failed", error);
+            }
+        }
+    };
+    const schedule = () => {
+        if (scheduled || disposed)
+            return;
+        scheduled = true;
+        // 页面被隐藏（窗口最小化）时 rAF 不再跑，而那一刻正是「未聚焦时」要弹的时候。
+        // 隐藏期间改用微任务，它不受渲染帧暂停的影响
+        if (document.hidden) {
+            queueMicrotask(flush);
+            return;
+        }
+        requestAnimationFrame(flush);
+    };
+    // 座位在这几次请求之外还会重挂（切会话、轨迹页来回切），所以定位与观察绑定在一起；
+    // 已经挂在同一个座位上是空操作。父容器也一并盯住：它一变就再走一次这里
+    const watchSeat = () => {
+        const nextHost = document.querySelector(SCROLL_SELECTOR);
+        if (nextHost !== host || hostObserver === null) {
+            hostObserver?.disconnect();
+            host = nextHost;
+            if (nextHost !== null) {
+                hostObserver = new MutationObserver(() => watchSeat());
+                hostObserver.observe(nextHost, { childList: true });
+            }
+        }
+        const next = document.querySelector(SEAT_SELECTOR);
+        if (next === null) {
+            probe();
+            return;
+        }
+        if (next === seat && observer !== null)
+            return;
+        observer?.disconnect();
+        stopProbe();
+        seat = next;
+        observer = new MutationObserver(schedule);
+        observer.observe(next, { childList: true, subtree: true });
+        schedule();
+    };
+    const stopProbe = () => {
+        if (probeHandle !== 0)
+            cancelAnimationFrame(probeHandle);
+        probeHandle = 0;
+        probeFrames = 0;
+    };
+    // 等座位渲染出来。每帧一次 querySelector，找到就退场，跑满上限也退场
+    const probe = () => {
+        if (probeHandle !== 0)
+            return;
+        if (probeFrames > SEAT_PROBE_LIMIT)
+            return;
+        probeHandle = requestAnimationFrame(() => {
+            probeHandle = 0;
+            if (disposed)
+                return;
+            probeFrames += 1;
+            watchSeat();
+        });
+    };
+    // 窗口进出前台各补一次：提问出现时读者正在看，切走那一刻才该弹。
+    // 顺带重新定位一次座位——探针跑满上限之后没有别的时机再来问
+    const onWindowAttention = () => {
+        watchSeat();
+        schedule();
+    };
+    const onRescan = () => flush();
+    window.addEventListener("focus", onWindowAttention);
+    window.addEventListener("blur", onWindowAttention);
+    document.addEventListener("visibilitychange", onWindowAttention);
+    document.addEventListener(RESCAN_EVENT, onRescan);
+    watchSeat();
+    return {
+        dispose: () => {
+            if (disposed)
+                return;
+            disposed = true;
+            observer?.disconnect();
+            observer = null;
+            hostObserver?.disconnect();
+            hostObserver = null;
+            seat = null;
+            host = null;
+            stopProbe();
+            window.removeEventListener("focus", onWindowAttention);
+            window.removeEventListener("blur", onWindowAttention);
+            document.removeEventListener("visibilitychange", onWindowAttention);
+            document.removeEventListener(RESCAN_EVENT, onRescan);
+            for (const key of [...open.keys()])
+                closeNotice(key);
+            document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+        },
+    };
+}
+    };
+
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1454,7 +1736,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_FONT = exports.DEFAULT_PAPER_ON = void 0;
+exports.DEFAULT_ASK_NOTIFY = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_FONT = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 exports.DEFAULT_PAPER_ON = true;
@@ -1476,6 +1758,8 @@ exports.DEFAULT_LIVE_DIFF = true;
 exports.DEFAULT_FOLLOW_ON_APPEAR = true;
 // 发送那一下，整张输入卡片收成落点那条气泡。关掉时气泡直接出现在那里
 exports.DEFAULT_SEND_FLIGHT = true;
+// 等读者动手时的系统通知。默认一律弹：它停下来等你这件事本身就要紧，不挑窗口在不在前台
+exports.DEFAULT_ASK_NOTIFY = "always";
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -9432,6 +9716,7 @@ const COMPOSER_GLASS_FIELD = "composerGlass";
 const LIVE_DIFF_FIELD = "liveDiff";
 const FOLLOW_FIELD = "followOnAppear";
 const SEND_FLIGHT_FIELD = "sendFlight";
+const NOTIFY_FIELD = "notifyAsk";
 const ZH_COPY = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
@@ -9467,6 +9752,12 @@ const ZH_COPY = {
     sendFlightLabel: "发送气泡形变",
     sendFlightHint: "发出之后，一块与输入框同形同色的方块从输入框上沿升起，带在里面的就是刚发的那句话，一边收窄一边折行、"
         + "换成气泡的颜色，落成落点那条气泡。关掉就回到 dsh 原来的样子。",
+    notifyLabel: "窗口通知",
+    notifyHint: "AI 在等你回答、等你确认、或者交了一份计划时，弹一条 Windows 通知，正文就是它写的那段内容。"
+        + "「未聚焦时」只在窗口不在前台时弹，你正看着它就不打扰；「无论何时」一律弹。",
+    notifyOff: "关",
+    notifyUnfocused: "未聚焦时",
+    notifyAlways: "无论何时",
     overridden: "已覆盖",
     reset: "重置",
     failed: "保存未生效，请重试。",
@@ -9515,6 +9806,13 @@ const EN_COPY = {
     sendFlightHint: "Once sent, a slab the size and colour of the composer lifts off its top edge carrying the text you just typed. "
         + "It narrows and re-wraps as it goes, then turns into the colour of the bubble it lands on. "
         + "Off restores dsh's own behaviour.",
+    notifyLabel: "Window notifications",
+    notifyHint: "When the AI is waiting on your answer or your approval, or hands you a plan, a Windows notification pops up "
+        + "carrying what it wrote. \"Unfocused\" only fires while the window sits in the background, so it never "
+        + "interrupts you while you are reading; \"Always\" fires every time.",
+    notifyOff: "Off",
+    notifyUnfocused: "Unfocused",
+    notifyAlways: "Always",
     overridden: "Overridden",
     reset: "Reset",
     failed: "The save did not take effect. Please try again.",
@@ -9548,6 +9846,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const liveDiffOn = storedLiveDiff(snapshot.value);
     const caretMode = storedCaret(snapshot.value);
     const sendFlightOn = storedSendFlight(snapshot.value);
+    const notifyMode = storedNotify(snapshot.value);
     const unavailable = snapshot.status === "unavailable";
     const readOnly = snapshot.writable === false;
     const controlsDisabled = saving || unavailable || readOnly;
@@ -9555,6 +9854,11 @@ function ChatUxConfigCard({ scope, locale, view }) {
         { value: "off", label: copy.caretOff },
         { value: "move", label: copy.caretMove },
         { value: "typing", label: copy.caretTyping },
+    ];
+    const notifyOptionList = [
+        { value: "off", label: copy.notifyOff },
+        { value: "unfocused", label: copy.notifyUnfocused },
+        { value: "always", label: copy.notifyAlways },
     ];
     if (view === "summary")
         return (0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, { children: copy.summary() });
@@ -9581,7 +9885,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
     // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行
     const rowChrome = (field, label, hint, control, indented = false) => ((0, jsx_runtime_1.jsxs)("div", { className: indented ? config_card_styles_1.CARD_CLASS.row + " " + config_card_styles_1.CARD_CLASS.childRow : config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperFontOn, disabled: controlsDisabled, label: copy.paperFontLabel, onChange: (next) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont) })), true), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperFontOn, disabled: controlsDisabled, label: copy.paperFontLabel, onChange: (next) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont) })), true), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(NOTIFY_FIELD, copy.notifyLabel, copy.notifyHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-notify", value: notifyMode, options: notifyOptionList, onChange: (next) => void writeField(NOTIFY_FIELD, next, storedNotify), label: copy.notifyLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 function storedPaperOn(value) {
     return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
@@ -9612,6 +9916,9 @@ function storedCaret(value) {
 }
 function storedSendFlight(value) {
     return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
+}
+function storedNotify(value) {
+    return value?.notifyAsk ?? settings_scope_1.DEFAULT_ASK_NOTIFY;
 }
 function nonEmpty(value) {
     if (typeof value !== "string" || value === "")

@@ -6,6 +6,7 @@
  * 平台包由模块加载器在运行时解析，不参与编译
  */
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
+import type {AskNotifyMode} from "../chat/notify/ask-notify"
 
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 
@@ -39,6 +40,9 @@ export const DEFAULT_FOLLOW_ON_APPEAR = true
 // 发送那一下，整张输入卡片收成落点那条气泡。关掉时气泡直接出现在那里
 export const DEFAULT_SEND_FLIGHT = true
 
+// 等读者动手时的系统通知。默认一律弹：它停下来等你这件事本身就要紧，不挑窗口在不在前台
+export const DEFAULT_ASK_NOTIFY: AskNotifyMode = "always"
+
 
 // host 解析出来的、本插件占用的那个配置条目
 export interface ChatUxSection {
@@ -62,6 +66,8 @@ export interface ChatUxSection {
     followOnAppear?: boolean
     // 发送那一下是否整张输入卡片收成落点那条气泡（形变）
     sendFlight?: boolean
+    // 等读者动手时的系统通知档位。关掉时一条都不弹
+    notifyAsk?: AskNotifyMode
 }
 
 

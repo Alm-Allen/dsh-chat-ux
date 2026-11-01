@@ -14,11 +14,12 @@ import type {KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEv
 import {SegmentedControl, Switch, Tag} from "@deepseek-ai/dsh-client-ui-primitives"
 import type {SegmentedControlOption} from "@deepseek-ai/dsh-client-ui-primitives"
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
+import type {AskNotifyMode} from "../chat/notify/ask-notify"
 import {CARD_CLASS} from "./config-card-styles"
 import {
-    DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT,
-    DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
+    DEFAULT_ASK_NOTIFY, DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
+    DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF,
+    DEFAULT_PAPER_FONT, DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
@@ -33,6 +34,7 @@ const COMPOSER_GLASS_FIELD = "composerGlass"
 const LIVE_DIFF_FIELD = "liveDiff"
 const FOLLOW_FIELD = "followOnAppear"
 const SEND_FLIGHT_FIELD = "sendFlight"
+const NOTIFY_FIELD = "notifyAsk"
 
 // 一种语言的文案
 interface Copy {
@@ -60,6 +62,11 @@ interface Copy {
     liveDiffHint: string
     sendFlightLabel: string
     sendFlightHint: string
+    notifyLabel: string
+    notifyHint: string
+    notifyOff: string
+    notifyUnfocused: string
+    notifyAlways: string
     overridden: string
     reset: string
     failed: string
@@ -112,6 +119,13 @@ const ZH_COPY: Copy = {
     sendFlightHint:
         "发出之后，一块与输入框同形同色的方块从输入框上沿升起，带在里面的就是刚发的那句话，一边收窄一边折行、"
         + "换成气泡的颜色，落成落点那条气泡。关掉就回到 dsh 原来的样子。",
+    notifyLabel: "窗口通知",
+    notifyHint:
+        "AI 在等你回答、等你确认、或者交了一份计划时，弹一条 Windows 通知，正文就是它写的那段内容。"
+        + "「未聚焦时」只在窗口不在前台时弹，你正看着它就不打扰；「无论何时」一律弹。",
+    notifyOff: "关",
+    notifyUnfocused: "未聚焦时",
+    notifyAlways: "无论何时",
 
     overridden: "已覆盖",
     reset: "重置",
@@ -173,6 +187,14 @@ const EN_COPY: Copy = {
         "Once sent, a slab the size and colour of the composer lifts off its top edge carrying the text you just typed. "
         + "It narrows and re-wraps as it goes, then turns into the colour of the bubble it lands on. "
         + "Off restores dsh's own behaviour.",
+    notifyLabel: "Window notifications",
+    notifyHint:
+        "When the AI is waiting on your answer or your approval, or hands you a plan, a Windows notification pops up "
+        + "carrying what it wrote. \"Unfocused\" only fires while the window sits in the background, so it never "
+        + "interrupts you while you are reading; \"Always\" fires every time.",
+    notifyOff: "Off",
+    notifyUnfocused: "Unfocused",
+    notifyAlways: "Always",
 
     overridden: "Overridden",
     reset: "Reset",
@@ -227,6 +249,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     const liveDiffOn = storedLiveDiff(snapshot.value)
     const caretMode = storedCaret(snapshot.value)
     const sendFlightOn = storedSendFlight(snapshot.value)
+    const notifyMode = storedNotify(snapshot.value)
 
     const unavailable = snapshot.status === "unavailable"
     const readOnly = snapshot.writable === false
@@ -235,6 +258,11 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
         {value: "off", label: copy.caretOff},
         {value: "move", label: copy.caretMove},
         {value: "typing", label: copy.caretTyping},
+    ]
+    const notifyOptionList: readonly SegmentedControlOption<AskNotifyMode>[] = [
+        {value: "off", label: copy.notifyOff},
+        {value: "unfocused", label: copy.notifyUnfocused},
+        {value: "always", label: copy.notifyAlways},
     ]
 
     if (view === "summary") return <>{copy.summary()}</>
@@ -344,6 +372,17 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     className={CARD_CLASS.segment}
                 />
             ))}
+            {rowChrome(NOTIFY_FIELD, copy.notifyLabel, copy.notifyHint, (
+                <SegmentedControl
+                    id={fieldId + "-notify"}
+                    value={notifyMode}
+                    options={notifyOptionList}
+                    onChange={(next) => void writeField(NOTIFY_FIELD, next, storedNotify)}
+                    label={copy.notifyLabel}
+                    disabled={controlsDisabled}
+                    className={CARD_CLASS.segment}
+                />
+            ))}
             {rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, (
                 <Switch
                     checked={reelOn}
@@ -429,6 +468,10 @@ function storedCaret(value: ChatUxSection | undefined): CaretMotionMode {
 
 function storedSendFlight(value: ChatUxSection | undefined): boolean {
     return value?.sendFlight ?? DEFAULT_SEND_FLIGHT
+}
+
+function storedNotify(value: ChatUxSection | undefined): AskNotifyMode {
+    return value?.notifyAsk ?? DEFAULT_ASK_NOTIFY
 }
 
 

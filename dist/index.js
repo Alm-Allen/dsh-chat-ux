@@ -30,6 +30,8 @@ export const DEFAULT_LIVE_DIFF = true;
 export const DEFAULT_FOLLOW_ON_APPEAR = true;
 // 发送气泡的形变：提交那一下整张输入卡片收成落点那条气泡。默认开着
 export const DEFAULT_SEND_FLIGHT = true;
+// 默认一律弹。三档里「关闭」与「未聚焦时」都留给了不想被它打断的人
+export const DEFAULT_ASK_NOTIFY = "always";
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
@@ -42,6 +44,7 @@ export const Config = Schema.object({
     liveDiff: Schema.boolean().default(DEFAULT_LIVE_DIFF).volatile(),
     followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
+    notifyAsk: Schema.union(["off", "unfocused", "always"]).default(DEFAULT_ASK_NOTIFY).volatile(),
 });
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写
 export function apply() {
