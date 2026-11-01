@@ -30,13 +30,11 @@ import type {PaperMode, PaperSettings} from "./paper-tables"
 import {currentPaperMode, watchThemeMode} from "./paper-theme"
 import {toUnit} from "./paper-math"
 
-// 读者那边的两个开关。每帧现读，所以运行期改配置不必重新安装。
+// 读者那边的开关。每帧现读，所以运行期改配置不必重新安装。
 // 明暗不在这里：它跟着 dsh 的主题走，由 paper-theme 现读
 export interface PaperOptions {
-    // 纸感总开关
+    // 纸感总开关。关掉时这一整块一起收：两片 canvas、令牌、侧栏那层纹理
     on: boolean
-    // 纸要不要盖住左侧栏。读者自建桌面把侧栏做成窗口材质时，这一项必须是 false
-    includeSidebar: boolean
 }
 
 // 挂载结果
@@ -140,9 +138,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     let overlayPresent = false
     // body 的直接子元素变了要重算上面那一项
     let overlayDirty = true
-    // 这一帧纸盖不盖侧栏：平时由配置与平台判据决定，浮层在场时恒为真。
+    // 这一帧纸盖不盖侧栏：平时只看平台判据，浮层在场时恒为真。
     // 几何、令牌、侧栏纹理三处都问它
-    let coversSidebar = paperIncludesSidebar(readOptions().includeSidebar)
+    let coversSidebar = paperIncludesSidebar()
 
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
@@ -200,7 +198,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     let sidebarWaitObserver: MutationObserver | null = null
 
     /**
-     * 等侧栏出现。只在「开关要它、但还定位不到」的那一小段时间里存在。
+     * 等侧栏出现。只在「这一列该有纸纹、但还定位不到」的那一小段时间里存在。
      *
      * 为什么要等：装上纸的那一刻 React 可能还没渲染出 AppFrame，而静置之后整条帧循环是 0 帧，
      * 没有谁再来问一次，那层纹理就永远挂不上。
@@ -293,7 +291,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
         // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
         // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
-        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && !coversSidebar && windowMaterialPresent())
+        syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && windowMaterialPresent())
         // 气泡那一层纸色走同一个明暗档：两处都从这一处算，切主题时不会一边换了一边没换。
         // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
         applyPaperBubble(mode)
@@ -311,7 +309,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 浮层状态可能还没落到 coversSidebar 上（配置或主题先变）：先对一次
         overlayDirty = false
         overlayPresent = overlayCoversViewport()
-        coversSidebar = paperIncludesSidebar(readOptions().includeSidebar) || overlayPresent
+        coversSidebar = paperIncludesSidebar() || overlayPresent
         refreshTokens()
         rect = measurePaperRect(coversSidebar)
         pixelRatio = computePixelRatio()
@@ -341,7 +339,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
         // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
         // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
-        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && !coversSidebar && windowMaterialPresent())
+        syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && windowMaterialPresent())
         const mode = currentPaperMode()
         const paper = paperOf(mode)
 
@@ -353,7 +351,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         if (overlayDirty) {
             overlayDirty = false
             overlayPresent = overlayCoversViewport()
-            const coverage = paperIncludesSidebar(options.includeSidebar) || overlayPresent
+            const coverage = paperIncludesSidebar() || overlayPresent
             if (coverage !== coversSidebar) {
                 coversSidebar = coverage
                 refreshTokens()
@@ -565,7 +563,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     // 上一次判出来的「纸要不要让开侧栏」。两条标记的增减只有落到这个结论上才值得重算：
     // 失焦时标记被撤下、判据却因为粘性没有变，那时重落一次令牌等于把整篇文档的样式全作废一遍，
     // 换不来任何变化
-    let lastIncludeSidebar = paperIncludesSidebar(readOptions().includeSidebar)
+    let lastIncludeSidebar = paperIncludesSidebar()
     // 上一次判出来的「此刻底下还有没有玻璃」。失焦与聚焦只翻这一个，粘性那份不动
     let lastMaterialPresent = windowMaterialPresent()
     const onMaterialChange = (): void => {
@@ -576,9 +574,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 只动侧栏纸纹，不重落令牌：整块重落会让整篇文档的样式失效一遍，而这里变的是一个开关
         if (windowMaterialPresent() !== lastMaterialPresent) {
             lastMaterialPresent = windowMaterialPresent()
-            syncSidebarTexture(sidebarPaintsOwnTexture(readOptions().includeSidebar) && !coversSidebar && lastMaterialPresent)
+            syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && lastMaterialPresent)
         }
-        const includeSidebar = paperIncludesSidebar(readOptions().includeSidebar)
+        const includeSidebar = paperIncludesSidebar()
         if (includeSidebar === lastIncludeSidebar) return
         lastIncludeSidebar = includeSidebar
         // 布局键清空：纸还覆不覆盖侧栏变了，必须重新量一次
@@ -613,7 +611,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
 
     overlayPresent = overlayCoversViewport()
     overlayDirty = false
-    coversSidebar = paperIncludesSidebar(readOptions().includeSidebar) || overlayPresent
+    coversSidebar = paperIncludesSidebar() || overlayPresent
     refreshTokens()
     rect = measurePaperRect(coversSidebar)
     pixelRatio = computePixelRatio()

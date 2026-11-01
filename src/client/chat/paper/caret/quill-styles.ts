@@ -16,7 +16,8 @@
  * 会动的只剩两条，都不属于「闪」：读者挪光标时那一趟 80 ms 位移过渡（geometry 那一侧的事），
  * 以及哪一帧该出现、哪一帧该藏起来（caret-motion 的事）
  */
-import {CARET_COLOR_PROPERTY, CARET_LAYER_ATTRIBUTE} from "../../caret/caret-motion"
+import {COMPOSER_PLACEHOLDER_SELECTOR} from "../../../dom-contract"
+import {CARET_COLOR_PROPERTY, CARET_LAYER_ATTRIBUTE, CARET_VISIBLE_ATTRIBUTE} from "../../caret/caret-motion"
 import {PAPER_ROOT_ATTRIBUTE} from "../paper-tokens"
 import {QUILL_ATTRIBUTE, QUILL_ID, QUILL_ROOT_CLASS} from "./quill"
 
@@ -33,6 +34,17 @@ const LAYER = ROOT_SCOPE + " [" + CARET_LAYER_ATTRIBUTE + "][" + QUILL_ATTRIBUTE
 
 // 羽毛根
 const ROOT = "." + QUILL_ROOT_CLASS
+
+/**
+ * 空输入框里那行提示要给羽毛让开多宽。
+ *
+ * 一支笔从笔尖朝右上伸出去 60 个本地单位，整支高 78 单位、按插入符的高度画：
+ * 默认档 16px 字、字盒约 22px 时横向占到 60 / 78 × 22 ≈ 17px，约合 1.06em。
+ * 这里取 1.25em——中文界面下五个半角空格差不多就这么宽——比笔宽多出来的那一点是缝。
+ *
+ * 写 em 不写 px：字号一变，笔与提示按同一个比例放大，这道缝不会在大字号上消失
+ */
+const PLACEHOLDER_INDENT_EM = 1.25
 
 /**
  * 羽毛光标那一整张表。
@@ -148,5 +160,17 @@ ${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
 ${ROOT}-glint {
   fill: #fff;
   opacity: 0.55;
+}
+
+/* 空着的时候，那行提示要给这支笔让开。
+   笔尖钉在插入点上，整支朝右上伸出去，正好横过提示最前面几个字；提示整行向右让出一段，字就不被压住。
+
+   只有笔真画在那里才让：插入符层上带着羽毛标记、并且这一帧是可见的。
+   没聚焦、插入符动效关着、纸感关着——这些时候提示都留在原处，不会平白无故挪一下。
+
+   :has 从提示的父元素往下找那根笔：插入符层与提示同级，都挂在可编辑面的父元素下面
+   （caret-motion 的 layerFor 把那一根 append 到 input.parentElement 上） */
+${ROOT_SCOPE} *:has(> [${CARET_LAYER_ATTRIBUTE}][${QUILL_ATTRIBUTE}][${CARET_VISIBLE_ATTRIBUTE}]) > ${COMPOSER_PLACEHOLDER_SELECTOR} {
+  padding-left: ${PLACEHOLDER_INDENT_EM}em;
 }
 `

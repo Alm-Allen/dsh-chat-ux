@@ -53,6 +53,12 @@ export const COMPOSER_SELECTOR = "[data-composer-seat]"
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 export const COMPOSER_INPUT_SELECTOR = "[data-composer-input]"
 
+/**
+ * 输入框空着时压在里面那行提示。它与可编辑面同级、用同一套内边距，绝对定位盖在插入点那一行上。
+ * 纸感那支羽毛从插入点朝右上伸出去，会横过它最前面几个字，所以提示要按这支笔让开一段
+ */
+export const COMPOSER_PLACEHOLDER_SELECTOR = "[data-composer-placeholder]"
+
 // 输入卡片（那条胶囊）。落在它里面的点击可能是提交
 export const COMPOSER_CARD_SELECTOR = "[data-composer-card]"
 

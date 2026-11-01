@@ -15,12 +15,10 @@ import {paperIncludesSidebar} from "./paper-layout"
 import {applyPaperTokens, clearPaperTokens, PAPER_ROOT_ATTRIBUTE, paperTokenSet} from "./paper-tokens"
 import {currentPaperMode} from "./paper-theme"
 
-// 安装时现读的配置。两个字段的默认值在 settings-scope.ts 里也有一份
+// 安装时现读的配置。默认值在 settings-scope.ts 里也有一份
 export interface PaperSettingsInput {
-    // 纸感总开关
+    // 纸感总开关。开着时这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩
     on: boolean
-    // 左侧栏是否也铺纸
-    sidebar: boolean
 }
 
 /**
@@ -41,11 +39,8 @@ export function installPaperLayer(readSettings: () => PaperSettingsInput): Paper
     // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
     // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
     const mode = currentPaperMode()
-    applyPaperTokens(paperTokenSet(mode), mode, paperIncludesSidebar(settings.sidebar))
-    return installPaper(() => {
-        const current = readSettings()
-        return {on: current.on, includeSidebar: current.sidebar}
-    })
+    applyPaperTokens(paperTokenSet(mode), mode, paperIncludesSidebar())
+    return installPaper(() => ({on: readSettings().on}))
 }
 
 // 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记

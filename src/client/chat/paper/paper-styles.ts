@@ -19,7 +19,7 @@ export const PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow"
  * 第一个子元素，而 :has 的失效检查会跟着每一次 DOM 变更走——聊天流每吐一个字都要重算一遍。
  * 反过来由 JS 定位一次、挂一条属性，样式表里就只剩一个属性选择器。
  *
- * 为什么这个开关不在 CSS 里再判一次平台：窗口材质那套判据已经有了一份（paper-layout 的
+ * 为什么这件事不在 CSS 里再判一次平台：窗口材质那套判据已经有了一份（paper-layout 的
  * sidebarRevealsWindowMaterial），CSS 里照抄一遍就是两份会分叉的真相
  */
 export const PAPER_SIDEBAR_ATTRIBUTE = "data-dsh-chat-ux-paper-sidebar-texture"

@@ -29,7 +29,7 @@ import {ChatUxConfigCard} from "./settings/settings-card"
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
     DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
-    DEFAULT_PAPER_SIDEBAR, DEFAULT_SEND_FLIGHT,
+    DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
@@ -78,7 +78,6 @@ export function apply(ctx: ClientContext): void {
         followOn: DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: DEFAULT_SEND_FLIGHT,
         paperOn: DEFAULT_PAPER_ON,
-        paperSidebar: DEFAULT_PAPER_SIDEBAR,
     }
 
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -138,11 +137,10 @@ export function apply(ctx: ClientContext): void {
     }
 
     // 纸：开着才装。装的是两片 canvas 加令牌，关掉时把它卸干净、令牌一并还原。
-    // 纸只有一张，纸色跟着 body 上的深浅色标记走，所以配置里只剩两个开关
+    // 纸只有一张，纸色跟着 body 上的深浅色标记走，所以配置里只剩这一个开关：关掉就没有纸感，一处不剩
     let paper: PaperHandle | null = null
     const paperSettings = (): PaperSettingsInput => ({
         on: settings.paperOn,
-        sidebar: settings.paperSidebar,
     })
     const syncPaper = (): void => {
         if (!settings.paperOn) {
@@ -179,7 +177,6 @@ export function apply(ctx: ClientContext): void {
         settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
         settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
-        settings.paperSidebar = value?.paperSidebar ?? DEFAULT_PAPER_SIDEBAR
         syncGlass()
         caret.resync()
         syncPie()
@@ -305,10 +302,9 @@ interface ChatUxSettings {
     followOn: boolean
     // 发送气泡是否走形变（整张卡片收成气泡），改一次就得重落一次
     sendFlight: boolean
-    // 纸感总开关。它不只是画不画，还决定整页底色那几条令牌写不写
+    // 纸感总开关。它不只是画不画，还决定整页底色那几条令牌写不写。
+    // 关掉时纸感这一整块一起收：两片 canvas、令牌、羽毛、侧栏那层纹理，一处不剩
     paperOn: boolean
-    // 左侧栏是否也铺纸。材质平台（darwin、Windows 11 acrylic）上读者想留着侧栏的窗口材质时关掉它
-    paperSidebar: boolean
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input

@@ -130,11 +130,11 @@ export function sidebarElement(): HTMLElement | null {
 }
 
 /**
- * 全屏那一层纸要不要盖住左侧栏：读者的选择，再让一层平台判据。
+ * 全屏那一层纸要不要盖住左侧栏：只看平台，没有读者开关。
  *
- * 两项都为真才盖。第二项是给自建桌面准备的——那边的左侧栏是仿 macOS 的透明窗口材质，
- * 观感来自它背后的窗口而不是页面自己画的，纸盖上去那块玻璃当场失效。这种平台上无论开关怎么选
- * 都不盖。判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
+ * 自建桌面的左侧栏是仿 macOS 的透明窗口材质，观感来自它背后的窗口而不是页面自己画的，
+ * 纸盖上去那块玻璃当场失效。所以这种平台上纸让开侧栏，其余平台一律盖满。
+ * 判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
  *
  * 让开之后侧栏并不是没有纸感：纸纹改为由侧栏自己那一层半透明纹理提供，见 sidebarPaintsOwnTexture()
  *
@@ -142,22 +142,22 @@ export function sidebarElement(): HTMLElement | null {
  * applyPaperTokens 第三个参数）。它必须在材质平台上恒为假：那一笔写进去的是不透明的纸色，
  * 落在侧栏上会把 dsh 那层 85% 的 tint（只剩 15% 透光）整个盖死，窗口材质当场消失。
  * 现在走不到是因为这里的平台判据；哪天有人把判据放宽，侧栏的玻璃会跟着一起没 */
-export function paperIncludesSidebar(requested: boolean): boolean {
-    return requested && !sidebarRevealsWindowMaterial()
+export function paperIncludesSidebar(): boolean {
+    return !sidebarRevealsWindowMaterial()
 }
 
 /**
  * 侧栏要不要由插件自己叠一层纸纹。
  *
- * 只有在「开关打开、全屏那一层纸又让开了侧栏」时才画。让开的原因正是窗口材质，所以这一条读作
- * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」。窗口材质的平台上开关的语义因此保住了：
- * 打开有纸纹，关掉一条都不留。
+ * 只在「全屏那一层纸让开了侧栏」时画。让开的原因正是窗口材质，所以这一条读作
+ * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」——纸感在这一列上仍然成立，只是换了个画法；
+ * 纸感总开关关掉时它跟整块纸一起收。
  *
  * 全屏纸盖住侧栏时（没有窗口材质的平台）这一条为假——那边纸面 canvas 已经用 multiply 压过整列，
  * 再叠一层细纹只会把侧栏从它右边那半张纸里挑出来
  */
-export function sidebarPaintsOwnTexture(requested: boolean): boolean {
-    return requested && !paperIncludesSidebar(requested)
+export function sidebarPaintsOwnTexture(): boolean {
+    return !paperIncludesSidebar()
 }
 
 /**

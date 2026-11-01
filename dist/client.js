@@ -101,7 +101,6 @@ function apply(ctx) {
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
         paperOn: settings_scope_1.DEFAULT_PAPER_ON,
-        paperSidebar: settings_scope_1.DEFAULT_PAPER_SIDEBAR,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
@@ -162,11 +161,10 @@ function apply(ctx) {
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
     // 纸：开着才装。装的是两片 canvas 加令牌，关掉时把它卸干净、令牌一并还原。
-    // 纸只有一张，纸色跟着 body 上的深浅色标记走，所以配置里只剩两个开关
+    // 纸只有一张，纸色跟着 body 上的深浅色标记走，所以配置里只剩这一个开关：关掉就没有纸感，一处不剩
     let paper = null;
     const paperSettings = () => ({
         on: settings.paperOn,
-        sidebar: settings.paperSidebar,
     });
     const syncPaper = () => {
         if (!settings.paperOn) {
@@ -203,7 +201,6 @@ function apply(ctx) {
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
-        settings.paperSidebar = value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
         syncGlass();
         caret.resync();
         syncPie();
@@ -876,7 +873,7 @@ function surfaceOf(element) {
  * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_ATTRIBUTE = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_PLACEHOLDER_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_ATTRIBUTE = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 // 聊天列
 exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
 // 每一行思考行；它的阶段看 data-state
@@ -913,6 +910,11 @@ exports.FOLLOW_THRESHOLD_PX = 25;
 exports.COMPOSER_SELECTOR = "[data-composer-seat]";
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
+/**
+ * 输入框空着时压在里面那行提示。它与可编辑面同级、用同一套内边距，绝对定位盖在插入点那一行上。
+ * 纸感那支羽毛从插入点朝右上伸出去，会横过它最前面几个字，所以提示要按这支笔让开一段
+ */
+exports.COMPOSER_PLACEHOLDER_SELECTOR = "[data-composer-placeholder]";
 // 输入卡片（那条胶囊）。落在它里面的点击可能是提交
 exports.COMPOSER_CARD_SELECTOR = "[data-composer-card]";
 /**
@@ -1449,12 +1451,10 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_SIDEBAR = exports.DEFAULT_PAPER_ON = void 0;
+exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 exports.DEFAULT_PAPER_ON = true;
-// 左侧栏是否也跟着铺同一张纸
-exports.DEFAULT_PAPER_SIDEBAR = true;
 // 思考行与过程组自己开合，这是本插件的主要效果
 exports.DEFAULT_AUTO_FOLD = true;
 // 凡是会挪位置的地方都给过渡
@@ -5332,11 +5332,8 @@ function installPaperLayer(readSettings) {
     // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
     // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
     const mode = (0, paper_theme_1.currentPaperMode)();
-    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)(settings.sidebar));
-    return (0, paper_mount_1.installPaper)(() => {
-        const current = readSettings();
-        return { on: current.on, includeSidebar: current.sidebar };
-    });
+    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)());
+    return (0, paper_mount_1.installPaper)(() => ({ on: readSettings().on }));
 }
 // 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
 function clearPaperLayer() {
@@ -5443,9 +5440,9 @@ function installPaper(readOptions) {
     let overlayPresent = false;
     // body 的直接子元素变了要重算上面那一项
     let overlayDirty = true;
-    // 这一帧纸盖不盖侧栏：平时由配置与平台判据决定，浮层在场时恒为真。
+    // 这一帧纸盖不盖侧栏：平时只看平台判据，浮层在场时恒为真。
     // 几何、令牌、侧栏纹理三处都问它
-    let coversSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
+    let coversSidebar = (0, paper_layout_1.paperIncludesSidebar)();
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
     // 不用 hidden 属性：本插件的样式表给这两片写了 display: block，作者样式恒赢过 UA 的
@@ -5501,7 +5498,7 @@ function installPaper(readOptions) {
     // 侧栏还没渲染出来时临时挂的那个观察器，与上面那个（盯 grid）不是同一件事
     let sidebarWaitObserver = null;
     /**
-     * 等侧栏出现。只在「开关要它、但还定位不到」的那一小段时间里存在。
+     * 等侧栏出现。只在「这一列该有纸纹、但还定位不到」的那一小段时间里存在。
      *
      * 为什么要等：装上纸的那一刻 React 可能还没渲染出 AppFrame，而静置之后整条帧循环是 0 帧，
      * 没有谁再来问一次，那层纹理就永远挂不上。
@@ -5597,7 +5594,7 @@ function installPaper(readOptions) {
         // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
         // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
         // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
-        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(options.includeSidebar) && !coversSidebar && (0, paper_layout_1.windowMaterialPresent)());
+        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)() && !coversSidebar && (0, paper_layout_1.windowMaterialPresent)());
         // 气泡那一层纸色走同一个明暗档：两处都从这一处算，切主题时不会一边换了一边没换。
         // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
         (0, paper_bubble_1.applyPaperBubble)(mode);
@@ -5615,7 +5612,7 @@ function installPaper(readOptions) {
         // 浮层状态可能还没落到 coversSidebar 上（配置或主题先变）：先对一次
         overlayDirty = false;
         overlayPresent = (0, paper_layout_1.overlayCoversViewport)();
-        coversSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar) || overlayPresent;
+        coversSidebar = (0, paper_layout_1.paperIncludesSidebar)() || overlayPresent;
         refreshTokens();
         rect = (0, paper_layout_1.measurePaperRect)(coversSidebar);
         pixelRatio = computePixelRatio();
@@ -5644,7 +5641,7 @@ function installPaper(readOptions) {
         // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
         // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
         // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
-        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(options.includeSidebar) && !coversSidebar && (0, paper_layout_1.windowMaterialPresent)());
+        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)() && !coversSidebar && (0, paper_layout_1.windowMaterialPresent)());
         const mode = (0, paper_theme_1.currentPaperMode)();
         const paper = (0, paper_tables_1.paperOf)(mode);
         // 换了明暗档：令牌要重落，纸纹要重算。这两件都不必等调用方来 refresh
@@ -5655,7 +5652,7 @@ function installPaper(readOptions) {
         if (overlayDirty) {
             overlayDirty = false;
             overlayPresent = (0, paper_layout_1.overlayCoversViewport)();
-            const coverage = (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar) || overlayPresent;
+            const coverage = (0, paper_layout_1.paperIncludesSidebar)() || overlayPresent;
             if (coverage !== coversSidebar) {
                 coversSidebar = coverage;
                 refreshTokens();
@@ -5859,7 +5856,7 @@ function installPaper(readOptions) {
     // 上一次判出来的「纸要不要让开侧栏」。两条标记的增减只有落到这个结论上才值得重算：
     // 失焦时标记被撤下、判据却因为粘性没有变，那时重落一次令牌等于把整篇文档的样式全作废一遍，
     // 换不来任何变化
-    let lastIncludeSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
+    let lastIncludeSidebar = (0, paper_layout_1.paperIncludesSidebar)();
     // 上一次判出来的「此刻底下还有没有玻璃」。失焦与聚焦只翻这一个，粘性那份不动
     let lastMaterialPresent = (0, paper_layout_1.windowMaterialPresent)();
     const onMaterialChange = () => {
@@ -5871,9 +5868,9 @@ function installPaper(readOptions) {
         // 只动侧栏纸纹，不重落令牌：整块重落会让整篇文档的样式失效一遍，而这里变的是一个开关
         if ((0, paper_layout_1.windowMaterialPresent)() !== lastMaterialPresent) {
             lastMaterialPresent = (0, paper_layout_1.windowMaterialPresent)();
-            syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(readOptions().includeSidebar) && !coversSidebar && lastMaterialPresent);
+            syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)() && !coversSidebar && lastMaterialPresent);
         }
-        const includeSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
+        const includeSidebar = (0, paper_layout_1.paperIncludesSidebar)();
         if (includeSidebar === lastIncludeSidebar)
             return;
         lastIncludeSidebar = includeSidebar;
@@ -5908,7 +5905,7 @@ function installPaper(readOptions) {
         reduceMotionQuery.addEventListener("change", onMotionChange);
     overlayPresent = (0, paper_layout_1.overlayCoversViewport)();
     overlayDirty = false;
-    coversSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar) || overlayPresent;
+    coversSidebar = (0, paper_layout_1.paperIncludesSidebar)() || overlayPresent;
     refreshTokens();
     rect = (0, paper_layout_1.measurePaperRect)(coversSidebar);
     pixelRatio = computePixelRatio();
@@ -6586,11 +6583,11 @@ function sidebarElement() {
     return Math.abs(first.getBoundingClientRect().width - sidebarWidth()) < 8 ? first : null;
 }
 /**
- * 全屏那一层纸要不要盖住左侧栏：读者的选择，再让一层平台判据。
+ * 全屏那一层纸要不要盖住左侧栏：只看平台，没有读者开关。
  *
- * 两项都为真才盖。第二项是给自建桌面准备的——那边的左侧栏是仿 macOS 的透明窗口材质，
- * 观感来自它背后的窗口而不是页面自己画的，纸盖上去那块玻璃当场失效。这种平台上无论开关怎么选
- * 都不盖。判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
+ * 自建桌面的左侧栏是仿 macOS 的透明窗口材质，观感来自它背后的窗口而不是页面自己画的，
+ * 纸盖上去那块玻璃当场失效。所以这种平台上纸让开侧栏，其余平台一律盖满。
+ * 判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
  *
  * 让开之后侧栏并不是没有纸感：纸纹改为由侧栏自己那一层半透明纹理提供，见 sidebarPaintsOwnTexture()
  *
@@ -6598,21 +6595,21 @@ function sidebarElement() {
  * applyPaperTokens 第三个参数）。它必须在材质平台上恒为假：那一笔写进去的是不透明的纸色，
  * 落在侧栏上会把 dsh 那层 85% 的 tint（只剩 15% 透光）整个盖死，窗口材质当场消失。
  * 现在走不到是因为这里的平台判据；哪天有人把判据放宽，侧栏的玻璃会跟着一起没 */
-function paperIncludesSidebar(requested) {
-    return requested && !sidebarRevealsWindowMaterial();
+function paperIncludesSidebar() {
+    return !sidebarRevealsWindowMaterial();
 }
 /**
  * 侧栏要不要由插件自己叠一层纸纹。
  *
- * 只有在「开关打开、全屏那一层纸又让开了侧栏」时才画。让开的原因正是窗口材质，所以这一条读作
- * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」。窗口材质的平台上开关的语义因此保住了：
- * 打开有纸纹，关掉一条都不留。
+ * 只在「全屏那一层纸让开了侧栏」时画。让开的原因正是窗口材质，所以这一条读作
+ * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」——纸感在这一列上仍然成立，只是换了个画法；
+ * 纸感总开关关掉时它跟整块纸一起收。
  *
  * 全屏纸盖住侧栏时（没有窗口材质的平台）这一条为假——那边纸面 canvas 已经用 multiply 压过整列，
  * 再叠一层细纹只会把侧栏从它右边那半张纸里挑出来
  */
-function sidebarPaintsOwnTexture(requested) {
-    return requested && !paperIncludesSidebar(requested);
+function sidebarPaintsOwnTexture() {
+    return !paperIncludesSidebar();
 }
 /**
  * 这一帧有没有盖住整个视口的浮层——设置面板这类 body-portal 的模态。
@@ -6682,7 +6679,7 @@ exports.PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow";
  * 第一个子元素，而 :has 的失效检查会跟着每一次 DOM 变更走——聊天流每吐一个字都要重算一遍。
  * 反过来由 JS 定位一次、挂一条属性，样式表里就只剩一个属性选择器。
  *
- * 为什么这个开关不在 CSS 里再判一次平台：窗口材质那套判据已经有了一份（paper-layout 的
+ * 为什么这件事不在 CSS 里再判一次平台：窗口材质那套判据已经有了一份（paper-layout 的
  * sidebarRevealsWindowMaterial），CSS 里照抄一遍就是两份会分叉的真相
  */
 exports.PAPER_SIDEBAR_ATTRIBUTE = "data-dsh-chat-ux-paper-sidebar-texture";
@@ -9307,7 +9304,6 @@ const config_card_styles_1 = require("./config-card-styles");
 const settings_scope_1 = require("./settings-scope");
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
 const PAPER_ON_FIELD = "paperOn";
-const PAPER_SIDEBAR_FIELD = "paperSidebar";
 const AUTO_FOLD_FIELD = "autoFold";
 const CARET_FIELD = "caretMotion";
 const HIT_REEL_FIELD = "hitReel";
@@ -9319,11 +9315,8 @@ const SEND_FLIGHT_FIELD = "sendFlight";
 const ZH_COPY = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
-    paperHint: "整页铺一张纸，页面底色换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层。"
-        + "关掉就回到 dsh 原来的样子。",
-    paperSidebarLabel: "左侧栏也铺纸",
-    paperSidebarHint: "左侧栏那一列也换成同一张纸，整扇窗看起来是一张纸。关掉时左侧栏保持 dsh 自己的底色，"
-        + "只有聊天区铺纸；纸感关掉时这一项同样不起作用。",
+    paperHint: "整页铺一张纸：页面底色与左侧栏都换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
+        + "输入光标也变成一支羽毛笔。关掉就一起收掉，回到 dsh 原来的样子。",
     autoFoldLabel: "自动开合",
     autoFoldHint: "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
         + "你自己动手折叠过的，它不再打扰。",
@@ -9360,11 +9353,9 @@ const ZH_COPY = {
 const EN_COPY = {
     summary: () => "The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
     paperLabel: "Paper",
-    paperHint: "The whole page lies on a sheet of paper: the page background takes that paper's tone, so the composer and the "
-        + "bubbles read as layers pressed into it. Off restores dsh's own look.",
-    paperSidebarLabel: "Paper the sidebar",
-    paperSidebarHint: "The left sidebar takes the same sheet, so the whole window reads as one piece of paper. Off leaves the "
-        + "sidebar on dsh's own fill and papers the chat area only; it does nothing while paper is off either.",
+    paperHint: "The whole page lies on a sheet of paper: the page background and the sidebar take that paper's tone, so the "
+        + "composer and the bubbles read as layers pressed into it, and the caret becomes a quill. Off takes all of it "
+        + "away and restores dsh's own look.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint: "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
         + "tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.",
@@ -9422,7 +9413,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
     const paperOn = storedPaperOn(snapshot.value);
-    const paperSidebarOn = storedPaperSidebar(snapshot.value);
     const autoFoldOn = storedAutoFold(snapshot.value);
     const followOn = storedFollow(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
@@ -9463,13 +9453,10 @@ function ChatUxConfigCard({ scope, locale, view }) {
     };
     // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
     const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperSidebarOn, disabled: controlsDisabled, label: copy.paperSidebarLabel, onChange: (next) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 function storedPaperOn(value) {
     return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
-}
-function storedPaperSidebar(value) {
-    return value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
 }
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -9988,6 +9975,7 @@ exports.QUILL_CSS = void 0;
  * 会动的只剩两条，都不属于「闪」：读者挪光标时那一趟 80 ms 位移过渡（geometry 那一侧的事），
  * 以及哪一帧该出现、哪一帧该藏起来（caret-motion 的事）
  */
+const dom_contract_1 = require("../../../dom-contract");
 const caret_motion_1 = require("../../caret/caret-motion");
 const paper_tokens_1 = require("../paper-tokens");
 const quill_1 = require("./quill");
@@ -10002,6 +9990,16 @@ const ROOT_SCOPE = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
 const LAYER = ROOT_SCOPE + " [" + caret_motion_1.CARET_LAYER_ATTRIBUTE + "][" + quill_1.QUILL_ATTRIBUTE + "]";
 // 羽毛根
 const ROOT = "." + quill_1.QUILL_ROOT_CLASS;
+/**
+ * 空输入框里那行提示要给羽毛让开多宽。
+ *
+ * 一支笔从笔尖朝右上伸出去 60 个本地单位，整支高 78 单位、按插入符的高度画：
+ * 默认档 16px 字、字盒约 22px 时横向占到 60 / 78 × 22 ≈ 17px，约合 1.06em。
+ * 这里取 1.25em——中文界面下五个半角空格差不多就这么宽——比笔宽多出来的那一点是缝。
+ *
+ * 写 em 不写 px：字号一变，笔与提示按同一个比例放大，这道缝不会在大字号上消失
+ */
+const PLACEHOLDER_INDENT_EM = 1.25;
 /**
  * 羽毛光标那一整张表。
  *
@@ -10116,6 +10114,18 @@ ${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
 ${ROOT}-glint {
   fill: #fff;
   opacity: 0.55;
+}
+
+/* 空着的时候，那行提示要给这支笔让开。
+   笔尖钉在插入点上，整支朝右上伸出去，正好横过提示最前面几个字；提示整行向右让出一段，字就不被压住。
+
+   只有笔真画在那里才让：插入符层上带着羽毛标记、并且这一帧是可见的。
+   没聚焦、插入符动效关着、纸感关着——这些时候提示都留在原处，不会平白无故挪一下。
+
+   :has 从提示的父元素往下找那根笔：插入符层与提示同级，都挂在可编辑面的父元素下面
+   （caret-motion 的 layerFor 把那一根 append 到 input.parentElement 上） */
+${ROOT_SCOPE} *:has(> [${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${quill_1.QUILL_ATTRIBUTE}][${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}]) > ${dom_contract_1.COMPOSER_PLACEHOLDER_SELECTOR} {
+  padding-left: ${PLACEHOLDER_INDENT_EM}em;
 }
 `;
     };

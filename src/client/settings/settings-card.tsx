@@ -18,13 +18,12 @@ import {CARD_CLASS} from "./config-card-styles"
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
     DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
-    DEFAULT_PAPER_SIDEBAR, DEFAULT_SEND_FLIGHT,
+    DEFAULT_SEND_FLIGHT,
 } from "./settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
 const PAPER_ON_FIELD = "paperOn"
-const PAPER_SIDEBAR_FIELD = "paperSidebar"
 const AUTO_FOLD_FIELD = "autoFold"
 const CARET_FIELD = "caretMotion"
 const HIT_REEL_FIELD = "hitReel"
@@ -39,8 +38,6 @@ interface Copy {
     summary: () => string
     paperLabel: string
     paperHint: string
-    paperSidebarLabel: string
-    paperSidebarHint: string
     autoFoldLabel: string
     autoFoldHint: string
     followLabel: string
@@ -71,12 +68,8 @@ const ZH_COPY: Copy = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
     paperHint:
-        "整页铺一张纸，页面底色换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层。"
-        + "关掉就回到 dsh 原来的样子。",
-    paperSidebarLabel: "左侧栏也铺纸",
-    paperSidebarHint:
-        "左侧栏那一列也换成同一张纸，整扇窗看起来是一张纸。关掉时左侧栏保持 dsh 自己的底色，"
-        + "只有聊天区铺纸；纸感关掉时这一项同样不起作用。",
+        "整页铺一张纸：页面底色与左侧栏都换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
+        + "输入光标也变成一支羽毛笔。关掉就一起收掉，回到 dsh 原来的样子。",
     autoFoldLabel: "自动开合",
     autoFoldHint:
         "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
@@ -125,12 +118,9 @@ const EN_COPY: Copy = {
         "The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
     paperLabel: "Paper",
     paperHint:
-        "The whole page lies on a sheet of paper: the page background takes that paper's tone, so the composer and the "
-        + "bubbles read as layers pressed into it. Off restores dsh's own look.",
-    paperSidebarLabel: "Paper the sidebar",
-    paperSidebarHint:
-        "The left sidebar takes the same sheet, so the whole window reads as one piece of paper. Off leaves the "
-        + "sidebar on dsh's own fill and papers the chat area only; it does nothing while paper is off either.",
+        "The whole page lies on a sheet of paper: the page background and the sidebar take that paper's tone, so the "
+        + "composer and the bubbles read as layers pressed into it, and the caret becomes a quill. Off takes all of it "
+        + "away and restores dsh's own look.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint:
         "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
@@ -217,7 +207,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 
     const paperOn = storedPaperOn(snapshot.value)
-    const paperSidebarOn = storedPaperSidebar(snapshot.value)
     const autoFoldOn = storedAutoFold(snapshot.value)
     const followOn = storedFollow(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
@@ -306,14 +295,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     onChange={(next: boolean) => void writeField(PAPER_ON_FIELD, next, storedPaperOn)}
                 />
             ))}
-            {rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, (
-                <Switch
-                    checked={paperSidebarOn}
-                    disabled={controlsDisabled}
-                    label={copy.paperSidebarLabel}
-                    onChange={(next: boolean) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar)}
-                />
-            ))}
             {rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, (
                 <Switch
                     checked={autoFoldOn}
@@ -390,10 +371,6 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 function storedPaperOn(value: ChatUxSection | undefined): boolean {
     return value?.paperOn ?? DEFAULT_PAPER_ON
-}
-
-function storedPaperSidebar(value: ChatUxSection | undefined): boolean {
-    return value?.paperSidebar ?? DEFAULT_PAPER_SIDEBAR
 }
 
 function storedAutoFold(value: ChatUxSection | undefined): boolean {
