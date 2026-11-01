@@ -12,6 +12,7 @@
  * 判据全部来自 dsh 的语义属性——列宽在 grid 的 grid-template-columns 里，
  * 不认任何带构建期 hash 的 class
  */
+import { PAPER_GLOW_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE, PAPER_VIGNETTE_ATTRIBUTE } from "./paper-styles"
 
 // 纸占的那块矩形，单位是 CSS 像素、相对视口左上角
 export interface PaperRect {
@@ -27,6 +28,9 @@ const PLATFORM_ATTRIBUTE = "data-platform"
 
 // AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
 const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]"
+
+// 纸自己那三片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
+const PAPER_LAYER_SELECTOR = `[${PAPER_SHEET_ATTRIBUTE}], [${PAPER_GLOW_ATTRIBUTE}], [${PAPER_VIGNETTE_ATTRIBUTE}]`
 
 // 这一页见过窗口材质没有。见过一次就一直是 true，详见下面那份函数的注释
 let windowMaterialSeen = false
@@ -157,15 +161,40 @@ export function sidebarPaintsOwnTexture(requested: boolean): boolean {
 }
 
 /**
+ * 这一帧有没有盖住整个视口的浮层——设置面板这类 body-portal 的模态。
+ *
+ * 有它时纸铺满整窗。理由：这种浮层是「整屏遮罩加一块居中的面板」，窗口不够宽时面板左缘会
+ * 伸进侧栏；纸平时让开侧栏，那一条上就露着面板自己的不透明底，与它右边被纸压过的那一截
+ * 不是一个颜色。铺满之后整块面板都在纸下，侧栏的玻璃让位到浮层关闭为止。
+ *
+ * 怎么认：body 的直接子元素里，位置是 fixed、且盖住视口九成以上的；纸自己那三片也满足
+ * 这几条，先跳过；#root 是页面本身，不算浮层
+ */
+export function overlayCoversViewport(): boolean {
+    const body = document.body
+    if (body === null) return false
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    for (const element of body.children) {
+        if (element.matches(PAPER_LAYER_SELECTOR)) continue
+        if (element.id === "root") continue
+        if (getComputedStyle(element).position !== "fixed") continue
+        const box = element.getBoundingClientRect()
+        if (box.width >= viewportWidth * 0.9 && box.height >= viewportHeight * 0.9) return true
+    }
+    return false
+}
+
+/**
  * 这一帧纸该占的矩形。
  *
- * includeSidebar 为 false 时把左栏那条竖带让出去；让出去之后纸的尺寸会变，所以这个函数
- * 只在尺寸真的变了的时候才算一次（见 paper-mount 的脏标记）
+ * coversSidebar 为 false 时把左栏那条竖带让出去，为 true 时铺满整个视口。
+ * 这个函数只在尺寸真的变了的时候才算一次（见 paper-mount 的脏标记）
  */
-export function measurePaperRect(includeSidebar: boolean): PaperRect {
+export function measurePaperRect(coversSidebar: boolean): PaperRect {
     const viewportWidth = Math.max(1, Math.round(window.innerWidth))
     const viewportHeight = Math.max(1, Math.round(window.innerHeight))
-    if (includeSidebar) return {left: 0, top: 0, width: viewportWidth, height: viewportHeight}
+    if (coversSidebar) return {left: 0, top: 0, width: viewportWidth, height: viewportHeight}
     const inset = Math.min(viewportWidth - 1, Math.max(0, Math.round(sidebarWidth())))
     return {left: inset, top: 0, width: Math.max(1, viewportWidth - inset), height: viewportHeight}
 }

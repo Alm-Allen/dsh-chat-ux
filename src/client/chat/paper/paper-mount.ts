@@ -14,7 +14,8 @@
 import {GlowLayer, poolColor, poolStrength} from "./paper-glow"
 import type {GlowFrame} from "./paper-glow"
 import {
-    measurePaperRect, paperIncludesSidebar, sidebarElement, sidebarPaintsOwnTexture, windowMaterialPresent,
+    measurePaperRect, overlayCoversViewport, paperIncludesSidebar, sidebarElement, sidebarPaintsOwnTexture,
+    windowMaterialPresent,
 } from "./paper-layout"
 import type {PaperRect} from "./paper-layout"
 import {PaperLight} from "./paper-light"
@@ -138,6 +139,13 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     // 上一次落地的是哪一档纸，用来判断明暗到底变了没有
     let lastMode: PaperMode | null = null
     let lastLayoutKey = ""
+    // 这一帧有没有盖住整个视口的浮层（设置面板这类 body-portal 的模态）
+    let overlayPresent = false
+    // body 的直接子元素变了要重算上面那一项
+    let overlayDirty = true
+    // 这一帧纸盖不盖侧栏：平时由配置与平台判据决定，浮层在场时恒为真。
+    // 几何、令牌、侧栏纹理三处都问它
+    let coversSidebar = paperIncludesSidebar(readOptions().includeSidebar)
 
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
@@ -288,11 +296,11 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             return
         }
         const mode = currentPaperMode()
-        applyPaperTokens(paperTokenSet(mode), mode, paperIncludesSidebar(options.includeSidebar))
+        applyPaperTokens(paperTokenSet(mode), mode, coversSidebar)
         // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
         // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
         // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
-        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && windowMaterialPresent())
+        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && !coversSidebar && windowMaterialPresent())
         // 气泡那一层纸色走同一个明暗档：两处都从这一处算，切主题时不会一边换了一边没换。
         // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
         applyPaperBubble(mode)
@@ -307,9 +315,12 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     // 切明暗档时只有令牌与纸纹要重算，光与辉光跟着脏标记走
     const refresh = (): void => {
         if (disposed) return
+        // 浮层状态可能还没落到 coversSidebar 上（配置或主题先变）：先对一次
+        overlayDirty = false
+        overlayPresent = overlayCoversViewport()
+        coversSidebar = paperIncludesSidebar(readOptions().includeSidebar) || overlayPresent
         refreshTokens()
-        const options = readOptions()
-        rect = measurePaperRect(paperIncludesSidebar(options.includeSidebar))
+        rect = measurePaperRect(coversSidebar)
         pixelRatio = computePixelRatio()
         applyRect()
         needsBuild = true
@@ -337,18 +348,27 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
         // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
         // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
-        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && windowMaterialPresent())
+        syncSidebarTexture(sidebarPaintsOwnTexture(options.includeSidebar) && !coversSidebar && windowMaterialPresent())
         const mode = currentPaperMode()
         const paper = paperOf(mode)
 
         // 换了明暗档：令牌要重落，纸纹要重算。这两件都不必等调用方来 refresh
         if (mode !== lastMode) refreshTokens()
 
+        // 浮层挂上或摘掉之后量一次；其余帧用缓存，免得每帧都为它强制一次布局。
+        // 「纸盖不盖侧栏」变了就重落令牌：侧栏填充色与那层纹理都跟着它
+        if (overlayDirty) {
+            overlayDirty = false
+            overlayPresent = overlayCoversViewport()
+            const coverage = paperIncludesSidebar(options.includeSidebar) || overlayPresent
+            if (coverage !== coversSidebar) {
+                coversSidebar = coverage
+                refreshTokens()
+            }
+        }
         // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形
-        // 平台判据也在这一句里落地：窗口材质的平台上 includeSidebar 恒为假，几何与令牌一起让开
-        const includeSidebar = paperIncludesSidebar(options.includeSidebar)
-        const desired = measurePaperRect(includeSidebar)
-        const layoutKey = includeSidebar + ":" + desired.left + ":" + desired.width + "x" + desired.height
+        const desired = measurePaperRect(coversSidebar)
+        const layoutKey = coversSidebar + ":" + desired.left + ":" + desired.width + "x" + desired.height
         if (layoutKey !== lastLayoutKey) {
             lastLayoutKey = layoutKey
             const changed =
@@ -473,9 +493,19 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         frameHandle = requestAnimationFrame(tick)
     }
 
+    // 浮层（设置面板这类 body-portal 的模态）挂上或摘掉时，纸的左缘要跟着挪。
+    // 只盯 body 的直接子元素：聊天流的变化发生在 #root 内部，不会触发这一条
+    const overlayObserver = new MutationObserver(() => {
+        overlayDirty = true
+        wake()
+    })
+    overlayObserver.observe(document.body, {childList: true})
+
     // 窗口尺寸变了：矩形与像素比一起重算，纸纹要重建
     const onResize = (): void => {
         lastLayoutKey = ""
+        // 居中浮层的左缘跟着窗口宽度变
+        overlayDirty = true
         needsBuild = true
         needsLight = true
         needsGlow = true
@@ -553,7 +583,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // 只动侧栏纸纹，不重落令牌：整块重落会让整篇文档的样式失效一遍，而这里变的是一个开关
         if (windowMaterialPresent() !== lastMaterialPresent) {
             lastMaterialPresent = windowMaterialPresent()
-            syncSidebarTexture(sidebarPaintsOwnTexture(readOptions().includeSidebar) && lastMaterialPresent)
+            syncSidebarTexture(sidebarPaintsOwnTexture(readOptions().includeSidebar) && !coversSidebar && lastMaterialPresent)
         }
         const includeSidebar = paperIncludesSidebar(readOptions().includeSidebar)
         if (includeSidebar === lastIncludeSidebar) return
@@ -588,8 +618,11 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     sheetCanvas.addEventListener("webglcontextrestored", onContextRestored)
     if (typeof reduceMotionQuery.addEventListener === "function") reduceMotionQuery.addEventListener("change", onMotionChange)
 
+    overlayPresent = overlayCoversViewport()
+    overlayDirty = false
+    coversSidebar = paperIncludesSidebar(readOptions().includeSidebar) || overlayPresent
     refreshTokens()
-    rect = measurePaperRect(paperIncludesSidebar(readOptions().includeSidebar))
+    rect = measurePaperRect(coversSidebar)
     pixelRatio = computePixelRatio()
     applyRect()
     frameHandle = requestAnimationFrame(tick)
@@ -605,6 +638,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             unwatchTheme()
             materialObserver.disconnect()
             bodyMaterialObserver?.disconnect()
+            overlayObserver.disconnect()
             bodyMaterialObserver = null
             window.removeEventListener("resize", onResize)
             window.removeEventListener("orientationchange", onResize)
