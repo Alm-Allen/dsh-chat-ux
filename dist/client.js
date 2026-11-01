@@ -2731,7 +2731,7 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
  * 卸载与关掉时逐项还原，别人后写过的就不抢回来
  *
  * 写在哪个元素上是有讲究的，这不是风格问题而是层级问题：dsh 的 ui-theme 把 `--dsw-alias-bg-base`
- * 定义在 `body` 上（design-platform.css 的 `body { … }`），主题包又把 `--dsh-font-family-text`
+ * 定义在 `body` 上（design-platform.css 的 `body { … }`），主题包又把字族那几条
  * 写在 body 上。内联写在 `html` 上只是「根元素的声明」，body 自己的声明是本地声明、赢过继承——
  * 实测就是这么翻的车：html 上是 #efdfbd，body 上算出来仍是 #fff。所以宿主那几条一律写到 body 上
  */
@@ -2769,8 +2769,14 @@ const HOST_INTERACTIVE_BG_HOVER_SOLID_PROPERTY = "--dsw-alias-interactive-bg-hov
 const HOST_BG_OVERLAY_PROPERTY = "--dsw-alias-bg-overlay";
 const HOST_BG_LAYER_1_PROPERTY = "--dsw-alias-bg-layer-1";
 const HOST_BG_DOCUMENT_PREVIEW_PROPERTY = "--dsw-alias-bg-document-preview";
-const HOST_TEXT_FONT_PROPERTY = "--dsh-font-family-text";
-const HOST_CODE_FONT_PROPERTY = "--dsh-font-family-code";
+// 字族写的是下游那两条，不是 --dsh-font-family-text / --dsh-font-family-code。
+// 从 0.2.1-rc.5 起，ui-layout 的 ThemePresenter 会把读者在设置里填的字体写进 body 的
+// --dsh-font-family-text 与 --dsh-font-family-code（FONT_FAMILY_VARIABLES），插件写同一对名字
+// 就是与它抢同一个变量，而且它的撤销集会 removeProperty 把插件写的那一笔一起删掉。
+// body 上的 --dsw-font-family 与 --ds-font-family-code 是 base.css 由那两条算出来的消费点，
+// 插件直接在 body 内联这两条：内联声明赢过样式表规则，两代 dsh 都吃得到，也不必与谁抢上游
+const HOST_TEXT_FONT_PROPERTY = "--dsw-font-family";
+const HOST_CODE_FONT_PROPERTY = "--ds-font-family-code";
 /**
  * 墨色按比例压进纸色里的一档。
  *
@@ -2786,10 +2792,17 @@ function paperInkMix(inkPercent) {
  *
  * 纸面上的字是衬线，这是纸感的一半——老式数字配衬线字身是 ebook 的读法，配无衬线就只是一块米色。
  * 栈的写法与 nocturne 逐字一致：自起的名字没有，用字体的本名，后面一路退到各平台的衬线系统字。
- * dsh 自己的 base.css 把 --dsw-font-family 定义成 var(--dsh-font-family-text, 默认值)，所以写这一条就够
+ *
+ * **中文那几个必须逐个点名。** 末尾那个 `serif` 是 CSS 的通用族，Windows 上它只解析到没有中文字形的
+ * 拉丁衬线（Times New Roman 一类），汉字于是被浏览器按「找不到字形」回退到系统默认的无衬线字体——
+ * 表现出来就是英文换了衬线、汉字一动不动。而思源宋体在 Windows 上的 family 名是 `Noto Serif SC`，
+ * 不是 macOS 那边的 `Source Han Serif SC`，也不是 `Noto Serif CJK SC`，所以三个都写；
+ * 再往后退到华文宋体（`STSong`）与宋体（`SimSun`），那两条在中文 Windows 上一定有
+ * 落地的是 body 上那条 --dsw-font-family（base.css 由 --dsh-font-family-text 算出来），
+ * 代码那一半同理落在 --ds-font-family-code 上，理由见上面那两个常量的注释
  */
 const PAPER_TEXT_FONT_STACK = '"EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, '
-    + '"Source Han Serif SC", "Songti SC", "Noto Serif CJK SC", serif';
+    + '"Source Han Serif SC", "Noto Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun", serif';
 // 代码字族：打字机体的那一支，退到 Courier 与 Consolas
 const PAPER_CODE_FONT_STACK = '"Courier Prime", "IBM Plex Mono", "Courier New", "DejaVu Sans Mono", ui-monospace, monospace';
 // 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
