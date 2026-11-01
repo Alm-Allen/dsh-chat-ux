@@ -6770,8 +6770,8 @@ function buildRig(sheet, caretSheetX, room, settings) {
     if (room.light.source === "desk-lamp") {
         const position = room.light.position;
         const lamp = [position.x * width, position.y * height, (.3 + .4 * settings.reach) * height];
-        const dx = width * .5 - lamp[0];
-        const dy = height * .55 - lamp[1];
+        const dx = width * .45 - lamp[0];
+        const dy = height * .5 - lamp[1];
         const cos = Math.cos(swivel);
         const sin = Math.sin(swivel);
         const aimX = lamp[0] + dx * cos - dy * sin;
