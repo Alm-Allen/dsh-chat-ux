@@ -9701,7 +9701,7 @@ exports.ALL_CSS = exports.CHAT_AREA_CSS = exports.STYLE_ID = void 0;
  * 聊天区样式。写成纯文本是因为 client bundle 必须单文件自包含，DSH 的 client 模块加载器不提供资源 URL。
  *
  * ALL_CSS 是注入的那一张表：下面这份聊天区规则，再加上调色板、数字滚动、卡片、插入符、文件变更行、
- * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
+ * 折叠体入场、输入框玻璃与输入框滚动条那几份各自的 *-styles.ts
  */
 const send_flight_styles_1 = require("./chat/send-flight/send-flight-styles");
 const caret_motion_styles_1 = require("./chat/caret/caret-motion-styles");
@@ -9710,6 +9710,7 @@ const reel_styles_1 = require("./chat/reel/reel-styles");
 const config_card_styles_1 = require("./settings/config-card-styles");
 const cache_hit_styles_1 = require("./chat/cache-hit/cache-hit-styles");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
+const composer_scroll_styles_1 = require("./chat/composer-scroll/composer-scroll-styles");
 const context_meter_styles_1 = require("./chat/context-meter/context-meter-styles");
 const file_mutation_styles_1 = require("./chat/file-mutation/file-mutation-styles");
 const follow_probe_styles_1 = require("./chat/follow/follow-probe-styles");
@@ -9807,7 +9808,7 @@ exports.CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS].join("\n");
+exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS, send_flight_styles_1.SEND_FLIGHT_CSS, ramp_1.RAMP_TONE_CSS, reel_styles_1.REEL_CSS, config_card_styles_1.CARD_CSS, caret_motion_styles_1.CARET_MOTION_CSS, cache_hit_styles_1.CACHE_HIT_CSS, context_meter_styles_1.CONTEXT_METER_CSS, file_mutation_styles_1.FILE_MUTATION_CSS, fold_motion_styles_1.FOLD_MOTION_CSS, composer_glass_styles_1.COMPOSER_GLASS_CSS, composer_scroll_styles_1.COMPOSER_SCROLL_CSS].join("\n");
     };
 
     __registry["chat/send-flight/send-flight-styles.js"] = function (module, exports, require) {
@@ -10164,6 +10165,49 @@ ${ROOT}-glint {
    （caret-motion 的 layerFor 把那一根 append 到 input.parentElement 上） */
 ${ROOT_SCOPE} *:has(> [${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${quill_1.QUILL_ATTRIBUTE}][${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}]) > ${dom_contract_1.COMPOSER_PLACEHOLDER_SELECTOR} {
   padding-left: ${PLACEHOLDER_INDENT_EM}em;
+}
+`;
+    };
+
+    __registry["chat/composer-scroll/composer-scroll-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.COMPOSER_SCROLL_CSS = void 0;
+/**
+ * 输入框里的滚动条：一律不显示。
+ *
+ * 两个盒子都算输入框：主输入框的滚动容器（DraftEditor 给那个 div 挂了 data-input-scroll），
+ * 以及输入区里的纯文本框（提问卡片的作答框、排队消息的行内编辑框）。
+ *
+ * **为什么非做不可。** 主输入框的滚动容器只声明了 overflow-y: auto；按 CSS Overflow 规范，
+ * 另一个轴是 visible 时会计算成 auto，于是它同时成了横向滚动容器。纵向条一出现就吃掉 5px 宽度，
+ * 贴右缘的内容当场横向溢出，两根条一起冒出来；羽毛光标朝右上伸出去的那一截也计入它的可滚动宽度。
+ * 两根条不只难看，出现与消失还会让文字列左右跳一下。
+ *
+ * **两条属性并存是有意的。** scrollbar-width: none 给新 Chromium 与 Firefox，条消失、也不占位；
+ * ::-webkit-scrollbar 给不认识上一条的老 Chromium。反过来，一旦引擎认得 scrollbar-width 且值不是 auto，
+ * 它会丢掉同一个元素上所有 ::-webkit-scrollbar* 规则（dsh 自己的 scrollbar.css 里写着这条互斥），
+ * 所以两边都要写，它们不互相打架。
+ *
+ * **只隐藏、不禁止滚动。** 纵向仍能用滚轮与键盘滚，横向也仍可滚；14 行上限与随光标滚动都还在，
+ * 拿走的只有那两根条
+ */
+const dom_contract_1 = require("../../dom-contract");
+/**
+ * 主输入框的滚动容器。DraftEditor 给那个 div 挂了 data-input-scroll，滚动发生在它身上，
+ * 不在里面的 contenteditable 上
+ */
+const SCROLLPORT_SELECTOR = "[data-input-scroll]";
+exports.COMPOSER_SCROLL_CSS = `
+${SCROLLPORT_SELECTOR},
+${dom_contract_1.COMPOSER_TEXTAREA_SELECTOR} {
+  scrollbar-width: none;
+}
+
+${SCROLLPORT_SELECTOR}::-webkit-scrollbar,
+${dom_contract_1.COMPOSER_TEXTAREA_SELECTOR}::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 `;
     };

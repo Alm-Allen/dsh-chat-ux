@@ -2,7 +2,7 @@
  * 聊天区样式。写成纯文本是因为 client bundle 必须单文件自包含，DSH 的 client 模块加载器不提供资源 URL。
  *
  * ALL_CSS 是注入的那一张表：下面这份聊天区规则，再加上调色板、数字滚动、卡片、插入符、文件变更行、
- * 折叠体入场、输入框玻璃那几份各自的 *-styles.ts
+ * 折叠体入场、输入框玻璃与输入框滚动条那几份各自的 *-styles.ts
  */
 import {SEND_FLIGHT_CSS} from "./chat/send-flight/send-flight-styles"
 import {CARET_MOTION_CSS} from "./chat/caret/caret-motion-styles"
@@ -11,6 +11,7 @@ import {REEL_CSS} from "./chat/reel/reel-styles"
 import {CARD_CSS} from "./settings/config-card-styles"
 import {CACHE_HIT_CSS} from "./chat/cache-hit/cache-hit-styles"
 import {COMPOSER_GLASS_CSS} from "./chat/composer-glass/composer-glass-styles"
+import {COMPOSER_SCROLL_CSS} from "./chat/composer-scroll/composer-scroll-styles"
 import {CONTEXT_METER_CSS} from "./chat/context-meter/context-meter-styles"
 import {FILE_MUTATION_CSS} from "./chat/file-mutation/file-mutation-styles"
 import {FOLLOW_PROBE_CSS} from "./chat/follow/follow-probe-styles"
@@ -111,4 +112,4 @@ export const CHAT_AREA_CSS = `/* dsh-chat-ux —— 聊天区 */
  * 注入的那一张样式表：本插件拥有的常驻规则，按下面的顺序拼起来。
  * 加了带 CSS 的特性，把它的 CSS 加进这张清单，入口只认这一处，不再自己拼
  */
-export const ALL_CSS = [CHAT_AREA_CSS, FOLLOW_PROBE_CSS, SEND_FLIGHT_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, COMPOSER_GLASS_CSS].join("\n")
+export const ALL_CSS = [CHAT_AREA_CSS, FOLLOW_PROBE_CSS, SEND_FLIGHT_CSS, RAMP_TONE_CSS, REEL_CSS, CARD_CSS, CARET_MOTION_CSS, CACHE_HIT_CSS, CONTEXT_METER_CSS, FILE_MUTATION_CSS, FOLD_MOTION_CSS, COMPOSER_GLASS_CSS, COMPOSER_SCROLL_CSS].join("\n")
