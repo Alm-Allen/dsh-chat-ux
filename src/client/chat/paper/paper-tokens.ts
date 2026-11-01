@@ -90,8 +90,6 @@ export interface PaperTokenSet {
     lightRgb: string
     // 选区底色
     selection: string
-    // 灯照不到的暗角强度，0 到 1
-    vignette: number
     // 代码块的底：比纸深一档，但不到 dsh 深色代码块那一档，否则暗纸上会变成一块黑斑
     codeBlock: string
     // 内联代码的底：与代码块同一条规则，浅一档
@@ -171,7 +169,8 @@ export function applyPaperTokens(set: PaperTokenSet, mode: PaperMode, includeSid
     const body = document.body
     // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
     root.setAttribute(PAPER_ROOT_ATTRIBUTE, "")
-    // 暗档单独一条标记：暗角那两个系数差得远，按档分成两条规则比在 CSS 里算更直白
+    // 暗档单独一条标记。它原来的唯一读者是暗角那两条按档分叉的规则；暗角下线之后暂时没人读它，
+    // 留着是给以后按档写的样式
     if (mode === "dark") root.setAttribute(PAPER_DARK_ATTRIBUTE, "")
     else root.removeAttribute(PAPER_DARK_ATTRIBUTE)
     // 自己那一套写在根元素上：没有别人定义过它们，继承就能一路到每个元素
@@ -183,7 +182,6 @@ export function applyPaperTokens(set: PaperTokenSet, mode: PaperMode, includeSid
         [PAPER_PREFIX + "room-edge", set.roomEdge],
         [PAPER_PREFIX + "light-rgb", set.lightRgb],
         [PAPER_PREFIX + "selection", set.selection],
-        [PAPER_PREFIX + "vignette", String(set.vignette)],
     ]
     for (const [name, value] of ownPairs) setOwned(root, name, value)
     // 宿主那几条得写在 body 上：ui-theme 在 body 的规则里定义它们，内联写在根元素上只算「根元素的声明」，
@@ -266,7 +264,6 @@ export function paperTokenSet(mode: PaperMode): PaperTokenSet {
         roomEdge: ROOM.palette.roomEdge,
         lightRgb: toUnit(ROOM.light.color).map((channel) => Math.round(channel * 255)).join(" "),
         selection: paper.selection,
-        vignette: paper.vignette,
         codeBlock: surfaces.codeBlock,
         inlineCode: surfaces.inlineCode,
     }

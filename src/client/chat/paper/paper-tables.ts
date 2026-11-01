@@ -2,7 +2,7 @@
  * 纸与灯：一张葱皮、一个房间、两档明暗，以及从它们派生出来的颜色。
  *
  * 纸只有一张，明暗由 dsh 当前的主题决定：亮档是原来那张葱皮，暗档是它的暗版。
- * 两者共用同一套纸纹参数与同一盏灯，只有纸色、墨色、选区与暗角跟着分档。
+ * 两者共用同一套纸纹参数与同一盏灯，只有纸色、墨色与选区跟着分档。
  *
  * 明暗这一维单独叫 PaperMode，它的来源不在这份文件里：入口（paper-theme.ts）读 dsh 的主题，
  * 再把它交给纸上每一处。表里没有任何一档写明"什么时候用我"
@@ -42,8 +42,6 @@ export interface PaperDefinition {
     inkMuted: string
     // 选区底色
     selection: string
-    // 灯照不到的暗角强度，0 到 1
-    vignette: number
     surface: PaperSurface
 }
 
@@ -61,7 +59,6 @@ export const PAPER_LIGHT: PaperDefinition = {
     inkMuted: "#6b5f52",
     // 亮档用房间的描金，与细边、页码同源
     selection: "rgba(176, 138, 74, 0.30)",
-    vignette: .35,
     surface: {crinkle: .08, felt: 0, laid: 0, linen: 0, mottle: .04, age: 0},
 }
 
@@ -75,15 +72,14 @@ export const PAPER_LIGHT: PaperDefinition = {
  */
 export const PAPER_DARK: PaperDefinition = {
     mode: "dark",
-    // 纸色比 dsh 的深色画布（#151517）亮 22 阶：暗纸上纸纹只能把纸往下压，纸色压得太低就没有下压空间，
-    // 压出来的是一团脏而不是纹理。提到 #2b2b25 之后纸纹才有 25 阶的起伏，见 PAPER_DARK.surface
-    paper: "#2b2b25",
+    // 纸色比 dsh 的深色画布（#151517）亮 37 阶：暗纸上纸纹只能把纸往下压，纸色压得太低就没有下压空间，
+    // 压出来的是一团脏而不是纹理。提到 #3a3a32 之后纸纹才有 37 阶的可压空间，见 PAPER_DARK.surface。
+    // 再亮一档是为了台灯：纸色每暗一档，最终像素上一个色阶就要吃掉更多 canvas 级，光斑的台阶就更宽
+    paper: "#3a3a32",
     ink: "#e8e6dd",
     inkMuted: "#a09c8f",
     // 暗档的描金提亮一档：原来那一笔压在暗纸上几乎看不见
     selection: "rgba(214, 178, 112, 0.26)",
-    // 暗纸上同样的暗角看不出来，所以比亮档重
-    vignette: .45,
     // 褶皱与云斑比亮档重，但不能重到把灯吃掉：纸纹在那套着色器里是乘法扰动，扰动一起来，
     // 灯心那点亮就被淹没（±46% 的扰动配 +21% 的灯差，灯斑一个字都看不出来）。这一组给纸纹 ±8%
     surface: {crinkle: .5, felt: 0, laid: 0, linen: 0, mottle: .18, age: 0},
@@ -91,17 +87,21 @@ export const PAPER_DARK: PaperDefinition = {
 
 /**
  * 暗档的渲染参数。PAPER_DEFAULT_SETTINGS 那一套是按亮档调的：纸纹 0.18 在米白纸上刚好，
- * 落在暗纸上连两个色阶都压不出来。这里只动四项，其余沿用出厂值
+ * 落在暗纸上连两个色阶都压不出来。这里只动五项，其余沿用出厂值
  */
 export const PAPER_DARK_RENDER = {
     // 纸纹强度：0.18 → 0.55。它同时乘在褶皱与法线上，是暗纸上能不能看见起伏的主开关
     texture: .55,
     // 浮雕：0.22 → 0.45。纸面层的那道法线扰动由它放大
     paperIllumination: .45,
-    // 环境光下限：0.86 → 0.72。这是「台灯还看不看得见」的旋钮——环境光把整片纸抬到接近 1，
-    // 灯心那点亮就没有落差可言。0.66 是灯斑最清楚的那一档，但灯外那八成面积偏沉；
-    // 抬到 0.72 之后纸面整体亮一档，灯心仍比中心亮 13 阶，光斑还在
-    ambientFloor: .72,
+    // 环境光下限：0.86 → 0.66。这是「台灯还看不看得见」的旋钮——环境光把整片纸抬到接近 1，
+    // 灯心那点亮就没有落差可言。0.66 是灯斑最清楚的那一档；纸色提到 #3a3a32 之后灯外仍有
+    // 38 阶（原来 0.72 配 #33332c 是 37 阶），落差从 0.28 升到 0.34，光斑的级数也跟着多出来
+    ambientFloor: .66,
+    // 光锥边缘：0.65 → 0.25。softness 越小，cosOuter 到 cosInner 那条过渡带越窄（越陡）：
+    // 0.65 时亮区到暗区的过渡约 262px，0.4 收到 172px，0.25 收到 113px。暗纸上那圈渐变本来
+    // 只剩十几级，过渡带越宽越容易读成一圈圈等高线。只改暗档：亮档级数够多，宽过渡带正是它平滑的来源
+    softness: .25,
 }
 
 // 一张纸的两档都由这里取，调用方不必自己认 mode
@@ -139,7 +139,7 @@ export interface RoomDefinition {
         roomEdge: string
     }
     light: RoomLight
-    // 暗角强度按纸分档，所以房间这边只剩灯与地面
+    // 暗角下线之后这个字段没有读者，留着是备位；房间这边眼下只剩灯与地面
     atmosphere: {
         vignette: number
     }

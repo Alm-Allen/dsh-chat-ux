@@ -1,17 +1,16 @@
 /**
  * 纸感的样式。
  *
- * 四件事：给两片全屏 canvas 与那层暗角找位置、把纸色铺到宿主真正画底的几处、让侧栏在需要时
+ * 四件事：给两片全屏 canvas 找位置、把纸色铺到宿主真正画底的几处、让侧栏在需要时
  * 躲开全屏那一层纸，以及给躲开之后的侧栏补一层只有纹理、没有底色的纸纹。
  * 整张表都以根元素上的 `data-dsh-chat-ux-paper` 为前提——那个标记不在时一条都不命中，
  * 于是关掉纸感是彻底的，不必逐条撤销
  */
-import {PAPER_DARK_ATTRIBUTE, PAPER_ROOT_ATTRIBUTE, PAPER_PREFIX} from "./paper-tokens"
+import {PAPER_ROOT_ATTRIBUTE, PAPER_PREFIX} from "./paper-tokens"
 
-// 两片 canvas 与暗角上的标记，值就是它们的角色
+// 两片 canvas 上的标记，值就是它们的角色
 export const PAPER_SHEET_ATTRIBUTE = "data-dsh-chat-ux-paper-sheet"
 export const PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow"
-export const PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette"
 
 /**
  * 侧栏那层纸纹的标记，挂在侧栏那一列自己身上（paper-mount 负责增删）。
@@ -26,9 +25,9 @@ export const PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette"
 export const PAPER_SIDEBAR_ATTRIBUTE = "data-dsh-chat-ux-paper-sidebar-texture"
 
 /**
- * 收起标记。写在三件身上就是「这一层此刻不参与绘制」。
+ * 收起标记。写在两片 canvas 身上就是「这一层此刻不参与绘制」。
  *
- * 用它而不是 hidden 属性：UA 样式表里 [hidden] 只有 display:none 这一条，而本表给三件写的是
+ * 用它而不是 hidden 属性：UA 样式表里 [hidden] 只有 display:none 这一条，而本表给两片写的是
  * display:block，作者样式恒赢，于是 hidden 一点作用都没有（实测：加了 hidden 之后
  * computed display 仍是 block，截图与纸开逐字节相同）
  */
@@ -39,7 +38,6 @@ export const PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden"
 // 替身若浮在纸上，飞行中不受 multiply 压暗、落定后受，同一个色值在两帧里差出一档，读者看到的就是落地跳色
 const SHEET_Z = "2147482000"
 const GLOW_Z = "2147482001"
-const VIGNETTE_Z = "2147482002"
 
 // 侧栏纸纹那张噪声块的边长，也是 mask-size 的重复周期。180 是读者看着真机一轮轮调出来的：
 // 更小时平铺痕迹要靠放大镜才看得见，更大则白占内存、看不出差别
@@ -107,8 +105,7 @@ export const PAPER_CSS = `
 /* 纸与光：两片 fixed 全屏 canvas。left / top / width / height 由 paper-mount 逐帧写，
    纸不铺侧栏时那几项就是左侧栏右边那一块 */
 ${ROOT} [${PAPER_SHEET_ATTRIBUTE}],
-${ROOT} [${PAPER_GLOW_ATTRIBUTE}],
-${ROOT} [${PAPER_VIGNETTE_ATTRIBUTE}] {
+${ROOT} [${PAPER_GLOW_ATTRIBUTE}] {
   position: fixed;
   left: 0;
   top: 0;
@@ -127,41 +124,19 @@ ${ROOT} [${PAPER_GLOW_ATTRIBUTE}] {
   z-index: ${GLOW_Z};
 }
 
-/* 暗角挂在单独一层上，位置跟着纸走：纸不覆盖左侧栏时，那块的窗口材质不该被压暗 */
-${ROOT} [${PAPER_VIGNETTE_ATTRIBUTE}] {
-  z-index: ${VIGNETTE_Z};
-  background: radial-gradient(
-    ellipse 92% 88% at 50% 46%,
-    transparent 52%,
-    rgba(0, 0, 0, calc(var(${PAPER_PREFIX}vignette, 0.35) * 0.30)) 100%
-  );
-}
-
-/* 收起来的三件。这里必须自己写一条，而不是靠 UA 的 [hidden]{display:none}：
+/* 收起来的两片。这里必须自己写一条，而不是靠 UA 的 [hidden]{display:none}：
    上面那条把 display 写成了 block，作者样式压过 UA 样式表，于是加了 hidden 也照样是 block、
    照样参与合成（实测截图与纸开逐字节相同）。
-   连定位一起撤掉也是必须的：只藏不撤的话，三块 1440x900 的元素仍然撑在文档流里，
+   连定位一起撤掉也是必须的：只藏不撤的话，两块 1440x900 的元素仍然撑在文档流里，
    body.scrollHeight 会从 900 涨到 3610 */
 ${ROOT} [${PAPER_HIDDEN_ATTRIBUTE}] {
   display: none;
-  /* 定位一起撤：只藏不撤的话，三块 1440x900 的元素仍会撑在文档流里 */
+  /* 定位一起撤：只藏不撤的话，两块 1440x900 的元素仍会撑在文档流里 */
   position: static;
   left: auto;
   top: auto;
   width: 0;
   height: 0;
-}
-
-/* 暗档的暗角比亮档重，但不能重到四角比画布还黑。亮档那个 0.30 的乘子是给米白纸调的，
-   压到暗纸上几乎看不出来；这一路是 0.85 → 0.70 → 0.45 → 0.25 收下来的：0.70 那一档算出来
-   四角是 19，比 dsh 的深色画布（21）还黑，整张纸的四边像被啃掉一圈；0.45 之后四角 24，纸
-   从画布上浮起来；最后读者又收到 0.25，四角更亮一档 */
-${ROOT}[${PAPER_DARK_ATTRIBUTE}] [${PAPER_VIGNETTE_ATTRIBUTE}] {
-  background: radial-gradient(
-    ellipse 92% 88% at 50% 46%,
-    transparent 46%,
-    rgba(0, 0, 0, calc(var(${PAPER_PREFIX}vignette, 0.25) * 0.25)) 100%
-  );
 }
 
 /* 侧栏自己那层纸纹。

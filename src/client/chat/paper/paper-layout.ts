@@ -12,7 +12,7 @@
  * 判据全部来自 dsh 的语义属性——列宽在 grid 的 grid-template-columns 里，
  * 不认任何带构建期 hash 的 class
  */
-import { PAPER_GLOW_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE, PAPER_VIGNETTE_ATTRIBUTE } from "./paper-styles"
+import { PAPER_GLOW_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE } from "./paper-styles"
 
 // 纸占的那块矩形，单位是 CSS 像素、相对视口左上角
 export interface PaperRect {
@@ -29,8 +29,8 @@ const PLATFORM_ATTRIBUTE = "data-platform"
 // AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
 const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]"
 
-// 纸自己那三片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
-const PAPER_LAYER_SELECTOR = `[${PAPER_SHEET_ATTRIBUTE}], [${PAPER_GLOW_ATTRIBUTE}], [${PAPER_VIGNETTE_ATTRIBUTE}]`
+// 纸自己那两片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
+const PAPER_LAYER_SELECTOR = `[${PAPER_SHEET_ATTRIBUTE}], [${PAPER_GLOW_ATTRIBUTE}]`
 
 // 这一页见过窗口材质没有。见过一次就一直是 true，详见下面那份函数的注释
 let windowMaterialSeen = false

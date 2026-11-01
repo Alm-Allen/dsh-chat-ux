@@ -1,7 +1,7 @@
 /**
  * 纸的挂载与帧循环。
  *
- * 这一层只做三件事：把两片 canvas 与那层暗角挂上去、按脏标记决定这一帧要不要重算、以及在
+ * 这一层只做三件事：把两片 canvas 挂上去、按脏标记决定这一帧要不要重算、以及在
  * 卸载时把挂过的全部撤干净。渲染本身在 paper-light 与 paper-glow，配色在 paper-tokens，
  * 覆盖范围在 paper-layout
  *
@@ -22,7 +22,6 @@ import {PaperLight} from "./paper-light"
 import {buildRig} from "./paper-light-model"
 import {
     PAPER_CSS, PAPER_GLOW_ATTRIBUTE, PAPER_HIDDEN_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE, PAPER_SIDEBAR_ATTRIBUTE,
-    PAPER_VIGNETTE_ATTRIBUTE,
 } from "./paper-styles"
 import {applyPaperBubble} from "./paper-bubble"
 import {applyPaperTokens, clearPaperTokens, paperTokenSet} from "./paper-tokens"
@@ -42,7 +41,7 @@ export interface PaperOptions {
 
 // 挂载结果
 export interface PaperMountHandle {
-    // 撤掉两片 canvas、暗角、令牌与全部监听
+    // 撤掉两片 canvas、令牌与全部监听
     dispose: () => void
     // 配置变了就调它：令牌要重落，下一帧重算
     refresh: () => void
@@ -99,14 +98,12 @@ const PIXEL_BUDGET = 1950000
 export function installPaper(readOptions: () => PaperOptions): PaperMountHandle {
     const sheetCanvas = document.createElement("canvas")
     const glowCanvas = document.createElement("canvas")
-    const vignette = document.createElement("div")
     sheetCanvas.setAttribute(PAPER_SHEET_ATTRIBUTE, "")
     glowCanvas.setAttribute(PAPER_GLOW_ATTRIBUTE, "")
-    vignette.setAttribute(PAPER_VIGNETTE_ATTRIBUTE, "")
-    for (const node of [sheetCanvas, glowCanvas, vignette]) node.setAttribute("aria-hidden", "true")
-    // 三件都直接挂 body 下：包一层带 z-index 的容器会给它们造一个隔离栈，
+    for (const node of [sheetCanvas, glowCanvas]) node.setAttribute("aria-hidden", "true")
+    // 两片都直接挂 body 下：包一层带 z-index 的容器会给它们造一个隔离栈，
     // multiply 与页面断开之后就退化成直接覆盖（nocturne 实测过）
-    document.body.append(sheetCanvas, glowCanvas, vignette)
+    document.body.append(sheetCanvas, glowCanvas)
 
     // 样式表跟着挂载走：纸关掉时它一条都不命中（根上没有那个标记），所以不需要按开关装卸
     ensurePaperStyle()
@@ -149,12 +146,12 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
 
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
-    // 不用 hidden 属性：本插件的样式表给这三件写了 display: block，作者样式恒赢过 UA 的
+    // 不用 hidden 属性：本插件的样式表给这两片写了 display: block，作者样式恒赢过 UA 的
     // [hidden]{display:none}，于是 hidden 一点作用都没有——实测加了它之后 computed display
     // 仍是 block，截图与纸开逐字节相同。所以这套用自己的一条规则（PAPER_HIDDEN_ATTRIBUTE）
     // 一并把 display 与定位都撤掉
     const setAttached = (attached: boolean): void => {
-        for (const node of [sheetCanvas, glowCanvas, vignette]) {
+        for (const node of [sheetCanvas, glowCanvas]) {
             if (attached) node.removeAttribute(PAPER_HIDDEN_ATTRIBUTE)
             else node.setAttribute(PAPER_HIDDEN_ATTRIBUTE, "")
         }
@@ -169,7 +166,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         return {x: box.left, y: box.top + box.height / 2}
     }
 
-    // 把三件的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
+    // 把两片的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
     // canvas 的 CSS 尺寸与它在视口里的偏移一起改，着色器里的坐标系仍以 canvas 自己为准
     const applyRect = (): void => {
         for (const canvas of [sheetCanvas, glowCanvas]) {
@@ -178,10 +175,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             canvas.style.width = rect.width + "px"
             canvas.style.height = rect.height + "px"
         }
-        vignette.style.left = rect.left + "px"
-        vignette.style.top = rect.top + "px"
-        vignette.style.width = rect.width + "px"
-        vignette.style.height = rect.height + "px"
     }
 
     // 纸的像素尺寸按预算压一次：超过预算就按面积开方降 DPR，最低 0.5
@@ -649,7 +642,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             paperLight.destroy()
             sheetCanvas.remove()
             glowCanvas.remove()
-            vignette.remove()
             // 侧栏那条标记是挂在别人的节点上的，卸载时得自己摘：clearPaperTokens 只管变量
             syncSidebarTexture(false)
             stopWaitingForSidebar()

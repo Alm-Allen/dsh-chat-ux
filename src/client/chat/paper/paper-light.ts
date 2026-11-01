@@ -177,7 +177,7 @@ export class PaperLight {
         const tintChannel = (channel: number): number => 1 + ((.6 + channel * 1.5) - 1) * strength
         const lampOn = frame.settings.lamp && frame.settings.enabled
         // 纸的相对亮度：着色器拿它当抖动的除数。这一层是 multiply 压在页面上（最终像素 = 纸色 × 这里的值），
-        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 43 个灰阶、一个台阶 5.9 级，
+        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 58 个灰阶、一个台阶 4.4 级，
         // 亮纸 242 个、只吃 1.1 级，同一个抖动幅度在暗纸上只盖得住台阶的四分之一
         const paperColor = toUnit(frame.paper.paper)
         // 兜住零：除数取到 0 会把抖动放大成无穷大，整张纸变成一片噪点

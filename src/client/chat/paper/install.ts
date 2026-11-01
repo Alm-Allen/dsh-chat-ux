@@ -48,7 +48,7 @@ export function installPaperLayer(readSettings: () => PaperSettingsInput): Paper
     })
 }
 
-// 撤掉纸：两片 canvas、暗角、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
+// 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
 export function clearPaperLayer(): void {
     clearPaperTokens()
     document.documentElement.removeAttribute(PAPER_ROOT_ATTRIBUTE)

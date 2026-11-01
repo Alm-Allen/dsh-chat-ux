@@ -2204,10 +2204,10 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
 
 /* 纸感开着时的深色玻璃：底的色相跟着纸走，不再掺冷蓝。
    上面那一条的底是「输入面色 neutral-bluish-850 掺 3% 冷蓝」，合成出来是一块冷近黑（#2d2e2f）；纸感开着时
-   卡片底下压的是暗档葱皮 #2b2b25（暖灰），两者色相差出 160 度，同屏就是读者说的「太冷、太科技感」。
+   卡片底下压的是暗档葱皮 #3a3a32（暖灰），两者色相差出 160 度，同屏就是读者说的「太冷、太科技感」。
    所以纸开着时改从纸色与墨色派生：纸色朝墨色混 6%。
-   明度那头：6% 在 srgb 里逐通道 +11 阶，把 #2b2b25 抬到 #363630；乘 70% 的 alpha 压在纸上之后是 #33332d，
-   对纸 1.12——仍比纸深一点，读起来是压在纸上的一层玻璃，没有变成浮起的一块。
+   明度那头：6% 在 srgb 里逐通道 +10 阶，把 #3a3a32 抬到 #44443c；乘 70% 的 alpha 压在纸上之后是 #414139，
+   对纸 1.1——仍比纸深一点，读起来是压在纸上的一层玻璃，没有变成浮起的一块。
    色相那头：纸与墨在暗档都是暖黄绿家族（R-B 分别 6 与 11），掺出来自然同族；纸色以后改了它自动跟。
    不掺 --dsw-specific-input-major 了：那是宿主的中性偏冷的近黑，正是另一半「冷」的来源。
    两条变量名由 paper-tokens 的 PAPER_PREFIX 拼出来，不在这里重抄一遍字面量：两处写法一旦分叉，
@@ -2217,7 +2217,7 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   --dsh-chat-ux-glass-base: color-mix(
 	in srgb,
 	var(${paper_tokens_1.PAPER_PREFIX}ink, #e8e6dd) 6%,
-	var(${paper_tokens_1.PAPER_PREFIX}paper, #2b2b25)
+	var(${paper_tokens_1.PAPER_PREFIX}paper, #3a3a32)
   );
 }
 
@@ -2570,7 +2570,8 @@ function applyPaperTokens(set, mode, includeSidebar) {
     const body = document.body;
     // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
     root.setAttribute(exports.PAPER_ROOT_ATTRIBUTE, "");
-    // 暗档单独一条标记：暗角那两个系数差得远，按档分成两条规则比在 CSS 里算更直白
+    // 暗档单独一条标记。它原来的唯一读者是暗角那两条按档分叉的规则；暗角下线之后暂时没人读它，
+    // 留着是给以后按档写的样式
     if (mode === "dark")
         root.setAttribute(exports.PAPER_DARK_ATTRIBUTE, "");
     else
@@ -2584,7 +2585,6 @@ function applyPaperTokens(set, mode, includeSidebar) {
         [exports.PAPER_PREFIX + "room-edge", set.roomEdge],
         [exports.PAPER_PREFIX + "light-rgb", set.lightRgb],
         [exports.PAPER_PREFIX + "selection", set.selection],
-        [exports.PAPER_PREFIX + "vignette", String(set.vignette)],
     ];
     for (const [name, value] of ownPairs)
         setOwned(root, name, value);
@@ -2668,7 +2668,6 @@ function paperTokenSet(mode) {
         roomEdge: paper_tables_1.ROOM.palette.roomEdge,
         lightRgb: (0, paper_math_1.toUnit)(paper_tables_1.ROOM.light.color).map((channel) => Math.round(channel * 255)).join(" "),
         selection: paper.selection,
-        vignette: paper.vignette,
         codeBlock: surfaces.codeBlock,
         inlineCode: surfaces.inlineCode,
     };
@@ -2747,7 +2746,7 @@ exports.glassColor = glassColor;
  * 纸与灯：一张葱皮、一个房间、两档明暗，以及从它们派生出来的颜色。
  *
  * 纸只有一张，明暗由 dsh 当前的主题决定：亮档是原来那张葱皮，暗档是它的暗版。
- * 两者共用同一套纸纹参数与同一盏灯，只有纸色、墨色、选区与暗角跟着分档。
+ * 两者共用同一套纸纹参数与同一盏灯，只有纸色、墨色与选区跟着分档。
  *
  * 明暗这一维单独叫 PaperMode，它的来源不在这份文件里：入口（paper-theme.ts）读 dsh 的主题，
  * 再把它交给纸上每一处。表里没有任何一档写明"什么时候用我"
@@ -2770,7 +2769,6 @@ exports.PAPER_LIGHT = {
     inkMuted: "#6b5f52",
     // 亮档用房间的描金，与细边、页码同源
     selection: "rgba(176, 138, 74, 0.30)",
-    vignette: .35,
     surface: { crinkle: .08, felt: 0, laid: 0, linen: 0, mottle: .04, age: 0 },
 };
 /**
@@ -2783,32 +2781,35 @@ exports.PAPER_LIGHT = {
  */
 exports.PAPER_DARK = {
     mode: "dark",
-    // 纸色比 dsh 的深色画布（#151517）亮 22 阶：暗纸上纸纹只能把纸往下压，纸色压得太低就没有下压空间，
-    // 压出来的是一团脏而不是纹理。提到 #2b2b25 之后纸纹才有 25 阶的起伏，见 PAPER_DARK.surface
-    paper: "#2b2b25",
+    // 纸色比 dsh 的深色画布（#151517）亮 37 阶：暗纸上纸纹只能把纸往下压，纸色压得太低就没有下压空间，
+    // 压出来的是一团脏而不是纹理。提到 #3a3a32 之后纸纹才有 37 阶的可压空间，见 PAPER_DARK.surface。
+    // 再亮一档是为了台灯：纸色每暗一档，最终像素上一个色阶就要吃掉更多 canvas 级，光斑的台阶就更宽
+    paper: "#3a3a32",
     ink: "#e8e6dd",
     inkMuted: "#a09c8f",
     // 暗档的描金提亮一档：原来那一笔压在暗纸上几乎看不见
     selection: "rgba(214, 178, 112, 0.26)",
-    // 暗纸上同样的暗角看不出来，所以比亮档重
-    vignette: .45,
     // 褶皱与云斑比亮档重，但不能重到把灯吃掉：纸纹在那套着色器里是乘法扰动，扰动一起来，
     // 灯心那点亮就被淹没（±46% 的扰动配 +21% 的灯差，灯斑一个字都看不出来）。这一组给纸纹 ±8%
     surface: { crinkle: .5, felt: 0, laid: 0, linen: 0, mottle: .18, age: 0 },
 };
 /**
  * 暗档的渲染参数。PAPER_DEFAULT_SETTINGS 那一套是按亮档调的：纸纹 0.18 在米白纸上刚好，
- * 落在暗纸上连两个色阶都压不出来。这里只动四项，其余沿用出厂值
+ * 落在暗纸上连两个色阶都压不出来。这里只动五项，其余沿用出厂值
  */
 exports.PAPER_DARK_RENDER = {
     // 纸纹强度：0.18 → 0.55。它同时乘在褶皱与法线上，是暗纸上能不能看见起伏的主开关
     texture: .55,
     // 浮雕：0.22 → 0.45。纸面层的那道法线扰动由它放大
     paperIllumination: .45,
-    // 环境光下限：0.86 → 0.72。这是「台灯还看不看得见」的旋钮——环境光把整片纸抬到接近 1，
-    // 灯心那点亮就没有落差可言。0.66 是灯斑最清楚的那一档，但灯外那八成面积偏沉；
-    // 抬到 0.72 之后纸面整体亮一档，灯心仍比中心亮 13 阶，光斑还在
-    ambientFloor: .72,
+    // 环境光下限：0.86 → 0.66。这是「台灯还看不看得见」的旋钮——环境光把整片纸抬到接近 1，
+    // 灯心那点亮就没有落差可言。0.66 是灯斑最清楚的那一档；纸色提到 #3a3a32 之后灯外仍有
+    // 38 阶（原来 0.72 配 #33332c 是 37 阶），落差从 0.28 升到 0.34，光斑的级数也跟着多出来
+    ambientFloor: .66,
+    // 光锥边缘：0.65 → 0.25。softness 越小，cosOuter 到 cosInner 那条过渡带越窄（越陡）：
+    // 0.65 时亮区到暗区的过渡约 262px，0.4 收到 172px，0.25 收到 113px。暗纸上那圈渐变本来
+    // 只剩十几级，过渡带越宽越容易读成一圈圈等高线。只改暗档：亮档级数够多，宽过渡带正是它平滑的来源
+    softness: .25,
 };
 // 一张纸的两档都由这里取，调用方不必自己认 mode
 function paperOf(mode) {
@@ -5337,7 +5338,7 @@ function installPaperLayer(readSettings) {
         return { on: current.on, includeSidebar: current.sidebar };
     });
 }
-// 撤掉纸：两片 canvas、暗角、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
+// 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
 function clearPaperLayer() {
     (0, paper_tokens_1.clearPaperTokens)();
     document.documentElement.removeAttribute(paper_tokens_1.PAPER_ROOT_ATTRIBUTE);
@@ -5351,7 +5352,7 @@ exports.installPaper = installPaper;
 /**
  * 纸的挂载与帧循环。
  *
- * 这一层只做三件事：把两片 canvas 与那层暗角挂上去、按脏标记决定这一帧要不要重算、以及在
+ * 这一层只做三件事：把两片 canvas 挂上去、按脏标记决定这一帧要不要重算、以及在
  * 卸载时把挂过的全部撤干净。渲染本身在 paper-light 与 paper-glow，配色在 paper-tokens，
  * 覆盖范围在 paper-layout
  *
@@ -5402,15 +5403,13 @@ const PIXEL_BUDGET = 1950000;
 function installPaper(readOptions) {
     const sheetCanvas = document.createElement("canvas");
     const glowCanvas = document.createElement("canvas");
-    const vignette = document.createElement("div");
     sheetCanvas.setAttribute(paper_styles_1.PAPER_SHEET_ATTRIBUTE, "");
     glowCanvas.setAttribute(paper_styles_1.PAPER_GLOW_ATTRIBUTE, "");
-    vignette.setAttribute(paper_styles_1.PAPER_VIGNETTE_ATTRIBUTE, "");
-    for (const node of [sheetCanvas, glowCanvas, vignette])
+    for (const node of [sheetCanvas, glowCanvas])
         node.setAttribute("aria-hidden", "true");
-    // 三件都直接挂 body 下：包一层带 z-index 的容器会给它们造一个隔离栈，
+    // 两片都直接挂 body 下：包一层带 z-index 的容器会给它们造一个隔离栈，
     // multiply 与页面断开之后就退化成直接覆盖（nocturne 实测过）
-    document.body.append(sheetCanvas, glowCanvas, vignette);
+    document.body.append(sheetCanvas, glowCanvas);
     // 样式表跟着挂载走：纸关掉时它一条都不命中（根上没有那个标记），所以不需要按开关装卸
     ensurePaperStyle();
     const paperLight = new paper_light_1.PaperLight(sheetCanvas);
@@ -5449,12 +5448,12 @@ function installPaper(readOptions) {
     let coversSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
-    // 不用 hidden 属性：本插件的样式表给这三件写了 display: block，作者样式恒赢过 UA 的
+    // 不用 hidden 属性：本插件的样式表给这两片写了 display: block，作者样式恒赢过 UA 的
     // [hidden]{display:none}，于是 hidden 一点作用都没有——实测加了它之后 computed display
     // 仍是 block，截图与纸开逐字节相同。所以这套用自己的一条规则（PAPER_HIDDEN_ATTRIBUTE）
     // 一并把 display 与定位都撤掉
     const setAttached = (attached) => {
-        for (const node of [sheetCanvas, glowCanvas, vignette]) {
+        for (const node of [sheetCanvas, glowCanvas]) {
             if (attached)
                 node.removeAttribute(paper_styles_1.PAPER_HIDDEN_ATTRIBUTE);
             else
@@ -5471,7 +5470,7 @@ function installPaper(readOptions) {
             return null;
         return { x: box.left, y: box.top + box.height / 2 };
     };
-    // 把三件的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
+    // 把两片的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
     // canvas 的 CSS 尺寸与它在视口里的偏移一起改，着色器里的坐标系仍以 canvas 自己为准
     const applyRect = () => {
         for (const canvas of [sheetCanvas, glowCanvas]) {
@@ -5480,10 +5479,6 @@ function installPaper(readOptions) {
             canvas.style.width = rect.width + "px";
             canvas.style.height = rect.height + "px";
         }
-        vignette.style.left = rect.left + "px";
-        vignette.style.top = rect.top + "px";
-        vignette.style.width = rect.width + "px";
-        vignette.style.height = rect.height + "px";
     };
     // 纸的像素尺寸按预算压一次：超过预算就按面积开方降 DPR，最低 0.5
     const computePixelRatio = () => {
@@ -5944,7 +5939,6 @@ function installPaper(readOptions) {
             paperLight.destroy();
             sheetCanvas.remove();
             glowCanvas.remove();
-            vignette.remove();
             // 侧栏那条标记是挂在别人的节点上的，卸载时得自己摘：clearPaperTokens 只管变量
             syncSidebarTexture(false);
             stopWaitingForSidebar();
@@ -6489,8 +6483,8 @@ const WINDOW_MATERIAL_ATTRIBUTE = "data-window-material";
 const PLATFORM_ATTRIBUTE = "data-platform";
 // AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
 const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]";
-// 纸自己那三片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
-const PAPER_LAYER_SELECTOR = `[${paper_styles_1.PAPER_SHEET_ATTRIBUTE}], [${paper_styles_1.PAPER_GLOW_ATTRIBUTE}], [${paper_styles_1.PAPER_VIGNETTE_ATTRIBUTE}]`;
+// 纸自己那两片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
+const PAPER_LAYER_SELECTOR = `[${paper_styles_1.PAPER_SHEET_ATTRIBUTE}], [${paper_styles_1.PAPER_GLOW_ATTRIBUTE}]`;
 // 这一页见过窗口材质没有。见过一次就一直是 true，详见下面那份函数的注释
 let windowMaterialSeen = false;
 /**
@@ -6668,20 +6662,19 @@ function measurePaperRect(coversSidebar) {
     __registry["chat/paper/paper-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PAPER_CSS = exports.PAPER_HIDDEN_ATTRIBUTE = exports.PAPER_SIDEBAR_ATTRIBUTE = exports.PAPER_VIGNETTE_ATTRIBUTE = exports.PAPER_GLOW_ATTRIBUTE = exports.PAPER_SHEET_ATTRIBUTE = void 0;
+exports.PAPER_CSS = exports.PAPER_HIDDEN_ATTRIBUTE = exports.PAPER_SIDEBAR_ATTRIBUTE = exports.PAPER_GLOW_ATTRIBUTE = exports.PAPER_SHEET_ATTRIBUTE = void 0;
 /**
  * 纸感的样式。
  *
- * 四件事：给两片全屏 canvas 与那层暗角找位置、把纸色铺到宿主真正画底的几处、让侧栏在需要时
+ * 四件事：给两片全屏 canvas 找位置、把纸色铺到宿主真正画底的几处、让侧栏在需要时
  * 躲开全屏那一层纸，以及给躲开之后的侧栏补一层只有纹理、没有底色的纸纹。
  * 整张表都以根元素上的 `data-dsh-chat-ux-paper` 为前提——那个标记不在时一条都不命中，
  * 于是关掉纸感是彻底的，不必逐条撤销
  */
 const paper_tokens_1 = require("./paper-tokens");
-// 两片 canvas 与暗角上的标记，值就是它们的角色
+// 两片 canvas 上的标记，值就是它们的角色
 exports.PAPER_SHEET_ATTRIBUTE = "data-dsh-chat-ux-paper-sheet";
 exports.PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow";
-exports.PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette";
 /**
  * 侧栏那层纸纹的标记，挂在侧栏那一列自己身上（paper-mount 负责增删）。
  *
@@ -6694,9 +6687,9 @@ exports.PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette";
  */
 exports.PAPER_SIDEBAR_ATTRIBUTE = "data-dsh-chat-ux-paper-sidebar-texture";
 /**
- * 收起标记。写在三件身上就是「这一层此刻不参与绘制」。
+ * 收起标记。写在两片 canvas 身上就是「这一层此刻不参与绘制」。
  *
- * 用它而不是 hidden 属性：UA 样式表里 [hidden] 只有 display:none 这一条，而本表给三件写的是
+ * 用它而不是 hidden 属性：UA 样式表里 [hidden] 只有 display:none 这一条，而本表给两片写的是
  * display:block，作者样式恒赢，于是 hidden 一点作用都没有（实测：加了 hidden 之后
  * computed display 仍是 block，截图与纸开逐字节相同）
  */
@@ -6706,7 +6699,6 @@ exports.PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden";
 // 替身若浮在纸上，飞行中不受 multiply 压暗、落定后受，同一个色值在两帧里差出一档，读者看到的就是落地跳色
 const SHEET_Z = "2147482000";
 const GLOW_Z = "2147482001";
-const VIGNETTE_Z = "2147482002";
 // 侧栏纸纹那张噪声块的边长，也是 mask-size 的重复周期。180 是读者看着真机一轮轮调出来的：
 // 更小时平铺痕迹要靠放大镜才看得见，更大则白占内存、看不出差别
 const SIDEBAR_NOISE_TILE = 180;
@@ -6770,8 +6762,7 @@ exports.PAPER_CSS = `
 /* 纸与光：两片 fixed 全屏 canvas。left / top / width / height 由 paper-mount 逐帧写，
    纸不铺侧栏时那几项就是左侧栏右边那一块 */
 ${ROOT} [${exports.PAPER_SHEET_ATTRIBUTE}],
-${ROOT} [${exports.PAPER_GLOW_ATTRIBUTE}],
-${ROOT} [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
+${ROOT} [${exports.PAPER_GLOW_ATTRIBUTE}] {
   position: fixed;
   left: 0;
   top: 0;
@@ -6790,41 +6781,19 @@ ${ROOT} [${exports.PAPER_GLOW_ATTRIBUTE}] {
   z-index: ${GLOW_Z};
 }
 
-/* 暗角挂在单独一层上，位置跟着纸走：纸不覆盖左侧栏时，那块的窗口材质不该被压暗 */
-${ROOT} [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
-  z-index: ${VIGNETTE_Z};
-  background: radial-gradient(
-    ellipse 92% 88% at 50% 46%,
-    transparent 52%,
-    rgba(0, 0, 0, calc(var(${paper_tokens_1.PAPER_PREFIX}vignette, 0.35) * 0.30)) 100%
-  );
-}
-
-/* 收起来的三件。这里必须自己写一条，而不是靠 UA 的 [hidden]{display:none}：
+/* 收起来的两片。这里必须自己写一条，而不是靠 UA 的 [hidden]{display:none}：
    上面那条把 display 写成了 block，作者样式压过 UA 样式表，于是加了 hidden 也照样是 block、
    照样参与合成（实测截图与纸开逐字节相同）。
-   连定位一起撤掉也是必须的：只藏不撤的话，三块 1440x900 的元素仍然撑在文档流里，
+   连定位一起撤掉也是必须的：只藏不撤的话，两块 1440x900 的元素仍然撑在文档流里，
    body.scrollHeight 会从 900 涨到 3610 */
 ${ROOT} [${exports.PAPER_HIDDEN_ATTRIBUTE}] {
   display: none;
-  /* 定位一起撤：只藏不撤的话，三块 1440x900 的元素仍会撑在文档流里 */
+  /* 定位一起撤：只藏不撤的话，两块 1440x900 的元素仍会撑在文档流里 */
   position: static;
   left: auto;
   top: auto;
   width: 0;
   height: 0;
-}
-
-/* 暗档的暗角比亮档重，但不能重到四角比画布还黑。亮档那个 0.30 的乘子是给米白纸调的，
-   压到暗纸上几乎看不出来；这一路是 0.85 → 0.70 → 0.45 → 0.25 收下来的：0.70 那一档算出来
-   四角是 19，比 dsh 的深色画布（21）还黑，整张纸的四边像被啃掉一圈；0.45 之后四角 24，纸
-   从画布上浮起来；最后读者又收到 0.25，四角更亮一档 */
-${ROOT}[${paper_tokens_1.PAPER_DARK_ATTRIBUTE}] [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
-  background: radial-gradient(
-    ellipse 92% 88% at 50% 46%,
-    transparent 46%,
-    rgba(0, 0, 0, calc(var(${paper_tokens_1.PAPER_PREFIX}vignette, 0.25) * 0.25)) 100%
-  );
 }
 
 /* 侧栏自己那层纸纹。
@@ -7009,7 +6978,7 @@ class PaperLight {
         const tintChannel = (channel) => 1 + ((.6 + channel * 1.5) - 1) * strength;
         const lampOn = frame.settings.lamp && frame.settings.enabled;
         // 纸的相对亮度：着色器拿它当抖动的除数。这一层是 multiply 压在页面上（最终像素 = 纸色 × 这里的值），
-        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 43 个灰阶、一个台阶 5.9 级，
+        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 58 个灰阶、一个台阶 4.4 级，
         // 亮纸 242 个、只吃 1.1 级，同一个抖动幅度在暗纸上只盖得住台阶的四分之一
         const paperColor = (0, paper_math_1.toUnit)(frame.paper.paper);
         // 兜住零：除数取到 0 会把抖动放大成无穷大，整张纸变成一片噪点
@@ -7337,7 +7306,7 @@ const float BULB = 30.0;
  * 抖动的幅度（乘在 g 上，g 落在 -0.5 到 0.5）。
  *
  * 这一层是 multiply 压在页面上：最终像素 = 纸色 × 这里算出来的值。所以纸越暗，纸上相邻两级
- * 8 位灰度之间那道坎就越宽——暗纸 #2b2b25 的 R 只有 43 级，一个最终色阶要吃掉 5.93 个 canvas 级；
+ * 8 位灰度之间那道坎就越宽——暗纸 #3a3a32 的 R 是 58 级，一个最终色阶要吃掉 4.4 个 canvas 级；
  * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有四分之一宽，
  * 光斑边缘那些同心圆弧就露成几块平台。
  *
@@ -8655,12 +8624,12 @@ function startMorph(frame, bubble, end) {
 /**
  * 替身最外层的层级。
  *
- * **要落在纸层之下**（paper-styles.ts 里纸是 2147482000、辉光 2001、暗角 2002），取 1999。
+ * **要落在纸层之下**（paper-styles.ts 里纸是 2147482000、辉光 2001），取 1999。
  * 这不是小事：替身原来是 2147483000，压在纸上，而落点的气泡在纸下——两处色值一样，屏幕上一个
  * 被纸光压暗、一个没有，落定那一帧就必然跳一下（实测飞行中 rgb(221,215,203)、落地后同一个值
  * 被 multiply 压成更深的纸色，读者看到的就是"落地瞬间换了个色"）。
  *
- * 压到纸下之后，替身与气泡吃同一层纸光、同一道暗角，飞行中途与落定那一刻是同一块像素。
+ * 压到纸下之后，替身与气泡吃同一层纸光，飞行中途与落定那一刻是同一块像素。
  * 代价是它不再盖在纸上——但它本来就是一层面，不是浮在整页之上的浮层，压在纸下才是对的。
  */
 const GHOST_Z = '2147481999';
