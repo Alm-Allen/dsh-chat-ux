@@ -4,10 +4,11 @@ English | [中文](./README.md)
 
 A chat-area UX plugin for the [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) web GUI.
 
-With it installed, reasoning rows fold themselves away when thinking ends, process groups open and close on their own, and the composer and readouts take on this plugin's own look—and none of it ever yanks a reader who scrolled away.
+With it installed, the whole page lies on a sheet of paper, reasoning rows fold themselves away when thinking ends, process groups open and close on their own, and the composer and readouts take on this plugin's own look—and none of it ever yanks a reader who scrolled away.
 
 ## What it does
 
+- **Paper** (on by default): the whole page is a sheet of paper. The page background takes that paper's tone, the sheet carries a grain with a round pool of light in the middle and a vignette at the corners, and the composer, the bubbles and the menus read as layers pressed into it; body text and code switch to a serif and a typewriter face. Five papers (Cotton, Linen, Laid, Onionskin, Night) by three rooms (Paper and ink, Midnight study, Moonlit poetry) make fifteen — the paper sets the colour and grain, the room sets the light and the vignette. Off puts everything back the way dsh had it, typefaces included; the left sidebar can keep dsh's own fill on its own, for a custom desktop whose sidebar is window material. A switch on the Plugins page turns it off.
 - **Self-folding reasoning rows**: a reasoning row expands while thinking and folds when it ends; once you touch it yourself, it stops moving.
 - **Self-folding process groups**: a process group expands when a tool call starts and folds when that stretch ends, with a roller-blind transition in both directions. A row whose body holds several cards (`run_code`'s program plus its output) rolls as one blind, not card by card. Both share one "Automatic folding" switch on the Plugins page. A height-capped process group in standard / compact scrolls vertically only — that rule is always on and is not behind any switch. When dsh's own collapse timing is set to "on next message", the collapse at the end of a stretch is left to dsh; while dsh's own fold animation is driving a row (`data-chat-motion`), the plugin stays out of the way too.
 - **File change rows**: write / edit calls inside `run_code` show their diff lines right in the chat area For direct calls, the path, input size and `+n -m` appear while the arguments are still streaming, both counts growing as the content arrives (each starts counting as soon as its own field arrives, and neither waits for the path — a write puts `file_path` last); the digits at the end of the row pop on a beat so each reel turn plays out in full (same for a write and an edit), and switch to live following once the call settles (on by default; turn it off on the Plugins page).
@@ -59,6 +60,9 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| Paper | on | When off, the page goes back to dsh's own look and its own typefaces. |
+| Paper and room | Cotton / Paper and ink | Five papers by three rooms — fifteen in all. The paper sets the colour and grain, the room sets the light and the vignette. Does nothing while paper is off. |
+| Paper the sidebar | on | When off, the sidebar keeps dsh's own fill and only the chat area is papered. Use it when a custom desktop turns the sidebar into window material. |
 | Automatic folding | on | When off, reasoning rows and process groups stop opening and closing on their own; clicking still works. |
 | Caret motion | always | Three steps: off / on move / always. |
 | Send bubble morph | on | When off, the message appears straight at its place, with no slab carrying its text. |

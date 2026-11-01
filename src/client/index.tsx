@@ -22,11 +22,14 @@ import {installFoldGlide} from "./chat/fold/fold-glide"
 import {createFoldWatch} from "./chat/fold/fold-observers"
 import {installProcessFold} from "./chat/fold/process-fold"
 import {installReasoningFold} from "./chat/fold/reasoning-fold"
+import {installPaperLayer} from "./chat/paper/install"
+import type {PaperHandle, PaperSettingsInput} from "./chat/paper/install"
 import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
 	DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
+	DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
+	DEFAULT_PAPER_SIDEBAR, DEFAULT_PAPER_STYLE, DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
@@ -74,11 +77,16 @@ export function apply(ctx: ClientContext): void {
 		liveDiff: DEFAULT_LIVE_DIFF,
 		followOn: DEFAULT_FOLLOW_ON_APPEAR,
 		sendFlight: DEFAULT_SEND_FLIGHT,
+		paperOn: DEFAULT_PAPER_ON,
+		paperStyle: DEFAULT_PAPER_STYLE,
+		paperSidebar: DEFAULT_PAPER_SIDEBAR,
 	}
 
 	// 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
 	// （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
-	const caret = installCaretMotion(() => settings.caret)
+	// 纸感开着时那根自绘插入符画成羽毛，关掉时回到 2px 的竖线。几何、位移与闪烁仍归 caret-motion，
+	// 羽毛只是它里面的一种画法——两套自绘互相覆盖是这套动效最容易翻车的地方，所以不另起一根
+	const caret = installCaretMotion(() => settings.caret, () => settings.paperOn)
 	// 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那一个），
 	// 接不过来，所以从 DOM 上认它，只写读数与档位，形状与颜色由样式表接。
 	// 开关关掉时整块卸下：写过的属性、内联样式与数字滚动一起撤干净，读者看到的是 dsh 原来那圈环
@@ -130,6 +138,29 @@ export function apply(ctx: ClientContext): void {
 		glassDispose = installComposerGlass()
 	}
 
+	// 纸：开着才装。装的是两片 canvas 加令牌，关掉时把它卸干净、令牌一并还原。
+	// 纸样只在装上之后才会变，所以换纸样不必重装，重落一次配置就够
+	let paper: PaperHandle | null = null
+	const paperSettings = (): PaperSettingsInput => ({
+		on: settings.paperOn,
+		style: settings.paperStyle,
+		sidebar: settings.paperSidebar,
+	})
+	const syncPaper = (): void => {
+		if (!settings.paperOn) {
+			paper?.dispose()
+			paper = null
+			document.documentElement.removeAttribute("data-dsh-chat-ux-paper")
+			return
+		}
+		// 已经装着的时候只重落参数：重画两片 canvas 会把纸纹整块重算一遍，换一张纸的代价不该这么大
+		if (paper !== null) {
+			paper.refresh()
+			return
+		}
+		paper = installPaperLayer(paperSettings)
+	}
+
 	let followDispose: (() => void) | null = null
 	const syncFollow = (): void => {
 		if (!settings.followOn) {
@@ -149,15 +180,29 @@ export function apply(ctx: ClientContext): void {
 		settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
 		settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
 		settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
+		settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
+		settings.paperStyle = value?.paperStyle ?? DEFAULT_PAPER_STYLE
+		settings.paperSidebar = value?.paperSidebar ?? DEFAULT_PAPER_SIDEBAR
 		syncGlass()
 		caret.resync()
 		syncPie()
 		syncAutoFold()
 		syncFollow()
+		syncPaper()
 	}
 	syncSettings()
 	ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror")
 	ctx.effect(() => caret.dispose, "dsh-chat-ux: caret motion")
+	ctx.effect(
+		() => {
+			syncPaper()
+			return () => {
+				paper?.dispose()
+				paper = null
+			}
+		},
+		"dsh-chat-ux: paper",
+	)
 	ctx.effect(
 		() => {
 			syncGlass()
@@ -263,6 +308,12 @@ interface ChatUxSettings {
 	followOn: boolean
 	// 发送气泡是否走形变（整张卡片收成气泡），改一次就得重落一次
 	sendFlight: boolean
+	// 纸感总开关。它不只是画不画，还决定整页底色那几条令牌写不写
+	paperOn: boolean
+	// 纸 __ 房间。换它要重算纸纹与令牌
+	paperStyle: string
+	// 左侧栏是否也铺纸。材质平台（darwin、Windows 11 acrylic）上读者想留着侧栏的窗口材质时关掉它
+	paperSidebar: boolean
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input

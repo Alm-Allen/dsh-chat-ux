@@ -4,11 +4,15 @@
  * 三条规则：按掉原生插入符、给挂那根的父元素补定位上下文、把自绘的那根画出来
  * 前两条只认 caret-motion.ts 写上的标记，脚本半途没跑起来时一条都不命中，原生插入符还在
  * 这是这套动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏
+ *
+ * 纸感开着时那根画成一支羽毛，那一份表在 ../paper/caret/quill-styles，拼在最后面：
+ * 它要求根元素上有纸感标记、并且那根带着羽毛标记，条件不成立时这里一个字节都不受影响
  */
 import {
 	CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
 	CARET_VISIBLE_ATTRIBUTE,
 } from "./caret-motion"
+import {QUILL_CSS} from "../paper/caret/quill-styles"
 
 // 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px，与这里同档
 const CARET_WIDTH = "2px"
@@ -81,3 +85,6 @@ ${LAYER}[${CARET_VISIBLE_ATTRIBUTE}] {
   }
 }
 `
+
+// 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
++ QUILL_CSS

@@ -56,6 +56,7 @@ const fold_glide_1 = require("./chat/fold/fold-glide");
 const fold_observers_1 = require("./chat/fold/fold-observers");
 const process_fold_1 = require("./chat/fold/process-fold");
 const reasoning_fold_1 = require("./chat/fold/reasoning-fold");
+const install_1 = require("./chat/paper/install");
 const send_flight_1 = require("./chat/send-flight/send-flight");
 const settings_card_1 = require("./settings/settings-card");
 const settings_scope_1 = require("./settings/settings-scope");
@@ -99,10 +100,15 @@ function apply(ctx) {
         liveDiff: settings_scope_1.DEFAULT_LIVE_DIFF,
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
+        paperOn: settings_scope_1.DEFAULT_PAPER_ON,
+        paperStyle: settings_scope_1.DEFAULT_PAPER_STYLE,
+        paperSidebar: settings_scope_1.DEFAULT_PAPER_SIDEBAR,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
-    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
+    // 纸感开着时那根自绘插入符画成羽毛，关掉时回到 2px 的竖线。几何、位移与闪烁仍归 caret-motion，
+    // 羽毛只是它里面的一种画法——两套自绘互相覆盖是这套动效最容易翻车的地方，所以不另起一根
+    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret, () => settings.paperOn);
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那一个），
     // 接不过来，所以从 DOM 上认它，只写读数与档位，形状与颜色由样式表接。
     // 开关关掉时整块卸下：写过的属性、内联样式与数字滚动一起撤干净，读者看到的是 dsh 原来那圈环
@@ -156,6 +162,28 @@ function apply(ctx) {
             return;
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
+    // 纸：开着才装。装的是两片 canvas 加令牌，关掉时把它卸干净、令牌一并还原。
+    // 纸样只在装上之后才会变，所以换纸样不必重装，重落一次配置就够
+    let paper = null;
+    const paperSettings = () => ({
+        on: settings.paperOn,
+        style: settings.paperStyle,
+        sidebar: settings.paperSidebar,
+    });
+    const syncPaper = () => {
+        if (!settings.paperOn) {
+            paper?.dispose();
+            paper = null;
+            document.documentElement.removeAttribute("data-dsh-chat-ux-paper");
+            return;
+        }
+        // 已经装着的时候只重落参数：重画两片 canvas 会把纸纹整块重算一遍，换一张纸的代价不该这么大
+        if (paper !== null) {
+            paper.refresh();
+            return;
+        }
+        paper = (0, install_1.installPaperLayer)(paperSettings);
+    };
     let followDispose = null;
     const syncFollow = () => {
         if (!settings.followOn) {
@@ -176,15 +204,26 @@ function apply(ctx) {
         settings.liveDiff = value?.liveDiff ?? settings_scope_1.DEFAULT_LIVE_DIFF;
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
+        settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
+        settings.paperStyle = value?.paperStyle ?? settings_scope_1.DEFAULT_PAPER_STYLE;
+        settings.paperSidebar = value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
         syncGlass();
         caret.resync();
         syncPie();
         syncAutoFold();
         syncFollow();
+        syncPaper();
     };
     syncSettings();
     ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror");
     ctx.effect(() => caret.dispose, "dsh-chat-ux: caret motion");
+    ctx.effect(() => {
+        syncPaper();
+        return () => {
+            paper?.dispose();
+            paper = null;
+        };
+    }, "dsh-chat-ux: paper");
     ctx.effect(() => {
         syncGlass();
         return () => {
@@ -274,6 +313,7 @@ exports.installCaretMotion = installCaretMotion;
  * ⚠️ 原生被按下去、自绘没画出来就是读者看不见光标，所以量不出来一律退回原生，绝不维持现状
  */
 const dom_contract_1 = require("../../dom-contract");
+const quill_1 = require("../paper/caret/quill");
 // 闪烁动画的名字。caret-motion-styles.ts 用它拼 keyframes，两处必须一字不差
 exports.CARET_BLINK_NAME = "dsh-chat-ux-caret-blink";
 // 挂在可编辑面上的标记：有它原生插入符才被按掉，规则在 caret-motion-styles.ts
@@ -300,7 +340,7 @@ const MIRRORED_PROPERTY_LIST = [
     "padding-top", "padding-right", "padding-bottom", "padding-left",
 ];
 // 给整页装上插入符动效。档位在每次同步时现读，所以运行期改档不必重新安装
-function installCaretMotion(readMotionMode) {
+function installCaretMotion(readMotionMode, readQuillOn = () => false) {
     // 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项
     const caretLayerMap = new Map();
     // 一次同步已经排在下一帧
@@ -572,6 +612,9 @@ function installCaretMotion(readMotionMode) {
     // 把一个面的自绘状态整个撤掉：那一根、按掉标记、以及替它补过的定位上下文
     const release = (input, layer) => {
         layer.caret.remove();
+        // 那根连同它怀里的羽毛一起撤掉了；引用留着会让下一次重建接回旧节点
+        layer.quill = null;
+        layer.quillHeight = 0;
         input.removeAttribute(exports.CARET_ATTRIBUTE);
         if (layer.markedHost)
             layer.host.removeAttribute(exports.CARET_HOST_ATTRIBUTE);
@@ -609,7 +652,7 @@ function installCaretMotion(readMotionMode) {
         host.appendChild(caret);
         if (input.isContentEditable)
             observeComposer(input);
-        const layer = { caret, visible: false, host, markedHost };
+        const layer = { caret, visible: false, host, markedHost, quill: null, quillHeight: 0 };
         caretLayerMap.set(input, layer);
         return layer;
     };
@@ -619,6 +662,35 @@ function installCaretMotion(readMotionMode) {
         const style = getComputedStyle(input);
         const color = style.caretColor === "auto" ? style.color : style.caretColor;
         layer.caret.style.setProperty(exports.CARET_COLOR_PROPERTY, color);
+    };
+    // 给这一根装上一支羽毛，并按插入符高度摆好
+    // 先挂笔、再打标记：标记一到，样式表就把 2px 的底色撤掉；反过来写的话，
+    // 中间那一帧读者看到的是一根没有底色的条
+    const markQuill = (layer, caretHeight) => {
+        // React 重渲染会把那根连同里面那支笔一起摘掉再挂回来，所以每次按「笔还在不在」判一次。
+        // 重复调用是幂等的，标记在不在都一样走
+        if (layer.quill === null || layer.quill.parentElement !== layer.caret) {
+            layer.quill = (0, quill_1.buildQuillCaret)();
+            layer.caret.appendChild(layer.quill);
+            layer.quillHeight = 0;
+        }
+        // 高度没变就不重写尺寸与偏移：这一帧 DOM 已经写够了
+        if (Math.abs(layer.quillHeight - caretHeight) > 0.01) {
+            (0, quill_1.placeQuillCaret)(layer.quill, caretHeight);
+            layer.quillHeight = caretHeight;
+        }
+        layer.caret.setAttribute(quill_1.QUILL_ATTRIBUTE, "");
+    };
+    // 撤掉怀里那支笔，把 2px 条要回来
+    // 先摘标记、后撤笔：摘标记那一刻样式表已经把条画回来，笔留着一瞬也只是叠着；
+    // 反过来先撤笔的话，中途只要有谁强制回流，那一瞬就是一根没有底色的空盒子
+    const dropQuill = (layer) => {
+        if (!layer.caret.hasAttribute(quill_1.QUILL_ATTRIBUTE))
+            return;
+        layer.caret.removeAttribute(quill_1.QUILL_ATTRIBUTE);
+        layer.quill?.remove();
+        layer.quill = null;
+        layer.quillHeight = 0;
     };
     // 把自绘的光标放到这个视口矩形上
     // paused 为真时这一帧不播位移过渡：刚出现，或者 move 档下的一次打字
@@ -645,6 +717,12 @@ function installCaretMotion(readMotionMode) {
             layer.visible = true;
             layer.caret.setAttribute(exports.CARET_VISIBLE_ATTRIBUTE, "");
         }
+        // 纸感开着就把怀里那支笔摆到这一帧的高度上，关着就把它撤掉、把 2px 条要回来。
+        // 两档都在这里落，是因为只有这里才拿到刚量出来的高度
+        if (readQuillOn())
+            markQuill(layer, box.height);
+        else
+            dropQuill(layer);
         // 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
         // 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
         // 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
@@ -662,6 +740,13 @@ function installCaretMotion(readMotionMode) {
                 release(input, layer);
             caretLayerMap.clear();
             return;
+        }
+        // 纸感关掉而光标还开着：把怀里的羽毛撤掉，让 2px 条回来。
+        // 样式表也挡得住（它要求根上有纸感标记），但那认的是纸挂没挂上、不是配置；
+        // 配置先落、纸下一帧才摘的那一段，两边都不动的话读者会看到一支笔和一根条叠着
+        if (!readQuillOn()) {
+            for (const layer of caretLayerMap.values())
+                dropQuill(layer);
         }
         const selection = document.getSelection();
         const activeElement = document.activeElement;
@@ -881,6 +966,267 @@ exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
 exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
     };
 
+    __registry["chat/paper/caret/quill.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 羽毛笔光标：一支由几何算出来的笔，笔尖压在插入点上，整支向右倾 35°
+ *
+ * 鎏金笔尖装在笔箍里，裸露的角质笔杆，两侧羽枝一窄一宽、各带分叉，笔尖上有一点光。没有位图。
+ * 曲线、比例与每一段手画的路径都照搬 nocturne 的 core/quill.js；按「这是一根光标」重算的只有三样，
+ * 各自在旁边写着理由：整支的缩放倍率（QUILL_HEIGHT_SCALE）、羽枝的根数、笔尖的横向落点
+ *
+ * **它不是独立的一根光标，而是 ../../caret/caret-motion 那根自绘插入符里面的一种画法。**
+ * 位置、位移过渡、什么时候出现与藏起来、按掉原生插入符，全部仍归 caret-motion；这里只负责
+ * 「按给定高度画成什么样」。不这么做的话就会有两套测量、两套事件、两套让位逻辑互相打架，
+ * 而且纸感那一层是拿 [data-chat-ux-caret-layer] 的矩形去点灯的，多一根浮层会让它量到别处去
+ *
+ * 形状上有三处与 nocturne 不同，都是因为「这是光标，不是装饰」：
+ * · 去掉 sway（3.4s 的左右微摆）。笔尖必须钉在插入点上，摆动等于光标位置在漂
+ * · 去掉羽片上那道上下扫过的光。羽片本身只有几十像素宽，扫光几乎看不出来，却多一条一直在跑的动画
+ * · 不去量光标后面那个字的字宽。nocturne 拿它把笔尖横向推进半格；本模块只管几何，笔尖就压在插入符
+ *   左缘上，与那根 2px 的条同一列，两种画法互换时位置不跳
+ * 留下的是笔尖那一点光：它每 2.8s 亮一次，位置不动，读者看得出光标还活着
+ *
+ * 颜色不在这里，写在 quill-styles.ts，变量一律 --dsh-chat-ux-paper-quill-*：
+ * 与纸感渲染色板（--dsh-chat-ux-paper-*）刻意不共用一套名字，换纸、换房间时羽毛只按墨色与纸色派生
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.QUILL_ID = exports.QUILL_ROOT_CLASS = exports.QUILL_ATTRIBUTE = void 0;
+exports.buildQuillCaret = buildQuillCaret;
+exports.placeQuillCaret = placeQuillCaret;
+// 挂在 caret-motion 那根自绘插入符上的标记：有它，样式表就把那一根画成羽毛，而不是 2px 的条
+exports.QUILL_ATTRIBUTE = "data-chat-ux-paper-quill";
+// 羽毛根元素的 class，与 quill-styles.ts 里的选择器同名
+exports.QUILL_ROOT_CLASS = "dsh-chat-ux-paper-quill";
+// 羽毛在它自己坐标系里的可见范围。原点是笔尖：横向 -4 到 60，纵向 -74 到 4
+const QUILL_VIEW = { left: 4, top: 74, width: 64, height: 78 };
+/**
+ * 整支按插入符高度的多少倍画。
+ *
+ * 这一条是**改过 nocturne 的**：它用 1.15。放大有个上限，来自挂载位置——那根自绘插入符挂在
+ * `.grow` 里，`.grow` 的父元素 `.scroll` 是 `overflow-y: auto`，**伸出去的部分会被裁掉**，
+ * 而插入符离那一行顶端只有 `.input` 的 4px 上内边距加行内居中那一点点。
+ *
+ * 在真页面上量过（dsh 默认档：16px 字、26px 行高、字盒 22px、那一行上方留 6px）：
+ * 1.15 时羽梢比插入符顶高 5.52px，**只剩 0.48px 余量**——读者把字号调大一档就会被切掉一片羽枝。
+ * 1.0 时整支 22px、羽梢只高 2.39px，余量 3.6px，而且余量随字号等比增长
+ * （上方空间与字盒都随字号线性放大），所以任何字号档下都还留得住。
+ *
+ * 降到 1.0 之后形状仍然认得出：羽片在 16px 字号下约 13×17px，羽枝之间的缝还有一两个像素。
+ * 要整支都不被裁只有一条路：挂到 body 下用 position: fixed，那就得自己再量一遍视口坐标、
+ * 再做一套视口裁剪，与「位置与位移仍然只由 caret-motion 负责」这条冲突——
+ * 而正是这条让纸感那一层拿 [data-chat-ux-caret-layer] 的矩形去点灯时不会量错
+ */
+const QUILL_HEIGHT_SCALE = 1;
+// 笔尖落在字盒纵向的哪个位置，羽毛的笔尖就压在这个点上
+const QUILL_NIB_Y = 0.84;
+// 整支右倾的角度
+const QUILL_LEAN = 35;
+// 取越界的邻居时用的空点
+const ZERO_POINT = [0, 0];
+// 两位小数：路径与尺寸都按它收，字符串稳定，也不会冒出 0.30000000000000004 这种位数
+const round2 = (value) => Number(value.toFixed(2));
+// 穿过一串点的样条：每个点的控制点取前后邻居差的三分之一（Catmull-Rom 转三次贝塞尔）
+const curveThrough = (points) => {
+    let path = "";
+    for (let index = 0; index < points.length - 1; index += 1) {
+        const previous = points[Math.max(0, index - 1)] ?? ZERO_POINT;
+        const from = points[index] ?? ZERO_POINT;
+        const to = points[index + 1] ?? ZERO_POINT;
+        const next = points[Math.min(points.length - 1, index + 2)] ?? to;
+        const control1 = round2(from[0] + (to[0] - previous[0]) / 6) + " " + round2(from[1] + (to[1] - previous[1]) / 6);
+        const control2 = round2(to[0] - (next[0] - from[0]) / 6) + " " + round2(to[1] - (next[1] - from[1]) / 6);
+        path += " C" + control1 + " " + control2 + " " + to[0] + " " + to[1];
+    }
+    return path;
+};
+const pathThrough = (points) => {
+    const first = points[0] ?? ZERO_POINT;
+    return "M" + first[0] + " " + first[1] + curveThrough(points);
+};
+// 羽脊：笔尖之上那段弯曲的脊，羽枝都长在它上面
+const QUILL_RACHIS = [[0, -24], [0.4, -46], [2.4, -70], [5.6, -90]];
+// 羽脊上参数 t 处的位置与两根方向。法向朝一侧，羽枝沿它长出去
+const alongRachis = (t) => {
+    const [head, first, second, tail] = QUILL_RACHIS;
+    const rest = 1 - t;
+    const weight0 = rest * rest * rest;
+    const weight1 = 3 * rest * rest * t;
+    const weight2 = 3 * rest * t * t;
+    const weight3 = t * t * t;
+    const at = [
+        weight0 * head[0] + weight1 * first[0] + weight2 * second[0] + weight3 * tail[0],
+        weight0 * head[1] + weight1 * first[1] + weight2 * second[1] + weight3 * tail[1],
+    ];
+    const dx = 3 * rest * rest * (first[0] - head[0]) + 6 * rest * t * (second[0] - first[0]) + 3 * t * t * (tail[0] - second[0]);
+    const dy = 3 * rest * rest * (first[1] - head[1]) + 6 * rest * t * (second[1] - first[1]) + 3 * t * t * (tail[1] - second[1]);
+    const length = Math.hypot(dx, dy) || 1;
+    const tangent = [dx / length, dy / length];
+    return { at, tangent, normal: [-tangent[1], tangent[0]] };
+};
+// 羽枝从羽脊往外伸多远。两侧各一条曲线，各带一道缺口，那就是羽枝的分叉
+const QUILL_VANE_FROM = 0.05;
+const gauss = (offset, center, width) => Math.exp(-(((offset - center) / width) ** 2));
+const trailingReach = (s) => 8.4 * Math.sin(Math.PI * s ** 0.75) ** 0.85 * (1 - 0.3 * gauss(s, 0.42, 0.018) - 0.24 * gauss(s, 0.67, 0.016));
+const leadingReach = (s) => 3.4 * Math.sin(Math.PI * s ** 0.65) ** 0.9 * (1 - 0.32 * gauss(s, 0.56, 0.02));
+/**
+ * 羽片边缘上 s 处、某一侧的那一点
+ *
+ * side 是 1（宽的那一侧）或 -1（窄的一侧）；reach 按比例把羽枝缩短，
+ * 羽枝的端点用它收到 0.94，才不伸出羽片轮廓
+ */
+const edgeOn = (s, side, reach) => {
+    const t = QUILL_VANE_FROM + (1 - QUILL_VANE_FROM) * s;
+    const curve = alongRachis(t);
+    const width = (side > 0 ? trailingReach(s) : leadingReach(s)) * reach;
+    return [
+        round2(curve.at[0] + curve.normal[0] * width * side + curve.tangent[0] * width * 0.38),
+        round2(curve.at[1] + curve.normal[1] * width * side + curve.tangent[1] * width * 0.38),
+    ];
+};
+/**
+ * 羽枝的根数。
+ *
+ * nocturne 画的是 30（宽侧）与 22（窄侧），那是给它的皮肤当装饰用的。这里整支笔只有二十来个像素高，
+ * 五十多根羽枝挤在不到二十个像素里，线一叠就是一小片均匀的灰，读者看到的是一块污渍而不是羽毛。
+ * 减到 14 与 10 之后，相邻两根之间隔开约两个像素，羽片才认得出是一根羽毛
+ */
+const QUILL_TRAILING_BARB_COUNT = 14;
+const QUILL_LEADING_BARB_COUNT = 10;
+// 羽脊整根取样的位置，0 到 1 均分
+const QUILL_SAMPLES = Array.from({ length: 61 }, (_, index) => index / 60);
+// 羽片轮廓：窄的一侧从根到梢，宽的一侧从梢回根，首尾相接
+const QUILL_VANE_PATH = (() => {
+    const leading = QUILL_SAMPLES.map((s) => edgeOn(s, -1, 1));
+    const trailing = QUILL_SAMPLES.slice().reverse().map((s) => edgeOn(s, 1, 1));
+    return pathThrough(leading.concat(trailing.slice(1))) + " Z";
+})();
+// 羽枝：从羽脊上每隔一段伸出去一根，端点收进羽片轮廓里
+const barbPaths = (side, count) => {
+    let path = "";
+    for (let index = 0; index < count; index += 1) {
+        const s = 0.04 + (index / (count - 1)) * 0.9;
+        const curve = alongRachis(QUILL_VANE_FROM + (1 - QUILL_VANE_FROM) * s);
+        const end = edgeOn(Math.min(1, s + 0.05), side, 0.94);
+        const width = (side > 0 ? trailingReach(s) : leadingReach(s)) * 0.55;
+        const control = [
+            round2(curve.at[0] + curve.normal[0] * width * side),
+            round2(curve.at[1] + curve.normal[1] * width * side),
+        ];
+        path += "M" + round2(curve.at[0]) + " " + round2(curve.at[1]) + " Q" + control[0] + " " + control[1]
+            + " " + end[0] + " " + end[1] + " ";
+    }
+    return path.trim();
+};
+const QUILL_TRAILING_BARBS = barbPaths(1, QUILL_TRAILING_BARB_COUNT);
+const QUILL_LEADING_BARBS = barbPaths(-1, QUILL_LEADING_BARB_COUNT);
+// 羽脊自己的实体：根粗梢细的一条带子，左边从根到梢、右边从梢回根
+const QUILL_RACHIS_SHAPE = (() => {
+    const steps = Array.from({ length: 25 }, (_, index) => (index / 24) * 0.98);
+    const side = (sign) => steps.map((t) => {
+        const curve = alongRachis(t);
+        const half = 0.62 * (1 - t) + 0.08;
+        return [round2(curve.at[0] + curve.normal[0] * half * sign), round2(curve.at[1] + curve.normal[1] * half * sign)];
+    });
+    return pathThrough(side(-1).concat(side(1).reverse())) + " Z";
+})();
+// 笔杆、笔箍、笔尖与它们的刻线。这几段是手画的定值，原样照搬
+const QUILL_RACHIS_LINE = "M-0.15 -24 C0.25 -46 2.25 -70 5.6 -90";
+const QUILL_CALAMUS_PATH = "M-1.15 -10.4 C-1.2 -15 -1.05 -20 -0.82 -24.6 L0.82 -24.6 C1.05 -20 1.2 -15 1.15 -10.4 Z";
+const QUILL_DOWN_PATH = "M0 -25.2 q-2.6 0.5 -4.6 -1.4 M0 -26.6 q-3 -0.2 -4.8 -3.2 M0.1 -28 q-2.4 -0.9 -3.6 -4.2 "
+    + "M0.2 -25.4 q2.8 0.7 4.8 -0.8 M0.2 -27 q3.3 -0.1 5.2 -2.9 M0.3 -28.6 q2.7 -0.8 4 -4";
+const QUILL_FERRULE_PATH = "M-1.55 -9 L1.55 -9 L1.4 -11.2 L-1.4 -11.2 Z";
+const QUILL_NIB_PATH = "M0 0.3 C-0.6 -2 -1.9 -5.4 -1.7 -9.1 L1.7 -9.1 C1.9 -5.4 0.6 -2 0 0.3 Z";
+const QUILL_SLIT_PATH = "M0 -0.2 L0 -5.4";
+const QUILL_SHOULDERS_PATH = "M-1.5 -7.6 Q0 -8.3 1.5 -7.6";
+// 渐变与裁剪共用的 id 前缀。同页只有这一份，不会被谁盖掉
+// 样式表按它拼 fill: url(#…)，两处引用的是同一个 id
+exports.QUILL_ID = "dsh-chat-ux-paper-quill";
+const QUILL_VIEW_BOX = -QUILL_VIEW.left + " " + -QUILL_VIEW.top + " " + QUILL_VIEW.width + " " + QUILL_VIEW.height;
+// 各部件身上的 class。下面写好、样式在 quill-styles.ts，两处必须一字不差
+const PART = {
+    vane: exports.QUILL_ROOT_CLASS + "-vane",
+    barbs: exports.QUILL_ROOT_CLASS + "-barbs",
+    rachis: exports.QUILL_ROOT_CLASS + "-rachis",
+    rachisLight: exports.QUILL_ROOT_CLASS + "-rachis-light",
+    down: exports.QUILL_ROOT_CLASS + "-down",
+    engraving: exports.QUILL_ROOT_CLASS + "-engraving",
+    hole: exports.QUILL_ROOT_CLASS + "-hole",
+    glint: exports.QUILL_ROOT_CLASS + "-glint",
+};
+// 整支笔的标记。先在原点画好，再整体右倾 QUILL_LEAN 度
+const QUILL_MARKUP = [
+    '<svg viewBox="', QUILL_VIEW_BOX, '" aria-hidden="true">',
+    "<defs>",
+    '<linearGradient id="', exports.QUILL_ID, '-vane" x1="0" x2="1" y1="0" y2="0">',
+    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-edge)"/>',
+    '<stop offset="0.3" stop-color="var(--dsh-chat-ux-paper-quill-sheen)"/>',
+    '<stop offset="0.5" stop-color="var(--dsh-chat-ux-paper-quill-body)"/>',
+    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-edge)"/>',
+    "</linearGradient>",
+    '<linearGradient id="', exports.QUILL_ID, '-gilt" x1="0" x2="1" y1="0" y2="0">',
+    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-metal-lo)"/>',
+    '<stop offset="0.35" stop-color="var(--dsh-chat-ux-paper-quill-metal-hi)"/>',
+    '<stop offset="0.6" stop-color="var(--dsh-chat-ux-paper-quill-metal)"/>',
+    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-metal-lo)"/>',
+    "</linearGradient>",
+    '<linearGradient id="', exports.QUILL_ID, '-horn" x1="0" x2="1" y1="0" y2="0">',
+    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-horn-lo)"/>',
+    '<stop offset="0.35" stop-color="var(--dsh-chat-ux-paper-quill-horn-hi)"/>',
+    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-horn-lo)"/>',
+    "</linearGradient>",
+    '<clipPath id="', exports.QUILL_ID, '-clip"><path d="', QUILL_VANE_PATH, '"/></clipPath>',
+    "</defs>",
+    '<g transform="rotate(', QUILL_LEAN, ')">',
+    '<path d="', QUILL_DOWN_PATH, '" class="', PART.down, '"/>',
+    '<path d="', QUILL_VANE_PATH, '" class="', PART.vane, '"/>',
+    '<g clip-path="url(#', exports.QUILL_ID, '-clip)">',
+    '<path d="', QUILL_TRAILING_BARBS, '" class="', PART.barbs, '"/>',
+    '<path d="', QUILL_LEADING_BARBS, '" class="', PART.barbs, '"/>',
+    "</g>",
+    '<path d="', QUILL_RACHIS_SHAPE, '" class="', PART.rachis, '"/>',
+    '<path d="', QUILL_RACHIS_LINE, '" class="', PART.rachisLight, '"/>',
+    '<path d="', QUILL_CALAMUS_PATH, '" fill="url(#', exports.QUILL_ID, '-horn)"/>',
+    '<path d="', QUILL_FERRULE_PATH, '" fill="url(#', exports.QUILL_ID, '-gilt)"/>',
+    '<path d="', QUILL_NIB_PATH, '" fill="url(#', exports.QUILL_ID, '-gilt)"/>',
+    '<path d="', QUILL_SHOULDERS_PATH, '" class="', PART.engraving, '"/>',
+    '<path d="', QUILL_SLIT_PATH, '" class="', PART.engraving, '"/>',
+    '<circle cx="0" cy="-6" r="0.5" class="', PART.hole, '"/>',
+    '<circle class="', PART.glint, '" cx="0.4" cy="-1.8" r="0.9"/>',
+    "</g></svg>",
+].join("");
+/**
+ * 一支新的羽毛，返回它的根元素
+ *
+ * 调用方负责把它塞进 caret-motion 那根自绘插入符里。两件事的次序不能颠倒：
+ * **先塞好、再打 QUILL_ATTRIBUTE**。属性一到，样式表就把那根的 2px 底色让掉；
+ * 反过来写的话，让掉底色到笔挂上之间只要有一次强制回流，读者看到的就是一根空盒子。
+ * 真颠倒了也不会永远空着——quill-styles 里那条 :not(:has(> …)) 会把 2px 条还回来
+ */
+function buildQuillCaret() {
+    const element = document.createElement("div");
+    element.className = exports.QUILL_ROOT_CLASS;
+    element.setAttribute("aria-hidden", "true");
+    element.innerHTML = QUILL_MARKUP;
+    return element;
+}
+/**
+ * 按插入符的高度把这支笔摆好
+ *
+ * 写的是相对那根 2px 条左上角的偏移：条的左上角就是插入符的左上角，所以这里的 left 与 top
+ * 都可能是负数，羽枝朝右上伸出去，笔尖落在插入符左缘、纵向 QUILL_NIB_Y 处。
+ * 尺寸写像素、不写 transform: scale：SVG 按 CSS 尺寸栅格化，0.28 倍缩放会把 0.28 单位的笔画糊成一片
+ */
+function placeQuillCaret(element, caretHeight) {
+    const height = caretHeight * QUILL_HEIGHT_SCALE;
+    const scale = height / QUILL_VIEW.height;
+    element.style.width = round2(QUILL_VIEW.width * scale) + "px";
+    element.style.height = round2(height) + "px";
+    element.style.left = round2(-QUILL_VIEW.left * scale) + "px";
+    element.style.top = round2(caretHeight * QUILL_NIB_Y - QUILL_VIEW.top * scale) + "px";
+}
+    };
+
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1097,8 +1443,15 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = void 0;
+exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_SIDEBAR = exports.DEFAULT_PAPER_STYLE = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
+// 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
+exports.DEFAULT_PAPER_ON = true;
+// 纸样：纸 __ 房间（双下划线）的一对 id。这一串在 paper-styles.ts 里必须拆得开，
+// 与渲染核认的 id 也必须一致
+exports.DEFAULT_PAPER_STYLE = "cotton__paper-and-ink";
+// 左侧栏是否也跟着铺同一张纸
+exports.DEFAULT_PAPER_SIDEBAR = true;
 // 思考行与过程组自己开合，这是本插件的主要效果
 exports.DEFAULT_AUTO_FOLD = true;
 // 凡是会挪位置的地方都给过渡
@@ -4466,6 +4819,2076 @@ function installReasoningFold() {
 }
     };
 
+    __registry["chat/paper/install.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installPaperLayer = installPaperLayer;
+exports.clearPaperLayer = clearPaperLayer;
+/**
+ * 纸感的安装入口：按配置装上或卸下这一整块。
+ *
+ * 它比聊天区其他几块多一层分支。其他几块关掉时只是「不装」，纸关掉时却要让页面回到 dsh 原来的样子，
+ * 而那件事有一半落在令牌上（整页底色那一条）。所以这里把两件事分开：装上的那一刻先把令牌落下去，
+ * 免得首帧之前页面还是白的；两片 canvas 由挂载层自己按帧接上来
+ */
+const paper_mount_1 = require("./paper-mount");
+const paper_layout_1 = require("./paper-layout");
+const paper_tokens_1 = require("./paper-tokens");
+/**
+ * 装上纸。
+ *
+ * 关着的时候返回一个空把手：调用方不必判断「这次装上了没有」，卸载路径只有一条
+ */
+function installPaperLayer(readSettings) {
+    const settings = readSettings();
+    if (!settings.on) {
+        document.documentElement.removeAttribute(paper_tokens_1.PAPER_ROOT_ATTRIBUTE);
+        return { dispose: () => { }, refresh: () => { } };
+    }
+    // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
+    // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
+    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(settings.style), (0, paper_layout_1.paperIncludesSidebar)(settings.sidebar));
+    return (0, paper_mount_1.installPaper)(() => {
+        const current = readSettings();
+        return { on: current.on, style: current.style, includeSidebar: current.sidebar };
+    });
+}
+// 撤掉纸：两片 canvas、暗角、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
+function clearPaperLayer() {
+    (0, paper_tokens_1.clearPaperTokens)();
+    document.documentElement.removeAttribute(paper_tokens_1.PAPER_ROOT_ATTRIBUTE);
+}
+    };
+
+    __registry["chat/paper/paper-mount.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installPaper = installPaper;
+/**
+ * 纸的挂载与帧循环。
+ *
+ * 这一层只做三件事：把两片 canvas 与那层暗角挂上去、按脏标记决定这一帧要不要重算、以及在
+ * 卸载时把挂过的全部撤干净。渲染本身在 paper-light 与 paper-glow，配色在 paper-tokens，
+ * 覆盖范围在 paper-layout
+ *
+ * 节流的三条照搬 nocturne，它们是这个插件能和长会话共存的原因：
+ *   一、纸纹（SURFACE）只在尺寸、纸样、纸纹强度变了时重算；
+ *   二、光照（LIGHT）只在灯架变了时重算，不是每帧；
+ *   三、辉光（screen 混合，最贵的那一层）只在灯重算过、光标动了、或者开着环境动效时重画
+ * 空闲时整条循环压到 8 fps，有动效时才回到 30 fps；页面看不见时整条停掉
+ */
+const paper_glow_1 = require("./paper-glow");
+const paper_layout_1 = require("./paper-layout");
+const paper_light_1 = require("./paper-light");
+const paper_light_model_1 = require("./paper-light-model");
+const paper_styles_1 = require("./paper-styles");
+const paper_tokens_1 = require("./paper-tokens");
+const paper_tables_1 = require("./paper-tables");
+const paper_math_1 = require("./paper-math");
+// 自绘插入符那一根上的标记，由 caret-motion 写。纸只读它，不参与插符的接管
+const CARET_LAYER_ATTRIBUTE = "data-chat-ux-caret-layer";
+// 样式表的 id。纸的规则整块在 paper-styles 里，这里只负责注入一次
+const STYLE_ID = "dsh-chat-ux-paper-style";
+/**
+ * 注入纸的样式表。重复调用是幂等的；样式表本身以根元素上那个标记为前提，
+ * 所以纸关着时它虽然躺在 head 里，却一条规则都不命中
+ */
+function ensurePaperStyle() {
+    if (document.getElementById(STYLE_ID) !== null)
+        return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.dataset.plugin = "dsh-chat-ux";
+    style.textContent = paper_styles_1.PAPER_CSS;
+    document.head.appendChild(style);
+}
+// 一帧最多一次，这一层自己不改任何 DOM 的时机
+const IDLE_INTERVAL_MS = 1000 / 8;
+const ACTIVE_INTERVAL_MS = 1000 / 30;
+// 一张全屏画布的像素预算。DOM 文字仍按系统 DPR 清晰渲染，这里只限制纸与光的采样率
+const PIXEL_BUDGET = 1950000;
+/**
+ * 挂上纸。
+ *
+ * options 是现读的函数而不是快照：配置改了不必重装，下一帧自然读到新值；
+ * 只有纸样真的变了才需要 refresh()
+ */
+function installPaper(readOptions) {
+    const sheetCanvas = document.createElement("canvas");
+    const glowCanvas = document.createElement("canvas");
+    const vignette = document.createElement("div");
+    sheetCanvas.setAttribute(paper_styles_1.PAPER_SHEET_ATTRIBUTE, "");
+    glowCanvas.setAttribute(paper_styles_1.PAPER_GLOW_ATTRIBUTE, "");
+    vignette.setAttribute(paper_styles_1.PAPER_VIGNETTE_ATTRIBUTE, "");
+    for (const node of [sheetCanvas, glowCanvas, vignette])
+        node.setAttribute("aria-hidden", "true");
+    // 三件都直接挂 body 下：包一层带 z-index 的容器会给它们造一个隔离栈，
+    // multiply 与页面断开之后就退化成直接覆盖（nocturne 实测过）
+    document.body.append(sheetCanvas, glowCanvas, vignette);
+    // 样式表跟着挂载走：纸关掉时它一条都不命中（根上没有那个标记），所以不需要按开关装卸
+    ensurePaperStyle();
+    const paperLight = new paper_light_1.PaperLight(sheetCanvas);
+    const glow = new paper_glow_1.GlowLayer(glowCanvas);
+    const settings = { ...paper_tables_1.PAPER_DEFAULT_SETTINGS };
+    const reduceMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reduceMotion = reduceMotionQuery.matches;
+    let rect = { left: 0, top: 0, width: 1, height: 1 };
+    let pixelRatio = 1;
+    // 纸纹要重算。尺寸、纸样、纸纹强度任一变了就置起来
+    let needsBuild = true;
+    // 光照要重算。灯架变了就置起来
+    let needsLight = true;
+    let needsGlow = true;
+    let lastCaret = null;
+    let lastLightAt = 0;
+    let lastPaintAt = 0;
+    let frameHandle = 0;
+    let disposed = false;
+    // 上一帧算出来「有没有在动」，它决定下一帧的间隔
+    let active = false;
+    // 上一次落地的组合 id 与画布尺寸，用来判断这几样到底变了没有
+    let lastStyle = "";
+    let lastLayoutKey = "";
+    // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
+    //
+    // 不用 hidden 属性：本插件的样式表给这三件写了 display: block，作者样式恒赢过 UA 的
+    // [hidden]{display:none}，于是 hidden 一点作用都没有——实测加了它之后 computed display
+    // 仍是 block，截图与纸开逐字节相同。所以这套用自己的一条规则（PAPER_HIDDEN_ATTRIBUTE）
+    // 一并把 display 与定位都撤掉
+    const setAttached = (attached) => {
+        for (const node of [sheetCanvas, glowCanvas, vignette]) {
+            if (attached)
+                node.removeAttribute(paper_styles_1.PAPER_HIDDEN_ATTRIBUTE);
+            else
+                node.setAttribute(paper_styles_1.PAPER_HIDDEN_ATTRIBUTE, "");
+        }
+    };
+    // 自绘插入符此刻在哪。量不出来给 null，那一圈辉光就不画
+    const readCaret = () => {
+        const layer = document.querySelector("[" + CARET_LAYER_ATTRIBUTE + "]");
+        if (layer === null)
+            return null;
+        const box = layer.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0)
+            return null;
+        return { x: box.left, y: box.top + box.height / 2 };
+    };
+    // 把三件的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
+    // canvas 的 CSS 尺寸与它在视口里的偏移一起改，着色器里的坐标系仍以 canvas 自己为准
+    const applyRect = () => {
+        for (const canvas of [sheetCanvas, glowCanvas]) {
+            canvas.style.left = rect.left + "px";
+            canvas.style.top = rect.top + "px";
+            canvas.style.width = rect.width + "px";
+            canvas.style.height = rect.height + "px";
+        }
+        vignette.style.left = rect.left + "px";
+        vignette.style.top = rect.top + "px";
+        vignette.style.width = rect.width + "px";
+        vignette.style.height = rect.height + "px";
+    };
+    // 纸的像素尺寸按预算压一次：超过预算就按面积开方降 DPR，最低 0.5
+    const computePixelRatio = () => {
+        const budget = Math.sqrt(PIXEL_BUDGET / (rect.width * rect.height));
+        return Math.max(0.5, Math.min(2, window.devicePixelRatio || 1, budget));
+    };
+    // 令牌跟着纸样落。纸样换了要重算纸纹，所以这里顺手把脏标记置上
+    const refreshTokens = () => {
+        const options = readOptions();
+        if (!options.on) {
+            (0, paper_tokens_1.clearPaperTokens)();
+            return;
+        }
+        (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(options.style), (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar));
+        if (options.style !== lastStyle) {
+            lastStyle = options.style;
+            needsBuild = true;
+        }
+    };
+    // 切纸样时只有令牌与纸纹要重算，光与辉光跟着脏标记走
+    const refresh = () => {
+        if (disposed)
+            return;
+        refreshTokens();
+        const options = readOptions();
+        rect = (0, paper_layout_1.measurePaperRect)((0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar));
+        pixelRatio = computePixelRatio();
+        applyRect();
+        needsBuild = true;
+        needsLight = true;
+        needsGlow = true;
+        wake();
+    };
+    // 要不要再来一帧。纸面与辉光都是「算一次就静止」的，所以大多数时候这里返回 false，
+    // 整条循环随之停下——不是降频，是不跑
+    const paint = (now) => {
+        const options = readOptions();
+        // 关掉、或者这台机器的 WebGL 起不来：两片 canvas 收起来，令牌也撤掉。
+        // 令牌留着会让整页停在一张没有纹理的纸色上，那比不铺纸更难看
+        if (!options.on || paperLight.state === "failed") {
+            setAttached(false);
+            (0, paper_tokens_1.clearPaperTokens)();
+            lastStyle = "";
+            lastLayoutKey = "";
+            return false;
+        }
+        setAttached(true);
+        const profile = (0, paper_tables_1.resolveProfile)(options.style);
+        const paper = (0, paper_tables_1.paperOf)(profile);
+        const room = (0, paper_tables_1.roomOf)(profile);
+        // 换了纸样：令牌要重落，纸纹要重算。这两件都不必等调用方来 refresh
+        if (options.style !== lastStyle)
+            refreshTokens();
+        // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形
+        // 平台判据也在这一句里落地：窗口材质的平台上 includeSidebar 恒为假，几何与令牌一起让开
+        const includeSidebar = (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar);
+        const desired = (0, paper_layout_1.measurePaperRect)(includeSidebar);
+        const layoutKey = includeSidebar + ":" + desired.left + ":" + desired.width + "x" + desired.height;
+        if (layoutKey !== lastLayoutKey) {
+            lastLayoutKey = layoutKey;
+            const changed = desired.left !== rect.left || desired.width !== rect.width || desired.height !== rect.height;
+            rect = desired;
+            pixelRatio = computePixelRatio();
+            applyRect();
+            // 覆盖范围变了，侧栏填充色要不要写也跟着变，令牌重落一次
+            refreshTokens();
+            if (changed)
+                needsBuild = true;
+        }
+        if (needsBuild) {
+            paperLight.build({ width: rect.width, height: rect.height, pixelRatio, paper, texture: settings.texture });
+            glow.resize(rect.width, rect.height, pixelRatio);
+            needsBuild = false;
+            needsLight = true;
+        }
+        const caret = readCaret();
+        // 灯的横向偏移要的是光标在纸上的坐标；纸不覆盖侧栏时那一段要扣掉
+        const caretSheetX = caret === null ? rect.width / 2 : caret.x - rect.left;
+        const rig = (0, paper_light_model_1.buildRig)({ width: rect.width, height: rect.height }, caretSheetX, room, settings);
+        const animateGrain = settings.grain > 0 && !reduceMotion;
+        const time = animateGrain ? now / 1000 : 0;
+        const caretMoved = caret === null
+            ? lastCaret !== null
+            : lastCaret === null || Math.abs(caret.x - lastCaret.x) > 0.5 || Math.abs(caret.y - lastCaret.y) > 0.5;
+        const caretAppeared = (caret === null) !== (lastCaret === null);
+        const dustDue = settings.particles > 0 && !reduceMotion && now - lastPaintAt > 60;
+        // 光照只要灯没动就不重算。颗粒要动的时候它得跟着走，否则噪点是死的
+        let lightRan = false;
+        if (needsLight || (animateGrain && now - lastLightAt > 120)) {
+            paperLight.render({
+                rig,
+                paper,
+                room,
+                settings: { ...settings, lamp: settings.lamp },
+                time,
+                reduceMotion,
+            });
+            needsLight = false;
+            lastLightAt = now;
+            lightRan = true;
+        }
+        // 辉光这一层只在「有光池、有尘埃、或者要跟光标那一圈余温」时才有内容可画。
+        // 静止的台灯下这三样一件都不剩：颗粒与尘埃都关着、光池强度也降到了 0，整层是空的。
+        // 空着还挂在页面上时，浏览器仍要为它付一次全屏 screen 合成——那是实测里帧间隔翻倍的主因
+        // （纸开 p95 33.4ms、纸关 16.8ms，而两片 canvas 的 GL 绘制计数都是 0）。
+        // 所以这一层按「有没有内容」显式收起来，而不是画一张全透明的图
+        const glowMatters = settings.particles > 0 || settings.cursorGlow > 0 || (0, paper_glow_1.poolStrength)(rig, paper.appearance) > 0;
+        if (glowMatters && (lightRan || needsGlow || caretMoved || caretAppeared || dustDue)) {
+            const lightChannels = (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255));
+            const frame = {
+                rig,
+                lamp: settings.lamp,
+                rgb: lightChannels.join(", "),
+                poolRgb: (0, paper_glow_1.poolColor)(room, paper.appearance),
+                appearance: paper.appearance,
+                intensity: settings.intensity,
+                particles: settings.particles,
+                cursorGlow: settings.cursorGlow,
+                cursor: caret === null ? null : { x: caret.x - rect.left, y: caret.y - rect.top },
+                time,
+            };
+            glow.render(frame);
+            needsGlow = false;
+            glowCanvas.removeAttribute(paper_styles_1.PAPER_HIDDEN_ATTRIBUTE);
+        }
+        else if (!glowMatters) {
+            glowCanvas.setAttribute(paper_styles_1.PAPER_HIDDEN_ATTRIBUTE, "");
+        }
+        lastCaret = caret;
+        // 只有「跟着光标走」的那一路光源需要持续跟帧：它每挪一次，整片纸的明暗都要重算。
+        // 台灯与月光都只看纸的尺寸与房间预设，静止下来之后一个像素都不会再变，所以这里返回 false
+        return rig.tracksCaret && !reduceMotion;
+    };
+    /**
+     * 跑一帧。
+     *
+     * 与 nocturne 那版最大的差别在这里：它每帧都无条件排下一次 rAF，靠 8 fps / 30 fps 的间隔省电；
+     * 这里干脆不排——纸光与辉光都是算一次就静止的，只要没有东西再变，循环就停下，
+     * 于是静置时是 0 帧而不是 8 帧。有东西变了由 wake() 把它叫醒
+     *
+     * 里面出任何异常都不许把循环掐断，否则纸会停在最后一帧再也不动
+     */
+    const tick = (now) => {
+        frameHandle = 0;
+        if (disposed)
+            return;
+        const interval = active && !reduceMotion ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
+        if (now - lastPaintAt < interval) {
+            frameHandle = requestAnimationFrame(tick);
+            return;
+        }
+        lastPaintAt = now;
+        let keepGoing = false;
+        try {
+            keepGoing = paint(now);
+        }
+        catch (error) {
+            console.warn("dsh-chat-ux: paper frame failed", error);
+        }
+        // 下一帧要不要按 30 fps 跑。只有「这一帧还想再来一遍」才算在动——台灯与月光永远返回 false，
+        // 于是整条循环停下；跟着光标走的那一路才会把它置起来
+        active = keepGoing;
+        if (keepGoing && !document.hidden)
+            frameHandle = requestAnimationFrame(tick);
+    };
+    // 叫醒循环。已经醒着时是空操作
+    const wake = () => {
+        if (disposed || document.hidden || frameHandle !== 0)
+            return;
+        // 叫醒之后先等一个空闲间隔再画：一批 resize 与配置变化会连着叫好几次，只该画一次
+        lastPaintAt = 0;
+        frameHandle = requestAnimationFrame(tick);
+    };
+    // 窗口尺寸变了：矩形与像素比一起重算，纸纹要重建
+    const onResize = () => {
+        lastLayoutKey = "";
+        needsBuild = true;
+        needsLight = true;
+        needsGlow = true;
+        wake();
+    };
+    // 页面看不见时停掉循环：一张一直在重算的纸，后台没人看，白烧电
+    const onVisibility = () => {
+        if (document.hidden) {
+            if (frameHandle !== 0)
+                cancelAnimationFrame(frameHandle);
+            frameHandle = 0;
+            return;
+        }
+        needsLight = true;
+        needsGlow = true;
+        wake();
+    };
+    // 显卡被回收（切后台、驱动重置、显存吃紧）时不能白屏：让 context 自己回来，再整块重建纸纹
+    const onContextLost = (event) => {
+        event.preventDefault();
+        paperLight.invalidate();
+        // 光池也得丢：尺寸没变时 resize 会提前返回，那张小画布会一直贴着丢之前那套灯架
+        glow.invalidate();
+    };
+    const onContextRestored = () => {
+        paperLight.restore();
+        lastLayoutKey = "";
+        needsBuild = true;
+        needsLight = true;
+        needsGlow = true;
+        wake();
+    };
+    const onMotionChange = (event) => {
+        reduceMotion = event.matches;
+        needsLight = true;
+        needsGlow = true;
+        wake();
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    document.addEventListener("visibilitychange", onVisibility);
+    sheetCanvas.addEventListener("webglcontextlost", onContextLost);
+    sheetCanvas.addEventListener("webglcontextrestored", onContextRestored);
+    if (typeof reduceMotionQuery.addEventListener === "function")
+        reduceMotionQuery.addEventListener("change", onMotionChange);
+    refreshTokens();
+    rect = (0, paper_layout_1.measurePaperRect)((0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar));
+    pixelRatio = computePixelRatio();
+    applyRect();
+    frameHandle = requestAnimationFrame(tick);
+    return {
+        refresh,
+        refreshTokens,
+        dispose: () => {
+            if (disposed)
+                return;
+            disposed = true;
+            if (frameHandle !== 0)
+                cancelAnimationFrame(frameHandle);
+            frameHandle = 0;
+            window.removeEventListener("resize", onResize);
+            window.removeEventListener("orientationchange", onResize);
+            document.removeEventListener("visibilitychange", onVisibility);
+            sheetCanvas.removeEventListener("webglcontextlost", onContextLost);
+            sheetCanvas.removeEventListener("webglcontextrestored", onContextRestored);
+            if (typeof reduceMotionQuery.removeEventListener === "function")
+                reduceMotionQuery.removeEventListener("change", onMotionChange);
+            paperLight.destroy();
+            sheetCanvas.remove();
+            glowCanvas.remove();
+            vignette.remove();
+            (0, paper_tokens_1.clearPaperTokens)();
+        },
+    };
+}
+    };
+
+    __registry["chat/paper/paper-glow.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.GlowLayer = void 0;
+exports.poolStrength = poolStrength;
+exports.poolColor = poolColor;
+/**
+ * 辉光那一层：光池、灯焰、光标的那一圈余温，以及空气里的尘埃。它用 screen 混合压在纸上，
+ * 所以只负责"多出来的光"，不负责颜色。
+ *
+ * 照 nocturne 的 core/glow-layer.js 搬。整层是 2D canvas：光池先在一张 192 列的小画布上按
+ * lightAmount 逐像素算一遍，再放大贴回来——直接按屏幕像素算，每重画一次都是几十万次 toneMap
+ *
+ * 这一层很贵：screen 混合每重画一次，浏览器要把整块背景重新合成一遍，长会话里 DOM 上万节点时
+ * 是秒级代价。所以调用方只在真会变的时候画（见 paper-mount 的脏标记），这里不做节流
+ */
+const paper_light_model_1 = require("./paper-light-model");
+const paper_math_1 = require("./paper-math");
+// 一颗尘埃的伪随机分量
+function moteHash(seed) {
+    const value = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+    return value - Math.floor(value);
+}
+// 尘埃的位置表。固定 110 颗，浓度只决定画前多少颗，所以同样的浓度每次画出来的分布都一样
+const MOTES = Array.from({ length: 110 }, (_unused, index) => ({
+    x: moteHash(index * 3.1),
+    y: moteHash(index * 7.7),
+    z: moteHash(index * 1.9),
+    phase: moteHash(index * 5.3) * 100,
+    size: .5 + moteHash(index * 9.1) * 1.6,
+}));
+// 把漂移量折回 0 到 1，尘埃走出纸面就从另一边回来
+function wrap01(value) {
+    return ((value % 1) + 1) % 1;
+}
+// 光池小画布的列数。行数按纸的长宽比推，所以光池的像素永远是这个量级
+const POOL_COLUMNS = 192;
+/**
+ * 光池画多实。
+ *
+ * 纸光那一层已经把灯画出来了，光池再叠一次就是双重打光。所以只有「纸光画不出灯」的那两路才给它：
+ * 暗纸（纸光在深色底上几乎看不出方向）与穿窗月光（它要的是窗棂投影，不是一团亮）。
+ *
+ * 台灯与静止光都返回 0：台灯那圈圆形光斑已经在 LIGHT 那次 pass 里算进来了，
+ * 再补一层 screen 只会让光斑边缘发白。这一项一旦是 0、尘埃与光标余温又都关着，
+ * 挂载层就会把整整一层全屏 screen 合成收起来——那是实测里帧间隔翻倍的主因
+ */
+function poolStrength(rig, appearance) {
+    if (rig.source === "still" || rig.source === "desk-lamp")
+        return 0;
+    if (appearance === "dark")
+        return 1;
+    if (rig.source === "moonlight")
+        return .2;
+    return 0;
+}
+/**
+ * screen 那一层的池色。
+ *
+ * 亮纸上用灯色即可。暗纸上若照搬"灯色 × 纸色"，screen 会直接烧成一片白（nocturne 实测过），
+ * 所以取灯色的 34%——暖，但不刺眼
+ */
+function poolColor(room, appearance) {
+    const light = (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255));
+    const scaled = appearance === "dark" ? light.map((channel) => Math.round(channel * 0.34)) : light;
+    return scaled.join(", ");
+}
+/**
+ * 辉光那一层。一个实例对一片 canvas。
+ *
+ * 三张离屏画布（光池、柔边、辉光）与那张尘埃的贴图都是自己建的，不进 DOM
+ */
+class GlowLayer {
+    canvas;
+    // 2D 上下文拿不到时整层不画：纸还在，只是没有光池与尘埃
+    context;
+    // 最近一次 resize 的量，render 用它把画布坐标换回 CSS 像素
+    width = 0;
+    height = 0;
+    pixelRatio = 1;
+    // 逐像素算出来的光池，以及它的两份模糊
+    pool;
+    soft;
+    bloom;
+    // 光池的输入指纹。灯没动、纸没换，就不重算那 192 × N 次 toneMap
+    poolKey = "";
+    // 尘埃的那张圆形贴图：一张 32px 的径向渐变，画的时候按尺寸拉伸
+    sprite;
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.context = canvas.getContext("2d");
+        this.pool = document.createElement("canvas");
+        this.soft = document.createElement("canvas");
+        this.bloom = document.createElement("canvas");
+        this.sprite = document.createElement("canvas");
+        this.sprite.width = 32;
+        this.sprite.height = 32;
+        const spriteContext = this.sprite.getContext("2d");
+        if (spriteContext === null)
+            return;
+        const gradient = spriteContext.createRadialGradient(16, 16, 0, 16, 16, 16);
+        gradient.addColorStop(0, "rgba(255,255,255,1)");
+        gradient.addColorStop(.22, "rgba(255,255,255,.6)");
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        spriteContext.fillStyle = gradient;
+        spriteContext.fillRect(0, 0, 32, 32);
+    }
+    /**
+     * 换尺寸。尺寸没变时直接返回——同尺寸重设 canvas.width 会清空画布，
+     * 而流式期间每帧都有一批 dirty 标记走到这里
+     */
+    resize(width, height, pixelRatio) {
+        if (this.width === width && this.height === height && this.pixelRatio === pixelRatio)
+            return;
+        this.width = width;
+        this.height = height;
+        this.pixelRatio = pixelRatio;
+        this.canvas.width = Math.max(1, Math.round(width * pixelRatio));
+        this.canvas.height = Math.max(1, Math.round(height * pixelRatio));
+        // 光池按旧的尺寸算的，作废
+        this.poolKey = "";
+    }
+    /**
+     * 让光池作废：尺寸可能要换、或者上一张纸的光池不该再贴回来。
+     *
+     * 只扔指纹不扔三张离屏画布——它们下次 ensurePool 时会按新尺寸重设，
+     * 提前置成 0 反而会多一次分配
+     */
+    invalidate() {
+        this.poolKey = "";
+        this.clear();
+    }
+    // 清空整层。灯关掉、纸要重画之前都得先来这一下，否则上一帧的光池还留着
+    clear() {
+        const context = this.context;
+        if (context === null)
+            return;
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+    // 画一帧。lamp 关着时画布被清空，之后什么都不画
+    render(frame) {
+        const context = this.context;
+        if (context === null)
+            return;
+        context.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
+        context.clearRect(0, 0, this.width, this.height);
+        if (!frame.lamp)
+            return;
+        const rig = frame.rig;
+        this.paintPool(context, frame, rig);
+        this.paintLampSpill(context, frame, rig);
+        this.paintMotes(context, frame, rig);
+        this.paintLampGlare(context, frame, rig);
+        this.paintCursorGlow(context, frame);
+    }
+    // 光池：把那张 192 列的贴图按纸的大小铺开，两份模糊叠出层次
+    paintPool(context, frame, rig) {
+        const strength = poolStrength(rig, frame.appearance);
+        if (strength <= 0)
+            return;
+        this.ensurePool(rig, frame.poolRgb);
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.globalAlpha = strength;
+        context.drawImage(this.soft, 0, 0, this.width, this.height);
+        context.globalAlpha = strength * (frame.appearance === "dark" ? .4 : .8);
+        context.drawImage(this.bloom, 0, 0, this.width, this.height);
+        context.globalAlpha = 1;
+    }
+    // 台灯自己那一圈外溢：落在灯座上，所以只有台灯这一路有
+    paintLampSpill(context, frame, rig) {
+        if (rig.source !== "desk-lamp")
+            return;
+        const x = rig.position[0];
+        const y = rig.position[1];
+        const radius = Math.max(1, this.height * .55);
+        const spill = context.createRadialGradient(x, y, 0, x, y, radius);
+        spill.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.appearance === "light" ? .1 : .16) + ")");
+        spill.addColorStop(1, "rgba(" + frame.rgb + ", 0)");
+        context.fillStyle = spill;
+        context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    /**
+     * 尘埃。每一颗自己漂、自己闪，只有被灯照到的那一片才画——
+     * 暗处的尘埃本来就不该看见，这一条省掉的正是最多的工作量
+     */
+    paintMotes(context, frame, rig) {
+        if (frame.particles <= 0)
+            return;
+        const count = Math.round(MOTES.length * frame.particles);
+        const strength = frame.appearance === "light" ? .5 : .9;
+        for (let index = 0; index < count; index += 1) {
+            const mote = MOTES[index];
+            if (mote === undefined)
+                continue;
+            const speed = .4 + mote.z;
+            const drift = Math.sin(frame.time * .05 * speed + mote.phase) * .04 + frame.time * .004 * (mote.z - .5);
+            const fall = -frame.time * .006 * speed + Math.cos(frame.time * .07 + mote.phase) * .03;
+            const x = wrap01(mote.x + drift) * this.width;
+            const y = wrap01(mote.y + fall) * this.height;
+            const lit = (0, paper_light_model_1.lightAmount)(rig, x, y);
+            if (lit < .05)
+                continue;
+            const twinkle = .5 + .5 * Math.sin(frame.time * (.8 + mote.z * 2.2) + mote.phase);
+            const size = mote.size * (1 + mote.z * 1.6);
+            context.globalAlpha = Math.min(1, lit * twinkle * strength);
+            context.drawImage(this.sprite, x - size * 2, y - size * 2, size * 4, size * 4);
+        }
+        context.globalAlpha = 1;
+    }
+    // 字锤小灯自己那一圈灯焰：它是这一路光源的署名，半径跟着强度走
+    paintLampGlare(context, frame, rig) {
+        if (rig.source !== "carriage")
+            return;
+        const x = rig.position[0];
+        const y = rig.position[1];
+        const radius = Math.max(1, 110 * frame.intensity);
+        const glare = context.createRadialGradient(x, y, 0, x, y, radius);
+        glare.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.appearance === "light" ? .26 : .45) + ")");
+        glare.addColorStop(1, "rgba(" + frame.rgb + ", 0)");
+        context.fillStyle = glare;
+        context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    // 光标那一圈余温。只在光标真的在的时候画
+    paintCursorGlow(context, frame) {
+        const cursor = frame.cursor;
+        if (cursor === null || frame.cursorGlow <= 0)
+            return;
+        const glow = context.createRadialGradient(cursor.x, cursor.y, 0, cursor.x, cursor.y, 34);
+        glow.addColorStop(0, "rgba(" + frame.rgb + ", " + (.4 * frame.cursorGlow).toFixed(3) + ")");
+        glow.addColorStop(1, "rgba(" + frame.rgb + ", 0)");
+        context.fillStyle = glow;
+        context.fillRect(cursor.x - 34, cursor.y - 34, 68, 68);
+    }
+    /**
+     * 重算光池。
+     *
+     * 指纹把灯架的每一个数、池色与尺寸一起带上：任意一项变了就重算。这比每次渲染都算省得多，
+     * 而它仍然只在灯真的动过之后才算——光池是这一层最贵的那一步
+     */
+    ensurePool(rig, poolRgb) {
+        const key = JSON.stringify([
+            rig.position, rig.direction, rig.cosOuter, rig.cosInner, rig.exposure, rig.window, poolRgb, this.width, this.height,
+        ]);
+        if (key === this.poolKey)
+            return;
+        this.poolKey = key;
+        const columns = POOL_COLUMNS;
+        const rows = Math.max(8, Math.round((columns * this.height) / Math.max(1, this.width)));
+        const channels = poolRgb.split(",").map((part) => Number(part));
+        const red = channels[0] ?? 0;
+        const green = channels[1] ?? 0;
+        const blue = channels[2] ?? 0;
+        for (const target of [this.pool, this.soft, this.bloom]) {
+            target.width = columns;
+            target.height = rows;
+        }
+        const poolContext = this.pool.getContext("2d");
+        const softContext = this.soft.getContext("2d");
+        const bloomContext = this.bloom.getContext("2d");
+        if (poolContext === null || softContext === null || bloomContext === null)
+            return;
+        const image = poolContext.createImageData(columns, rows);
+        for (let row = 0; row < rows; row += 1) {
+            for (let column = 0; column < columns; column += 1) {
+                const lit = (0, paper_light_model_1.lightAmount)(rig, ((column + .5) / columns) * this.width, ((row + .5) / rows) * this.height);
+                const offset = (row * columns + column) * 4;
+                image.data[offset] = red;
+                image.data[offset + 1] = green;
+                image.data[offset + 2] = blue;
+                image.data[offset + 3] = Math.round(Math.min(1, lit) * 255);
+            }
+        }
+        poolContext.putImageData(image, 0, 0);
+        // 两份模糊：柔边让光池没有格子感，辉光那一份把亮处往外散
+        softContext.filter = "blur(1px)";
+        softContext.drawImage(this.pool, 0, 0);
+        softContext.filter = "none";
+        bloomContext.filter = "blur(6px)";
+        bloomContext.drawImage(this.pool, 0, 0);
+        bloomContext.filter = "none";
+    }
+}
+exports.GlowLayer = GlowLayer;
+    };
+
+    __registry["chat/paper/paper-light-model.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.barHalfWidth = barHalfWidth;
+exports.between = between;
+exports.windowGobo = windowGobo;
+exports.irradiance = irradiance;
+exports.toneMap = toneMap;
+exports.lightAmount = lightAmount;
+exports.referenceExposure = referenceExposure;
+exports.buildRig = buildRig;
+exports.ambientLevel = ambientLevel;
+/**
+ * 灯：从纸的尺寸与光标位置算出这一帧的灯架，以及在某个点上收多少光。
+ *
+ * 与 nocturne 的 core/light-model.js 逐行对应，只多了一件事：那边读全局 SETTINGS 与 theme()，
+ * 这里把 settings 与房间当参数传进来。函数切分保持不变，数值一个没改
+ *
+ * 三路光源共用一套几何，分叉只在这三处：灯座怎么钉、光是怎么走的、曝光按哪个参考点标定
+ * （nocturne 文档 3.2 记了灯座那一处改动：上游挂在小车上，这里钉在纸心，只随光标偏移 ±30%）
+ */
+const paper_math_1 = require("./paper-math");
+// 窗格的边宽：夹在 4 到 16 像素之间，取短边的 4%
+function barHalfWidth(width, height) {
+    return Math.min(16, Math.max(4, .04 * Math.min(width, height)));
+}
+// 一条格线上的窗棂：offset 落在 cell 的整数倍附近时为 0，落在两格之间时为 1
+function between(offset, cell, bar, soft) {
+    const t = offset / cell;
+    return (0, paper_math_1.smoothstep)(bar - soft, bar + soft, Math.abs(t - Math.round(t)) * cell);
+}
+/**
+ * 月光穿过的窗：一块矩形窗框，里面按格数分格，窗棂挡掉中间那一部分。
+ *
+ * 返回 0 到 1 的透过率。窗框的柔边用 softness 撑开，斜度把整块窗框剪成平行四边形
+ */
+function windowGobo(rig, x, y) {
+    const frame = rig.window;
+    const soft = Math.max(.5, frame.softness);
+    const shearedX = x - (y - frame.y) * frame.skew;
+    const dx = shearedX - frame.x;
+    const dy = y - frame.y;
+    const across = (0, paper_math_1.smoothstep)(-soft, soft, frame.width / 2 - Math.abs(dx));
+    const down = (0, paper_math_1.smoothstep)(-soft, soft, frame.height / 2 - Math.abs(dy));
+    const paneWidth = frame.width / frame.columns;
+    const paneHeight = frame.height / frame.rows;
+    const bar = barHalfWidth(paneWidth, paneHeight);
+    const open = between(dx + frame.width / 2, paneWidth, bar, soft) * between(dy + frame.height / 2, paneHeight, bar, soft);
+    return across * down * (.3 + .7 * open);
+}
+/**
+ * 纸面上某一点收到的辐照度。
+ *
+ * 月光是一路平行光乘窗棂；另外两路是点光源：平方反比、Lambert、再乘光锥的浓淡。
+ * normal 缺省是正对读者（0, 0, 1），辉光那一层要的正是这个方向
+ */
+function irradiance(rig, x, y, normal) {
+    const facing = normal ?? [0, 0, 1];
+    if (rig.source === "moonlight") {
+        return Math.max(0, (0, paper_math_1.dot3)(facing, [-rig.direction[0], -rig.direction[1], -rig.direction[2]])) * windowGobo(rig, x, y);
+    }
+    const toLight = [x - rig.position[0], y - rig.position[1], -rig.position[2]];
+    const distanceSquared = Math.max(1, (0, paper_math_1.dot3)(toLight, toLight));
+    const ray = (0, paper_math_1.norm)(toLight);
+    const cone = (0, paper_math_1.smoothstep)(rig.cosOuter, rig.cosInner, (0, paper_math_1.dot3)(ray, rig.direction));
+    const lambert = Math.max(0, -(0, paper_math_1.dot3)(facing, ray));
+    return (cone * lambert) / distanceSquared;
+}
+// 曝光曲线：1 减 e 的负值。这条把无界的辐照度压进 0 到 1，是"像灯"而不是"像贴图"的一半
+function toneMap(value) {
+    return 1 - Math.exp(-Math.max(0, value));
+}
+// 某一点最终收多少光，0 到 1
+function lightAmount(rig, x, y, normal) {
+    return toneMap(irradiance(rig, x, y, normal) * rig.exposure);
+}
+/**
+ * 把曝光标定到参考点上。
+ *
+ * 参考点是"光锥应该最亮的那一处"：灯从那里量出来多少辐照度，曝光就按它反算，
+ * 于是换光源、换纸的大小，最亮处一样亮，差别只在光怎么散开
+ */
+function referenceExposure(rig, intensity, x, y) {
+    const energy = irradiance(rig, x, y);
+    return energy > 0 ? intensity / energy : 0;
+}
+/**
+ * 这一帧的灯架。
+ *
+ * caretSheetX 是光标在纸上的横坐标；量不出来时传纸心，光锥就停在中间。
+ * 三种光源的几何各自照搬：carriage 钉在纸心只随光标偏移 ±30%，desk-lamp 从房间给的角上打过来，
+ * moonlight 是一束平行光加一扇窗
+ */
+function buildRig(sheet, caretSheetX, room, settings) {
+    const width = sheet.width;
+    const height = sheet.height;
+    const halfAngle = Math.acos((0, paper_math_1.spreadToCosine)(settings.spread));
+    const cosOuter = Math.cos(halfAngle);
+    const cosInner = Math.cos(halfAngle * (1 - .85 * settings.softness));
+    const swivel = ((0, paper_math_1.clamp)(settings.aim, -45, 45) * Math.PI) / 180;
+    const base = {
+        source: room.light.source,
+        position: [0, 0, 1],
+        direction: [0, 0, -1],
+        cosOuter,
+        cosInner,
+        exposure: 1,
+        window: { x: width / 2, y: height / 2, width, height, columns: 3, rows: 2, softness: 8, skew: 0 },
+        // 只有挂在光标上的那盏小灯会随光标挪。台灯与月光都只看纸的尺寸与房间的预设，
+        // carrier 那种「一打字就重算整屏」的代价正是这一条要省掉的东西
+        tracksCaret: room.light.source === "carriage",
+    };
+    if (room.light.source === "still") {
+        // 静止漫射光：没有灯座，没有光锥，也没有热点。整片纸的明暗只由尺寸与强度决定，
+        // 所以同一张纸每次算出来的图一模一样——挂载层据此把整条帧循环停掉
+        // （这是默认的那一路：一盏跟着光标跑的灯在长会话里每动一次就要重算一遍纸面）
+        return { ...base, source: "still", exposure: settings.intensity, tracksCaret: false };
+    }
+    if (room.light.source === "carriage") {
+        // 灯座钉在纸的横向中心，只随光标轻微偏移（±30%）。nocturne 的灯跟着打字机小车横移，
+        // 那是因为终端的光标常在左侧；正文界面若照搬，光锥会永远挤在左边缘
+        const centre = width / 2;
+        const lampX = (0, paper_math_1.clamp)(centre + (caretSheetX - centre) * .3, 40, width - 40);
+        const lampY = height - Math.max(18, height * .03);
+        const lamp = [lampX, lampY, 12 + .02 * height];
+        const throwLength = .6 * settings.reach * height;
+        const aimX = lampX + Math.tan(swivel) * throwLength;
+        const aimY = lampY - throwLength;
+        const rig = {
+            ...base,
+            source: "carriage",
+            position: lamp,
+            direction: (0, paper_math_1.norm)([aimX - lamp[0], aimY - lamp[1], 0 - lamp[2]]),
+        };
+        const referenceLength = .5 * settings.reach * height;
+        return {
+            ...rig,
+            exposure: referenceExposure(rig, settings.intensity, lampX + Math.tan(swivel) * referenceLength, lampY - referenceLength),
+        };
+    }
+    if (room.light.source === "desk-lamp") {
+        const position = room.light.position;
+        const lamp = [position.x * width, position.y * height, (.3 + .4 * settings.reach) * height];
+        const dx = width * .5 - lamp[0];
+        const dy = height * .55 - lamp[1];
+        const cos = Math.cos(swivel);
+        const sin = Math.sin(swivel);
+        const aimX = lamp[0] + dx * cos - dy * sin;
+        const aimY = lamp[1] + dx * sin + dy * cos;
+        const rig = {
+            ...base,
+            source: "desk-lamp",
+            position: lamp,
+            direction: (0, paper_math_1.norm)([aimX - lamp[0], aimY - lamp[1], 0 - lamp[2]]),
+        };
+        return { ...rig, exposure: referenceExposure(rig, settings.intensity, aimX, aimY) };
+    }
+    // 月光：从房间给的角上斜进来，穿一扇 3 × 2 的窗
+    const position = room.light.position;
+    const azimuth = Math.atan2(.5 - position.y, .5 - position.x) + swivel;
+    const elevation = (40 * Math.PI) / 180;
+    const direction = (0, paper_math_1.norm)([
+        Math.cos(azimuth) * Math.cos(elevation),
+        Math.sin(azimuth) * Math.cos(elevation),
+        -Math.sin(elevation),
+    ]);
+    const frame = settings.window;
+    const pane = Math.max(60, (Math.min(width * .62, height * .7) * settings.reach) / 2);
+    const rig = {
+        ...base,
+        source: "moonlight",
+        direction,
+        window: {
+            x: width * frame.x,
+            y: height * frame.y,
+            width: pane * frame.columns,
+            height: pane * frame.rows,
+            columns: frame.columns,
+            rows: frame.rows,
+            // 窗光自成一组参数：借台灯的 softness（0.65）会算出比窗格还宽的柔边，3 × 2 的方窗糊成一片白
+            softness: 4 + 40 * frame.softness,
+            skew: Math.tan(((0, paper_math_1.clamp)(frame.slant, -35, 35) * Math.PI) / 180),
+        },
+    };
+    const facing = Math.max(0, -direction[2]);
+    return { ...rig, exposure: facing > 0 ? settings.intensity / facing : 0 };
+}
+/**
+ * 环境光的水平，0 到 1。
+ *
+ * 它是一道下限，不是一项加光：灯照不到的地方靠它兜住，正文才不会糊进纸里。nocturne 把上游的
+ * 0.55 抬到 0.64——理由写在它文档 3.3：那只够等宽的终端字，衬线散文笔画细、字面小，
+ * 同样的下限让正文发灰（实测 p3 亮度 70，上游同区域 45）。抬到 0.64 之后 p3 落到 52
+ *
+ * 这个数是量出来的，不是随手调的：改它之前先重跑一遍那张对齐表
+ */
+function ambientLevel(room, settings, appearance) {
+    // 静止的台灯只在自己脚下那一圈亮，剩下整片纸全靠这道下限兜住。nocturne 的 0.64 是按一盏
+    // 罩住半个屏幕的锥形灯调的；换成圆形光斑之后，灯外那八成面积会整片发灰，下限因此一路抬上来。
+    //
+    // 这几个数是照着合成结果反推的，不是照抄。分成两件事看：
+    //
+    // 一是下限本身。亮纸 0.86、暗纸 0.88——离灯最远的地方也只比纸原色暗一档。它在中途调过两轮
+    // （0.82 → 0.94 → 0.86 / 0.88），改它之前先重跑一遍那张对齐表。
+    //
+    // 二是这件事与强度脱钩。原来那道式子里环境光跟着 intensity 走，强度一抬整片纸一起变亮，
+    // 灯的那份好处反而被摊平了。现在写成常数：环境光是环境光，灯是灯，两者各管各的
+    const floor = appearance === "light" ? .86 : .88;
+    return floor;
+}
+    };
+
+    __registry["chat/paper/paper-math.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 纸光要用的那几个小函数：clamp、smoothstep、十六进制转单位向量，以及三个短向量上的点积。
+ *
+ * 照 nocturne 的 core/math.js 搬过来。它原来把 reduceMotion 的 matchMedia 也放在这里，
+ * 这里没有：那是"谁的动效要不要跑"的策略，归 paper-mount 那一层，渲染核只认传进来的数
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.clamp = clamp;
+exports.smoothstep = smoothstep;
+exports.toUnit = toUnit;
+exports.norm = norm;
+exports.dot3 = dot3;
+exports.spreadToCosine = spreadToCosine;
+/**
+ * 把值夹在两个端点之间。
+ *
+ * 三个参数都按"下界在前"读：clamp(value, low, high)。上游就是这个顺序，照搬省得两处对不上
+ */
+function clamp(value, low, high) {
+    return Math.min(high, Math.max(low, value));
+}
+// 三次平滑阶跃。两端相等时退化成硬阶跃，与 GLSL 里那条一致
+function smoothstep(edge0, edge1, value) {
+    if (edge0 === edge1)
+        return value < edge0 ? 0 : 1;
+    const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+}
+/**
+ * "#ffd29a" 这种写法转成三个 0 到 1 的分量。
+ *
+ * 只认 `#rrggbb`：表里的颜色全是这个形状，多一种写法就要多一条分支，而多出来的分支永远走不到
+ */
+function toUnit(hexColor) {
+    return [
+        parseInt(hexColor.slice(1, 3), 16) / 255,
+        parseInt(hexColor.slice(3, 5), 16) / 255,
+        parseInt(hexColor.slice(5, 7), 16) / 255,
+    ];
+}
+// 单位化。长度为零时给回原向量而不是 NaN——光照里一个 NaN 会让整张纸变黑
+function norm(vector) {
+    const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+    return [vector[0] / length, vector[1] / length, vector[2] / length];
+}
+// 三维点积
+function dot3(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+/**
+ * 光锥的张角（度）转成余弦。
+ *
+ * 半角是它的一半，所以在这里先除 360 而不是 180。夹在 5 到 170 度之间：
+ * 0 度是一条射线（除零），180 度是一整片（光锥失效），两头都没有意义
+ */
+function spreadToCosine(degrees) {
+    return Math.cos((clamp(degrees, 5, 170) * Math.PI) / 360);
+}
+    };
+
+    __registry["chat/paper/paper-layout.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 纸的覆盖范围。
+ *
+ * 纸是挂在 body 下的一片全屏 canvas，但它不一定覆盖整个视口：读者自建的桌面把左侧栏做成了
+ * 透明的窗口材质（`data-window-material` 与 darwin 平台都会让 dsh 把 frame 的背景交出去），
+ * 纸往那一块盖上去，透出来的就不是桌面而是纸纹，那块玻璃当场失效。
+ *
+ * 所以这里只回答一件事：这一帧纸该占视口的哪一块矩形。判据全部来自 dsh 的语义属性——
+ * 列宽在 grid 的 grid-template-columns 里，不认任何带构建期 hash 的 class
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.sidebarRevealsWindowMaterial = sidebarRevealsWindowMaterial;
+exports.sidebarWidth = sidebarWidth;
+exports.paperIncludesSidebar = paperIncludesSidebar;
+exports.measurePaperRect = measurePaperRect;
+// 桌面版把窗口材质交出去的那两个标记：darwin 平台与 Windows 11 的 acrylic
+const WINDOW_MATERIAL_ATTRIBUTE = "data-window-material";
+const PLATFORM_ATTRIBUTE = "data-platform";
+// AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
+const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]";
+/**
+ * 左侧栏此刻是不是「透出窗口材质」的状态。
+ *
+ * 两个标记任一在场就说明 dsh 已经把 frame 的底色交了出去（frame 变透明、侧栏只留一层 tint），
+ * 侧栏的观感来自它背后的窗口，不是页面自己画的。这种时候纸不能盖上去
+ */
+function sidebarRevealsWindowMaterial() {
+    const root = document.documentElement;
+    const platform = root.getAttribute(PLATFORM_ATTRIBUTE);
+    if (platform === "darwin")
+        return true;
+    const material = root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE);
+    if (material === "translucent")
+        return true;
+    // 两个标记也可能落在 body 上：一并认，认不到就当作没有材质
+    return document.body !== null && document.body.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent";
+}
+/**
+ * 左侧栏的宽度。取不到给 0，调用方据此退回「整块视口」。
+ *
+ * 列宽写在 AppFrame 那层 grid 的 grid-template-columns 上，形如 `280px minmax(...) minmax(...)`。
+ * 只读第一项：sidebar | center | rightbar 的三列顺序由 dsh 定死，第一个数字就是左栏
+ */
+function sidebarWidth() {
+    const shellBottom = document.querySelector(SHELL_BOTTOM_SELECTOR);
+    const frame = shellBottom === null ? null : shellBottom.parentElement;
+    if (frame === null)
+        return 0;
+    const columns = getComputedStyle(frame).gridTemplateColumns;
+    const first = columns.trim().split(/\s+/)[0];
+    if (first === undefined)
+        return 0;
+    const width = Number.parseFloat(first);
+    return Number.isFinite(width) && width > 0 ? width : 0;
+}
+/**
+ * 纸到底要不要盖住左侧栏：读者的选择，再让一层平台判据。
+ *
+ * 两项都为真才盖。第二项是给自建桌面准备的——那边的左侧栏是仿 macOS 的透明窗口材质，
+ * 观感来自它背后的窗口而不是页面自己画的，纸盖上去那块玻璃当场失效。这种平台上无论开关怎么选
+ * 都不盖：留一块不铺纸的侧栏，比铺上去把读者的桌面材质弄没要好。判据本身在
+ * sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
+ */
+function paperIncludesSidebar(requested) {
+    return requested && !sidebarRevealsWindowMaterial();
+}
+/**
+ * 这一帧纸该占的矩形。
+ *
+ * includeSidebar 为 false 时把左栏那条竖带让出去；让出去之后纸的尺寸会变，所以这个函数
+ * 只在尺寸真的变了的时候才算一次（见 paper-mount 的脏标记）
+ */
+function measurePaperRect(includeSidebar) {
+    const viewportWidth = Math.max(1, Math.round(window.innerWidth));
+    const viewportHeight = Math.max(1, Math.round(window.innerHeight));
+    if (includeSidebar)
+        return { left: 0, top: 0, width: viewportWidth, height: viewportHeight };
+    const inset = Math.min(viewportWidth - 1, Math.max(0, Math.round(sidebarWidth())));
+    return { left: inset, top: 0, width: Math.max(1, viewportWidth - inset), height: viewportHeight };
+}
+    };
+
+    __registry["chat/paper/paper-light.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PaperLight = void 0;
+const paper_light_model_1 = require("./paper-light-model");
+const paper_math_1 = require("./paper-math");
+const paper_shaders_1 = require("./paper-shaders");
+// 灯架的 source 到着色器里那个整数。顺序是 GLSL 里 uSource 的约定，不是数组顺序
+const SOURCE_CODE = {
+    carriage: 0,
+    "desk-lamp": 1,
+    moonlight: 2,
+    still: 3,
+};
+/**
+ * 纸面那一层。一个实例对一片 canvas，资源与 WebGL context 同寿命。
+ *
+ * state 是对外的：mount 只在 ready 时才画，失败就整块不挂，读者看到的是没有纸的界面而不是一片黑
+ */
+class PaperLight {
+    canvas;
+    gl;
+    // initializing 只在构造函数里那一瞬，ready 之后才画得出来
+    state = "initializing";
+    // 上一帧那两个程序、顶点缓冲与 uniform 位置；context 丢了之后全部作废
+    surfaceProgram = null;
+    lightProgram = null;
+    buffer = null;
+    surfaceUniforms = null;
+    lightUniforms = null;
+    // 两个颜色附件：0 是 albedo，1 是法线
+    textures = [];
+    framebuffer = null;
+    // 最近一次 build 的输入。render 靠它拿尺寸与纸样，所以它必须在
+    spec = null;
+    constructor(canvas) {
+        this.canvas = canvas;
+        this.gl = canvas.getContext("webgl2", { premultipliedAlpha: false, antialias: false });
+        this.state = this.gl === null ? "failed" : "initializing";
+        if (this.gl === null)
+            return;
+        this.initialize();
+    }
+    /**
+     * 重新算纸纹：SURFACE 那次 pass，外加为两个颜色附件重建 FBO 与两张纹理。
+     *
+     * 尺寸、纸样、纸纹强度任一项变了才需要它——它比 LIGHT 贵一个量级，所以 mount 拿尺寸与纸样当脏标记
+     */
+    build(spec) {
+        const gl = this.gl;
+        if (gl === null || this.state !== "ready")
+            return;
+        const width = Math.max(1, Math.round(spec.width * spec.pixelRatio));
+        const height = Math.max(1, Math.round(spec.height * spec.pixelRatio));
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.spec = spec;
+        this.release();
+        const framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        for (let index = 0; index < 2; index += 1) {
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            // texStorage2D 而不是 texImage2D：两级都是不可变的，采样器不会擅自做 mip
+            gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, width, height);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + index, gl.TEXTURE_2D, texture, 0);
+            this.textures.push(texture);
+        }
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+        this.framebuffer = framebuffer;
+        this.paintSurface(spec, width, height);
+    }
+    /**
+     * 点灯：LIGHT 那次 pass。灯动、纸样换、尺寸变、窗口重新聚焦之后都要来一次。
+     *
+     * 没 build 过、context 丢了、或者已经 dispose 时什么都不做——宁可纸停在上一帧，不要画一片白
+     */
+    render(frame) {
+        const gl = this.gl;
+        const uniforms = this.lightUniforms;
+        const spec = this.spec;
+        if (gl === null || uniforms === null || spec === null)
+            return;
+        if (this.state !== "ready" || gl.isContextLost())
+            return;
+        const albedoTexture = this.textures[0];
+        const normalTexture = this.textures[1];
+        if (albedoTexture === undefined || normalTexture === undefined)
+            return;
+        const lightColor = (0, paper_math_1.toUnit)(frame.room.light.color);
+        const peak = Math.max(lightColor[0], lightColor[1], lightColor[2], 1e-6);
+        const roomColor = (0, paper_math_1.toUnit)(frame.room.palette.room);
+        // 房间色往纸面推多少。nocturne 用 0.4：那时环境光只占三成，房间色把整片纸染凉是它想要的观感。
+        // 现在环境光占九成多，同样的强度会把一整张纸统统压灰，所以收到 0.12——房间里那点暖只留在灯下面
+        const strength = frame.rig.source === "moonlight" ? .3 : .12;
+        const tintChannel = (channel) => 1 + ((.6 + channel * 1.5) - 1) * strength;
+        const lampOn = frame.settings.lamp && frame.settings.enabled;
+        gl.useProgram(this.lightProgram);
+        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, albedoTexture);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, normalTexture);
+        gl.uniform1i(uniforms.uAlbedo, 0);
+        gl.uniform1i(uniforms.uNormal, 1);
+        gl.uniform2f(uniforms.uSize, spec.width, spec.height);
+        gl.uniform1f(uniforms.uScale, spec.pixelRatio);
+        gl.uniform1i(uniforms.uSource, SOURCE_CODE[frame.rig.source]);
+        gl.uniform3fv(uniforms.uLightPos, frame.rig.position);
+        gl.uniform3fv(uniforms.uLightDir, frame.rig.direction);
+        gl.uniform2f(uniforms.uCone, frame.rig.cosOuter, frame.rig.cosInner);
+        gl.uniform1f(uniforms.uExposure, frame.rig.exposure);
+        gl.uniform4f(uniforms.uWindow, frame.rig.window.x, frame.rig.window.y, frame.rig.window.width, frame.rig.window.height);
+        gl.uniform4f(uniforms.uPanes, frame.rig.window.columns, frame.rig.window.rows, frame.rig.window.softness, frame.rig.window.skew);
+        // 归一化到峰值：真正的亮度由 exposure 与 lamp 决定，颜色只负责色相
+        gl.uniform3f(uniforms.uTint, lightColor[0] / peak, lightColor[1] / peak, lightColor[2] / peak);
+        gl.uniform1f(uniforms.uLamp, lampOn ? 1 : 0);
+        gl.uniform1f(uniforms.uAmbient, (0, paper_light_model_1.ambientLevel)(frame.room, frame.settings, frame.paper.appearance));
+        gl.uniform3f(uniforms.uAmbientTint, tintChannel(roomColor[0]), tintChannel(roomColor[1]), tintChannel(roomColor[2]));
+        gl.uniform1f(uniforms.uRelief, 2 * frame.settings.paperIllumination);
+        gl.uniform1f(uniforms.uSoft, frame.settings.beam === "soft" ? 1 : 0);
+        gl.uniform1f(uniforms.uCrinkle, frame.paper.surface.crinkle * frame.settings.texture);
+        gl.uniform1f(uniforms.uGrain, frame.reduceMotion ? 0 : frame.settings.grain);
+        gl.uniform1f(uniforms.uTime, frame.time);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    /**
+     * context 丢了：旧句柄由浏览器回收，这里只把引用清干净，恢复之后必须整块重建。
+     *
+     * 状态记成 lost 而不是 failed——这两者的处置不同，failed 不再试，lost 等 restored 事件
+     */
+    invalidate() {
+        this.spec = null;
+        this.textures = [];
+        this.framebuffer = null;
+        this.buffer = null;
+        this.surfaceProgram = null;
+        this.lightProgram = null;
+        this.surfaceUniforms = null;
+        this.lightUniforms = null;
+        this.state = "lost";
+    }
+    // context 回来了：重建全部与 context 同寿命的资源，然后由调用方重新 build
+    restore() {
+        if (this.gl === null) {
+            this.state = "failed";
+            return false;
+        }
+        this.invalidate();
+        return this.initialize();
+    }
+    // 彻底卸下。样式表里这片 canvas 也随之摘掉，所以这里不再关心画面
+    destroy() {
+        this.release();
+        const gl = this.gl;
+        if (gl !== null) {
+            if (this.buffer !== null)
+                gl.deleteBuffer(this.buffer);
+            if (this.surfaceProgram !== null)
+                gl.deleteProgram(this.surfaceProgram);
+            if (this.lightProgram !== null)
+                gl.deleteProgram(this.lightProgram);
+        }
+        this.buffer = null;
+        this.surfaceProgram = null;
+        this.lightProgram = null;
+        this.spec = null;
+        this.state = "disposed";
+    }
+    /**
+     * 建全部与 context 同寿命的资源。构造与 restore 两处都走它，所以失败只有这一个出口：
+     * 抛出、接住、记 failed，然后由样式表让纸整块不出现
+     */
+    initialize() {
+        const gl = this.gl;
+        if (gl === null) {
+            this.state = "failed";
+            return false;
+        }
+        try {
+            this.surfaceProgram = this.compile(paper_shaders_1.VERTEX, paper_shaders_1.SURFACE);
+            this.lightProgram = this.compile(paper_shaders_1.VERTEX, paper_shaders_1.LIGHT);
+            this.buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+            // 一个盖住整个裁剪空间的三角形：比两个三角形省一次光栅化边界上的重复着色
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(0);
+            gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+            this.surfaceUniforms = this.locate(this.surfaceProgram, [
+                "uSize", "uScale", "uSeed", "uFold", "uFelt", "uAge", "uMottle", "uCrinkle", "uLaid", "uLinen", "uPaper",
+            ]);
+            this.lightUniforms = this.locate(this.lightProgram, [
+                "uAlbedo", "uNormal", "uSize", "uScale", "uSource", "uLightPos", "uLightDir", "uCone", "uExposure",
+                "uWindow", "uPanes", "uTint", "uLamp", "uAmbient", "uAmbientTint", "uRelief", "uCrinkle", "uGrain",
+                "uTime", "uSoft",
+            ]);
+            this.state = "ready";
+            return true;
+        }
+        catch (error) {
+            // 没有 WebGL2、或者驱动拒绝编译：整块纸不画。页面照常，只是没有纸
+            console.warn("dsh-chat-ux paper: shader", error instanceof Error ? error.message : error);
+            this.state = "failed";
+            return false;
+        }
+    }
+    // 编一段程序。顶点着色器与片元着色器分开传，因为 SURFACE 与 LIGHT 共用 VERTEX，
+    // 位置 0 显式绑给 aPos：省得依赖编译器自动分配
+    compile(vertexSource, fragmentSource) {
+        const gl = this.gl;
+        if (gl === null)
+            throw new Error("webgl2 context is gone");
+        const program = gl.createProgram();
+        const stages = [
+            [gl.VERTEX_SHADER, vertexSource],
+            [gl.FRAGMENT_SHADER, fragmentSource],
+        ];
+        for (const [kind, source] of stages) {
+            const shader = gl.createShader(kind);
+            if (shader === null)
+                continue;
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (gl.getShaderParameter(shader, gl.COMPILE_STATUS) !== true)
+                throw new Error(gl.getShaderInfoLog(shader) ?? "shader compile failed");
+            gl.attachShader(program, shader);
+            // 链上之后就没用了：deleteShader 只是打上待删标记，程序还拿着它的编译结果，
+            // 程序删掉时才会真正释放。留着它反而要多管一份句柄的寿命
+            gl.deleteShader(shader);
+        }
+        gl.bindAttribLocation(program, 0, "aPos");
+        gl.linkProgram(program);
+        if (gl.getProgramParameter(program, gl.LINK_STATUS) !== true)
+            throw new Error(gl.getProgramInfoLog(program) ?? "program link failed");
+        return program;
+    }
+    /**
+     * 把一串 uniform 名字换成位置。
+     *
+     * 也接受 null 名字：Shader 里没用到的 uniform 在链接期被优化掉，getUniformLocation 返回 null，
+     * 之后对它 set 是合法的空操作。类型上带 null 是为了让这条路径不被当成错误
+     */
+    locate(program, names) {
+        const gl = this.gl;
+        const positions = {};
+        if (gl === null)
+            return positions;
+        for (const name of names)
+            positions[name] = gl.getUniformLocation(program, name);
+        return positions;
+    }
+    // SURFACE 那次 pass 本身。build 里紧接着 FBO 建好之后调用，所以它读的是刚设好的 spec
+    paintSurface(spec, pixelWidth, pixelHeight) {
+        const gl = this.gl;
+        const uniforms = this.surfaceUniforms;
+        if (gl === null || uniforms === null)
+            return;
+        gl.useProgram(this.surfaceProgram);
+        gl.viewport(0, 0, pixelWidth, pixelHeight);
+        gl.uniform2f(uniforms.uSize, spec.width, spec.height);
+        gl.uniform1f(uniforms.uScale, spec.pixelRatio);
+        gl.uniform1f(uniforms.uSeed, 3.7);
+        gl.uniform1f(uniforms.uFold, spec.height * 0.38);
+        // 纸纹的低频结构按纸的物理尺寸缩放：着色器是按 ~660×620 的纸调的，
+        // 同样的频率铺到 1200px 的纸上，斑块就碎成了噪点（nocturne 文档 3.1）
+        gl.uniform1f(uniforms.uPaper, (0, paper_math_1.clamp)(Math.sqrt(spec.width * spec.height) / 700, 0.9, 1.9));
+        gl.uniform1f(uniforms.uFelt, spec.paper.surface.felt);
+        gl.uniform1f(uniforms.uAge, spec.paper.surface.age);
+        gl.uniform1f(uniforms.uMottle, spec.paper.surface.mottle);
+        gl.uniform1f(uniforms.uCrinkle, spec.paper.surface.crinkle * spec.texture);
+        gl.uniform1f(uniforms.uLaid, spec.paper.surface.laid * Math.min(1, spec.texture));
+        gl.uniform1f(uniforms.uLinen, spec.paper.surface.linen * Math.min(1, spec.texture));
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    // 扔掉两个颜色附件与 FBO。纹理与 FBO 是一起建的，也就一起扔
+    release() {
+        const gl = this.gl;
+        if (gl === null)
+            return;
+        for (const texture of this.textures)
+            gl.deleteTexture(texture);
+        this.textures = [];
+        if (this.framebuffer !== null) {
+            gl.deleteFramebuffer(this.framebuffer);
+            this.framebuffer = null;
+        }
+    }
+}
+exports.PaperLight = PaperLight;
+    };
+
+    __registry["chat/paper/paper-shaders.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LIGHT = exports.SURFACE = exports.VERTEX = void 0;
+/**
+ * 纸的着色器：照 nocturne 的 core/shaders.js 逐字搬过来，一个字都没有改。
+ *
+ * 为什么原样搬：SURFACE 出 albedo 与法线两张图、LIGHT 在它们上面算辐照度，这是"像纸"与"一块米色"的
+ * 分界（nocturne 文档第 1 节那张表）。这里的常数是按上游官方截图的亮度分布调过的——均值 112.5、
+ * p50 114.7、p95 177.8——改一个数就得重新对一遍那张表，而重新对齐的代价远大于"改起来别扭"。
+ *
+ * 只有一处是移植时加上的 `uPaper`：低频纸纹按纸的物理尺寸缩放，理由见 nocturne 文档 3.1。
+ *
+ * 三个模板字符串里的注释里不许出现反引号，否则字符串会提前结束；GLSL 里本来也没有反引号
+ */
+exports.VERTEX = `#version 300 es
+in vec2 aPos;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+const NOISE = `
+float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float noise(vec2 p) {
+  vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(mix(hash12(i), hash12(i + vec2(1, 0)), u.x), mix(hash12(i + vec2(0, 1)), hash12(i + vec2(1, 1)), u.x), u.y);
+}
+float fbm(vec2 p) { float v = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; } return v; }
+`;
+exports.SURFACE = `#version 300 es
+precision highp float;
+uniform vec2 uSize; uniform float uScale; uniform float uSeed; uniform float uFold; uniform float uFelt;
+uniform float uAge; uniform float uMottle; uniform float uCrinkle; uniform float uLaid; uniform float uLinen;
+uniform float uPaper;
+layout(location = 0) out vec4 outAlbedo;
+layout(location = 1) out vec4 outNormal;
+${NOISE}
+const mat2 TURN = mat2(0.8, -0.6, 0.6, 0.8);
+float relief(vec2 p) {
+  vec2 q = p / uPaper;
+  vec2 w = vec2(fbm(q * 0.012 + uSeed), fbm(q * 0.012 + uSeed + 9.2));
+  float veins = 1.0 - abs(fbm(q * 0.02 + w * 3.0) * 2.0 - 1.0);
+  float r = 0.35 * pow(veins, 6.0) + 0.35 * noise(q * vec2(0.6, 0.18)) + 0.3 * noise(p * 1.9);
+  if (uFelt > 0.0) {
+    vec2 q = TURN * p;
+    float tooth = 0.62 * noise(q * 0.45) + 0.38 * noise(TURN * q * 0.95 + 5.3);
+    float felt = 0.7 * tooth + 0.2 * noise(q * 0.11 + 2.1) + 0.1 * noise(q * vec2(0.5, 0.12));
+    r = mix(r, felt, uFelt);
+  }
+  float laidLines = 0.5 + 0.5 * sin(p.y * 6.2831 / 4.2);
+  float chain = exp(-pow((mod(p.x, 96.0) - 48.0) / 3.2, 2.0));
+  r = mix(r, r * 0.6 + laidLines * 0.18 + chain * 0.35, uLaid);
+  float weave = 0.5 + 0.5 * sin(p.x * 6.2831 / 3.4) * sin(p.y * 6.2831 / 3.4);
+  float slub = noise(p * vec2(0.07, 1.3));
+  return mix(r, r * 0.3 + weave * 0.5 + slub * 0.35, uLinen);
+}
+vec3 albedo(vec2 p) {
+  vec2 uv = p / uSize;
+  vec2 q = p / uPaper;
+  float mottle = fbm(q * 0.006 + uSeed) * 0.65 + fbm(q * 0.022 + uSeed * 2.0) * 0.35;
+  vec3 tint = mix(vec3(1.0, 0.985, 0.95), vec3(0.86, 0.74, 0.55), smoothstep(0.35, 0.8, mottle) * 0.85);
+  vec3 base = mix(vec3(1.0), tint, uMottle);
+  vec3 tone = vec3(1.0);
+  float edge = min(min(uv.x, 1.0 - uv.x) * uSize.x, uv.y * uSize.y);
+  float ragged = edge + (fbm(q * 0.05 + 3.0) - 0.5) * 26.0;
+  tone *= mix(vec3(1.0), vec3(0.62, 0.45, 0.28), (1.0 - smoothstep(0.0, 46.0, ragged)) * 0.85);
+  vec2 cell = floor(p / 70.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 c = cell + vec2(float(i), float(j));
+      if (hash12(c + uSeed) > 0.16) continue;
+      vec2 centre = (c + vec2(hash12(c + 1.7), hash12(c + 4.1))) * 70.0;
+      float radius = mix(1.5, 6.5, hash12(c + 8.3));
+      float spot = 1.0 - smoothstep(radius * 0.4, radius * 2.4, length(p - centre));
+      tone *= mix(vec3(1.0), vec3(0.8, 0.62, 0.45), spot * 0.7);
+    }
+  }
+  float tide = smoothstep(0.015, 0.0, abs(fbm(q * 0.004 + uSeed + 31.0) - 0.58));
+  tone *= mix(vec3(1.0), vec3(0.82, 0.7, 0.52), tide * 0.35);
+  float fold = (p.y - uFold) / 2.5;
+  tone *= 1.0 - 0.08 * exp(-fold * fold) + 0.03 * exp(-(fold - 2.2) * (fold - 2.2));
+  float chainTone = exp(-pow((mod(p.x, 96.0) - 48.0) / 3.2, 2.0));
+  base *= 1.0 - uLaid * (0.03 * chainTone + 0.005 * (0.5 + 0.5 * sin(p.y * 6.2831 / 4.2)));
+  base *= 1.0 - uLinen * 0.02 * (0.5 + 0.5 * sin(p.x * 6.2831 / 3.4) * sin(p.y * 6.2831 / 3.4));
+  if (uFelt > 0.0) {
+    vec2 q = TURN * p;
+    float threads = smoothstep(0.86, 0.97, noise(q * vec2(0.06, 1.1) + uSeed));
+    threads += smoothstep(0.86, 0.97, noise(TURN * q * vec2(1.1, 0.06) + 3.0));
+    base *= 1.0 - uFelt * 0.035 * min(1.0, threads);
+  }
+  return base * mix(vec3(1.0), tone, uAge);
+}
+void main() {
+  vec2 p = vec2(gl_FragCoord.x, uSize.y * uScale - gl_FragCoord.y) / uScale;
+  float e = 0.9;
+  float h0 = relief(p);
+  float slope = 1.2 + 3.0 * uCrinkle;
+  vec3 n = normalize(vec3(-(relief(p + vec2(e, 0.0)) - h0) * slope, -(relief(p + vec2(0.0, e)) - h0) * slope, 1.0));
+  outAlbedo = vec4(albedo(p), 1.0);
+  outNormal = vec4(n.xy * 0.5 + 0.5, 0.0, 1.0);
+}`;
+exports.LIGHT = `#version 300 es
+precision highp float;
+uniform sampler2D uAlbedo; uniform sampler2D uNormal;
+uniform vec2 uSize; uniform float uScale; uniform int uSource;
+uniform vec3 uLightPos; uniform vec3 uLightDir; uniform vec2 uCone; uniform float uExposure;
+uniform vec4 uWindow; uniform vec4 uPanes; uniform vec3 uTint; uniform float uLamp;
+uniform float uAmbient; uniform vec3 uAmbientTint; uniform float uRelief; uniform float uCrinkle;
+uniform float uGrain; uniform float uTime; uniform float uSoft;
+out vec4 outColor;
+float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float between(float offset, float cell, float bar, float soft) {
+  float t = offset / cell;
+  return smoothstep(bar - soft, bar + soft, abs(t - round(t)) * cell);
+}
+float gobo(vec2 p) {
+  float soft = max(0.5, uPanes.z);
+  p.x -= (p.y - uWindow.y) * uPanes.w;
+  vec2 d = p - uWindow.xy;
+  vec2 inside = smoothstep(-soft, soft, uWindow.zw * 0.5 - abs(d));
+  vec2 pane = uWindow.zw / uPanes.xy;
+  float bar = clamp(0.04 * min(pane.x, pane.y), 4.0, 16.0);
+  float open = between(d.x + uWindow.z * 0.5, pane.x, bar, soft) * between(d.y + uWindow.w * 0.5, pane.y, bar, soft);
+  return inside.x * inside.y * (0.3 + 0.7 * open);
+}
+const float BULB = 30.0;
+float irradiance(vec3 P, vec3 n) {
+  // 3 是静止的漫射光：没有灯座、没有光锥、没有热点，只有一片从纸心散开的柔光。
+  // 它不看光标、不看时间，同一个纸样永远算出同一张图——所以这一路只在纸纹重建时算一次，
+  // 打字、滚动、切会话都不会再惊动它。椭圆而不是圆：纸是横的，等比扩散会像一块圆斑
+  if (uSource == 3) {
+    vec2 centre = P.xy / uSize - vec2(0.5, 0.44);
+    float reach = length(centre * vec2(0.95, 1.30));
+    return mix(1.0, 0.52, smoothstep(0.04, 1.05, reach));
+  }
+  if (uSource == 2) return max(0.0, dot(n, -uLightDir)) * gobo(P.xy);
+  vec3 d = P - uLightPos; float d2 = max(1.0, dot(d, d)); vec3 r = d * inversesqrt(d2);
+  float near = uSoft * (1.0 - smoothstep(0.0, 260.0, sqrt(d2)));
+  float cone = smoothstep(uCone.x - 0.3 * near, uCone.y, dot(r, uLightDir));
+  return cone * max(0.0, -dot(n, r)) / (d2 + uSoft * BULB * BULB);
+}
+void main() {
+  ivec2 texel = ivec2(gl_FragCoord.xy);
+  vec3 albedo = texelFetch(uAlbedo, texel, 0).rgb;
+  vec2 nxy = texelFetch(uNormal, texel, 0).xy * 2.0 - 1.0;
+  vec2 p = vec2(gl_FragCoord.x, uSize.y * uScale - gl_FragCoord.y) / uScale;
+  float lit = (1.0 - exp(-irradiance(vec3(p, 0.0), vec3(0.0, 0.0, 1.0)) * uExposure)) * uLamp;
+  vec2 uv = p / uSize;
+  float vignette = smoothstep(0.15, 1.1, length((uv - vec2(0.5, 0.55)) * vec2(1.0, 1.15)));
+  // 这一项是灯亮着时压给环境光的那一点暗角。nocturne 的 0.3 配的是一盏罩住半个屏幕的灯，
+  // 换成圆形光斑之后那三成正好落在唯一还亮着的地方，于是边角整片发闷。一路降到 0.04
+  float ambient = mix(1.0, uAmbient * (1.0 - 0.04 * vignette), uLamp);
+  vec3 irr = uAmbientTint * ambient + (1.0 - ambient) * lit * uTint;
+  float relief = uRelief * (1.0 - 0.4 * lit);
+  float bound = (0.16 * uCrinkle + 0.04) * relief;
+  irr *= clamp(1.0 + (-nxy.x * 0.35 - nxy.y * 0.55) * (0.6 + 2.2 * uCrinkle) * relief, 1.0 - bound, 1.0 + bound);
+  irr *= mix(0.9, 1.0, smoothstep(0.0, 28.0, min(uv.x, 1.0 - uv.x) * uSize.x));
+  float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5;
+  outColor = vec4(clamp(albedo * irr + g * (uGrain * 0.045 + 1.5 / 255.0), 0.0, 1.0), 1.0);
+}`;
+    };
+
+    __registry["chat/paper/paper-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_CSS = exports.PAPER_HIDDEN_ATTRIBUTE = exports.PAPER_VIGNETTE_ATTRIBUTE = exports.PAPER_GLOW_ATTRIBUTE = exports.PAPER_SHEET_ATTRIBUTE = void 0;
+/**
+ * 纸感的样式。
+ *
+ * 三件事：给两片全屏 canvas 与那层暗角找位置、把纸色铺到宿主真正画底的几处、以及让侧栏在需要时
+ * 躲开纸。整张表都以根元素上的 `data-dsh-chat-ux-paper` 为前提——那个标记不在时一条都不命中，
+ * 于是关掉纸感是彻底的，不必逐条撤销
+ */
+const paper_tokens_1 = require("./paper-tokens");
+// 两片 canvas 与暗角上的标记，值就是它们的角色
+exports.PAPER_SHEET_ATTRIBUTE = "data-dsh-chat-ux-paper-sheet";
+exports.PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow";
+exports.PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette";
+/**
+ * 收起标记。写在三件身上就是「这一层此刻不参与绘制」。
+ *
+ * 用它而不是 hidden 属性：UA 样式表里 [hidden] 只有 display:none 这一条，而本表给三件写的是
+ * display:block，作者样式恒赢，于是 hidden 一点作用都没有（实测：加了 hidden 之后
+ * computed display 仍是 block，截图与纸开逐字节相同）
+ */
+exports.PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden";
+// 纸层的层级。必须高过页面里所有正常内容，才压得住字；发送气泡的替身是 2147483000，比这里高，所以它飞在纸上面
+const SHEET_Z = "2147482000";
+const GLOW_Z = "2147482001";
+const VIGNETTE_Z = "2147482002";
+// 根元素上的选择器前缀，整张表的共同前提
+const ROOT = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
+/**
+ * 纸感那一整张表。
+ *
+ * 两片 canvas 直接挂在 body 下、不带任何包裹容器：mix-blend-mode 的元素一旦被包进带 z-index 的容器，
+ * 就会连同那个容器的隔离栈一起与页面断开，multiply 退化成直接覆盖。这条是 nocturne 实测出来的，
+ * 这里照搬同样的挂法
+ */
+exports.PAPER_CSS = `
+/* 纸与光：两片 fixed 全屏 canvas。left / top / width / height 由 paper-mount 逐帧写，
+   纸不铺侧栏时那几项就是左侧栏右边那一块 */
+${ROOT} [${exports.PAPER_SHEET_ATTRIBUTE}],
+${ROOT} [${exports.PAPER_GLOW_ATTRIBUTE}],
+${ROOT} [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+${ROOT} [${exports.PAPER_SHEET_ATTRIBUTE}] {
+  mix-blend-mode: multiply;
+  z-index: ${SHEET_Z};
+}
+
+${ROOT} [${exports.PAPER_GLOW_ATTRIBUTE}] {
+  mix-blend-mode: screen;
+  z-index: ${GLOW_Z};
+}
+
+/* 暗角挂在单独一层上，位置跟着纸走：纸不覆盖左侧栏时，那块的窗口材质不该被压暗 */
+${ROOT} [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
+  z-index: ${VIGNETTE_Z};
+  background: radial-gradient(
+    ellipse 92% 88% at 50% 46%,
+    transparent 52%,
+    rgba(0, 0, 0, calc(var(${paper_tokens_1.PAPER_PREFIX}vignette, 0.35) * 0.30)) 100%
+  );
+}
+
+/* 收起来的三件。这里必须自己写一条，而不是靠 UA 的 [hidden]{display:none}：
+   上面那条把 display 写成了 block，作者样式压过 UA 样式表，于是加了 hidden 也照样是 block、
+   照样参与合成（实测截图与纸开逐字节相同）。
+   连定位一起撤掉也是必须的：只藏不撤的话，三块 1440x900 的元素仍然撑在文档流里，
+   body.scrollHeight 会从 900 涨到 3610 */
+${ROOT} [${exports.PAPER_HIDDEN_ATTRIBUTE}] {
+  display: none;
+  /* 定位一起撤：只藏不撤的话，三块 1440x900 的元素仍会撑在文档流里 */
+  position: static;
+  left: auto;
+  top: auto;
+  width: 0;
+  height: 0;
+}
+
+/* 纸面下的字与背景：宿主的底色与侧栏填充色由 paper-tokens 内联写，这里只管那些靠自己的色值画底、
+   不认令牌的地方 */
+${ROOT} ::selection {
+  background: var(${paper_tokens_1.PAPER_PREFIX}selection, rgba(176, 138, 74, 0.28));
+  color: inherit;
+}
+
+`;
+    };
+
+    __registry["chat/paper/paper-tokens.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 纸感的配色令牌。
+ *
+ * 本插件从不写 --dsw-alias-*：那是宿主的语义别名，也是别的皮肤（dsh-claude-style 之类）在改的同一条通道。
+ * 纸只需要把底色、墨色、房间色这几样交给自己的一套变量，样式表再从这些变量派生。
+ *
+ * 但纸色必须先落到宿主真正画底的那条令牌上，否则 canvas 的 multiply 只能压出光照，纸会透成
+ * 宿主原来的米白（shader 里的 albedo 是接近白的）。所以这里分两步：
+ *   1. 我们自己的一整套 `--dsh-chat-ux-paper-*`，写在根元素上，样式表、光标、辉光都读它；
+ *   2. 宿主的几条令牌（整页底色、侧栏填充色、正文与代码字族），只写纸自己那一项值。
+ * 第二条是「纸盖上去之后底色得是纸色」这件事无法绕开的最小代价；每一笔都记着原值与优先级，
+ * 卸载与关掉时逐项还原，别人后写过的就不抢回来
+ *
+ * 写在哪个元素上是有讲究的，这不是风格问题而是层级问题：dsh 的 ui-theme 把 `--dsw-alias-bg-base`
+ * 定义在 `body` 上（design-platform.css 的 `body { … }`），主题包又把 `--dsh-font-family-text`
+ * 写在 body 上。内联写在 `html` 上只是「根元素的声明」，body 自己的声明是本地声明、赢过继承——
+ * 实测就是这么翻的车：html 上是 #efdfbd，body 上算出来仍是 #fff。所以宿主那几条一律写到 body 上
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_ROOT_ATTRIBUTE = exports.PAPER_PREFIX = void 0;
+exports.restorePaperTokens = restorePaperTokens;
+exports.applyPaperTokens = applyPaperTokens;
+exports.clearPaperTokens = clearPaperTokens;
+exports.paperTokenSet = paperTokenSet;
+const paper_math_1 = require("./paper-math");
+const paper_tables_1 = require("./paper-tables");
+// 本插件自己的变量前缀
+exports.PAPER_PREFIX = "--dsh-chat-ux-paper-";
+// 会被改写的宿主令牌。三条：整页底色、侧栏填充色、正文与代码的字族
+const HOST_BASE_PROPERTY = "--dsw-alias-bg-base";
+const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill";
+const HOST_TEXT_FONT_PROPERTY = "--dsh-font-family-text";
+const HOST_CODE_FONT_PROPERTY = "--dsh-font-family-code";
+/**
+ * 纸感的正文与代码字族。
+ *
+ * 纸面上的字是衬线，这是纸感的一半——老式数字配衬线字身是 ebook 的读法，配无衬线就只是一块米色。
+ * 栈的写法与 nocturne 逐字一致：自起的名字没有，用字体的本名，后面一路退到各平台的衬线系统字。
+ * dsh 自己的 base.css 把 --dsw-font-family 定义成 var(--dsh-font-family-text, 默认值)，所以写这一条就够
+ */
+const PAPER_TEXT_FONT_STACK = '"EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, '
+    + '"Source Han Serif SC", "Songti SC", "Noto Serif CJK SC", serif';
+// 代码字族：打字机体的那一支，退到 Courier 与 Consolas
+const PAPER_CODE_FONT_STACK = '"Courier Prime", "IBM Plex Mono", "Courier New", "DejaVu Sans Mono", ui-monospace, monospace';
+// 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
+const ownedList = [];
+// 记下原值并写入。同一个元素上的同一名字只记第一次的原值
+function setOwned(element, name, value, priority = "") {
+    const existing = ownedList.find((owned) => owned.element === element && owned.name === name);
+    if (existing === undefined) {
+        ownedList.push({
+            element,
+            name,
+            valueBefore: element.style.getPropertyValue(name),
+            priorityBefore: element.style.getPropertyPriority(name),
+            valueWritten: value,
+            priorityWritten: priority,
+        });
+    }
+    else {
+        existing.valueWritten = value;
+        existing.priorityWritten = priority;
+    }
+    element.style.setProperty(name, value, priority);
+}
+// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它
+function releaseOwned(element, name) {
+    const index = ownedList.findIndex((owned) => owned.element === element && owned.name === name);
+    if (index < 0)
+        return;
+    const owned = ownedList[index];
+    if (owned === undefined)
+        return;
+    if (element.style.getPropertyValue(name) === owned.valueWritten
+        && element.style.getPropertyPriority(name) === owned.priorityWritten) {
+        if (owned.valueBefore === "")
+            element.style.removeProperty(name);
+        else
+            element.style.setProperty(name, owned.valueBefore, owned.priorityBefore);
+    }
+    ownedList.splice(index, 1);
+}
+// 把写过的全部还回去：当下值仍是我们的写入值才动手
+function restorePaperTokens() {
+    for (const owned of ownedList) {
+        if (owned.element.style.getPropertyValue(owned.name) !== owned.valueWritten
+            || owned.element.style.getPropertyPriority(owned.name) !== owned.priorityWritten)
+            continue;
+        if (owned.valueBefore === "")
+            owned.element.style.removeProperty(owned.name);
+        else
+            owned.element.style.setProperty(owned.name, owned.valueBefore, owned.priorityBefore);
+    }
+    ownedList.length = 0;
+}
+/**
+ * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
+ * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
+ */
+function applyPaperTokens(set, includeSidebar) {
+    const root = document.documentElement;
+    const body = document.body;
+    // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
+    root.setAttribute(exports.PAPER_ROOT_ATTRIBUTE, "");
+    // 自己那一套写在根元素上：没有别人定义过它们，继承就能一路到每个元素
+    const ownPairs = [
+        [exports.PAPER_PREFIX + "paper", set.paper],
+        [exports.PAPER_PREFIX + "ink", set.ink],
+        [exports.PAPER_PREFIX + "ink-muted", set.inkMuted],
+        [exports.PAPER_PREFIX + "room", set.room],
+        [exports.PAPER_PREFIX + "room-edge", set.roomEdge],
+        [exports.PAPER_PREFIX + "light-rgb", set.lightRgb],
+        [exports.PAPER_PREFIX + "selection", set.selection],
+        [exports.PAPER_PREFIX + "vignette", String(set.vignette)],
+    ];
+    for (const [name, value] of ownPairs)
+        setOwned(root, name, value);
+    // 宿主那几条得写在 body 上：ui-theme 在 body 的规则里定义它们，内联写在根元素上只算「根元素的声明」，
+    // 输给 body 自己的本地声明。body 还没建出来（脚本跑得比文档早）时这一帧先跳过，下一帧会再来
+    if (body === null)
+        return;
+    setOwned(body, HOST_BASE_PROPERTY, set.paper);
+    // 字族跟着纸感走：关掉时这两条会被还原，页面回到 dsh 自己那套或读者在设置里填的那套
+    setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK);
+    setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK);
+    // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
+    // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
+    // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着
+    if (includeSidebar)
+        setOwned(body, HOST_SIDEBAR_PROPERTY, set.paper);
+    else
+        releaseOwned(body, HOST_SIDEBAR_PROPERTY);
+}
+/**
+ * 撤掉纸：把我们写过的全部还原，并摘掉范围标记。
+ *
+ * 标记摘得晚一步也行——样式表里所有纸规则都以它为前提，摘掉之后一条都不命中，
+ * 于是即使某条属性没还原成功，页面也只是回到宿主自己的样子
+ */
+function clearPaperTokens() {
+    restorePaperTokens();
+    document.documentElement.removeAttribute(exports.PAPER_ROOT_ATTRIBUTE);
+}
+// 挂在根元素上的范围标记：纸开着且有值时才在
+exports.PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper";
+/**
+ * 从纸样那一串算出这一套颜色。
+ *
+ * 挂载层与安装层都要它：前者在帧里按脏标记重落，后者在装上的那一刻落一次（首帧之前页面就该是纸的调子）。
+ * 两处算出来的必须是同一套，所以只写这一处
+ */
+function paperTokenSet(style) {
+    const profile = (0, paper_tables_1.resolveProfile)(style);
+    const paper = (0, paper_tables_1.paperOf)(profile);
+    const room = (0, paper_tables_1.roomOf)(profile);
+    return {
+        paper: paper.paper,
+        ink: paper.ink,
+        inkMuted: paper.inkMuted,
+        room: room.palette.room,
+        roomEdge: room.palette.roomEdge,
+        lightRgb: (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255)).join(" "),
+        // 选区色：暗纸用纸自带的那一支，亮纸用房间的描金。与 nocturne 的 washColor 同一条规则
+        selection: paper.appearance === "dark" ? paper.selection : (room.selection === "" ? paper.selection : room.selection),
+        vignette: room.atmosphere.vignette,
+    };
+}
+    };
+
+    __registry["chat/paper/paper-tables.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_DEFAULT_SETTINGS = exports.DEFAULT_ROOM_ID = exports.DEFAULT_PAPER_ID = exports.PROFILE_SEPARATOR = exports.ROOM_ID_LIST = exports.ROOMS = exports.PAPER_ID_LIST = exports.PAPERS = exports.NIGHT_ANSI = exports.LIGHT_ANSI = void 0;
+exports.resolveProfile = resolveProfile;
+exports.profileId = profileId;
+exports.paperAndRoomOf = paperAndRoomOf;
+exports.paperOf = paperOf;
+exports.roomOf = roomOf;
+exports.washColor = washColor;
+exports.surfaceColor = surfaceColor;
+/**
+ * 纸与房间：五张纸、三个房间，以及从它们派生出来的颜色。
+ *
+ * 纸管纸面与墨，房间管纸面的光色与暗角，两者正交，所以是 5 × 3 = 15 种组合。
+ * 组合 id 就用双下划线把两段拼起来：cotton__paper-and-ink。它既是配置里存的那一个字符串，
+ * 也是本模块唯一接受的输入形式，认不出的两半各自落到默认
+ *
+ * 与 nocturne 的差别只在命名：那边的 THEMES 在这里叫 ROOMS。字段一个没动——它们直接喂给
+ * buildRig 与 paper-light 的 uniform，改名只会让对照原文变难
+ */
+const paper_math_1 = require("./paper-math");
+// 16 色 ANSI 的浅色那一套。纸感目前不画终端，但纸的墨色与选择色跟它是同一组来源，留着以便一致
+exports.LIGHT_ANSI = {
+    black: "#2b231c",
+    red: "#9c3a2a",
+    green: "#4c6b2f",
+    yellow: "#8a6a1c",
+    blue: "#2f5277",
+    magenta: "#7b3f6e",
+    cyan: "#2e6b6a",
+    white: "#7d7060",
+    lightBlack: "#6e6153",
+    lightRed: "#b0452a",
+    lightGreen: "#557a33",
+    lightYellow: "#94701a",
+    lightBlue: "#3a6491",
+    lightMagenta: "#8c4a7e",
+    lightCyan: "#317876",
+    lightWhite: "#5b4f43",
+};
+// 深色那一套
+exports.NIGHT_ANSI = {
+    black: "#2a2b42",
+    red: "#d88a9a",
+    green: "#9cc3a4",
+    yellow: "#e2cf9a",
+    blue: "#8ea8e0",
+    magenta: "#b79ce0",
+    cyan: "#8cc8d6",
+    white: "#c9cadf",
+    lightBlack: "#6f7192",
+    lightRed: "#eba5b3",
+    lightGreen: "#b4d8bc",
+    lightYellow: "#efdfb2",
+    lightBlue: "#aac0ef",
+    lightMagenta: "#cbb5ef",
+    lightCyan: "#a8dbe6",
+    lightWhite: "#f0f0fa",
+};
+/**
+ * 五张纸。名字与 nocturne 文档 4.5 那张表的「性格」列一一对应，除了羊皮纸——它已经下线。
+ * 默认也不用上游的 onionskin：它极薄极平，铺满一整扇窗之后几乎没有可看的东西
+ */
+exports.PAPERS = {
+    cotton: {
+        id: "cotton",
+        name: "Cotton",
+        appearance: "light",
+        paper: "#eee6d5",
+        ink: "#2a2019",
+        inkMuted: "#6b5f52",
+        cursor: "#3a2c20",
+        selection: "rgba(52, 64, 112, 0.2)",
+        ansi: exports.LIGHT_ANSI,
+        surface: { crinkle: .3, felt: 1, laid: 0, linen: 0, mottle: .08, age: 0 },
+    },
+    laid: {
+        id: "laid",
+        name: "Laid",
+        appearance: "light",
+        paper: "#f1e9d6",
+        ink: "#2a2019",
+        inkMuted: "#6b5f52",
+        cursor: "#3a2c20",
+        selection: "rgba(52, 64, 112, 0.2)",
+        ansi: exports.LIGHT_ANSI,
+        surface: { crinkle: .22, felt: 0, laid: 1, linen: 0, mottle: .18, age: 0 },
+    },
+    linen: {
+        id: "linen",
+        name: "Linen",
+        appearance: "light",
+        paper: "#ebe5d8",
+        ink: "#2a2019",
+        inkMuted: "#6b5f52",
+        cursor: "#3a2c20",
+        selection: "rgba(52, 64, 112, 0.2)",
+        ansi: exports.LIGHT_ANSI,
+        surface: { crinkle: .2, felt: 0, laid: 0, linen: 1, mottle: .08, age: 0 },
+    },
+    onionskin: {
+        id: "onionskin",
+        name: "Onionskin",
+        appearance: "light",
+        paper: "#f2f1ea",
+        ink: "#2a2019",
+        inkMuted: "#6b5f52",
+        cursor: "#3a2c20",
+        selection: "rgba(52, 64, 112, 0.2)",
+        ansi: exports.LIGHT_ANSI,
+        surface: { crinkle: .08, felt: 0, laid: 0, linen: 0, mottle: .04, age: 0 },
+    },
+    night: {
+        id: "night",
+        name: "Night",
+        appearance: "dark",
+        paper: "#1d1a20",
+        ink: "#e6e1ea",
+        inkMuted: "#9a94a6",
+        cursor: "#e9e7ff",
+        selection: "rgba(196, 188, 255, 0.2)",
+        ansi: exports.NIGHT_ANSI,
+        surface: { crinkle: .3, felt: 0, laid: 0, linen: 0, mottle: .1, age: 0 },
+    },
+};
+/**
+ * 纸的 id 列表。顺序是界面上那几张卡片的顺序，不与 PAPERS 的书写顺序绑定。
+ *
+ * 羊皮纸（parchment）已下线：它那套 mottle 1.0 + age .75 的做旧——狐斑、水渍、折痕、烧边——在
+ * 一整扇窗的尺度上读起来是脏，不是旧。纸纹参数留在别处也不用，整块删掉比留个默认落点更省心
+ */
+exports.PAPER_ID_LIST = ["onionskin", "cotton", "laid", "linen", "night"];
+// 三个房间。角色上对应 nocturne 的 THEMES，改名是因为这里的纸与房间是正交的两件事
+exports.ROOMS = {
+    "paper-and-ink": {
+        id: "paper-and-ink",
+        name: "Paper & Ink",
+        selection: "rgba(176,138,74,.30)",
+        palette: {
+            room: "#241a14", roomEdge: "#070504", paper: "#f4ecdb", paperEdge: "#e1d1b0",
+            ink: "#2b231c", inkMuted: "#6e6153", inkFaint: "#a89a85",
+            accent: "#b08a4a", accentSoft: "#d9c08a", border: "#c9b48e",
+        },
+        light: { source: "desk-lamp", color: "#ffd29a", position: { x: .5, y: .5 }, shade: .42 },
+        atmosphere: { particles: .1, filmGrain: .08, vignette: .35 },
+    },
+    "midnight-study": {
+        id: "midnight-study",
+        name: "Midnight Study",
+        selection: "rgba(201,164,92,.30)",
+        palette: {
+            room: "#140f0b", roomEdge: "#030202", paper: "#1c1714", paperEdge: "#2c241e",
+            ink: "#eadfc8", inkMuted: "#a39580", inkFaint: "#6b5f52",
+            accent: "#c9a45c", accentSoft: "#8a6f3d", border: "#3a2f27",
+        },
+        light: { source: "desk-lamp", color: "#ffb35c", position: { x: .5, y: .5 }, shade: .5 },
+        atmosphere: { particles: .2, filmGrain: .12, vignette: .6 },
+    },
+    "moonlit-poetry": {
+        id: "moonlit-poetry",
+        name: "Moonlit Poetry",
+        selection: "rgba(160,168,214,.28)",
+        palette: {
+            room: "#0e0e1a", roomEdge: "#030307", paper: "#171826", paperEdge: "#26283e",
+            ink: "#dcdcec", inkMuted: "#9496b4", inkFaint: "#5c5e7c",
+            accent: "#b7bdd6", accentSoft: "#6e7396", border: "#2c2e48",
+        },
+        light: { source: "desk-lamp", color: "#c9d4ff", position: { x: .5, y: .5 }, shade: .48 },
+        atmosphere: { particles: .35, filmGrain: .1, vignette: .55 },
+    },
+};
+// 房间的 id 列表，顺序就是界面上的顺序
+exports.ROOM_ID_LIST = ["paper-and-ink", "midnight-study", "moonlit-poetry"];
+// 纸与房间之间的分隔符，组合 id 靠它拼
+exports.PROFILE_SEPARATOR = "__";
+// 默认的那张纸：棉浆纸。上游默认是 onionskin（极薄极平，几乎没有纹理），
+// 一整扇窗铺下来反而像没铺；棉浆纸有毡压的纸齿，空处也有东西可看
+exports.DEFAULT_PAPER_ID = "cotton";
+// 默认的那个房间
+exports.DEFAULT_ROOM_ID = "paper-and-ink";
+/**
+ * 出厂参数。底色仍是 nocturne 的 SETTINGS，改过的四项都在下面各自写着理由：
+ * 开的是静止的台灯，颗粒与尘埃关掉，纸纹与浮雕降下来
+ */
+exports.PAPER_DEFAULT_SETTINGS = {
+    lamp: true,
+    enabled: true,
+    // 灯的强度。静止的台灯光斑只占屏幕一小块，1.1 那点亮度在环境光占到八成之后几乎看不出来，
+    // 所以抬到 2.6：灯下纹丝不差地亮到接近纸的原色，灯外由 ambientLevel 那道下限兜住
+    intensity: 2.6,
+    spread: 74,
+    beam: "pointed",
+    aim: 0,
+    reach: 1,
+    softness: .65,
+    // 胶片颗粒与空气中的尘埃都关掉：它们是「一盏真实的灯照在一张真实的纸上」的一部分，
+    // 但整扇窗的尺度上，颗粒读起来是显示器的噪点，尘埃读起来是脏。0 之后这两样都不会再画
+    grain: 0,
+    cursorGlow: .35,
+    // 纸纹强度。nocturne 的 1 是按 ~660×620 的纸调的，铺到 1440 宽的一整扇窗上，同一组噪声频率
+    // 就显得又密又硬——读者的话是「像墙面而不是纸」。降到 0.28 之后纹理退成纸的底色变化，
+    // 凑近看得出织纹，退开就是一整片纸
+    texture: .18,
+    paperIllumination: .22,
+    particles: 0,
+    window: { x: .5, y: .5, columns: 3, rows: 2, softness: .15, slant: 0 },
+};
+/**
+ * 把配置里那个组合 id 拆成纸与房间。
+ *
+ * 认不出的一律落到默认：配置是读者手改过的历史值、或者两个字段的拼法变过，
+ * 都不该让整块纸不画。空值、只有一个分隔符、多出第二段，走的都是这条路
+ */
+function resolveProfile(profileId) {
+    const [paperPart, roomPart] = (profileId ?? "").split(exports.PROFILE_SEPARATOR);
+    const paperId = paperPart ?? "";
+    const roomId = roomPart ?? "";
+    return {
+        paperId: exports.PAPERS[paperId] === undefined ? exports.DEFAULT_PAPER_ID : paperId,
+        roomId: exports.ROOMS[roomId] === undefined ? exports.DEFAULT_ROOM_ID : roomId,
+    };
+}
+// 组合 id 拼回去。界面上那 5 乘 3 共 15 种组合与配置里存的值走的都是它
+function profileId(paperId, roomId) {
+    return paperId + exports.PROFILE_SEPARATOR + roomId;
+}
+/**
+ * 配置里那个值直接查纸与房间，一步到位——挂载那一层每帧都要的结果。
+ *
+ * 认不出的组合由 resolveProfile 落到默认，所以这里永远拿得到
+ */
+function paperAndRoomOf(profileId) {
+    const profile = resolveProfile(profileId);
+    return { paper: paperOf(profile), room: roomOf(profile) };
+}
+/**
+ * 一份 profile 对应的纸。
+ *
+ * resolveProfile 已经保证 id 在表里，所以这里取第二次仍然为空只可能是表自己坏了——
+ * 那是同一份文件里的字面量，编译期就该发现，所以直接抛，不把一张没有参数的纸喂进着色器
+ */
+function paperOf(profile) {
+    const paper = exports.PAPERS[profile.paperId];
+    if (paper === undefined)
+        throw new Error("dsh-chat-ux paper: unknown paper " + profile.paperId);
+    return paper;
+}
+// 一份 profile 对应的房间。空值的处置同 paperOf
+function roomOf(profile) {
+    const room = exports.ROOMS[profile.roomId];
+    if (room === undefined)
+        throw new Error("dsh-chat-ux paper: unknown room " + profile.roomId);
+    return room;
+}
+/**
+ * 选区的底色：纸自己的调子，不是浏览器的蓝。
+ *
+ * 浅色纸用房间的描金（与细边、页码同源），深色纸用纸自带的月白。nocturne 那边的规则是
+ * "主题选色优先、纸选色兜底"；这里的纸与房间正交，所以按纸的明暗分流
+ */
+function washColor(profile) {
+    const paper = paperOf(profile);
+    if (paper.appearance === "dark")
+        return paper.selection;
+    // 房间没有自己的选区色时退回纸自带的那一支：空字符串在 CSS 里等于没写，
+    // 而选区总得有个颜色
+    const roomSelection = roomOf(profile).selection;
+    return roomSelection === "" ? paper.selection : roomSelection;
+}
+/**
+ * 纸面上的"另一层纸"：把纸色朝墨色调一点。
+ *
+ * 气泡、输入框、菜单、侧栏都用它——整扇窗是一张纸，这些是纸上压出来的一层，不是浮在纸上的白卡片。
+ * 深色纸上 ink 是浅的，所以这条在夜纸上会自动变成"略亮"，不需要第二套值
+ */
+function surfaceColor(profile, amount) {
+    const paper = paperOf(profile);
+    const base = (0, paper_math_1.toUnit)(paper.paper);
+    const ink = (0, paper_math_1.toUnit)(paper.ink);
+    const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (ink[index] ?? 0) * amount) * 255));
+    return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
+}
+    };
+
     __registry["chat/send-flight/send-flight.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -6302,8 +8725,12 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
+const paper_styles_1 = require("./paper-styles");
 const settings_scope_1 = require("./settings-scope");
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
+const PAPER_ON_FIELD = "paperOn";
+const PAPER_STYLE_FIELD = "paperStyle";
+const PAPER_SIDEBAR_FIELD = "paperSidebar";
 const AUTO_FOLD_FIELD = "autoFold";
 const CARET_FIELD = "caretMotion";
 const HIT_REEL_FIELD = "hitReel";
@@ -6313,7 +8740,30 @@ const LIVE_DIFF_FIELD = "liveDiff";
 const FOLLOW_FIELD = "followOnAppear";
 const SEND_FLIGHT_FIELD = "sendFlight";
 const ZH_COPY = {
-    summary: () => "光标动效、读数、输入框玻璃与发送气泡都在这里调。",
+    summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
+    paperLabel: "纸感",
+    paperHint: "整页铺一张纸，页面底色换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层。"
+        + "关掉就回到 dsh 原来的样子。",
+    paperStyleLabel: "纸样",
+    paperStyleHint: "纸与房间是两个维度，各自挑一个，五张纸乘三个房间共十五种。纸决定纸面的颜色与纹理，"
+        + "房间决定纸面的光色与暗角。纸感关掉时这一项不起作用。",
+    paperDimension: "纸",
+    roomDimension: "房间",
+    paperNames: {
+        cotton: "棉浆",
+        linen: "亚麻",
+        laid: "帘纹",
+        onionskin: "葱皮",
+        night: "夜纸",
+    },
+    roomNames: {
+        "paper-and-ink": "纸与墨",
+        "midnight-study": "子夜书斋",
+        "moonlit-poetry": "月下诗稿",
+    },
+    paperSidebarLabel: "左侧栏也铺纸",
+    paperSidebarHint: "左侧栏那一列也换成同一张纸，整扇窗看起来是一张纸。关掉时左侧栏保持 dsh 自己的底色，"
+        + "只有聊天区铺纸；纸感关掉时这一项同样不起作用。",
     autoFoldLabel: "自动开合",
     autoFoldHint: "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
         + "你自己动手折叠过的，它不再打扰。",
@@ -6348,7 +8798,31 @@ const ZH_COPY = {
     readOnly: "当前设置不可修改，改动无法保存。",
 };
 const EN_COPY = {
-    summary: () => "Caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
+    summary: () => "The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
+    paperLabel: "Paper",
+    paperHint: "The whole page lies on a sheet of paper: the page background takes that paper's tone, so the composer and the "
+        + "bubbles read as layers pressed into it. Off restores dsh's own look.",
+    paperStyleLabel: "Paper and room",
+    paperStyleHint: "Paper and room are two separate dimensions — pick one of each, five papers by three rooms, fifteen in all. "
+        + "The paper sets the colour and grain of the sheet; the room sets where the light comes from and how dark "
+        + "the surroundings go. This row does nothing while paper is off.",
+    paperDimension: "Paper",
+    roomDimension: "Room",
+    paperNames: {
+        cotton: "Cotton",
+        linen: "Linen",
+        laid: "Laid",
+        onionskin: "Onionskin",
+        night: "Night",
+    },
+    roomNames: {
+        "paper-and-ink": "Paper and ink",
+        "midnight-study": "Midnight study",
+        "moonlit-poetry": "Moonlit poetry",
+    },
+    paperSidebarLabel: "Paper the sidebar",
+    paperSidebarHint: "The left sidebar takes the same sheet, so the whole window reads as one piece of paper. Off leaves the "
+        + "sidebar on dsh's own fill and papers the chat area only; it does nothing while paper is off either.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint: "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
         + "tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.",
@@ -6404,6 +8878,9 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [saving, setSaving] = (0, react_1.useState)(false);
     const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
+    const paperOn = storedPaperOn(snapshot.value);
+    const paperSelection = (0, paper_styles_1.splitPaperStyle)(snapshot.value?.paperStyle);
+    const paperSidebarOn = storedPaperSidebar(snapshot.value);
     const autoFoldOn = storedAutoFold(snapshot.value);
     const followOn = storedFollow(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
@@ -6420,6 +8897,9 @@ function ChatUxConfigCard({ scope, locale, view }) {
         { value: "move", label: copy.caretMove },
         { value: "typing", label: copy.caretTyping },
     ];
+    // 纸样那两排色片。挑一个只是把同一个字段的另一半接上，于是换纸不动房间、换房间不动纸
+    const paperLane = (laneLabel, names, values, selected, onPick) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.lane, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.laneTitle, children: laneLabel }), (0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.laneChips, role: "group", "aria-label": laneLabel, children: values.map((value) => ((0, jsx_runtime_1.jsx)("button", { type: "button", className: value === selected ? config_card_styles_1.CARD_CLASS.chip + " " + config_card_styles_1.CARD_CLASS.chipOn : config_card_styles_1.CARD_CLASS.chip, "aria-pressed": value === selected, disabled: controlsDisabled, onClick: () => { if (value !== selected)
+                        onPick(value); }, children: names[value] ?? value }, value))) })] }));
     if (view === "summary")
         return (0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, { children: copy.summary() });
     // 没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件
@@ -6442,9 +8922,20 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
         setSaving(false);
     };
-    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
-    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
+    // 控件装不进右侧那一格的行（纸样那一行有两个维度）用 className 换成上下排
+    const rowChrome = (field, label, hint, control, className) => ((0, jsx_runtime_1.jsxs)("div", { className: className === undefined ? config_card_styles_1.CARD_CLASS.row : config_card_styles_1.CARD_CLASS.row + " " + className, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_STYLE_FIELD, copy.paperStyleLabel, copy.paperStyleHint, ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [paperLane(copy.paperDimension, copy.paperNames, paper_styles_1.PAPER_IDS, paperSelection.paper, (next) => void writeField(PAPER_STYLE_FIELD, (0, paper_styles_1.joinPaperStyle)(next, paperSelection.room), storedPaperStyle)), paperLane(copy.roomDimension, copy.roomNames, paper_styles_1.ROOM_IDS, paperSelection.room, (next) => void writeField(PAPER_STYLE_FIELD, (0, paper_styles_1.joinPaperStyle)(paperSelection.paper, next), storedPaperStyle))] })), config_card_styles_1.CARD_CLASS.stacked), rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperSidebarOn, disabled: controlsDisabled, label: copy.paperSidebarLabel, onChange: (next) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+}
+function storedPaperOn(value) {
+    return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
+}
+// 读回来的是原始字符串：认不出的取值由 splitPaperStyle 兜底，这里只把缺席补成默认那一对
+function storedPaperStyle(value) {
+    return value?.paperStyle ?? settings_scope_1.DEFAULT_PAPER_STYLE;
+}
+function storedPaperSidebar(value) {
+    return value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
 }
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -6509,6 +9000,13 @@ exports.CARD_CLASS = {
     hint: "dsh-chat-ux-card-hint",
     failed: "dsh-chat-ux-card-failed",
     segment: "dsh-chat-ux-card-segment",
+    // 纸样那一行：文字在上、两排色片在下，一行里装下一张纸与一个房间两个维度
+    stacked: "dsh-chat-ux-card-row-stacked",
+    lane: "dsh-chat-ux-card-lane",
+    laneTitle: "dsh-chat-ux-card-lane-title",
+    laneChips: "dsh-chat-ux-card-lane-chips",
+    chip: "dsh-chat-ux-card-chip",
+    chipOn: "dsh-chat-ux-card-chip-on",
 };
 // 每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则
 exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
@@ -6604,7 +9102,134 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 .${exports.CARD_CLASS.segment} {
   flex: none;
 }
+
+/* 纸样那一行：一行里要摆下两个维度，控件没法靠右跟文字并排，于是文字在上、色片铺满下层 */
+.${exports.CARD_CLASS.stacked} {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.${exports.CARD_CLASS.lane} {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.${exports.CARD_CLASS.laneTitle} {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 色片按内容排，一行装不下就换行：纸那排五枚、房间那排三枚，两种屏幕宽度下都不会横向溢出 */
+.${exports.CARD_CLASS.laneChips} {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 一枚色片复用的是这一页自己的控件几何：高度 28、水平 16 的内边距、6 的圆角，
+   底色与描边也来自同一套主题令牌，所以深浅色两套主题都不用第二条规则 */
+.${exports.CARD_CLASS.chip} {
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 16px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+@media (hover: hover) {
+  .${exports.CARD_CLASS.chip}:hover:not(:disabled) {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* 选中的那枚抬起来：底色换成最上面那一层、边去掉，和分段控件那颗滑动指示器同一套观感 */
+.${exports.CARD_CLASS.chipOn} {
+  border-color: transparent;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-soft);
+  color: var(--dsw-alias-label-primary);
+}
+
+.${exports.CARD_CLASS.chip}:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.${exports.CARD_CLASS.chip}:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .${exports.CARD_CLASS.chip} {
+    transition: none;
+  }
+}
 `;
+    };
+
+    __registry["settings/paper-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_STYLE_SEPARATOR = exports.ROOM_IDS = exports.PAPER_IDS = void 0;
+exports.joinPaperStyle = joinPaperStyle;
+exports.splitPaperStyle = splitPaperStyle;
+/**
+ * 纸样的取值：五张纸乘三个房间，一个配置字段里存一对。
+ *
+ * 字面量是 纸__房间（双下划线），比如 cotton__paper-and-ink。两个 id 必须与渲染核
+ * （src/client/chat/paper/paper-tables.ts）里 PAPERS 与 ROOMS 的键一字不差：卡片这一侧认不出的
+ * 取值在下面兜底成标定那一对，渲染核那边认不出的 id 自己退回默认那张纸，两边都不会因为一个生词整块不装
+ */
+const settings_scope_1 = require("./settings-scope");
+// 五张纸，顺序就是卡片上色片网格的顺序，取值与渲染核的 PAPERS 键一致。
+// 羊皮纸已下线：它那套做旧在一整扇窗的尺度上读起来是脏
+exports.PAPER_IDS = ["cotton", "linen", "laid", "onionskin", "night"];
+// 三个房间，取值与渲染核的 ROOMS 键一致
+exports.ROOM_IDS = ["paper-and-ink", "midnight-study", "moonlit-poetry"];
+// 纸与房间在一个字段里的分隔符
+exports.PAPER_STYLE_SEPARATOR = "__";
+// 最后一道保险：连 DEFAULT_PAPER_STYLE 都拆不开时才落到这一对。正常路径上轮不到它，
+// 它存在只是为了让这个函数永远有一个认得出来的选择可以返回
+const LAST_RESORT_SELECTION = { paper: "cotton", room: "paper-and-ink" };
+// 把一对值拼回一个字段：换纸或换房间，都只重写这一个字段
+function joinPaperStyle(paper, room) {
+    return paper + exports.PAPER_STYLE_SEPARATOR + room;
+}
+// 拆开一个字段里的取值。空的、没有分隔符的、有一段是生词的，都退回标定那一对：
+// 读者手改过 profile 也不该让这一行读不出当前选择
+function splitPaperStyle(value) {
+    const known = readPaperSelection(value) ?? readPaperSelection(settings_scope_1.DEFAULT_PAPER_STYLE);
+    return known ?? LAST_RESORT_SELECTION;
+}
+function readPaperSelection(value) {
+    const parts = value?.split(exports.PAPER_STYLE_SEPARATOR) ?? [];
+    const paper = parts[0];
+    const room = parts[1];
+    if (paper === undefined || room === undefined)
+        return null;
+    if (!isPaperId(paper) || !isRoomId(room))
+        return null;
+    return { paper, room };
+}
+function isPaperId(value) {
+    return exports.PAPER_IDS.includes(value);
+}
+function isRoomId(value) {
+    return exports.ROOM_IDS.includes(value);
+}
     };
 
     __registry["settings/transcript-default.js"] = function (module, exports, require) {
@@ -6836,8 +9461,12 @@ exports.CARET_MOTION_CSS = void 0;
  * 三条规则：按掉原生插入符、给挂那根的父元素补定位上下文、把自绘的那根画出来
  * 前两条只认 caret-motion.ts 写上的标记，脚本半途没跑起来时一条都不命中，原生插入符还在
  * 这是这套动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏
+ *
+ * 纸感开着时那根画成一支羽毛，那一份表在 ../paper/caret/quill-styles，拼在最后面：
+ * 它要求根元素上有纸感标记、并且那根带着羽毛标记，条件不成立时这里一个字节都不受影响
  */
 const caret_motion_1 = require("./caret-motion");
+const quill_styles_1 = require("../paper/caret/quill-styles");
 // 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px，与这里同档
 const CARET_WIDTH = "2px";
 // 位移时长，与 VS Code 的平滑光标同档
@@ -6902,6 +9531,182 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
   ${LAYER} {
     transition: none;
     animation: none;
+  }
+}
+`
+    // 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
+    + quill_styles_1.QUILL_CSS;
+    };
+
+    __registry["chat/paper/caret/quill-styles.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.QUILL_CSS = void 0;
+/**
+ * 羽毛光标的样式
+ *
+ * 整张表都拿「根元素上有纸感标记 + 那根自绘插入符上带着 QUILL_ATTRIBUTE」当前提。这两个条件缺一个，
+ * 下面一条都不命中，那根仍是 caret-motion-styles 里的 2px 条——纸感关掉、纸还没挂上、脚本半路停了，
+ * 读者看到的都是原来那根光标，不存在「什么都没有」的那一帧
+ *
+ * 为什么要两个条件都认：QUILL_ATTRIBUTE 是脚本写的，摘掉它的那一瞬间纸感可能已经先关了（配置先落、
+ * 下一帧才重建光标）。只有纸感标记也当前提，那种中间态下底色才会回到 2px 条的那一支，而不是留在
+ * 「被撤掉的底色」上
+ *
+ * 颜色从纸感的两个变量派生（--dsh-chat-ux-paper-ink 与 --dsh-chat-ux-paper-paper），不写死色值：
+ * 换纸、换房间时羽毛自然跟着走。描金与角质笔杆是定值，它们不该随纸变
+ */
+const caret_motion_1 = require("../../caret/caret-motion");
+const paper_tokens_1 = require("../paper-tokens");
+const quill_1 = require("./quill");
+// 呼吸动画的名字。周期与 caret-motion-styles 的闪烁一样，只是「灭」换成了「淡下去」
+const QUILL_BREATHE_NAME = "dsh-chat-ux-paper-quill-breathe";
+// 笔尖那一点光的名字
+const QUILL_GLINT_NAME = "dsh-chat-ux-paper-quill-glint";
+// 纸感标记在根元素上时的选择器前缀
+const ROOT_SCOPE = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
+/**
+ * 装载羽毛的那根自绘插入符，三个属性写作 0-3-1
+ *
+ * 要压过 caret-motion-styles 里那份 0-2-0：它给这根写了 background 与 width，
+ * 羽毛模式下这根只剩一个装着笔的盒子，那两样都得让掉
+ */
+const LAYER = ROOT_SCOPE + " [" + caret_motion_1.CARET_LAYER_ATTRIBUTE + "][" + quill_1.QUILL_ATTRIBUTE + "]";
+// 羽毛根
+const ROOT = "." + quill_1.QUILL_ROOT_CLASS;
+/**
+ * 羽毛光标那一整张表。
+ *
+ * 由 caret-motion-styles 拼进它自己那张，随 CARET_MOTION_CSS 一起进 styles.ts 的 ALL_CSS：
+ * 入口只认那一处，这里不再单独注册
+ */
+exports.QUILL_CSS = `
+/* 装载羽毛的那根盒子：底色让掉，闪烁换成呼吸。
+   呼吸而不是闪烁：笔尖压在插入点上，眼里那一点位置必须一直在，整支淡下去再回来比整根消失更像一支笔。
+   周期与 Chromium 自己的插入符一样是 1s，暗下去的那一段只淡到七成，读者不会以为光标死了
+
+   与 2px 条唯一不一致的地方是**移动时不重新起拍**：caret-motion 每次都把那条闪烁拉回起点，
+   是因为赶上「灭」的那半周期读者会以为光标没跟上来。呼吸最暗也只到七成，羽毛一直在，
+   再把它拉回起点只会让连续打字时它永远停在最亮那一帧，呼吸就没了 */
+${LAYER} {
+  background: none;
+  /* 宽度仍是 2px，不改成 auto：纸感那一层是拿这一根的矩形去点灯、画脚下那圈光的，
+     宽度一缩，它量到的位置就跟着漂。羽毛是绝对定位的子元素，本来就不靠父元素的宽度 */
+  overflow: visible;
+  animation: ${QUILL_BREATHE_NAME} 1s ease-in-out infinite;
+  /* 颜色从纸上的墨与纸派生。这里是兜底的那一档：浏览器不认识 color-mix 时用纯墨色，仍是一支看得见的笔 */
+  --dsh-chat-ux-paper-quill-edge: var(--dsh-chat-ux-paper-ink, currentColor);
+  --dsh-chat-ux-paper-quill-body: var(--dsh-chat-ux-paper-ink, currentColor);
+  --dsh-chat-ux-paper-quill-sheen: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
+  --dsh-chat-ux-paper-quill-barb: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
+  --dsh-chat-ux-paper-quill-rachis: var(--dsh-chat-ux-paper-paper, #f2e9d8);
+  --dsh-chat-ux-paper-quill-down: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
+  /* 描金与角质笔杆：照搬 nocturne 的定值。金色在任何纸色上都成立，跟着纸走反而会糊成一块脏斑 */
+  --dsh-chat-ux-paper-quill-metal-lo: #5e431c;
+  --dsh-chat-ux-paper-quill-metal-hi: #f3dca4;
+  --dsh-chat-ux-paper-quill-metal: #b8904c;
+  --dsh-chat-ux-paper-quill-horn-lo: #8c7651;
+  --dsh-chat-ux-paper-quill-horn-hi: #f3e6c6;
+}
+
+/* 羽片比墨浅一档、羽枝比羽片再亮一档、笔脊就是纸色——这三档由墨与纸两个变量现算，
+   深浅两种纸各自成立，不必分主题写两套 */
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  ${LAYER} {
+    --dsh-chat-ux-paper-quill-body: color-mix(
+      in srgb,
+      var(--dsh-chat-ux-paper-ink, currentColor) 74%,
+      var(--dsh-chat-ux-paper-paper, #f2e9d8)
+    );
+    --dsh-chat-ux-paper-quill-sheen: color-mix(
+      in srgb,
+      var(--dsh-chat-ux-paper-ink, currentColor) 46%,
+      var(--dsh-chat-ux-paper-paper, #f2e9d8)
+    );
+    --dsh-chat-ux-paper-quill-barb: color-mix(
+      in srgb,
+      var(--dsh-chat-ux-paper-paper, #f2e9d8) 58%,
+      var(--dsh-chat-ux-paper-ink, currentColor)
+    );
+    --dsh-chat-ux-paper-quill-down: color-mix(in srgb, var(--dsh-chat-ux-paper-ink, currentColor) 55%, transparent);
+  }
+}
+
+/* 羽毛自己。尺寸与偏移由 quill.ts 的 placeQuillCaret 每帧写在那根盒子里，
+   这里只给材质：一支压在纸上的笔画，所以带一层很浅的落影 */
+${ROOT} {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  pointer-events: none;
+  filter: drop-shadow(0.8px 1.6px 1px rgba(0, 0, 0, 0.3));
+}
+
+/* 纸感标记不在时，装进去的那支笔整个收起来。
+   这一条是给「纸先关、光标下一帧才重建」那种中间态兜底的：那一帧底色已经回到 2px 条，
+   不藏的话会看到一根条和一支笔叠在一起 */
+html:not([${paper_tokens_1.PAPER_ROOT_ATTRIBUTE}]) ${ROOT} {
+  display: none;
+}
+
+/* 羽毛不在怀里时，2px 的条自己回来——这是这套东西唯一真正会伤到读者的失效方式的兜底。
+   能让它发生的只有一件事：React 把这根连同里面的笔一起摘掉、再挂回来，而中间没有一次同步。
+   那期间标记还在（所以上面那条把底色让掉了）、笔没了，纯靠脚本等着下一帧才修的话，
+   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为 */
+${LAYER}:not(:has(> ${ROOT})) {
+  background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
+  animation: ${caret_motion_1.CARET_BLINK_NAME} 1s step-end infinite;
+}
+
+${ROOT} svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* 羽枝伸到字盒之外，viewBox 装不下整支笔：裁掉就只剩个笔尖 */
+  overflow: visible;
+}
+
+${ROOT}-vane { fill: url(#${quill_1.QUILL_ID}-vane); }
+${ROOT}-barbs { fill: none; stroke: var(--dsh-chat-ux-paper-quill-barb); stroke-width: 0.28; stroke-linecap: round; }
+${ROOT}-rachis { fill: var(--dsh-chat-ux-paper-quill-rachis); }
+${ROOT}-rachis-light { fill: none; stroke: #fff; stroke-width: 0.22; opacity: 0.45; }
+${ROOT}-down { fill: none; stroke: var(--dsh-chat-ux-paper-quill-down); stroke-width: 0.35; stroke-linecap: round; }
+${ROOT}-engraving { fill: none; stroke: var(--dsh-chat-ux-paper-quill-metal-lo); stroke-width: 0.3; }
+${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
+
+/* 笔尖那一点光：2.8s 亮一次，位置一动不动。它不是装饰，是「这一根还活着」的信号——
+   羽毛的呼吸之外整支一直沉着，读者靠它确认输入框还有焦点
+   羽片上那道上下扫过的光没有移植：羽片只有几十像素宽，扫光看不出来，却多一条一直在跑的动画 */
+${ROOT}-glint {
+  fill: #fff;
+  opacity: 0;
+  animation: ${QUILL_GLINT_NAME} 2.8s ease-in-out infinite;
+}
+
+@keyframes ${QUILL_BREATHE_NAME} {
+  0%, 62% { opacity: 1; }
+  62%, 100% { opacity: 0.72; }
+}
+
+@keyframes ${QUILL_GLINT_NAME} {
+  0%, 72% { opacity: 0; }
+  80% { opacity: 0.9; }
+  88% { opacity: 0.15; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 呼吸与那点光一起停。这一档要的是少动，恒亮的羽毛正好是 VS Code 那根 solid 光标的等价物 */
+  ${LAYER},
+  ${LAYER}:not(:has(> ${ROOT})) {
+    animation: none;
+  }
+
+  ${ROOT}-glint {
+    animation: none;
+    /* 动画停了就永远到不了亮起来的那一帧，所以给它一个恒定的、看得见的值 */
+    opacity: 0.55;
   }
 }
 `;

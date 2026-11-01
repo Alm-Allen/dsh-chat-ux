@@ -8,6 +8,9 @@ import type { Volatile } from "@deepseek-ai/cordis";
 import Schema from "@deepseek-ai/schemastery";
 export declare const name = "dsh-chat-ux";
 export declare const SETTINGS_NAMESPACE = "dsh-chat-ux";
+export declare const DEFAULT_PAPER_ON = true;
+export declare const DEFAULT_PAPER_STYLE = "cotton__paper-and-ink";
+export declare const DEFAULT_PAPER_SIDEBAR = true;
 export declare const DEFAULT_AUTO_FOLD = true;
 export type CaretMotionMode = "off" | "move" | "typing";
 export declare const DEFAULT_CARET_MOTION: CaretMotionMode;
@@ -18,6 +21,9 @@ export declare const DEFAULT_LIVE_DIFF = true;
 export declare const DEFAULT_FOLLOW_ON_APPEAR = true;
 export declare const DEFAULT_SEND_FLIGHT = true;
 export interface Config {
+    paperOn: Volatile<boolean>;
+    paperStyle: Volatile<string>;
+    paperSidebar: Volatile<boolean>;
     autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
     hitReel: Volatile<boolean>;
@@ -28,6 +34,9 @@ export interface Config {
     sendFlight: Volatile<boolean>;
 }
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
+    paperOn: Schema<boolean, boolean, "volatile-defined">;
+    paperStyle: Schema<string, string, "volatile-defined">;
+    paperSidebar: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
@@ -37,6 +46,9 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     followOnAppear: Schema<boolean, boolean, "volatile-defined">;
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
+    paperOn: Schema<boolean, boolean, "volatile-defined">;
+    paperStyle: Schema<string, string, "volatile-defined">;
+    paperSidebar: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;

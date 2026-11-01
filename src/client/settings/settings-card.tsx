@@ -16,12 +16,20 @@ import type {SegmentedControlOption} from "@deepseek-ai/dsh-client-ui-primitives
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
 import {CARD_CLASS} from "./config-card-styles"
 import {
+	PAPER_IDS, ROOM_IDS, joinPaperStyle, splitPaperStyle,
+} from "./paper-styles"
+import type {PaperId, RoomId} from "./paper-styles"
+import {
 	DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-	DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_SEND_FLIGHT,
+	DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
+	DEFAULT_PAPER_SIDEBAR, DEFAULT_PAPER_STYLE, DEFAULT_SEND_FLIGHT,
 } from "./settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
+const PAPER_ON_FIELD = "paperOn"
+const PAPER_STYLE_FIELD = "paperStyle"
+const PAPER_SIDEBAR_FIELD = "paperSidebar"
 const AUTO_FOLD_FIELD = "autoFold"
 const CARET_FIELD = "caretMotion"
 const HIT_REEL_FIELD = "hitReel"
@@ -34,6 +42,17 @@ const SEND_FLIGHT_FIELD = "sendFlight"
 // 一种语言的文案
 interface Copy {
 	summary: () => string
+	paperLabel: string
+	paperHint: string
+	paperStyleLabel: string
+	paperStyleHint: string
+	// 纸样那两排色片上各自的维度名，以及每个取值自己的名字
+	paperDimension: string
+	roomDimension: string
+	paperNames: Record<PaperId, string>
+	roomNames: Record<RoomId, string>
+	paperSidebarLabel: string
+	paperSidebarHint: string
 	autoFoldLabel: string
 	autoFoldHint: string
 	followLabel: string
@@ -61,7 +80,33 @@ interface Copy {
 }
 
 const ZH_COPY: Copy = {
-	summary: () => "光标动效、读数、输入框玻璃与发送气泡都在这里调。",
+	summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
+	paperLabel: "纸感",
+	paperHint:
+		"整页铺一张纸，页面底色换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层。"
+		+ "关掉就回到 dsh 原来的样子。",
+	paperStyleLabel: "纸样",
+	paperStyleHint:
+		"纸与房间是两个维度，各自挑一个，五张纸乘三个房间共十五种。纸决定纸面的颜色与纹理，"
+		+ "房间决定纸面的光色与暗角。纸感关掉时这一项不起作用。",
+	paperDimension: "纸",
+	roomDimension: "房间",
+	paperNames: {
+		cotton: "棉浆",
+		linen: "亚麻",
+		laid: "帘纹",
+		onionskin: "葱皮",
+		night: "夜纸",
+	},
+	roomNames: {
+		"paper-and-ink": "纸与墨",
+		"midnight-study": "子夜书斋",
+		"moonlit-poetry": "月下诗稿",
+	},
+	paperSidebarLabel: "左侧栏也铺纸",
+	paperSidebarHint:
+		"左侧栏那一列也换成同一张纸，整扇窗看起来是一张纸。关掉时左侧栏保持 dsh 自己的底色，"
+		+ "只有聊天区铺纸；纸感关掉时这一项同样不起作用。",
 	autoFoldLabel: "自动开合",
 	autoFoldHint:
 		"思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
@@ -106,7 +151,35 @@ const ZH_COPY: Copy = {
 }
 
 const EN_COPY: Copy = {
-	summary: () => "Caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
+	summary: () =>
+		"The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
+	paperLabel: "Paper",
+	paperHint:
+		"The whole page lies on a sheet of paper: the page background takes that paper's tone, so the composer and the "
+		+ "bubbles read as layers pressed into it. Off restores dsh's own look.",
+	paperStyleLabel: "Paper and room",
+	paperStyleHint:
+		"Paper and room are two separate dimensions — pick one of each, five papers by three rooms, fifteen in all. "
+		+ "The paper sets the colour and grain of the sheet; the room sets where the light comes from and how dark "
+		+ "the surroundings go. This row does nothing while paper is off.",
+	paperDimension: "Paper",
+	roomDimension: "Room",
+	paperNames: {
+		cotton: "Cotton",
+		linen: "Linen",
+		laid: "Laid",
+		onionskin: "Onionskin",
+		night: "Night",
+	},
+	roomNames: {
+		"paper-and-ink": "Paper and ink",
+		"midnight-study": "Midnight study",
+		"moonlit-poetry": "Moonlit poetry",
+	},
+	paperSidebarLabel: "Paper the sidebar",
+	paperSidebarHint:
+		"The left sidebar takes the same sheet, so the whole window reads as one piece of paper. Off leaves the "
+		+ "sidebar on dsh's own fill and papers the chat area only; it does nothing while paper is off either.",
 	autoFoldLabel: "Automatic folding",
 	autoFoldHint:
 		"A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
@@ -192,6 +265,9 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 
 
+	const paperOn = storedPaperOn(snapshot.value)
+	const paperSelection = splitPaperStyle(snapshot.value?.paperStyle)
+	const paperSidebarOn = storedPaperSidebar(snapshot.value)
 	const autoFoldOn = storedAutoFold(snapshot.value)
 	const followOn = storedFollow(snapshot.value)
 	const reelOn = storedHitReel(snapshot.value)
@@ -209,6 +285,33 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 		{value: "move", label: copy.caretMove},
 		{value: "typing", label: copy.caretTyping},
 	]
+
+	// 纸样那两排色片。挑一个只是把同一个字段的另一半接上，于是换纸不动房间、换房间不动纸
+	const paperLane = <T extends string, >(
+		laneLabel: string,
+		names: Record<T, string>,
+		values: readonly T[],
+		selected: T,
+		onPick: (value: T) => void,
+	): ReactElement => (
+		<div className={CARD_CLASS.lane}>
+			<span className={CARD_CLASS.laneTitle}>{laneLabel}</span>
+			<div className={CARD_CLASS.laneChips} role="group" aria-label={laneLabel}>
+				{values.map((value) => (
+					<button
+						key={value}
+						type="button"
+						className={value === selected ? CARD_CLASS.chip + " " + CARD_CLASS.chipOn : CARD_CLASS.chip}
+						aria-pressed={value === selected}
+						disabled={controlsDisabled}
+						onClick={() => { if (value !== selected) onPick(value) }}
+					>
+						{names[value] ?? value}
+					</button>
+				))}
+			</div>
+		</div>
+	)
 
 	if (view === "summary") return <>{copy.summary()}</>
 	// 没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件
@@ -239,14 +342,16 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 
 
-	// 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
+	// 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
+	// 控件装不进右侧那一格的行（纸样那一行有两个维度）用 className 换成上下排
 	const rowChrome = (
 		field: string,
 		label: string,
 		hint: string,
 		control: ReactElement,
+		className?: string,
 	): ReactElement => (
-		<div className={CARD_CLASS.row}>
+		<div className={className === undefined ? CARD_CLASS.row : CARD_CLASS.row + " " + className}>
 			<div className={CARD_CLASS.rowText}>
 				<div className={CARD_CLASS.labelLine}>
 					<span className={CARD_CLASS.label}>{label}</span>
@@ -273,6 +378,48 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 	return (
 		<div className={CARD_CLASS.form} data-plugin-config-form="dsh-chat-ux">
 			{readOnly && <p className={CARD_CLASS.notice} role="status">{copy.readOnly}</p>}
+			{rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, (
+				<Switch
+					checked={paperOn}
+					disabled={controlsDisabled}
+					label={copy.paperLabel}
+					onChange={(next: boolean) => void writeField(PAPER_ON_FIELD, next, storedPaperOn)}
+				/>
+			))}
+			{rowChrome(PAPER_STYLE_FIELD, copy.paperStyleLabel, copy.paperStyleHint, (
+				<>
+					{paperLane(
+						copy.paperDimension,
+						copy.paperNames,
+						PAPER_IDS,
+						paperSelection.paper,
+						(next) => void writeField(
+							PAPER_STYLE_FIELD,
+							joinPaperStyle(next, paperSelection.room),
+							storedPaperStyle,
+						),
+					)}
+					{paperLane(
+						copy.roomDimension,
+						copy.roomNames,
+						ROOM_IDS,
+						paperSelection.room,
+						(next) => void writeField(
+							PAPER_STYLE_FIELD,
+							joinPaperStyle(paperSelection.paper, next),
+							storedPaperStyle,
+						),
+					)}
+				</>
+			), CARD_CLASS.stacked)}
+			{rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, (
+				<Switch
+					checked={paperSidebarOn}
+					disabled={controlsDisabled}
+					label={copy.paperSidebarLabel}
+					onChange={(next: boolean) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar)}
+				/>
+			))}
 			{rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, (
 				<Switch
 					checked={autoFoldOn}
@@ -347,6 +494,19 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 }
 
 
+
+function storedPaperOn(value: ChatUxSection | undefined): boolean {
+	return value?.paperOn ?? DEFAULT_PAPER_ON
+}
+
+// 读回来的是原始字符串：认不出的取值由 splitPaperStyle 兜底，这里只把缺席补成默认那一对
+function storedPaperStyle(value: ChatUxSection | undefined): string {
+	return value?.paperStyle ?? DEFAULT_PAPER_STYLE
+}
+
+function storedPaperSidebar(value: ChatUxSection | undefined): boolean {
+	return value?.paperSidebar ?? DEFAULT_PAPER_SIDEBAR
+}
 
 function storedAutoFold(value: ChatUxSection | undefined): boolean {
 	return value?.autoFold ?? DEFAULT_AUTO_FOLD

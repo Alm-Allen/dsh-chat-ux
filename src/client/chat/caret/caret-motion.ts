@@ -7,6 +7,7 @@
  * ⚠️ 原生被按下去、自绘没画出来就是读者看不见光标，所以量不出来一律退回原生，绝不维持现状
  */
 import {COMPOSER_INPUT_SELECTOR, COMPOSER_TEXTAREA_SELECTOR} from "../../dom-contract"
+import {QUILL_ATTRIBUTE, buildQuillCaret, placeQuillCaret} from "../paper/caret/quill"
 
 // 闪烁动画的名字。caret-motion-styles.ts 用它拼 keyframes，两处必须一字不差
 export const CARET_BLINK_NAME = "dsh-chat-ux-caret-blink"
@@ -55,7 +56,10 @@ export interface CaretMotionHandle {
 }
 
 // 给整页装上插入符动效。档位在每次同步时现读，所以运行期改档不必重新安装
-export function installCaretMotion(readMotionMode: () => CaretMotionMode): CaretMotionHandle {
+export function installCaretMotion(
+	readMotionMode: () => CaretMotionMode,
+	readQuillOn: () => boolean = () => false,
+): CaretMotionHandle {
 	// 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项
 	const caretLayerMap = new Map<HTMLElement, CaretLayer>()
 	// 一次同步已经排在下一帧
@@ -319,6 +323,9 @@ export function installCaretMotion(readMotionMode: () => CaretMotionMode): Caret
 	// 把一个面的自绘状态整个撤掉：那一根、按掉标记、以及替它补过的定位上下文
 	const release = (input: HTMLElement, layer: CaretLayer): void => {
 		layer.caret.remove()
+		// 那根连同它怀里的羽毛一起撤掉了；引用留着会让下一次重建接回旧节点
+		layer.quill = null
+		layer.quillHeight = 0
 		input.removeAttribute(CARET_ATTRIBUTE)
 		if (layer.markedHost) layer.host.removeAttribute(CARET_HOST_ATTRIBUTE)
 	}
@@ -351,7 +358,7 @@ export function installCaretMotion(readMotionMode: () => CaretMotionMode): Caret
 		caret.setAttribute(CARET_LAYER_ATTRIBUTE, "")
 		host.appendChild(caret)
 		if (input.isContentEditable) observeComposer(input)
-		const layer: CaretLayer = {caret, visible: false, host, markedHost}
+		const layer: CaretLayer = {caret, visible: false, host, markedHost, quill: null, quillHeight: 0}
 		caretLayerMap.set(input, layer)
 		return layer
 	}
@@ -362,6 +369,36 @@ export function installCaretMotion(readMotionMode: () => CaretMotionMode): Caret
 		const style = getComputedStyle(input)
 		const color = style.caretColor === "auto" ? style.color : style.caretColor
 		layer.caret.style.setProperty(CARET_COLOR_PROPERTY, color)
+	}
+
+	// 给这一根装上一支羽毛，并按插入符高度摆好
+	// 先挂笔、再打标记：标记一到，样式表就把 2px 的底色撤掉；反过来写的话，
+	// 中间那一帧读者看到的是一根没有底色的条
+	const markQuill = (layer: CaretLayer, caretHeight: number): void => {
+		// React 重渲染会把那根连同里面那支笔一起摘掉再挂回来，所以每次按「笔还在不在」判一次。
+		// 重复调用是幂等的，标记在不在都一样走
+		if (layer.quill === null || layer.quill.parentElement !== layer.caret) {
+			layer.quill = buildQuillCaret()
+			layer.caret.appendChild(layer.quill)
+			layer.quillHeight = 0
+		}
+		// 高度没变就不重写尺寸与偏移：这一帧 DOM 已经写够了
+		if (Math.abs(layer.quillHeight - caretHeight) > 0.01) {
+			placeQuillCaret(layer.quill, caretHeight)
+			layer.quillHeight = caretHeight
+		}
+		layer.caret.setAttribute(QUILL_ATTRIBUTE, "")
+	}
+
+	// 撤掉怀里那支笔，把 2px 条要回来
+	// 先摘标记、后撤笔：摘标记那一刻样式表已经把条画回来，笔留着一瞬也只是叠着；
+	// 反过来先撤笔的话，中途只要有谁强制回流，那一瞬就是一根没有底色的空盒子
+	const dropQuill = (layer: CaretLayer): void => {
+		if (!layer.caret.hasAttribute(QUILL_ATTRIBUTE)) return
+		layer.caret.removeAttribute(QUILL_ATTRIBUTE)
+		layer.quill?.remove()
+		layer.quill = null
+		layer.quillHeight = 0
 	}
 
 	// 把自绘的光标放到这个视口矩形上
@@ -389,6 +426,10 @@ export function installCaretMotion(readMotionMode: () => CaretMotionMode): Caret
 			layer.visible = true
 			layer.caret.setAttribute(CARET_VISIBLE_ATTRIBUTE, "")
 		}
+		// 纸感开着就把怀里那支笔摆到这一帧的高度上，关着就把它撤掉、把 2px 条要回来。
+		// 两档都在这里落，是因为只有这里才拿到刚量出来的高度
+		if (readQuillOn()) markQuill(layer, box.height)
+		else dropQuill(layer)
 		// 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
 		// 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
 		// 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
@@ -405,6 +446,12 @@ export function installCaretMotion(readMotionMode: () => CaretMotionMode): Caret
 			for (const [input, layer] of caretLayerMap) release(input, layer)
 			caretLayerMap.clear()
 			return
+		}
+		// 纸感关掉而光标还开着：把怀里的羽毛撤掉，让 2px 条回来。
+		// 样式表也挡得住（它要求根上有纸感标记），但那认的是纸挂没挂上、不是配置；
+		// 配置先落、纸下一帧才摘的那一段，两边都不动的话读者会看到一支笔和一根条叠着
+		if (!readQuillOn()) {
+			for (const layer of caretLayerMap.values()) dropQuill(layer)
 		}
 		const selection = document.getSelection()
 		const activeElement = document.activeElement
@@ -531,6 +578,10 @@ interface CaretLayer {
 	host: HTMLElement
 	// 父元素原本不是定位上下文、由这里补过标记；撤掉那根时标记要一起还回去
 	markedHost: boolean
+	// 怀里那支羽毛；纸感关着、或者还用不上时为 null
+	quill: HTMLElement | null
+	// 羽毛上一次摆好的插入符高度：相同就不再写一次尺寸与偏移
+	quillHeight: number
 }
 
 // 光标贴着的那个换行符，以及光标在它的哪一侧

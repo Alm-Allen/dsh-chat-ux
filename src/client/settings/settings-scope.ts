@@ -9,6 +9,16 @@ import type {CaretMotionMode} from "../chat/caret/caret-motion"
 
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 
+// 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
+export const DEFAULT_PAPER_ON = true
+
+// 纸样：纸 __ 房间（双下划线）的一对 id。这一串在 paper-styles.ts 里必须拆得开，
+// 与渲染核认的 id 也必须一致
+export const DEFAULT_PAPER_STYLE = "cotton__paper-and-ink"
+
+// 左侧栏是否也跟着铺同一张纸
+export const DEFAULT_PAPER_SIDEBAR = true
+
 // 思考行与过程组自己开合，这是本插件的主要效果
 export const DEFAULT_AUTO_FOLD = true
 
@@ -37,6 +47,12 @@ export const DEFAULT_SEND_FLIGHT = true
 
 // host 解析出来的、本插件占用的那个配置条目
 export interface ChatUxSection {
+	// 纸感是否开着，关掉时整页回到 dsh 原来的样子
+	paperOn?: boolean
+	// 纸样：纸 __ 房间（双下划线）。生词由 paper-styles.ts 兜底成默认那一对
+	paperStyle?: string
+	// 左侧栏是否也跟着铺同一张纸
+	paperSidebar?: boolean
 	// 思考行与过程组是否自己开合，关掉时两块都整块不装
 	autoFold?: boolean
 	// 插入符动效的档位
