@@ -35,6 +35,8 @@ import {toUnit} from "./paper-math"
 export interface PaperOptions {
     // 纸感总开关。关掉时这一整块一起收：两片 canvas、令牌、侧栏那层纹理
     on: boolean
+    // 纸感要不要接管字族。只影响令牌那两笔，纸本身照画
+    font: boolean
 }
 
 // 挂载结果
@@ -287,7 +289,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             return
         }
         const mode = currentPaperMode()
-        applyPaperTokens(paperTokenSet(mode), mode, coversSidebar)
+        applyPaperTokens(paperTokenSet(mode), mode, coversSidebar, options.font)
         // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
         // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
         // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）

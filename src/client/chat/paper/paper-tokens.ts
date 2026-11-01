@@ -30,7 +30,7 @@ export const PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper"
 export const PAPER_DARK_ATTRIBUTE = "data-dsh-chat-ux-paper-dark"
 
 // 会被改写的宿主令牌：整页底色、侧栏填充色、三档文字、代码块与内联代码的底、几条在纸上一压就
-// 只剩一两个 L* 的灰底与淡字，以及两条字族
+// 只剩一两个 L* 的灰底与淡字，以及两条字族（字族可以单独关掉，见 applyPaperTokens 的 includeFont）
 const HOST_BASE_PROPERTY = "--dsw-alias-bg-base"
 const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill"
 const HOST_LABEL_PRIMARY_PROPERTY = "--dsw-alias-label-primary"
@@ -164,7 +164,12 @@ export function restorePaperTokens(): void {
  * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
  * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
  */
-export function applyPaperTokens(set: PaperTokenSet, mode: PaperMode, includeSidebar: boolean): void {
+export function applyPaperTokens(
+    set: PaperTokenSet,
+    mode: PaperMode,
+    includeSidebar: boolean,
+    includeFont: boolean,
+): void {
     const root = document.documentElement
     const body = document.body
     // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
@@ -210,9 +215,15 @@ export function applyPaperTokens(set: PaperTokenSet, mode: PaperMode, includeSid
     setOwned(body, HOST_BG_LAYER_1_PROPERTY, paperInkMix(8))
     // 文档预览的底。深色现值比暗纸还深，读成纸上挖下去的一个洞
     setOwned(body, HOST_BG_DOCUMENT_PREVIEW_PROPERTY, paperInkMix(3))
-    // 字族跟着纸感走：关掉时这两条会被还原，页面回到 dsh 自己那套或读者在设置里填的那套
-    setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK)
-    setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK)
+    // 字族跟着纸感走，但在卡片上是一个可以单独关掉的子开关：读者自己配过字体时，
+    // 纸只换底与墨，字留给他自己那套。关掉时把写过的还回去，与侧栏填充色同一套还法
+    if (includeFont) {
+        setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK)
+        setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK)
+    } else {
+        releaseOwned(body, HOST_TEXT_FONT_PROPERTY)
+        releaseOwned(body, HOST_CODE_FONT_PROPERTY)
+    }
     // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
     // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
     // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着

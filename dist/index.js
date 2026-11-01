@@ -8,6 +8,8 @@ export const SETTINGS_NAMESPACE = "dsh-chat-ux";
 // 纸感总开关：整页铺一张纸，页面底色与左侧栏也跟着换成这张纸的调子。默认开着。
 // 开着时纸感这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩
 export const DEFAULT_PAPER_ON = true;
+// 纸感要不要接管字族（正文与代码那两栈）。默认开着；关掉时纸照铺，字回到 dsh 自己的或读者自己配的那套
+export const DEFAULT_PAPER_FONT = true;
 // 思考行与过程组自己开合。默认开着：这两块自己开合是本插件的主要效果，关掉时两块都整块不装，
 // 读者自己点开收起照常，高度过渡仍留给手动点击
 export const DEFAULT_AUTO_FOLD = true;
@@ -31,6 +33,7 @@ export const DEFAULT_SEND_FLIGHT = true;
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
+    paperFont: Schema.boolean().default(DEFAULT_PAPER_FONT).volatile(),
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(["off", "move", "typing"]).default(DEFAULT_CARET_MOTION).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),

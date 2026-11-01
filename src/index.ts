@@ -20,6 +20,9 @@ export const SETTINGS_NAMESPACE = "dsh-chat-ux"
 // 开着时纸感这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩
 export const DEFAULT_PAPER_ON = true
 
+// 纸感要不要接管字族（正文与代码那两栈）。默认开着；关掉时纸照铺，字回到 dsh 自己的或读者自己配的那套
+export const DEFAULT_PAPER_FONT = true
+
 // 思考行与过程组自己开合。默认开着：这两块自己开合是本插件的主要效果，关掉时两块都整块不装，
 // 读者自己点开收起照常，高度过渡仍留给手动点击
 export const DEFAULT_AUTO_FOLD = true
@@ -56,6 +59,8 @@ export const DEFAULT_SEND_FLIGHT = true
 export interface Config {
     // 纸感是否开着。关掉时整页回到 dsh 原来的样子，纸层与它接管的两条底色令牌一起撤掉
     paperOn: Volatile<boolean>
+    // 纸感是否接管字族。它挂在纸感底下：纸感关掉时这一项不起作用
+    paperFont: Volatile<boolean>
     // 思考行与过程组是否自己开合。关掉时两块都整块不装
     autoFold: Volatile<boolean>
     // 插入符动效的档位
@@ -77,6 +82,7 @@ export interface Config {
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
+    paperFont: Schema.boolean().default(DEFAULT_PAPER_FONT).volatile(),
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(["off", "move", "typing"] as const).default(DEFAULT_CARET_MOTION).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),

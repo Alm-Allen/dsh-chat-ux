@@ -28,8 +28,8 @@ import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-    DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
-    DEFAULT_SEND_FLIGHT,
+    DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT,
+    DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
@@ -78,6 +78,7 @@ export function apply(ctx: ClientContext): void {
         followOn: DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: DEFAULT_SEND_FLIGHT,
         paperOn: DEFAULT_PAPER_ON,
+        paperFont: DEFAULT_PAPER_FONT,
     }
 
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -141,6 +142,7 @@ export function apply(ctx: ClientContext): void {
     let paper: PaperHandle | null = null
     const paperSettings = (): PaperSettingsInput => ({
         on: settings.paperOn,
+        font: settings.paperFont,
     })
     const syncPaper = (): void => {
         if (!settings.paperOn) {
@@ -177,6 +179,7 @@ export function apply(ctx: ClientContext): void {
         settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
         settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
         settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
+        settings.paperFont = value?.paperFont ?? DEFAULT_PAPER_FONT
         syncGlass()
         caret.resync()
         syncPie()
@@ -305,6 +308,8 @@ interface ChatUxSettings {
     // 纸感总开关。它不只是画不画，还决定整页底色那几条令牌写不写。
     // 关掉时纸感这一整块一起收：两片 canvas、令牌、羽毛、侧栏那层纹理，一处不剩
     paperOn: boolean
+    // 纸感要不要接管字族。挂在前一项底下：纸关掉时它不起作用
+    paperFont: boolean
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input

@@ -19,6 +19,8 @@ import {currentPaperMode} from "./paper-theme"
 export interface PaperSettingsInput {
     // 纸感总开关。开着时这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩
     on: boolean
+    // 纸感要不要接管字族。关掉时纸照铺，正文与代码那两栈回到读者自己那套
+    font: boolean
 }
 
 /**
@@ -39,8 +41,11 @@ export function installPaperLayer(readSettings: () => PaperSettingsInput): Paper
     // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
     // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
     const mode = currentPaperMode()
-    applyPaperTokens(paperTokenSet(mode), mode, paperIncludesSidebar())
-    return installPaper(() => ({on: readSettings().on}))
+    applyPaperTokens(paperTokenSet(mode), mode, paperIncludesSidebar(), settings.font)
+    return installPaper(() => {
+        const current = readSettings()
+        return {on: current.on, font: current.font}
+    })
 }
 
 // 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记

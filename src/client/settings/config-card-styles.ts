@@ -13,6 +13,7 @@ export const CARD_CLASS = {
     form: "dsh-chat-ux-card-form",
     notice: "dsh-chat-ux-card-notice",
     row: "dsh-chat-ux-card-row",
+    childRow: "dsh-chat-ux-card-child-row",
     rowText: "dsh-chat-ux-card-row-text",
     label: "dsh-chat-ux-card-label",
     labelLine: "dsh-chat-ux-card-label-line",
@@ -110,6 +111,16 @@ export const CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 /* 首行之外每一行都带一条分隔线，各行于是有同一个节奏 */
 .${CARD_CLASS.row}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* 子开关：缩进一格、左边挂一条竖线，读起来属于上面那一行。
+   竖线取与分隔线同一个令牌，自己不再画上分隔线，好让这一段连成一块。
+   16px 是标题栏与说明之间那种一步的距离，不另造一套间距 */
+.${CARD_CLASS.row}.${CARD_CLASS.childRow} {
+  border-top: none;
+  padding-top: 4px;
+  padding-left: 16px;
+  box-shadow: inset 1px 0 0 var(--dsw-alias-border-l2);
 }
 
 /* 分段控件由平台自己画（ui-primitives 的 SegmentedControl），这里只保证它不被左侧文字挤扁：

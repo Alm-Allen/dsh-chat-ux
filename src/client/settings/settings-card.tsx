@@ -17,13 +17,14 @@ import type {CaretMotionMode} from "../chat/caret/caret-motion"
 import {CARD_CLASS} from "./config-card-styles"
 import {
     DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS, DEFAULT_CONTEXT_PIE,
-    DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_ON,
-    DEFAULT_SEND_FLIGHT,
+    DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT,
+    DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
 const PAPER_ON_FIELD = "paperOn"
+const PAPER_FONT_FIELD = "paperFont"
 const AUTO_FOLD_FIELD = "autoFold"
 const CARET_FIELD = "caretMotion"
 const HIT_REEL_FIELD = "hitReel"
@@ -38,6 +39,8 @@ interface Copy {
     summary: () => string
     paperLabel: string
     paperHint: string
+    paperFontLabel: string
+    paperFontHint: string
     autoFoldLabel: string
     autoFoldHint: string
     followLabel: string
@@ -70,6 +73,10 @@ const ZH_COPY: Copy = {
     paperHint:
         "整页铺一张纸：页面底色与左侧栏都换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
         + "输入光标也变成一支羽毛笔。关掉就一起收掉，回到 dsh 原来的样子。",
+    paperFontLabel: "纸面字体",
+    paperFontHint:
+        "正文与代码换成纸上的那套：正文是衬线，代码是打字机。关掉就回到你自己在 dsh 里配的字体，"
+        + "纸照铺；纸感关掉时这一项不起作用。",
     autoFoldLabel: "自动开合",
     autoFoldHint:
         "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
@@ -121,6 +128,10 @@ const EN_COPY: Copy = {
         "The whole page lies on a sheet of paper: the page background and the sidebar take that paper's tone, so the "
         + "composer and the bubbles read as layers pressed into it, and the caret becomes a quill. Off takes all of it "
         + "away and restores dsh's own look.",
+    paperFontLabel: "Paper typeface",
+    paperFontHint:
+        "Body text and code take the paper's own faces — a serif for prose, a typewriter for code. Off keeps the font "
+        + "you set in dsh and the paper stays; it does nothing while paper is off either.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint:
         "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
@@ -207,6 +218,7 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 
     const paperOn = storedPaperOn(snapshot.value)
+    const paperFontOn = storedPaperFont(snapshot.value)
     const autoFoldOn = storedAutoFold(snapshot.value)
     const followOn = storedFollow(snapshot.value)
     const reelOn = storedHitReel(snapshot.value)
@@ -253,14 +265,16 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
     }
 
 
-    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
+    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行
     const rowChrome = (
         field: string,
         label: string,
         hint: string,
         control: ReactElement,
+        indented = false,
     ): ReactElement => (
-        <div className={CARD_CLASS.row}>
+        <div className={indented ? CARD_CLASS.row + " " + CARD_CLASS.childRow : CARD_CLASS.row}>
             <div className={CARD_CLASS.rowText}>
                 <div className={CARD_CLASS.labelLine}>
                     <span className={CARD_CLASS.label}>{label}</span>
@@ -295,6 +309,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     onChange={(next: boolean) => void writeField(PAPER_ON_FIELD, next, storedPaperOn)}
                 />
             ))}
+            {rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, (
+                <Switch
+                    checked={paperFontOn}
+                    disabled={controlsDisabled}
+                    label={copy.paperFontLabel}
+                    onChange={(next: boolean) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont)}
+                />
+            ), true)}
             {rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, (
                 <Switch
                     checked={autoFoldOn}
@@ -371,6 +393,10 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
 
 function storedPaperOn(value: ChatUxSection | undefined): boolean {
     return value?.paperOn ?? DEFAULT_PAPER_ON
+}
+
+function storedPaperFont(value: ChatUxSection | undefined): boolean {
+    return value?.paperFont ?? DEFAULT_PAPER_FONT
 }
 
 function storedAutoFold(value: ChatUxSection | undefined): boolean {

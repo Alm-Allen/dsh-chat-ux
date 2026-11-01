@@ -101,6 +101,7 @@ function apply(ctx) {
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
         paperOn: settings_scope_1.DEFAULT_PAPER_ON,
+        paperFont: settings_scope_1.DEFAULT_PAPER_FONT,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
@@ -165,6 +166,7 @@ function apply(ctx) {
     let paper = null;
     const paperSettings = () => ({
         on: settings.paperOn,
+        font: settings.paperFont,
     });
     const syncPaper = () => {
         if (!settings.paperOn) {
@@ -201,6 +203,7 @@ function apply(ctx) {
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
+        settings.paperFont = value?.paperFont ?? settings_scope_1.DEFAULT_PAPER_FONT;
         syncGlass();
         caret.resync();
         syncPie();
@@ -1451,10 +1454,12 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_ON = void 0;
+exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_FONT = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 exports.DEFAULT_PAPER_ON = true;
+// 纸感要不要接管字族。它在卡片上是纸感底下的子开关，关掉时纸照铺，字回到读者自己那套
+exports.DEFAULT_PAPER_FONT = true;
 // 思考行与过程组自己开合，这是本插件的主要效果
 exports.DEFAULT_AUTO_FOLD = true;
 // 凡是会挪位置的地方都给过渡
@@ -2463,7 +2468,7 @@ exports.PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper";
 // 暗档的标记。与上面那条同时在场时才表示「此刻用的是暗版葱皮」
 exports.PAPER_DARK_ATTRIBUTE = "data-dsh-chat-ux-paper-dark";
 // 会被改写的宿主令牌：整页底色、侧栏填充色、三档文字、代码块与内联代码的底、几条在纸上一压就
-// 只剩一两个 L* 的灰底与淡字，以及两条字族
+// 只剩一两个 L* 的灰底与淡字，以及两条字族（字族可以单独关掉，见 applyPaperTokens 的 includeFont）
 const HOST_BASE_PROPERTY = "--dsw-alias-bg-base";
 const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill";
 const HOST_LABEL_PRIMARY_PROPERTY = "--dsw-alias-label-primary";
@@ -2565,7 +2570,7 @@ function restorePaperTokens() {
  * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
  * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
  */
-function applyPaperTokens(set, mode, includeSidebar) {
+function applyPaperTokens(set, mode, includeSidebar, includeFont) {
     const root = document.documentElement;
     const body = document.body;
     // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
@@ -2615,9 +2620,16 @@ function applyPaperTokens(set, mode, includeSidebar) {
     setOwned(body, HOST_BG_LAYER_1_PROPERTY, paperInkMix(8));
     // 文档预览的底。深色现值比暗纸还深，读成纸上挖下去的一个洞
     setOwned(body, HOST_BG_DOCUMENT_PREVIEW_PROPERTY, paperInkMix(3));
-    // 字族跟着纸感走：关掉时这两条会被还原，页面回到 dsh 自己那套或读者在设置里填的那套
-    setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK);
-    setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK);
+    // 字族跟着纸感走，但在卡片上是一个可以单独关掉的子开关：读者自己配过字体时，
+    // 纸只换底与墨，字留给他自己那套。关掉时把写过的还回去，与侧栏填充色同一套还法
+    if (includeFont) {
+        setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK);
+        setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK);
+    }
+    else {
+        releaseOwned(body, HOST_TEXT_FONT_PROPERTY);
+        releaseOwned(body, HOST_CODE_FONT_PROPERTY);
+    }
     // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
     // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
     // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着
@@ -5332,8 +5344,11 @@ function installPaperLayer(readSettings) {
     // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
     // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
     const mode = (0, paper_theme_1.currentPaperMode)();
-    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)());
-    return (0, paper_mount_1.installPaper)(() => ({ on: readSettings().on }));
+    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)(), settings.font);
+    return (0, paper_mount_1.installPaper)(() => {
+        const current = readSettings();
+        return { on: current.on, font: current.font };
+    });
 }
 // 撤掉纸：两片 canvas、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
 function clearPaperLayer() {
@@ -5590,7 +5605,7 @@ function installPaper(readOptions) {
             return;
         }
         const mode = (0, paper_theme_1.currentPaperMode)();
-        (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, coversSidebar);
+        (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, coversSidebar, options.font);
         // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
         // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
         // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
@@ -9304,6 +9319,7 @@ const config_card_styles_1 = require("./config-card-styles");
 const settings_scope_1 = require("./settings-scope");
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
 const PAPER_ON_FIELD = "paperOn";
+const PAPER_FONT_FIELD = "paperFont";
 const AUTO_FOLD_FIELD = "autoFold";
 const CARET_FIELD = "caretMotion";
 const HIT_REEL_FIELD = "hitReel";
@@ -9317,6 +9333,9 @@ const ZH_COPY = {
     paperLabel: "纸感",
     paperHint: "整页铺一张纸：页面底色与左侧栏都换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
         + "输入光标也变成一支羽毛笔。关掉就一起收掉，回到 dsh 原来的样子。",
+    paperFontLabel: "纸面字体",
+    paperFontHint: "正文与代码换成纸上的那套：正文是衬线，代码是打字机。关掉就回到你自己在 dsh 里配的字体，"
+        + "纸照铺；纸感关掉时这一项不起作用。",
     autoFoldLabel: "自动开合",
     autoFoldHint: "思考时思考行自己展开、思考结束就收起；工具调用开始时过程组自己打开、这一段跑完再收起。"
         + "你自己动手折叠过的，它不再打扰。",
@@ -9356,6 +9375,9 @@ const EN_COPY = {
     paperHint: "The whole page lies on a sheet of paper: the page background and the sidebar take that paper's tone, so the "
         + "composer and the bubbles read as layers pressed into it, and the caret becomes a quill. Off takes all of it "
         + "away and restores dsh's own look.",
+    paperFontLabel: "Paper typeface",
+    paperFontHint: "Body text and code take the paper's own faces — a serif for prose, a typewriter for code. Off keeps the font "
+        + "you set in dsh and the paper stays; it does nothing while paper is off either.",
     autoFoldLabel: "Automatic folding",
     autoFoldHint: "A reasoning row opens while the model thinks and folds when thinking ends; a process group opens when a "
         + "tool call starts and folds when that stretch ends. Anything you folded yourself is left alone.",
@@ -9413,6 +9435,7 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
     const paperOn = storedPaperOn(snapshot.value);
+    const paperFontOn = storedPaperFont(snapshot.value);
     const autoFoldOn = storedAutoFold(snapshot.value);
     const followOn = storedFollow(snapshot.value);
     const reelOn = storedHitReel(snapshot.value);
@@ -9451,12 +9474,16 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
         setSaving(false);
     };
-    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
-    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
+    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行
+    const rowChrome = (field, label, hint, control, indented = false) => ((0, jsx_runtime_1.jsxs)("div", { className: indented ? config_card_styles_1.CARD_CLASS.row + " " + config_card_styles_1.CARD_CLASS.childRow : config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperFontOn, disabled: controlsDisabled, label: copy.paperFontLabel, onChange: (next) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont) })), true), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 function storedPaperOn(value) {
     return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
+}
+function storedPaperFont(value) {
+    return value?.paperFont ?? settings_scope_1.DEFAULT_PAPER_FONT;
 }
 function storedAutoFold(value) {
     return value?.autoFold ?? settings_scope_1.DEFAULT_AUTO_FOLD;
@@ -9513,6 +9540,7 @@ exports.CARD_CLASS = {
     form: "dsh-chat-ux-card-form",
     notice: "dsh-chat-ux-card-notice",
     row: "dsh-chat-ux-card-row",
+    childRow: "dsh-chat-ux-card-child-row",
     rowText: "dsh-chat-ux-card-row-text",
     label: "dsh-chat-ux-card-label",
     labelLine: "dsh-chat-ux-card-label-line",
@@ -9609,6 +9637,16 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 /* 首行之外每一行都带一条分隔线，各行于是有同一个节奏 */
 .${exports.CARD_CLASS.row}:not(:first-child) {
   border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* 子开关：缩进一格、左边挂一条竖线，读起来属于上面那一行。
+   竖线取与分隔线同一个令牌，自己不再画上分隔线，好让这一段连成一块。
+   16px 是标题栏与说明之间那种一步的距离，不另造一套间距 */
+.${exports.CARD_CLASS.row}.${exports.CARD_CLASS.childRow} {
+  border-top: none;
+  padding-top: 4px;
+  padding-left: 16px;
+  box-shadow: inset 1px 0 0 var(--dsw-alias-border-l2);
 }
 
 /* 分段控件由平台自己画（ui-primitives 的 SegmentedControl），这里只保证它不被左侧文字挤扁：

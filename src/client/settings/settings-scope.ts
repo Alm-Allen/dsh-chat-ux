@@ -12,6 +12,9 @@ import type {CaretMotionMode} from "../chat/caret/caret-motion"
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 export const DEFAULT_PAPER_ON = true
 
+// 纸感要不要接管字族。它在卡片上是纸感底下的子开关，关掉时纸照铺，字回到读者自己那套
+export const DEFAULT_PAPER_FONT = true
+
 // 思考行与过程组自己开合，这是本插件的主要效果
 export const DEFAULT_AUTO_FOLD = true
 
@@ -41,6 +44,8 @@ export const DEFAULT_SEND_FLIGHT = true
 export interface ChatUxSection {
     // 纸感是否开着，关掉时整页回到 dsh 原来的样子
     paperOn?: boolean
+    // 纸感是否接管字族。它是纸感底下的子开关，纸感关掉时不起作用
+    paperFont?: boolean
     // 思考行与过程组是否自己开合，关掉时两块都整块不装
     autoFold?: boolean
     // 插入符动效的档位

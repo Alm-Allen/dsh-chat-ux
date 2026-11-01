@@ -9,6 +9,7 @@ import Schema from "@deepseek-ai/schemastery";
 export declare const name = "dsh-chat-ux";
 export declare const SETTINGS_NAMESPACE = "dsh-chat-ux";
 export declare const DEFAULT_PAPER_ON = true;
+export declare const DEFAULT_PAPER_FONT = true;
 export declare const DEFAULT_AUTO_FOLD = true;
 export type CaretMotionMode = "off" | "move" | "typing";
 export declare const DEFAULT_CARET_MOTION: CaretMotionMode;
@@ -20,6 +21,7 @@ export declare const DEFAULT_FOLLOW_ON_APPEAR = true;
 export declare const DEFAULT_SEND_FLIGHT = true;
 export interface Config {
     paperOn: Volatile<boolean>;
+    paperFont: Volatile<boolean>;
     autoFold: Volatile<boolean>;
     caretMotion: Volatile<CaretMotionMode>;
     hitReel: Volatile<boolean>;
@@ -31,6 +33,7 @@ export interface Config {
 }
 export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     paperOn: Schema<boolean, boolean, "volatile-defined">;
+    paperFont: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
@@ -41,6 +44,7 @@ export declare const Config: Schema<Schemastery.ObjectS<NoInfer<{
     sendFlight: Schema<boolean, boolean, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     paperOn: Schema<boolean, boolean, "volatile-defined">;
+    paperFont: Schema<boolean, boolean, "volatile-defined">;
     autoFold: Schema<boolean, boolean, "volatile-defined">;
     caretMotion: Schema<"off" | "move" | "typing", "off" | "move" | "typing", "volatile-defined">;
     hitReel: Schema<boolean, boolean, "volatile-defined">;
