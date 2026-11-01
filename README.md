@@ -84,8 +84,6 @@ dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
 
 这里是插件的源码与发行说明。构建脚本、内部设计文档不在本仓库内，因此 clone 之后不能直接 `npm run build`；需要用插件请直接安装 npm 上的包。
 
-每个版本的更新记录在 [CHANGELOG.md](./CHANGELOG.md) —— 打标签发布时，Release 报告就是从它里面抽的。
-
 ## 许可
 
 [MIT](./LICENSE)
