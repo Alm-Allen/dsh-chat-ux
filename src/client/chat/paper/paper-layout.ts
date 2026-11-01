@@ -91,14 +91,26 @@ export function windowMaterialPresent(): boolean {
 }
 
 /**
+ * AppFrame 那张 grid 元素。
+ *
+ * 三列的宽度写在它的 grid-template-columns 上：侧栏折叠、展开、拖宽都只改这一条。
+ * 纸的左缘与宽度都从那里量，所以它是纸的几何唯一的输入。[data-shell-bottom] 是它的子元素，
+ * 取父元素就是它
+ */
+export function frameElement(): HTMLElement | null {
+    const shellBottom = document.querySelector(SHELL_BOTTOM_SELECTOR)
+    const frame = shellBottom === null ? null : shellBottom.parentElement
+    return frame instanceof HTMLElement ? frame : null
+}
+
+/**
  * 左侧栏的宽度。取不到给 0，调用方据此退回「整块视口」。
  *
  * 列宽写在 AppFrame 那层 grid 的 grid-template-columns 上，形如 `280px minmax(...) minmax(...)`。
  * 只读第一项：sidebar | center | rightbar 的三列顺序由 dsh 定死，第一个数字就是左栏
  */
 export function sidebarWidth(): number {
-    const shellBottom = document.querySelector(SHELL_BOTTOM_SELECTOR)
-    const frame = shellBottom === null ? null : shellBottom.parentElement
+    const frame = frameElement()
     if (frame === null) return 0
     const columns = getComputedStyle(frame).gridTemplateColumns
     const first = columns.trim().split(/\s+/)[0]
@@ -119,8 +131,7 @@ export function sidebarWidth(): number {
  * 或者对不上，一律当作没有侧栏
  */
 export function sidebarElement(): HTMLElement | null {
-    const shellBottom = document.querySelector(SHELL_BOTTOM_SELECTOR)
-    const frame = shellBottom === null ? null : shellBottom.parentElement
+    const frame = frameElement()
     const first = frame === null ? null : frame.firstElementChild
     if (!(first instanceof HTMLElement)) return null
     // 容差 8px：列宽动画期间，列自身的矩形与 grid-template-columns 的插值会差一点。

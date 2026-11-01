@@ -14,8 +14,8 @@
 import {GlowLayer, poolColor, poolStrength} from "./paper-glow"
 import type {GlowFrame} from "./paper-glow"
 import {
-    measurePaperRect, overlayCoversViewport, paperIncludesSidebar, sidebarElement, sidebarPaintsOwnTexture,
-    windowMaterialPresent,
+    frameElement, measurePaperRect, overlayCoversViewport, paperIncludesSidebar, sidebarElement,
+    sidebarPaintsOwnTexture, windowMaterialPresent,
 } from "./paper-layout"
 import type {PaperRect} from "./paper-layout"
 import {PaperLight} from "./paper-light"
@@ -338,6 +338,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             return false
         }
         setAttached(true)
+        // AppFrame 被整块换下来时（布局切换、重挂）观察器还盯着旧节点，这里补一次。
+        // 正常帧只是一次 isConnected 读，只有节点真的没了才去 querySelector
+        if (frameGrid === null || !frameGrid.isConnected) watchFrame()
         // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
         // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
         // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
@@ -359,7 +362,11 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
                 refreshTokens()
             }
         }
-        // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形
+        // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形。
+        //
+        // 这里不重落令牌。侧栏宽度不进任何一条令牌，覆盖范围那一维在上面 overlayDirty 分支里
+        // 变了就落过一次；而拖宽侧栏时每帧重写十几条 custom property 会让整篇文档的样式作废一遍，
+        // 那是这个插件最贵的一次操作，换不来任何像素
         const desired = measurePaperRect(coversSidebar)
         const layoutKey = coversSidebar + ":" + desired.left + ":" + desired.width + "x" + desired.height
         if (layoutKey !== lastLayoutKey) {
@@ -369,8 +376,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             rect = desired
             pixelRatio = computePixelRatio()
             applyRect()
-            // 覆盖范围变了，侧栏填充色要不要写也跟着变，令牌重落一次
-            refreshTokens()
             if (changed) needsBuild = true
         }
 
@@ -478,13 +483,91 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         if (keepGoing && !document.hidden) frameHandle = requestAnimationFrame(tick)
     }
 
-    // 叫醒循环。已经醒着时是空操作
-    const wake = (): void => {
+    /**
+     * 叫醒循环。已经醒着时是空操作。
+     *
+     * immediate 为真时下一帧就画：resize、切主题、改配置这类一次性输入晚一个空闲间隔不值得。
+     * 为假时交给 tick 里那道 8 fps 的节流——侧栏拖宽那种连续输入每帧都会来一次，
+     * 每次都立刻重画等于把整块纸纹（最贵的那一个 pass）按帧重算，主线程跟着掉帧
+     */
+    const wake = (immediate = true): void => {
         if (disposed || document.hidden || frameHandle !== 0) return
-        // 叫醒之后先等一个空闲间隔再画：一批 resize 与配置变化会连着叫好几次，只该画一次
-        lastPaintAt = 0
+        // 立刻画：叫醒之后先等一个空闲间隔再画，一批 resize 与配置变化会连着叫好几次，只该画一次
+        if (immediate) lastPaintAt = 0
         frameHandle = requestAnimationFrame(tick)
     }
+
+    /**
+     * 盯 AppFrame 那张 grid 的列宽。
+     *
+     * 三列的宽度写在它的 grid-template-columns 内联样式上：侧栏折叠、展开、拖宽都只改这一条，
+     * 既不触发 resize，也不落在 body 的 childList 里。纸的覆盖矩形只从那里量，少了这个观察器，
+     * 纸的左缘就停在收起/展开之前的宽度上——收起时纸不铺过去，右侧露出一条没有纸的竖带；
+     * 展开时纸不让开，全屏那层 multiply 压住侧栏，窗口材质透不出来
+     */
+    let frameGrid: HTMLElement | null = null
+    let frameObserver: MutationObserver | null = null
+    let frameProbeHandle = 0
+    let frameProbeFrames = 0
+    const FRAME_PROBE_LIMIT = 180
+
+    const stopFrameProbe = (): void => {
+        if (frameProbeHandle !== 0) cancelAnimationFrame(frameProbeHandle)
+        frameProbeHandle = 0
+        frameProbeFrames = 0
+    }
+
+    /**
+     * 等 AppFrame 出现。
+     *
+     * 装上纸的那一刻 React 可能还没把它渲染出来，而静置之后整条帧循环是 0 帧，没有谁再来问一次。
+     * 用一条 rAF 探针而不是盯整棵文档的子树：后者会被聊天流的每一次变更叫起来，为了找一个只出现
+     * 一次的节点，代价挂在每一条消息上。探针只是每帧一次 querySelector，跑满上限就自己退场
+     */
+    const probeFrame = (): void => {
+        frameProbeHandle = 0
+        if (disposed) return
+        if (frameElement() !== null) {
+            watchFrame()
+            return
+        }
+        frameProbeFrames += 1
+        if (frameProbeFrames > FRAME_PROBE_LIMIT) return
+        frameProbeHandle = requestAnimationFrame(probeFrame)
+    }
+
+    const waitForFrame = (): void => {
+        if (frameProbeHandle !== 0) return
+        if (frameProbeFrames > FRAME_PROBE_LIMIT) return
+        frameProbeHandle = requestAnimationFrame(probeFrame)
+    }
+
+    // 定位 frame 并把观察器挂上去。已经挂在同一张 grid 上时是一次比较就返回。
+    // 回调只置一个脏标记，走 8 fps 那道节流：拖宽侧栏时列宽每帧都在变，按帧重画纸纹是主线程掉帧的来源
+    const watchFrame = (): void => {
+        const frame = frameElement()
+        if (frame === null) {
+            waitForFrame()
+            return
+        }
+        if (frame === frameGrid && frameObserver !== null) return
+        frameObserver?.disconnect()
+        stopFrameProbe()
+        frameGrid = frame
+        frameObserver = new MutationObserver(() => wake(false))
+        frameObserver.observe(frame, {attributes: true, attributeFilter: ["style"]})
+    }
+
+    /**
+     * 列宽的过渡是 0.3s。过渡期间 getComputedStyle 读到的是插值，上面那个观察器量到的是半路宽度；
+     * 过渡结束再叫醒一次，纸才落到最终宽度。只认 grid-template-columns 这一条属性，
+     * 页面里只有 AppFrame 那张 grid 会过渡它
+     */
+    const onColumnTransitionEnd = (event: TransitionEvent): void => {
+        if (event.propertyName !== "grid-template-columns") return
+        wake()
+    }
+    document.addEventListener("transitionend", onColumnTransitionEnd, true)
 
     // 浮层（设置面板这类 body-portal 的模态）挂上或摘掉时，纸的左缘要跟着挪。
     // 只盯 body 的直接子元素：聊天流的变化发生在 #root 内部，不会触发这一条
@@ -618,6 +701,8 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     rect = measurePaperRect(coversSidebar)
     pixelRatio = computePixelRatio()
     applyRect()
+    // 列宽那条观察器跟着挂载一起装。此刻 AppFrame 多半还没渲染出来，watchFrame 会自己等
+    watchFrame()
     frameHandle = requestAnimationFrame(tick)
 
     return {
@@ -632,6 +717,11 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             materialObserver.disconnect()
             bodyMaterialObserver?.disconnect()
             overlayObserver.disconnect()
+            frameObserver?.disconnect()
+            frameObserver = null
+            frameGrid = null
+            stopFrameProbe()
+            document.removeEventListener("transitionend", onColumnTransitionEnd, true)
             bodyMaterialObserver = null
             window.removeEventListener("resize", onResize)
             window.removeEventListener("orientationchange", onResize)
