@@ -581,7 +581,7 @@ export function mountGhost(snapshot: ComposerSnapshot, origin: DOMRect): HoldFra
     wrapper.setAttribute(GHOST_ATTRIBUTE, '')
     wrapper.setAttribute('aria-hidden', 'true')
     wrapper.inert = true
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:' + GHOST_Z
     wrapper.style.left = origin.left + 'px'
     wrapper.style.top = origin.top + 'px'
     const mover = document.createElement('div')
@@ -940,6 +940,19 @@ export function startMorph(frame: GhostFrame, bubble: HTMLElement, end: DOMRect)
 }
 
 /**
+ * 替身最外层的层级。
+ *
+ * **要落在纸层之下**（paper-styles.ts 里纸是 2147482000、辉光 2001、暗角 2002），取 1999。
+ * 这不是小事：替身原来是 2147483000，压在纸上，而落点的气泡在纸下——两处色值一样，屏幕上一个
+ * 被纸光压暗、一个没有，落定那一帧就必然跳一下（实测飞行中 rgb(221,215,203)、落地后同一个值
+ * 被 multiply 压成更深的纸色，读者看到的就是"落地瞬间换了个色"）。
+ *
+ * 压到纸下之后，替身与气泡吃同一层纸光、同一道暗角，飞行中途与落定那一刻是同一块像素。
+ * 代价是它不再盖在纸上——但它本来就是一层面，不是浮在整页之上的浮层，压在纸下才是对的。
+ */
+const GHOST_Z = '2147481999'
+
+/**
  * 色块替身：只复刻卡片的尺寸、圆角与底色，一个内容元素都不复制。
  *
  * 这一版把「形变要画的东西」压到最低：一个方块加一层渐入的气泡色。它没有克隆子树，首次栅格化几乎
@@ -954,7 +967,7 @@ export function mountSlab(snapshot: SlabSnapshot, origin: DOMRect): HoldFrame {
     wrapper.setAttribute(GHOST_ATTRIBUTE, '')
     wrapper.setAttribute('aria-hidden', 'true')
     wrapper.inert = true
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000'
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:' + GHOST_Z
     wrapper.style.left = origin.left + 'px'
     wrapper.style.top = origin.top + 'px'
     const mover = document.createElement('div')

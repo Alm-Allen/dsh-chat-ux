@@ -21,7 +21,9 @@ export const PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette"
  */
 export const PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden"
 
-// 纸层的层级。必须高过页面里所有正常内容，才压得住字；发送气泡的替身是 2147483000，比这里高，所以它飞在纸上面
+// 纸层的层级。必须高过页面里所有正常内容，才压得住字。
+// 发送气泡的替身是 2147481999，**压在纸下**（send-morph.ts 的 GHOST_Z 与这里是一对，改一处就要改两处）：
+// 替身若浮在纸上，飞行中不受 multiply 压暗、落定后受，同一个色值在两帧里差出一档，读者看到的就是落地跳色
 const SHEET_Z = "2147482000"
 const GLOW_Z = "2147482001"
 const VIGNETTE_Z = "2147482002"

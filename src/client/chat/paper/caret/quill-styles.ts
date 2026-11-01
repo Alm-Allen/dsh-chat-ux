@@ -11,16 +11,14 @@
  *
  * 颜色从纸感的两个变量派生（--dsh-chat-ux-paper-ink 与 --dsh-chat-ux-paper-paper），不写死色值：
  * 换纸、换房间时羽毛自然跟着走。描金与角质笔杆是定值，它们不该随纸变
+ *
+ * **整张表里没有一条会自己跑的动画。** 这支笔在屏幕上完全静止：不闪烁、不呼吸、笔尖那点光也不来回亮。
+ * 会动的只剩两条，都不属于「闪」：读者挪光标时那一趟 80 ms 位移过渡（geometry 那一侧的事），
+ * 以及哪一帧该出现、哪一帧该藏起来（caret-motion 的事）
  */
-import {CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_LAYER_ATTRIBUTE} from "../../caret/caret-motion"
+import {CARET_COLOR_PROPERTY, CARET_LAYER_ATTRIBUTE} from "../../caret/caret-motion"
 import {PAPER_ROOT_ATTRIBUTE} from "../paper-tokens"
 import {QUILL_ATTRIBUTE, QUILL_ID, QUILL_ROOT_CLASS} from "./quill"
-
-// 呼吸动画的名字。周期与 caret-motion-styles 的闪烁一样，只是「灭」换成了「淡下去」
-const QUILL_BREATHE_NAME = "dsh-chat-ux-paper-quill-breathe"
-
-// 笔尖那一点光的名字
-const QUILL_GLINT_NAME = "dsh-chat-ux-paper-quill-glint"
 
 // 纸感标记在根元素上时的选择器前缀
 const ROOT_SCOPE = "html[" + PAPER_ROOT_ATTRIBUTE + "]"
@@ -43,19 +41,22 @@ const ROOT = "." + QUILL_ROOT_CLASS
  * 入口只认那一处，这里不再单独注册
  */
 export const QUILL_CSS = `
-/* 装载羽毛的那根盒子：底色让掉，闪烁换成呼吸。
-   呼吸而不是闪烁：笔尖压在插入点上，眼里那一点位置必须一直在，整支淡下去再回来比整根消失更像一支笔。
-   周期与 Chromium 自己的插入符一样是 1s，暗下去的那一段只淡到七成，读者不会以为光标死了
-
-   与 2px 条唯一不一致的地方是**移动时不重新起拍**：caret-motion 每次都把那条闪烁拉回起点，
-   是因为赶上「灭」的那半周期读者会以为光标没跟上来。呼吸最暗也只到七成，羽毛一直在，
-   再把它拉回起点只会让连续打字时它永远停在最亮那一帧，呼吸就没了 */
+/* 装载羽毛的那根盒子：底色让掉，闪烁也停掉。
+   caret-motion-styles 给这一根写了闪烁（1s step-end，一半时间 opacity 0），那根条必须闪，
+   因为浏览器自己画的插入符就在闪。羽毛不该闪：读者要的是一支摆在那里的笔。
+   animation: none 就是这一条唯一的职责；恒定在这里，不在 keyframes 里 */
 ${LAYER} {
   background: none;
   /* 宽度仍是 2px，不改成 auto：纸感那一层是拿这一根的矩形去点灯、画脚下那圈光的，
      宽度一缩，它量到的位置就跟着漂。羽毛是绝对定位的子元素，本来就不靠父元素的宽度 */
   overflow: visible;
-  animation: ${QUILL_BREATHE_NAME} 1s ease-in-out infinite;
+  /* 不闪。caret-motion 的 draw() 每次移动都会把那条闪烁动画拉回起点，这一根身上没有那条动画，
+     那段循环对它就是空转——它只认动画名，认不到就什么都不做
+
+     caret-motion-styles 的 prefers-reduced-motion 那一段对这里没有额外的事可做：
+     整支本来就是静止的。那一档要停的位移过渡（80 ms）仍然由 caret-motion-styles 那一份关掉，
+     这里不重复写 */
+  animation: none;
   /* 颜色从纸上的墨与纸派生。这里是兜底的那一档：浏览器不认识 color-mix 时用纯墨色，仍是一支看得见的笔 */
   --dsh-chat-ux-paper-quill-edge: var(--dsh-chat-ux-paper-ink, currentColor);
   --dsh-chat-ux-paper-quill-body: var(--dsh-chat-ux-paper-ink, currentColor);
@@ -115,10 +116,13 @@ html:not([${PAPER_ROOT_ATTRIBUTE}]) ${ROOT} {
 /* 羽毛不在怀里时，2px 的条自己回来——这是这套东西唯一真正会伤到读者的失效方式的兜底。
    能让它发生的只有一件事：React 把这根连同里面的笔一起摘掉、再挂回来，而中间没有一次同步。
    那期间标记还在（所以上面那条把底色让掉了）、笔没了，纯靠脚本等着下一帧才修的话，
-   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为 */
+   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为
+
+   **这条兜底不闪**：它是一根等下一次同步来把羽毛挂回去的临时条，通常只存在一两帧，
+   给它挂上闪烁只会让这期间的光标看起来在闪——正是这一轮要去掉的东西。
+   恒定底色就够了：读者的要求是看得见光标，不是看得见它闪 */
 ${LAYER}:not(:has(> ${ROOT})) {
   background: var(${CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
-  animation: ${CARET_BLINK_NAME} 1s step-end infinite;
 }
 
 ${ROOT} svg {
@@ -137,38 +141,12 @@ ${ROOT}-down { fill: none; stroke: var(--dsh-chat-ux-paper-quill-down); stroke-w
 ${ROOT}-engraving { fill: none; stroke: var(--dsh-chat-ux-paper-quill-metal-lo); stroke-width: 0.3; }
 ${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
 
-/* 笔尖那一点光：2.8s 亮一次，位置一动不动。它不是装饰，是「这一根还活着」的信号——
-   羽毛的呼吸之外整支一直沉着，读者靠它确认输入框还有焦点
-   羽片上那道上下扫过的光没有移植：羽片只有几十像素宽，扫光看不出来，却多一条一直在跑的动画 */
+/* 笔尖那一点光：一个恒定的小亮点，不闪。
+   它原来是 2.8s 亮一次的循环，那是「这根还活着」的信号；静态之后这个信号没有地方安放，
+   就留成一点固定的高光——笔尖上有一点反光本来就成立，它只是不再随时间变
+   羽片上那道上下扫过的光从移植起就没带过来：羽片只有几十像素宽，扫光看不出来，却多一条常驻动画 */
 ${ROOT}-glint {
   fill: #fff;
-  opacity: 0;
-  animation: ${QUILL_GLINT_NAME} 2.8s ease-in-out infinite;
-}
-
-@keyframes ${QUILL_BREATHE_NAME} {
-  0%, 62% { opacity: 1; }
-  62%, 100% { opacity: 0.72; }
-}
-
-@keyframes ${QUILL_GLINT_NAME} {
-  0%, 72% { opacity: 0; }
-  80% { opacity: 0.9; }
-  88% { opacity: 0.15; }
-  100% { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 呼吸与那点光一起停。这一档要的是少动，恒亮的羽毛正好是 VS Code 那根 solid 光标的等价物 */
-  ${LAYER},
-  ${LAYER}:not(:has(> ${ROOT})) {
-    animation: none;
-  }
-
-  ${ROOT}-glint {
-    animation: none;
-    /* 动画停了就永远到不了亮起来的那一帧，所以给它一个恒定的、看得见的值 */
-    opacity: 0.55;
-  }
+  opacity: 0.55;
 }
 `

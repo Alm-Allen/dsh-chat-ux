@@ -726,6 +726,10 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
         // 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
         // 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
         // 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
+        //
+        // 纸感开着、羽毛在场时这里什么都不做，这是有意的：羽毛那一档把闪烁整个关掉了
+        // （quill-styles 给这根写了 animation: none），getAnimations() 里根本没有叫这个名字的动画，
+        // 循环空转一圈就过去。留着它是因为 2px 条那条路径还要靠它，两条路径共用这一段
         for (const animation of layer.caret.getAnimations()) {
             if (animation instanceof CSSAnimation && animation.animationName === exports.CARET_BLINK_NAME)
                 animation.currentTime = 0;
@@ -980,12 +984,16 @@ exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
  * 「按给定高度画成什么样」。不这么做的话就会有两套测量、两套事件、两套让位逻辑互相打架，
  * 而且纸感那一层是拿 [data-chat-ux-caret-layer] 的矩形去点灯的，多一根浮层会让它量到别处去
  *
- * 形状上有三处与 nocturne 不同，都是因为「这是光标，不是装饰」：
+ * 形状上有四处与 nocturne 不同，都是因为「这是光标，不是装饰」：
  * · 去掉 sway（3.4s 的左右微摆）。笔尖必须钉在插入点上，摆动等于光标位置在漂
  * · 去掉羽片上那道上下扫过的光。羽片本身只有几十像素宽，扫光几乎看不出来，却多一条一直在跑的动画
+ * · 笔尖那一点光不再循环：nocturne 让它 2.8s 亮一次，那是「这根还活着」的信号；这支笔整体是静止的，
+ *   那点光就留成一点固定的高光（写在 quill-styles 里），它只是不再随时间变
  * · 不去量光标后面那个字的字宽。nocturne 拿它把笔尖横向推进半格；本模块只管几何，笔尖就压在插入符
  *   左缘上，与那根 2px 的条同一列，两种画法互换时位置不跳
- * 留下的是笔尖那一点光：它每 2.8s 亮一次，位置不动，读者看得出光标还活着
+ *
+ * 于是整支笔在屏幕上是不动的：不闪、不呼吸、笔尖的光不来回亮。会变的只有位置——
+ * 读者挪光标时那一趟 80 ms 位移过渡归 caret-motion，不归这里
  *
  * 颜色不在这里，写在 quill-styles.ts，变量一律 --dsh-chat-ux-paper-quill-*：
  * 与纸感渲染色板（--dsh-chat-ux-paper-*）刻意不共用一套名字，换纸、换房间时羽毛只按墨色与纸色派生
@@ -4882,6 +4890,7 @@ const paper_layout_1 = require("./paper-layout");
 const paper_light_1 = require("./paper-light");
 const paper_light_model_1 = require("./paper-light-model");
 const paper_styles_1 = require("./paper-styles");
+const paper_bubble_1 = require("./paper-bubble");
 const paper_tokens_1 = require("./paper-tokens");
 const paper_tables_1 = require("./paper-tables");
 const paper_math_1 = require("./paper-math");
@@ -5000,6 +5009,9 @@ function installPaper(readOptions) {
             return;
         }
         (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(options.style), (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar));
+        // 气泡那一层纸色走同一个 style 字符串：两处都从配置里那一个值算，换纸时不会一边换了一边没换。
+        // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
+        (0, paper_bubble_1.applyPaperBubble)(options.style);
         if (options.style !== lastStyle) {
             lastStyle = options.style;
             needsBuild = true;
@@ -6361,7 +6373,9 @@ exports.PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette";
  * computed display 仍是 block，截图与纸开逐字节相同）
  */
 exports.PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden";
-// 纸层的层级。必须高过页面里所有正常内容，才压得住字；发送气泡的替身是 2147483000，比这里高，所以它飞在纸上面
+// 纸层的层级。必须高过页面里所有正常内容，才压得住字。
+// 发送气泡的替身是 2147481999，**压在纸下**（send-morph.ts 的 GHOST_Z 与这里是一对，改一处就要改两处）：
+// 替身若浮在纸上，飞行中不受 multiply 压暗、落定后受，同一个色值在两帧里差出一档，读者看到的就是落地跳色
 const SHEET_Z = "2147482000";
 const GLOW_Z = "2147482001";
 const VIGNETTE_Z = "2147482002";
@@ -6455,6 +6469,8 @@ ${ROOT} ::selection {
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PAPER_ROOT_ATTRIBUTE = exports.PAPER_PREFIX = void 0;
+exports.setOwned = setOwned;
+exports.releaseOwned = releaseOwned;
 exports.restorePaperTokens = restorePaperTokens;
 exports.applyPaperTokens = applyPaperTokens;
 exports.clearPaperTokens = clearPaperTokens;
@@ -6481,7 +6497,13 @@ const PAPER_TEXT_FONT_STACK = '"EB Garamond", "Iowan Old Style", "Palatino Linot
 const PAPER_CODE_FONT_STACK = '"Courier Prime", "IBM Plex Mono", "Courier New", "DejaVu Sans Mono", ui-monospace, monospace';
 // 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
 const ownedList = [];
-// 记下原值并写入。同一个元素上的同一名字只记第一次的原值
+/**
+ * 记下原值并写入。同一个元素上的同一名字只记第一次的原值。
+ *
+ * 导出是因为「写在宿主身上、又能逐项还原」这件事不止纸色一处要：用户气泡的底色
+ * （paper-bubble.ts）走的是同一条机制。两边共用同一本账，于是 clearPaperTokens() 一次就把
+ * 它们全还回去，不必记得谁先谁后
+ */
 function setOwned(element, name, value, priority = "") {
     const existing = ownedList.find((owned) => owned.element === element && owned.name === name);
     if (existing === undefined) {
@@ -6500,7 +6522,8 @@ function setOwned(element, name, value, priority = "") {
     }
     element.style.setProperty(name, value, priority);
 }
-// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它
+// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它。
+// 与 setOwned 一并导出，理由同上
 function releaseOwned(element, name) {
     const index = ownedList.findIndex((owned) => owned.element === element && owned.name === name);
     if (index < 0)
@@ -6614,6 +6637,7 @@ exports.paperAndRoomOf = paperAndRoomOf;
 exports.paperOf = paperOf;
 exports.roomOf = roomOf;
 exports.washColor = washColor;
+exports.glassColor = glassColor;
 exports.surfaceColor = surfaceColor;
 /**
  * 纸与房间：五张纸、三个房间，以及从它们派生出来的颜色。
@@ -6875,6 +6899,29 @@ function washColor(profile) {
     return roomSelection === "" ? paper.selection : roomSelection;
 }
 /**
+ * 输入卡片那块玻璃落到实色之后的样子。深浅两档各一份，与 composer-glass 的
+ * `--dsh-chat-ux-glass-base` 是同一个合成结果：那一层是「近白掺一点冷蓝」再让出三成给纸。
+ *
+ * 写在这里而不是读那条变量：那一条只在毛玻璃开着时才定义，而气泡的观感不该跟着毛玻璃的开关走
+ */
+const GLASS_SOLID_LIGHT = "#f3f5f9";
+// 深色那一档：玻璃的底在深色下是冷的近黑，比夜纸本身还深一档
+const GLASS_SOLID_DARK = "#14161d";
+/**
+ * 纸面上那块玻璃的调子：把纸色朝玻璃的实色混一截。
+ *
+ * 用户气泡要与输入框的毛玻璃对上，所以混的是玻璃那一支，不是 surfaceColor 的"朝墨"——
+ * 朝墨混出来的是一张更暗的纸，与读者按过的那张输入卡片对不上。深浅两档自动成立：
+ * 亮纸上玻璃比纸亮，混出来浮起一层；夜纸上玻璃比纸深，混出来压下去一层，两边都是"纸上的一层材质"
+ */
+function glassColor(profile, amount) {
+    const paper = paperOf(profile);
+    const target = (0, paper_math_1.toUnit)(paper.appearance === "dark" ? GLASS_SOLID_DARK : GLASS_SOLID_LIGHT);
+    const base = (0, paper_math_1.toUnit)(paper.paper);
+    const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (target[index] ?? 0) * amount) * 255));
+    return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
+}
+/**
  * 纸面上的"另一层纸"：把纸色朝墨色调一点。
  *
  * 气泡、输入框、菜单、侧栏都用它——整扇窗是一张纸，这些是纸上压出来的一层，不是浮在纸上的白卡片。
@@ -6886,6 +6933,72 @@ function surfaceColor(profile, amount) {
     const ink = (0, paper_math_1.toUnit)(paper.ink);
     const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (ink[index] ?? 0) * amount) * 255));
     return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
+}
+    };
+
+    __registry["chat/paper/paper-bubble.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_BUBBLE_PROPERTY = void 0;
+exports.applyPaperBubble = applyPaperBubble;
+/**
+ * 用户气泡的底色。
+ *
+ * dsh 给气泡画的底是 `var(--dsw-specific-bubble)`（ui-primitives 的 UserMessageBubble），浅色是
+ * deepseek-50、深色是 neutral-bluish-850——一块浮在页面上的白（或蓝黑）卡片。纸盖上来之后它就成了
+ * 整张纸里唯一一处"不是纸"的面，所以这里按纸重算。
+ *
+ * **算的方向是「朝输入卡片那块玻璃」，不是「朝墨」。** 读者按过的那张输入卡片是毛玻璃（浅色是一块
+ * 偏冷的白、深色是一块偏冷的近黑），气泡要与它对上，才像同一种材质写出来的两张面；朝墨混出来的是
+ * 一张更暗的纸，与那张卡片对不上，落定那一下看起来就像换了个控件。
+ *
+ * 为什么写在这一条而不是另起一条自己的变量：气泡的底由 dsh 自己那条规则直接吃令牌，
+ * 本插件拿不到那个元素，只能改写令牌。这是继整页底色与侧栏填充色之后的第三条，与前两条同性质。
+ *
+ * **只写一条。** `--dsw-specific-bubble-highlight` 与它挨着定义、名字也像，但 dsh 里用它的是
+ * 会话检查器那圈高亮框（experimental/session-inspector 的 .chatReveal），气泡本身一个都没用；
+ * 改写它只会让那圈框跟着变色，换来的是没有收益的副作用。
+ *
+ * 深浅两张纸只算一次色：glassColor 的两支目标色按纸的明暗二选一，于是同一条公式在暗纸上自动变成
+ * "比纸更深的冷面"。不需要按 data-ds-dark-theme 各写一套。
+ */
+const paper_tokens_1 = require("./paper-tokens");
+const paper_tables_1 = require("./paper-tables");
+/**
+ * 气泡朝玻璃实色混多少。
+ *
+ * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的
+ * 白」，混七成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
+ */
+const BUBBLE_MIX = 0.62;
+// 宿主画气泡底的那条令牌
+const HOST_BUBBLE_PROPERTY = "--dsw-specific-bubble";
+/**
+ * 气泡那一层色自己的一笔，落在本插件的前缀里。
+ *
+ * 目前只有一个读法：发送替身的起手色（send-flight-styles.ts 的纸感那一段读它）。
+ * 之所以另存这一笔、而不是让那段 CSS 直接读 --dsw-specific-bubble：替身那片的变量定义在 body 上，
+ * 读别人的令牌要绕一圈，而且宿主那条随时可能被别的皮肤抢走，替身的起手色不该跟着变
+ */
+exports.PAPER_BUBBLE_PROPERTY = "--dsh-chat-ux-paper-bubble";
+/**
+ * 把气泡的底色落到纸上。
+ *
+ * style 必须是配置里那一个字符串（与 paperTokenSet 的入参同源），否则换纸时两处会分叉：
+ * 令牌这边换了纸，气泡还停在上一张。重复调用是幂等的——setOwned 只在值变了时才真的写 DOM，
+ * 而改一条 custom property 会让整篇文档的样式重算，那是这个插件最贵的一次操作
+ */
+function applyPaperBubble(style) {
+    const color = (0, paper_tables_1.glassColor)((0, paper_tables_1.resolveProfile)(style), BUBBLE_MIX);
+    // 自己那一笔先写，而且不依赖 body 在不在：发送替身那截 CSS 读的是它，那一层要的首帧就有值。
+    // 写在根元素上：没有别人定义过它，继承就能到每个元素
+    (0, paper_tokens_1.setOwned)(document.documentElement, exports.PAPER_BUBBLE_PROPERTY, color);
+    // 宿主那条必须写在 body 上：ui-theme 把 --dsw-specific-bubble 定义在 body 自己的规则里，
+    // 内联写在根元素上只算"根元素的声明"，输给 body 的本地声明（与整页底色同一条坑）。
+    // body 还没建出来时这一条先跳过，下一次 refresh 会再来
+    if (document.body === null)
+        return;
+    (0, paper_tokens_1.setOwned)(document.body, HOST_BUBBLE_PROPERTY, color);
 }
     };
 
@@ -7695,7 +7808,7 @@ function mountGhost(snapshot, origin) {
     wrapper.setAttribute(GHOST_ATTRIBUTE, '');
     wrapper.setAttribute('aria-hidden', 'true');
     wrapper.inert = true;
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000';
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:' + GHOST_Z;
     wrapper.style.left = origin.left + 'px';
     wrapper.style.top = origin.top + 'px';
     const mover = document.createElement('div');
@@ -8058,6 +8171,18 @@ function startMorph(frame, bubble, end) {
     return { wrapper, compact, progress, play, alignStart, animations, finished: settled(travel) };
 }
 /**
+ * 替身最外层的层级。
+ *
+ * **要落在纸层之下**（paper-styles.ts 里纸是 2147482000、辉光 2001、暗角 2002），取 1999。
+ * 这不是小事：替身原来是 2147483000，压在纸上，而落点的气泡在纸下——两处色值一样，屏幕上一个
+ * 被纸光压暗、一个没有，落定那一帧就必然跳一下（实测飞行中 rgb(221,215,203)、落地后同一个值
+ * 被 multiply 压成更深的纸色，读者看到的就是"落地瞬间换了个色"）。
+ *
+ * 压到纸下之后，替身与气泡吃同一层纸光、同一道暗角，飞行中途与落定那一刻是同一块像素。
+ * 代价是它不再盖在纸上——但它本来就是一层面，不是浮在整页之上的浮层，压在纸下才是对的。
+ */
+const GHOST_Z = '2147481999';
+/**
  * 色块替身：只复刻卡片的尺寸、圆角与底色，一个内容元素都不复制。
  *
  * 这一版把「形变要画的东西」压到最低：一个方块加一层渐入的气泡色。它没有克隆子树，首次栅格化几乎
@@ -8072,7 +8197,7 @@ function mountSlab(snapshot, origin) {
     wrapper.setAttribute(GHOST_ATTRIBUTE, '');
     wrapper.setAttribute('aria-hidden', 'true');
     wrapper.inert = true;
-    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:2147483000';
+    wrapper.style.cssText = 'position:fixed;margin:0;width:0;height:0;pointer-events:none;z-index:' + GHOST_Z;
     wrapper.style.left = origin.left + 'px';
     wrapper.style.top = origin.top + 'px';
     const mover = document.createElement('div');
@@ -9402,6 +9527,7 @@ exports.ALL_CSS = [exports.CHAT_AREA_CSS, follow_probe_styles_1.FOLLOW_PROBE_CSS
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SEND_FLIGHT_CSS = exports.SLAB_SHEEN_VARIABLE = exports.SLAB_FILL_VARIABLE = void 0;
 const composer_glass_styles_1 = require("../composer-glass/composer-glass-styles");
+const paper_tokens_1 = require("../paper/paper-tokens");
 /** 色块替身的底色变量，挂在 `body` 上由替身继承（见 `send-morph.ts` 的 `SLAB_FILL_VAR`）。 */
 exports.SLAB_FILL_VARIABLE = '--dsh-chat-ux-slab-fill';
 /** 色块替身那两片渐变的变量（见 `SLAB_SHEEN_VAR`）。 */
@@ -9409,12 +9535,22 @@ exports.SLAB_SHEEN_VARIABLE = '--dsh-chat-ux-slab-sheen';
 /**
  * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
  *
- * **起手色不另抄一遍数**：它要的就是「chat-ux 玻璃卡片落到实色之后的样子」，玻璃那边已经按主题备好了
+ * **起手色分两条路：没铺纸时照抄玻璃，铺纸时照抄纸。**
+ *
+ * 没铺纸时，起手色要的就是「chat-ux 玻璃卡片落到实色之后的样子」，玻璃那边已经按主题备好了
  * `--dsh-chat-ux-glass-base`（浅色压过一点灰，深色换成 neutral-bluish-850 那一档）与让出多少的
  * `--dsh-chat-ux-glass-alpha`。直接引用它们，以后调玻璃不必再回来改一遍色块。
  *
+ * 铺了纸时这条取舍**不再成立**：那条路的终点是纸上压出来的一层纸（气泡的底由 paper-bubble 换掉），
+ * 起点却还是玻璃的冷白，于是整段飞行是"冷白渐变成米黄"。所以纸开着时起手色直接取气泡那一笔
+ * `--dsh-chat-ux-paper-bubble`（paper-bubble.ts 写的，与宿主的 --dsw-specific-bubble 同一个值），
+ * 两端同色，飞行中颜色一次都不变；那两片冷蓝紫色的渐变也一并作废——气泡自己没有渐变，
+ * 留着它等于在半路上又把色块染蓝一次。
+ *
  * 浅色这一档同时是**兜底**：读者关掉毛玻璃时那两个变量不在，`var()` 里的字面值接上（与旧版写死的
- * 那三条逐字相同），于是起手块与以前一模一样。
+ * 那三条逐字相同），于是起手块与以前一模一样。纸那一段没有兜底值：`--dsh-chat-ux-paper-bubble` 缺席时
+ * 这一条变量算作无效，JS 侧 `SLAB_FILL_VAR` 自带的玻璃色兜底接手——退回今天的行为，而不是画一块
+ * 没有来路的色。
  *
  * 深色那两片渐变比浅色浓一档（0.035 / 0.03 对 0.022 / 0.018）：同样的透明度叠在深底上几乎看不见。
  * 括号里是空兜底的那条——变量缺席时整层渐变作废，底还在，不会算出一块黑。
@@ -9447,6 +9583,23 @@ body[data-ds-dark-theme] {
   body[${composer_glass_styles_1.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     ${exports.SLAB_FILL_VARIABLE}: color-mix(in srgb, var(--dsh-chat-ux-glass-base, #0e1117) var(--dsh-chat-ux-glass-alpha, 70%), transparent);
   }
+}
+
+/* 铺了纸：起手块的底就是纸面上那一层，与落点气泡同一个值，整段飞行颜色不变。
+   深浅两档不分开写——纸色本身就是按纸算好的，夜纸那一份是"略亮的纸"，与主题无关。
+
+   这条必须排在最后、也必须带 !important：上面那几条没有它时都在 body 上写同一个变量，
+   而以 body[data-ds-dark-theme] 与 body[data-chat-ux-composer-glass] 起头的那几条特异度更高，
+   同值后写的规则赢不过它们，纸开着时起手块又会变回玻璃的冷白。
+
+   顺序这一条查过：ALL_CSS 里 COMPOSER_GLASS_CSS 排在本表之后，但那份表一个 --dsh-chat-ux-slab-*
+   都不写（它只管 --dsh-chat-ux-glass-base / -alpha 与它自己那几组规则），所以后写的那一张盖不到这里。
+   真要有人往毛玻璃那张表里加这两个变量，这里的 !important 仍然压得住——前提是它不加 !important。
+
+   两片冷蓝紫渐变一并抹掉：气泡自己身上没有渐变，留着它等于飞行中途再把色块染蓝一次 */
+:root[${paper_tokens_1.PAPER_ROOT_ATTRIBUTE}] body {
+  ${exports.SLAB_FILL_VARIABLE}: var(--dsh-chat-ux-paper-bubble) !important;
+  ${exports.SLAB_SHEEN_VARIABLE}: none !important;
 }
 `;
     };
@@ -9555,14 +9708,14 @@ exports.QUILL_CSS = void 0;
  *
  * 颜色从纸感的两个变量派生（--dsh-chat-ux-paper-ink 与 --dsh-chat-ux-paper-paper），不写死色值：
  * 换纸、换房间时羽毛自然跟着走。描金与角质笔杆是定值，它们不该随纸变
+ *
+ * **整张表里没有一条会自己跑的动画。** 这支笔在屏幕上完全静止：不闪烁、不呼吸、笔尖那点光也不来回亮。
+ * 会动的只剩两条，都不属于「闪」：读者挪光标时那一趟 80 ms 位移过渡（geometry 那一侧的事），
+ * 以及哪一帧该出现、哪一帧该藏起来（caret-motion 的事）
  */
 const caret_motion_1 = require("../../caret/caret-motion");
 const paper_tokens_1 = require("../paper-tokens");
 const quill_1 = require("./quill");
-// 呼吸动画的名字。周期与 caret-motion-styles 的闪烁一样，只是「灭」换成了「淡下去」
-const QUILL_BREATHE_NAME = "dsh-chat-ux-paper-quill-breathe";
-// 笔尖那一点光的名字
-const QUILL_GLINT_NAME = "dsh-chat-ux-paper-quill-glint";
 // 纸感标记在根元素上时的选择器前缀
 const ROOT_SCOPE = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
 /**
@@ -9581,19 +9734,22 @@ const ROOT = "." + quill_1.QUILL_ROOT_CLASS;
  * 入口只认那一处，这里不再单独注册
  */
 exports.QUILL_CSS = `
-/* 装载羽毛的那根盒子：底色让掉，闪烁换成呼吸。
-   呼吸而不是闪烁：笔尖压在插入点上，眼里那一点位置必须一直在，整支淡下去再回来比整根消失更像一支笔。
-   周期与 Chromium 自己的插入符一样是 1s，暗下去的那一段只淡到七成，读者不会以为光标死了
-
-   与 2px 条唯一不一致的地方是**移动时不重新起拍**：caret-motion 每次都把那条闪烁拉回起点，
-   是因为赶上「灭」的那半周期读者会以为光标没跟上来。呼吸最暗也只到七成，羽毛一直在，
-   再把它拉回起点只会让连续打字时它永远停在最亮那一帧，呼吸就没了 */
+/* 装载羽毛的那根盒子：底色让掉，闪烁也停掉。
+   caret-motion-styles 给这一根写了闪烁（1s step-end，一半时间 opacity 0），那根条必须闪，
+   因为浏览器自己画的插入符就在闪。羽毛不该闪：读者要的是一支摆在那里的笔。
+   animation: none 就是这一条唯一的职责；恒定在这里，不在 keyframes 里 */
 ${LAYER} {
   background: none;
   /* 宽度仍是 2px，不改成 auto：纸感那一层是拿这一根的矩形去点灯、画脚下那圈光的，
      宽度一缩，它量到的位置就跟着漂。羽毛是绝对定位的子元素，本来就不靠父元素的宽度 */
   overflow: visible;
-  animation: ${QUILL_BREATHE_NAME} 1s ease-in-out infinite;
+  /* 不闪。caret-motion 的 draw() 每次移动都会把那条闪烁动画拉回起点，这一根身上没有那条动画，
+     那段循环对它就是空转——它只认动画名，认不到就什么都不做
+
+     caret-motion-styles 的 prefers-reduced-motion 那一段对这里没有额外的事可做：
+     整支本来就是静止的。那一档要停的位移过渡（80 ms）仍然由 caret-motion-styles 那一份关掉，
+     这里不重复写 */
+  animation: none;
   /* 颜色从纸上的墨与纸派生。这里是兜底的那一档：浏览器不认识 color-mix 时用纯墨色，仍是一支看得见的笔 */
   --dsh-chat-ux-paper-quill-edge: var(--dsh-chat-ux-paper-ink, currentColor);
   --dsh-chat-ux-paper-quill-body: var(--dsh-chat-ux-paper-ink, currentColor);
@@ -9653,10 +9809,13 @@ html:not([${paper_tokens_1.PAPER_ROOT_ATTRIBUTE}]) ${ROOT} {
 /* 羽毛不在怀里时，2px 的条自己回来——这是这套东西唯一真正会伤到读者的失效方式的兜底。
    能让它发生的只有一件事：React 把这根连同里面的笔一起摘掉、再挂回来，而中间没有一次同步。
    那期间标记还在（所以上面那条把底色让掉了）、笔没了，纯靠脚本等着下一帧才修的话，
-   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为 */
+   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为
+
+   **这条兜底不闪**：它是一根等下一次同步来把羽毛挂回去的临时条，通常只存在一两帧，
+   给它挂上闪烁只会让这期间的光标看起来在闪——正是这一轮要去掉的东西。
+   恒定底色就够了：读者的要求是看得见光标，不是看得见它闪 */
 ${LAYER}:not(:has(> ${ROOT})) {
   background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
-  animation: ${caret_motion_1.CARET_BLINK_NAME} 1s step-end infinite;
 }
 
 ${ROOT} svg {
@@ -9675,39 +9834,13 @@ ${ROOT}-down { fill: none; stroke: var(--dsh-chat-ux-paper-quill-down); stroke-w
 ${ROOT}-engraving { fill: none; stroke: var(--dsh-chat-ux-paper-quill-metal-lo); stroke-width: 0.3; }
 ${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
 
-/* 笔尖那一点光：2.8s 亮一次，位置一动不动。它不是装饰，是「这一根还活着」的信号——
-   羽毛的呼吸之外整支一直沉着，读者靠它确认输入框还有焦点
-   羽片上那道上下扫过的光没有移植：羽片只有几十像素宽，扫光看不出来，却多一条一直在跑的动画 */
+/* 笔尖那一点光：一个恒定的小亮点，不闪。
+   它原来是 2.8s 亮一次的循环，那是「这根还活着」的信号；静态之后这个信号没有地方安放，
+   就留成一点固定的高光——笔尖上有一点反光本来就成立，它只是不再随时间变
+   羽片上那道上下扫过的光从移植起就没带过来：羽片只有几十像素宽，扫光看不出来，却多一条常驻动画 */
 ${ROOT}-glint {
   fill: #fff;
-  opacity: 0;
-  animation: ${QUILL_GLINT_NAME} 2.8s ease-in-out infinite;
-}
-
-@keyframes ${QUILL_BREATHE_NAME} {
-  0%, 62% { opacity: 1; }
-  62%, 100% { opacity: 0.72; }
-}
-
-@keyframes ${QUILL_GLINT_NAME} {
-  0%, 72% { opacity: 0; }
-  80% { opacity: 0.9; }
-  88% { opacity: 0.15; }
-  100% { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 呼吸与那点光一起停。这一档要的是少动，恒亮的羽毛正好是 VS Code 那根 solid 光标的等价物 */
-  ${LAYER},
-  ${LAYER}:not(:has(> ${ROOT})) {
-    animation: none;
-  }
-
-  ${ROOT}-glint {
-    animation: none;
-    /* 动画停了就永远到不了亮起来的那一帧，所以给它一个恒定的、看得见的值 */
-    opacity: 0.55;
-  }
+  opacity: 0.55;
 }
 `;
     };

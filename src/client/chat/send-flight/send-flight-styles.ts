@@ -12,6 +12,8 @@
  */
 
 import {GLASS_ATTRIBUTE} from '../composer-glass/composer-glass-styles'
+import {PAPER_BUBBLE_PROPERTY} from '../paper/paper-bubble'
+import {PAPER_ROOT_ATTRIBUTE} from '../paper/paper-tokens'
 
 /** 色块替身的底色变量，挂在 `body` 上由替身继承（见 `send-morph.ts` 的 `SLAB_FILL_VAR`）。 */
 export const SLAB_FILL_VARIABLE = '--dsh-chat-ux-slab-fill'
@@ -22,12 +24,22 @@ export const SLAB_SHEEN_VARIABLE = '--dsh-chat-ux-slab-sheen'
 /**
  * 整份样式，由 `styles.ts` 拼进那张 `<style>`。
  *
- * **起手色不另抄一遍数**：它要的就是「chat-ux 玻璃卡片落到实色之后的样子」，玻璃那边已经按主题备好了
+ * **起手色分两条路：没铺纸时照抄玻璃，铺纸时照抄纸。**
+ *
+ * 没铺纸时，起手色要的就是「chat-ux 玻璃卡片落到实色之后的样子」，玻璃那边已经按主题备好了
  * `--dsh-chat-ux-glass-base`（浅色压过一点灰，深色换成 neutral-bluish-850 那一档）与让出多少的
  * `--dsh-chat-ux-glass-alpha`。直接引用它们，以后调玻璃不必再回来改一遍色块。
  *
+ * 铺了纸时这条取舍**不再成立**：那条路的终点是纸上压出来的一层纸（气泡的底由 paper-bubble 换掉），
+ * 起点却还是玻璃的冷白，于是整段飞行是"冷白渐变成米黄"。所以纸开着时起手色直接取气泡那一笔
+ * `--dsh-chat-ux-paper-bubble`（paper-bubble.ts 写的，与宿主的 --dsw-specific-bubble 同一个值），
+ * 两端同色，飞行中颜色一次都不变；那两片冷蓝紫色的渐变也一并作废——气泡自己没有渐变，
+ * 留着它等于在半路上又把色块染蓝一次。
+ *
  * 浅色这一档同时是**兜底**：读者关掉毛玻璃时那两个变量不在，`var()` 里的字面值接上（与旧版写死的
- * 那三条逐字相同），于是起手块与以前一模一样。
+ * 那三条逐字相同），于是起手块与以前一模一样。纸那一段没有兜底值：`--dsh-chat-ux-paper-bubble` 缺席时
+ * 这一条变量算作无效，JS 侧 `SLAB_FILL_VAR` 自带的玻璃色兜底接手——退回今天的行为，而不是画一块
+ * 没有来路的色。
  *
  * 深色那两片渐变比浅色浓一档（0.035 / 0.03 对 0.022 / 0.018）：同样的透明度叠在深底上几乎看不见。
  * 括号里是空兜底的那条——变量缺席时整层渐变作废，底还在，不会算出一块黑。
@@ -60,5 +72,22 @@ body[data-ds-dark-theme] {
   body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
     ${SLAB_FILL_VARIABLE}: color-mix(in srgb, var(--dsh-chat-ux-glass-base, #0e1117) var(--dsh-chat-ux-glass-alpha, 70%), transparent);
   }
+}
+
+/* 铺了纸：起手块的底就是纸面上那一层，与落点气泡同一个值，整段飞行颜色不变。
+   深浅两档不分开写——纸色本身就是按纸算好的，夜纸那一份是"略亮的纸"，与主题无关。
+
+   这条必须排在最后、也必须带 !important：上面那几条没有它时都在 body 上写同一个变量，
+   而以 body[data-ds-dark-theme] 与 body[data-chat-ux-composer-glass] 起头的那几条特异度更高，
+   同值后写的规则赢不过它们，纸开着时起手块又会变回玻璃的冷白。
+
+   顺序这一条查过：ALL_CSS 里 COMPOSER_GLASS_CSS 排在本表之后，但那份表一个 --dsh-chat-ux-slab-*
+   都不写（它只管 --dsh-chat-ux-glass-base / -alpha 与它自己那几组规则），所以后写的那一张盖不到这里。
+   真要有人往毛玻璃那张表里加这两个变量，这里的 !important 仍然压得住——前提是它不加 !important。
+
+   两片冷蓝紫渐变一并抹掉：气泡自己身上没有渐变，留着它等于飞行中途再把色块染蓝一次 */
+:root[${PAPER_ROOT_ATTRIBUTE}] body {
+  ${SLAB_FILL_VARIABLE}: var(--dsh-chat-ux-paper-bubble) !important;
+  ${SLAB_SHEEN_VARIABLE}: none !important;
 }
 `

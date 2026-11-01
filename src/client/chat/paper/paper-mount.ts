@@ -20,6 +20,7 @@ import {ambientLevel, buildRig} from "./paper-light-model"
 import {
 	PAPER_CSS, PAPER_GLOW_ATTRIBUTE, PAPER_HIDDEN_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE, PAPER_VIGNETTE_ATTRIBUTE,
 } from "./paper-styles"
+import {applyPaperBubble} from "./paper-bubble"
 import {applyPaperTokens, clearPaperTokens, paperTokenSet} from "./paper-tokens"
 import {PAPER_DEFAULT_SETTINGS, paperOf, resolveProfile, roomOf} from "./paper-tables"
 import type {PaperSettings} from "./paper-tables"
@@ -181,6 +182,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
 			return
 		}
 		applyPaperTokens(paperTokenSet(options.style), paperIncludesSidebar(options.includeSidebar))
+		// 气泡那一层纸色走同一个 style 字符串：两处都从配置里那一个值算，换纸时不会一边换了一边没换。
+		// 它写的是宿主令牌，与纸色同性质，所以也归这一处落
+		applyPaperBubble(options.style)
 		if (options.style !== lastStyle) {
 			lastStyle = options.style
 			needsBuild = true

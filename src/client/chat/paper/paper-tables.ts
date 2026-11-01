@@ -409,6 +409,32 @@ export function washColor(profile: PaperProfile): string {
 }
 
 /**
+ * 输入卡片那块玻璃落到实色之后的样子。深浅两档各一份，与 composer-glass 的
+ * `--dsh-chat-ux-glass-base` 是同一个合成结果：那一层是「近白掺一点冷蓝」再让出三成给纸。
+ *
+ * 写在这里而不是读那条变量：那一条只在毛玻璃开着时才定义，而气泡的观感不该跟着毛玻璃的开关走
+ */
+const GLASS_SOLID_LIGHT = "#f3f5f9"
+
+// 深色那一档：玻璃的底在深色下是冷的近黑，比夜纸本身还深一档
+const GLASS_SOLID_DARK = "#14161d"
+
+/**
+ * 纸面上那块玻璃的调子：把纸色朝玻璃的实色混一截。
+ *
+ * 用户气泡要与输入框的毛玻璃对上，所以混的是玻璃那一支，不是 surfaceColor 的"朝墨"——
+ * 朝墨混出来的是一张更暗的纸，与读者按过的那张输入卡片对不上。深浅两档自动成立：
+ * 亮纸上玻璃比纸亮，混出来浮起一层；夜纸上玻璃比纸深，混出来压下去一层，两边都是"纸上的一层材质"
+ */
+export function glassColor(profile: PaperProfile, amount: number): string {
+	const paper = paperOf(profile)
+	const target = toUnit(paper.appearance === "dark" ? GLASS_SOLID_DARK : GLASS_SOLID_LIGHT)
+	const base = toUnit(paper.paper)
+	const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (target[index] ?? 0) * amount) * 255))
+	return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("")
+}
+
+/**
  * 纸面上的"另一层纸"：把纸色朝墨色调一点。
  *
  * 气泡、输入框、菜单、侧栏都用它——整扇窗是一张纸，这些是纸上压出来的一层，不是浮在纸上的白卡片。

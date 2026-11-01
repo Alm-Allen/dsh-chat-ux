@@ -75,8 +75,14 @@ interface OwnedProperty {
 // 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
 const ownedList: OwnedProperty[] = []
 
-// 记下原值并写入。同一个元素上的同一名字只记第一次的原值
-function setOwned(element: HTMLElement, name: string, value: string, priority = ""): void {
+/**
+ * 记下原值并写入。同一个元素上的同一名字只记第一次的原值。
+ *
+ * 导出是因为「写在宿主身上、又能逐项还原」这件事不止纸色一处要：用户气泡的底色
+ * （paper-bubble.ts）走的是同一条机制。两边共用同一本账，于是 clearPaperTokens() 一次就把
+ * 它们全还回去，不必记得谁先谁后
+ */
+export function setOwned(element: HTMLElement, name: string, value: string, priority = ""): void {
 	const existing = ownedList.find((owned) => owned.element === element && owned.name === name)
 	if (existing === undefined) {
 		ownedList.push({
@@ -94,8 +100,9 @@ function setOwned(element: HTMLElement, name: string, value: string, priority = 
 	element.style.setProperty(name, value, priority)
 }
 
-// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它
-function releaseOwned(element: HTMLElement, name: string): void {
+// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它。
+// 与 setOwned 一并导出，理由同上
+export function releaseOwned(element: HTMLElement, name: string): void {
 	const index = ownedList.findIndex((owned) => owned.element === element && owned.name === name)
 	if (index < 0) return
 	const owned = ownedList[index]

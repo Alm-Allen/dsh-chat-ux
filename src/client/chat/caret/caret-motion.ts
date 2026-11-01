@@ -433,6 +433,10 @@ export function installCaretMotion(
 		// 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
 		// 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
 		// 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
+		//
+		// 纸感开着、羽毛在场时这里什么都不做，这是有意的：羽毛那一档把闪烁整个关掉了
+		// （quill-styles 给这根写了 animation: none），getAnimations() 里根本没有叫这个名字的动画，
+		// 循环空转一圈就过去。留着它是因为 2px 条那条路径还要靠它，两条路径共用这一段
 		for (const animation of layer.caret.getAnimations()) {
 			if (animation instanceof CSSAnimation && animation.animationName === CARET_BLINK_NAME) animation.currentTime = 0
 		}
