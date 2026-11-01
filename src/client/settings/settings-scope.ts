@@ -12,10 +12,6 @@ import type {CaretMotionMode} from "../chat/caret/caret-motion"
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 export const DEFAULT_PAPER_ON = true
 
-// 纸样：纸 __ 房间（双下划线）的一对 id。这一串在 paper-styles.ts 里必须拆得开，
-// 与渲染核认的 id 也必须一致
-export const DEFAULT_PAPER_STYLE = "cotton__paper-and-ink"
-
 // 左侧栏是否也跟着铺同一张纸
 export const DEFAULT_PAPER_SIDEBAR = true
 
@@ -44,31 +40,28 @@ export const DEFAULT_FOLLOW_ON_APPEAR = true
 export const DEFAULT_SEND_FLIGHT = true
 
 
-
 // host 解析出来的、本插件占用的那个配置条目
 export interface ChatUxSection {
-	// 纸感是否开着，关掉时整页回到 dsh 原来的样子
-	paperOn?: boolean
-	// 纸样：纸 __ 房间（双下划线）。生词由 paper-styles.ts 兜底成默认那一对
-	paperStyle?: string
-	// 左侧栏是否也跟着铺同一张纸
-	paperSidebar?: boolean
-	// 思考行与过程组是否自己开合，关掉时两块都整块不装
-	autoFold?: boolean
-	// 插入符动效的档位
-	caretMotion?: CaretMotionMode
-	// 命中率读数变化时，变了的那一位是否原地滚到新值
-	hitReel?: boolean
-	// 上下文占用那圈环是否换成实心饼，关掉时这一处整块不装
-	contextPie?: boolean
-	// 输入框是否半透明并模糊背后，关掉时那一整张规则表一条都不命中
-	composerGlass?: boolean
-	// 文件变更行的 +n -m 是否在准备态就显示，并跟着流式内容增长
-	liveDiff?: boolean
-	// 工具调用与思考行第一次出现时是否把滚动位置补到底，关掉时门控属性不挂，检测规则一条都不命中
-	followOnAppear?: boolean
-	// 发送那一下是否整张输入卡片收成落点那条气泡（形变）
-	sendFlight?: boolean
+    // 纸感是否开着，关掉时整页回到 dsh 原来的样子
+    paperOn?: boolean
+    // 左侧栏是否也跟着铺同一张纸
+    paperSidebar?: boolean
+    // 思考行与过程组是否自己开合，关掉时两块都整块不装
+    autoFold?: boolean
+    // 插入符动效的档位
+    caretMotion?: CaretMotionMode
+    // 命中率读数变化时，变了的那一位是否原地滚到新值
+    hitReel?: boolean
+    // 上下文占用那圈环是否换成实心饼，关掉时这一处整块不装
+    contextPie?: boolean
+    // 输入框是否半透明并模糊背后，关掉时那一整张规则表一条都不命中
+    composerGlass?: boolean
+    // 文件变更行的 +n -m 是否在准备态就显示，并跟着流式内容增长
+    liveDiff?: boolean
+    // 工具调用与思考行第一次出现时是否把滚动位置补到底，关掉时门控属性不挂，检测规则一条都不命中
+    followOnAppear?: boolean
+    // 发送那一下是否整张输入卡片收成落点那条气泡（形变）
+    sendFlight?: boolean
 }
 
 
@@ -76,38 +69,38 @@ export interface ChatUxSection {
  * 一份表单在浏览器侧的同步状态，对映平台的 ConfigFormSnapshot，收窄到本插件会读的那些字段
  */
 export interface ConfigFormSnapshot<T> {
-	// 第一个分节到达之前是 loading，有一个分节立着时是 ready，这一行没有向这个客户端暴露配置时是 unavailable
-	// 非回环连接把偏好留在页面进程里时，看到的也是 unavailable
-	status: "loading" | "ready" | "unavailable"
-	// 最后一次被接受的、经 schema 解析的分节
-	value: T | undefined
-	// host 解析 value 时叠在上面的组合层
-	base: unknown
-	// 原始用户层，某个字段在这里存在才是被覆盖的标志
-	user: unknown
-	// 围栏下一次写入的条目版本号
-	revision: number | undefined
-	// host 文档是否接受写入
-	writable: boolean
-	// host 与 host 文档同步；memory 只活在当前页面进程里
-	mode: "host" | "memory"
+    // 第一个分节到达之前是 loading，有一个分节立着时是 ready，这一行没有向这个客户端暴露配置时是 unavailable
+    // 非回环连接把偏好留在页面进程里时，看到的也是 unavailable
+    status: "loading" | "ready" | "unavailable"
+    // 最后一次被接受的、经 schema 解析的分节
+    value: T | undefined
+    // host 解析 value 时叠在上面的组合层
+    base: unknown
+    // 原始用户层，某个字段在这里存在才是被覆盖的标志
+    user: unknown
+    // 围栏下一次写入的条目版本号
+    revision: number | undefined
+    // host 文档是否接受写入
+    writable: boolean
+    // host 与 host 文档同步；memory 只活在当前页面进程里
+    mode: "host" | "memory"
 }
 
 // 一份共享表单：读它、观察它、写它
 export interface ConfigForm<T = ChatUxSection> {
-	getSnapshot(): ConfigFormSnapshot<T>
+    getSnapshot(): ConfigFormSnapshot<T>
 
-	subscribe(listener: () => void): () => void
+    subscribe(listener: () => void): () => void
 
-	// 写入失败不抛错，用返回值判断 host 有没有接受；传输层与版本号的失败都在这下面被吞掉
-	set(field: string, value: unknown): Promise<boolean>
+    // 写入失败不抛错，用返回值判断 host 有没有接受；传输层与版本号的失败都在这下面被吞掉
+    set(field: string, value: unknown): Promise<boolean>
 
-	unset(field: string): Promise<boolean>
+    unset(field: string): Promise<boolean>
 }
 
 // locale 服务通过 ctx.reflect 读，而不是声明成依赖：没有它的部署里卡片退化成按浏览器语言显示，而不是不挂载
 export interface LocaleLike {
-	getSnapshot(): { active?: string | null | undefined }
+    getSnapshot(): { active?: string | null | undefined }
 
-	subscribe(listener: () => void): () => void
+    subscribe(listener: () => void): () => void
 }

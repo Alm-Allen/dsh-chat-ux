@@ -5,6 +5,7 @@
  * 祖先，卡片自己一带 backdrop-filter 就成了它们的祖先 backdrop root，菜单的模糊采样被掐断、整块透掉。
  * 每一组规则都拿 body 上的开关属性当前缀，关掉时整块表一条都不命中，真的回到 dsh 原来的输入框
  */
+import {PAPER_DARK_ATTRIBUTE, PAPER_PREFIX, PAPER_ROOT_ATTRIBUTE} from "../paper/paper-tokens"
 
 // 玻璃生效的开关属性，由 index.tsx 按设置写上或摘掉；表里每一组规则都拿它当前缀，开关不必重新生成样式表
 export const GLASS_ATTRIBUTE = "data-chat-ux-composer-glass"
@@ -49,6 +50,25 @@ body[${GLASS_ATTRIBUTE}] {
 /* 深色那一档不压灰：那里的输入面色（neutral-bluish-850）本来就比画布（950）亮一档，天然分得开 */
 body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   --dsh-chat-ux-glass-base: color-mix(in srgb, var(--dsw-specific-input-major, #0e1117) 97%, rgb(122 155 240));
+}
+
+/* 纸感开着时的深色玻璃：底的色相跟着纸走，不再掺冷蓝。
+   上面那一条的底是「输入面色 neutral-bluish-850 掺 3% 冷蓝」，合成出来是一块冷近黑（#2d2e2f）；纸感开着时
+   卡片底下压的是暗档葱皮 #2b2b25（暖灰），两者色相差出 160 度，同屏就是读者说的「太冷、太科技感」。
+   所以纸开着时改从纸色与墨色派生：纸色朝墨色混 6%。
+   明度那头：6% 在 srgb 里逐通道 +11 阶，把 #2b2b25 抬到 #363630；乘 70% 的 alpha 压在纸上之后是 #33332d，
+   对纸 1.12——仍比纸深一点，读起来是压在纸上的一层玻璃，没有变成浮起的一块。
+   色相那头：纸与墨在暗档都是暖黄绿家族（R-B 分别 6 与 11），掺出来自然同族；纸色以后改了它自动跟。
+   不掺 --dsw-specific-input-major 了：那是宿主的中性偏冷的近黑，正是另一半「冷」的来源。
+   两条变量名由 paper-tokens 的 PAPER_PREFIX 拼出来，不在这里重抄一遍字面量：两处写法一旦分叉，
+   color-mix 就整条作废、玻璃静默退回 dsh 自己那一档，页面不报错。
+   兜底值取当下这两个字面值，缺席时算出来与现在一致 */
+:root[${PAPER_ROOT_ATTRIBUTE}][${PAPER_DARK_ATTRIBUTE}] body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
+  --dsh-chat-ux-glass-base: color-mix(
+	in srgb,
+	var(${PAPER_PREFIX}ink, #e8e6dd) 6%,
+	var(${PAPER_PREFIX}paper, #2b2b25)
+  );
 }
 
 /* 没有 backdrop-filter 或 color-mix 的浏览器上，只做半透明会变成文字叠文字，比不做更糟，所以整块收在这里 */

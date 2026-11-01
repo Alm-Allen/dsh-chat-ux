@@ -11,15 +11,15 @@ let depth = 0
 
 // 标记一段本插件自己的折叠切换，让读者意图那几处守卫忽略其间的事件
 export function beginProgrammaticToggle(): void {
-	depth += 1
+    depth += 1
 }
 
 // 结束一段本插件自己的折叠切换
 export function endProgrammaticToggle(): void {
-	depth = Math.max(0, depth - 1)
+    depth = Math.max(0, depth - 1)
 }
 
 // 此刻是否有本插件自己的折叠切换正在进行
 export function isProgrammaticToggle(): boolean {
-	return depth > 0
+    return depth > 0
 }

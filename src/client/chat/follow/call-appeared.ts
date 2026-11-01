@@ -23,86 +23,86 @@ const PRESS_EVENTS = ["pointerdown", "touchstart"] as const
 
 // 装上这一处：挂上检测属性、接上两个事件通道，返回卸下的把手
 export function installCallAppearFollow(): () => void {
-	const gateElement = typeof document === "undefined" ? null : document.documentElement
-	if (gateElement === null) return () => undefined
-	// 已经自己动过手的滚动器：在它回到自己的底之前，我们不再替它补
-	const takenOverSet = new WeakSet<HTMLElement>()
-	// 按下去那一刻的位置，等下一次结构事件到来时看它有没有真的动过
-	const pressedTopMap = new WeakMap<HTMLElement, number>()
-	// 这一帧里要处理的滚动器：一次插入可能带出整棵子调用子树，父行与每个子行各响一次，它们要的是同一脚
-	const pendingScrollerSet = new Set<HTMLElement>()
-	let flushFrameId = 0
+    const gateElement = typeof document === "undefined" ? null : document.documentElement
+    if (gateElement === null) return () => undefined
+    // 已经自己动过手的滚动器：在它回到自己的底之前，我们不再替它补
+    const takenOverSet = new WeakSet<HTMLElement>()
+    // 按下去那一刻的位置，等下一次结构事件到来时看它有没有真的动过
+    const pressedTopMap = new WeakMap<HTMLElement, number>()
+    // 这一帧里要处理的滚动器：一次插入可能带出整棵子调用子树，父行与每个子行各响一次，它们要的是同一脚
+    const pendingScrollerSet = new Set<HTMLElement>()
+    let flushFrameId = 0
 
-	// 这一行住在哪个滚动器里：过程组体优先，其次会话滚动框（详细与完全展开两档没有组体）
-	const scrollerOf = (row: Element): HTMLElement | null =>
-		row.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
-		?? row.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
+    // 这一行住在哪个滚动器里：过程组体优先，其次会话滚动框（详细与完全展开两档没有组体）
+    const scrollerOf = (row: Element): HTMLElement | null =>
+        row.closest<HTMLElement>(PROCESS_BODY_SELECTOR)
+        ?? row.closest<HTMLElement>(CONVERSATION_SCROLL_SELECTOR)
 
-	// 补一次底。位置本来就到底时这里什么都不写，读那一次 scrollHeight 就是全部代价（强制布局，
-	// 本帧的布局早已结算过，实测 0.00 ms；真要补的那几次是 0.5～2.0 ms）
-	const followToBottom = (scroller: HTMLElement): void => {
-		if (!scroller.isConnected) return
-		// 按下时记的位置到这一刻还没动过，说明读者只是点开某一行看一眼，不算接管
-		const pressedTop = pressedTopMap.get(scroller)
-		if (pressedTop !== undefined) {
-			pressedTopMap.delete(scroller)
-			if (Math.abs(scroller.scrollTop - pressedTop) > 0.5) takenOverSet.add(scroller)
-		}
-		const behind = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
-		if (behind <= BOTTOM_SLACK_PX) {
-			takenOverSet.delete(scroller)
-			return
-		}
-		if (takenOverSet.has(scroller)) return
-		// 折叠的高度动画正在动，这一会儿位置归它管
-		if (isFoldGlideBusy()) return
-		scroller.scrollTop = scroller.scrollHeight
-	}
+    // 补一次底。位置本来就到底时这里什么都不写，读那一次 scrollHeight 就是全部代价（强制布局，
+    // 本帧的布局早已结算过，实测 0.00 ms；真要补的那几次是 0.5～2.0 ms）
+    const followToBottom = (scroller: HTMLElement): void => {
+        if (!scroller.isConnected) return
+        // 按下时记的位置到这一刻还没动过，说明读者只是点开某一行看一眼，不算接管
+        const pressedTop = pressedTopMap.get(scroller)
+        if (pressedTop !== undefined) {
+            pressedTopMap.delete(scroller)
+            if (Math.abs(scroller.scrollTop - pressedTop) > 0.5) takenOverSet.add(scroller)
+        }
+        const behind = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+        if (behind <= BOTTOM_SLACK_PX) {
+            takenOverSet.delete(scroller)
+            return
+        }
+        if (takenOverSet.has(scroller)) return
+        // 折叠的高度动画正在动，这一会儿位置归它管
+        if (isFoldGlideBusy()) return
+        scroller.scrollTop = scroller.scrollHeight
+    }
 
-	const flushPendingScrollers = (): void => {
-		flushFrameId = 0
-		for (const scroller of pendingScrollerSet) followToBottom(scroller)
-		pendingScrollerSet.clear()
-	}
+    const flushPendingScrollers = (): void => {
+        flushFrameId = 0
+        for (const scroller of pendingScrollerSet) followToBottom(scroller)
+        pendingScrollerSet.clear()
+    }
 
-	const onAppear = (event: Event): void => {
-		if (!(event instanceof AnimationEvent) || event.animationName !== APPEAR_PROBE_NAME) return
-		const row = event.target
-		if (!(row instanceof Element)) return
-		const scroller = scrollerOf(row)
-		if (scroller === null) return
-		pendingScrollerSet.add(scroller)
-		if (flushFrameId !== 0) return
-		flushFrameId = window.requestAnimationFrame(flushPendingScrollers)
-	}
+    const onAppear = (event: Event): void => {
+        if (!(event instanceof AnimationEvent) || event.animationName !== APPEAR_PROBE_NAME) return
+        const row = event.target
+        if (!(row instanceof Element)) return
+        const scroller = scrollerOf(row)
+        if (scroller === null) return
+        pendingScrollerSet.add(scroller)
+        if (flushFrameId !== 0) return
+        flushFrameId = window.requestAnimationFrame(flushPendingScrollers)
+    }
 
-	const onIntentMark = (event: Event): void => {
-		if (!isReaderScrollIntent(event)) return
-		const scroller = event.target instanceof Element ? scrollerOf(event.target) : null
-		if (scroller === null) return
-		takenOverSet.add(scroller)
-		pressedTopMap.delete(scroller)
-	}
+    const onIntentMark = (event: Event): void => {
+        if (!isReaderScrollIntent(event)) return
+        const scroller = event.target instanceof Element ? scrollerOf(event.target) : null
+        if (scroller === null) return
+        takenOverSet.add(scroller)
+        pressedTopMap.delete(scroller)
+    }
 
-	const onIntentPress = (event: Event): void => {
-		if (!isReaderScrollIntent(event)) return
-		const scroller = event.target instanceof Element ? scrollerOf(event.target) : null
-		if (scroller === null) return
-		pressedTopMap.set(scroller, scroller.scrollTop)
-	}
+    const onIntentPress = (event: Event): void => {
+        if (!isReaderScrollIntent(event)) return
+        const scroller = event.target instanceof Element ? scrollerOf(event.target) : null
+        if (scroller === null) return
+        pressedTopMap.set(scroller, scroller.scrollTop)
+    }
 
-	gateElement.setAttribute(APPEAR_ATTRIBUTE, "")
-	document.addEventListener("animationstart", onAppear, true)
-	for (const eventType of MARK_EVENTS) document.addEventListener(eventType, onIntentMark, {capture: true, passive: true})
-	for (const eventType of PRESS_EVENTS) document.addEventListener(eventType, onIntentPress, {capture: true, passive: true})
+    gateElement.setAttribute(APPEAR_ATTRIBUTE, "")
+    document.addEventListener("animationstart", onAppear, true)
+    for (const eventType of MARK_EVENTS) document.addEventListener(eventType, onIntentMark, {capture: true, passive: true})
+    for (const eventType of PRESS_EVENTS) document.addEventListener(eventType, onIntentPress, {capture: true, passive: true})
 
-	return () => {
-		if (flushFrameId !== 0) window.cancelAnimationFrame(flushFrameId)
-		flushFrameId = 0
-		pendingScrollerSet.clear()
-		document.removeEventListener("animationstart", onAppear, true)
-		for (const eventType of MARK_EVENTS) document.removeEventListener(eventType, onIntentMark, true)
-		for (const eventType of PRESS_EVENTS) document.removeEventListener(eventType, onIntentPress, true)
-		gateElement.removeAttribute(APPEAR_ATTRIBUTE)
-	}
+    return () => {
+        if (flushFrameId !== 0) window.cancelAnimationFrame(flushFrameId)
+        flushFrameId = 0
+        pendingScrollerSet.clear()
+        document.removeEventListener("animationstart", onAppear, true)
+        for (const eventType of MARK_EVENTS) document.removeEventListener(eventType, onIntentMark, true)
+        for (const eventType of PRESS_EVENTS) document.removeEventListener(eventType, onIntentPress, true)
+        gateElement.removeAttribute(APPEAR_ATTRIBUTE)
+    }
 }

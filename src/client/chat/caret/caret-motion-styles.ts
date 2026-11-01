@@ -9,8 +9,8 @@
  * 它要求根元素上有纸感标记、并且那根带着羽毛标记，条件不成立时这里一个字节都不受影响
  */
 import {
-	CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
-	CARET_VISIBLE_ATTRIBUTE,
+    CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
+    CARET_VISIBLE_ATTRIBUTE,
 } from "./caret-motion"
 import {QUILL_CSS} from "../paper/caret/quill-styles"
 
@@ -86,5 +86,5 @@ ${LAYER}[${CARET_VISIBLE_ATTRIBUTE}] {
 }
 `
 
-// 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
-+ QUILL_CSS
+    // 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
+    + QUILL_CSS

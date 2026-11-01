@@ -48,10 +48,10 @@ body[data-ds-dark-theme] {
 
 // 读数落在色标的哪一段、段内位置多少
 export interface RampPosition {
-	// 段标记：low、high，或者段序号的字符串（"0"…"4"）
-	span: string
-	// 段内位置，37.5% 这样的百分比
-	mix: string
+    // 段标记：low、high，或者段序号的字符串（"0"…"4"）
+    span: string
+    // 段内位置，37.5% 这样的百分比
+    mix: string
 }
 
 /**
@@ -61,17 +61,17 @@ export interface RampPosition {
  * 落在第一个之前是 low、最后一个之后是 high，那两段的两端是同一个色，插值走不出别的颜色
  */
 export function rampPosition(value: number, stops: readonly number[]): RampPosition {
-	const floorStop = stops[0] ?? value
-	const topStop = stops[stops.length - 1] ?? value
-	if (value < floorStop) return {span: RAMP_SPAN_LOW, mix: "0%"}
-	if (value >= topStop) return {span: RAMP_SPAN_HIGH, mix: "0%"}
-	let segmentIndex = 0
-	for (let index = 1; index < stops.length - 1; index += 1) {
-		const stop = stops[index]
-		if (stop !== undefined && value >= stop) segmentIndex = index
-	}
-	const fromStop = stops[segmentIndex] ?? floorStop
-	const toStop = stops[segmentIndex + 1] ?? topStop
-	// 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM
-	return {span: String(segmentIndex), mix: (Math.round((value - fromStop) / (toStop - fromStop) * 1000) / 10) + "%"}
+    const floorStop = stops[0] ?? value
+    const topStop = stops[stops.length - 1] ?? value
+    if (value < floorStop) return {span: RAMP_SPAN_LOW, mix: "0%"}
+    if (value >= topStop) return {span: RAMP_SPAN_HIGH, mix: "0%"}
+    let segmentIndex = 0
+    for (let index = 1; index < stops.length - 1; index += 1) {
+        const stop = stops[index]
+        if (stop !== undefined && value >= stop) segmentIndex = index
+    }
+    const fromStop = stops[segmentIndex] ?? floorStop
+    const toStop = stops[segmentIndex + 1] ?? topStop
+    // 位置写成一位小数的百分比：精度比读数细两个量级，字符串也稳定，读数没变就不会重写 DOM
+    return {span: String(segmentIndex), mix: (Math.round((value - fromStop) / (toStop - fromStop) * 1000) / 10) + "%"}
 }

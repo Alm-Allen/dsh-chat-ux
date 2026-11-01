@@ -13,44 +13,44 @@ import {useEffect, useRef, useState} from "react"
 export const PACE_STEP_MS = 300
 
 export function usePacedValue<T>(target: T, paced: boolean): T {
-	const [shownValue, setShownValue] = useState(target)
-	const targetRef = useRef(target)
-	const nextAtRef = useRef<number | null>(null)
-	const pendingRef = useRef(false)
-	targetRef.current = target
-	useEffect(() => {
-		// 不在流式：实时跟随，并把节拍归零，上一次流式的相位不该影响下一次
-		if (!paced) {
-			nextAtRef.current = null
-			pendingRef.current = false
-			setShownValue(target)
-			return
-		}
-		const now = Date.now()
-		// 第一次换数：读数刚出现，直接给。若这里也等一拍，节拍会因为 nextAtRef 一直为 null 而永远起不来
-		if (nextAtRef.current === null) {
-			nextAtRef.current = now + PACE_STEP_MS
-			setShownValue(target)
-			return
-		}
-		const waitMs = nextAtRef.current - now
-		if (waitMs <= 0) {
-			nextAtRef.current = now + PACE_STEP_MS
-			setShownValue(target)
-			return
-		}
-		// 这一段里读数还会继续长，到点取那一刻的最新值，所以只需一个定时器，不必每批都重排
-		if (pendingRef.current) return
-		pendingRef.current = true
-		const timer = setTimeout(() => {
-			pendingRef.current = false
-			nextAtRef.current = Date.now() + PACE_STEP_MS
-			setShownValue(targetRef.current)
-		}, waitMs)
-		return () => {
-			pendingRef.current = false
-			clearTimeout(timer)
-		}
-	}, [paced, target])
-	return shownValue
+    const [shownValue, setShownValue] = useState(target)
+    const targetRef = useRef(target)
+    const nextAtRef = useRef<number | null>(null)
+    const pendingRef = useRef(false)
+    targetRef.current = target
+    useEffect(() => {
+        // 不在流式：实时跟随，并把节拍归零，上一次流式的相位不该影响下一次
+        if (!paced) {
+            nextAtRef.current = null
+            pendingRef.current = false
+            setShownValue(target)
+            return
+        }
+        const now = Date.now()
+        // 第一次换数：读数刚出现，直接给。若这里也等一拍，节拍会因为 nextAtRef 一直为 null 而永远起不来
+        if (nextAtRef.current === null) {
+            nextAtRef.current = now + PACE_STEP_MS
+            setShownValue(target)
+            return
+        }
+        const waitMs = nextAtRef.current - now
+        if (waitMs <= 0) {
+            nextAtRef.current = now + PACE_STEP_MS
+            setShownValue(target)
+            return
+        }
+        // 这一段里读数还会继续长，到点取那一刻的最新值，所以只需一个定时器，不必每批都重排
+        if (pendingRef.current) return
+        pendingRef.current = true
+        const timer = setTimeout(() => {
+            pendingRef.current = false
+            nextAtRef.current = Date.now() + PACE_STEP_MS
+            setShownValue(targetRef.current)
+        }, waitMs)
+        return () => {
+            pendingRef.current = false
+            clearTimeout(timer)
+        }
+    }, [paced, target])
+    return shownValue
 }

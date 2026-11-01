@@ -101,7 +101,6 @@ function apply(ctx) {
         followOn: settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR,
         sendFlight: settings_scope_1.DEFAULT_SEND_FLIGHT,
         paperOn: settings_scope_1.DEFAULT_PAPER_ON,
-        paperStyle: settings_scope_1.DEFAULT_PAPER_STYLE,
         paperSidebar: settings_scope_1.DEFAULT_PAPER_SIDEBAR,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -163,11 +162,10 @@ function apply(ctx) {
         glassDispose = (0, composer_glass_1.installComposerGlass)();
     };
     // 纸：开着才装。装的是两片 canvas 加令牌，关掉时把它卸干净、令牌一并还原。
-    // 纸样只在装上之后才会变，所以换纸样不必重装，重落一次配置就够
+    // 纸只有一张，纸色跟着 body 上的深浅色标记走，所以配置里只剩两个开关
     let paper = null;
     const paperSettings = () => ({
         on: settings.paperOn,
-        style: settings.paperStyle,
         sidebar: settings.paperSidebar,
     });
     const syncPaper = () => {
@@ -177,7 +175,7 @@ function apply(ctx) {
             document.documentElement.removeAttribute("data-dsh-chat-ux-paper");
             return;
         }
-        // 已经装着的时候只重落参数：重画两片 canvas 会把纸纹整块重算一遍，换一张纸的代价不该这么大
+        // 已经装着的时候只重落参数：重画两片 canvas 会把纸纹整块重算一遍，改一个开关的代价不该这么大
         if (paper !== null) {
             paper.refresh();
             return;
@@ -205,7 +203,6 @@ function apply(ctx) {
         settings.followOn = value?.followOnAppear ?? settings_scope_1.DEFAULT_FOLLOW_ON_APPEAR;
         settings.sendFlight = value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
         settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
-        settings.paperStyle = value?.paperStyle ?? settings_scope_1.DEFAULT_PAPER_STYLE;
         settings.paperSidebar = value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
         syncGlass();
         caret.resync();
@@ -1427,7 +1424,8 @@ function createSettingMirror(initial, pick) {
         },
         adopt: (form) => {
             if (form === undefined)
-                return () => { };
+                return () => {
+                };
             const pullFromForm = () => {
                 const next = pick(form.getSnapshot().value);
                 if (next === current)
@@ -1451,13 +1449,10 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_SIDEBAR = exports.DEFAULT_PAPER_STYLE = exports.DEFAULT_PAPER_ON = void 0;
+exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_SIDEBAR = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 exports.DEFAULT_PAPER_ON = true;
-// 纸样：纸 __ 房间（双下划线）的一对 id。这一串在 paper-styles.ts 里必须拆得开，
-// 与渲染核认的 id 也必须一致
-exports.DEFAULT_PAPER_STYLE = "cotton__paper-and-ink";
 // 左侧栏是否也跟着铺同一张纸
 exports.DEFAULT_PAPER_SIDEBAR = true;
 // 思考行与过程组自己开合，这是本插件的主要效果
@@ -2158,6 +2153,8 @@ function touchesGlass(changedNode) {
 
     __registry["chat/composer-glass/composer-glass-styles.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.COMPOSER_GLASS_CSS = exports.GLASS_STOP_ATTRIBUTE = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
 /**
  * 输入框毛玻璃：只把输入卡片那个矩形变成一块半透明、背后模糊的玻璃，卡片下面那排统计、上面那几张卡都不动。
  *
@@ -2165,8 +2162,7 @@ function touchesGlass(changedNode) {
  * 祖先，卡片自己一带 backdrop-filter 就成了它们的祖先 backdrop root，菜单的模糊采样被掐断、整块透掉。
  * 每一组规则都拿 body 上的开关属性当前缀，关掉时整块表一条都不命中，真的回到 dsh 原来的输入框
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.COMPOSER_GLASS_CSS = exports.GLASS_STOP_ATTRIBUTE = exports.GLASS_ADD_ATTRIBUTE = exports.GLASS_PRIMARY_ATTRIBUTE = exports.GLASS_BOTTOM_VARIABLE = exports.GLASS_TOP_VARIABLE = exports.GLASS_ATTRIBUTE = void 0;
+const paper_tokens_1 = require("../paper/paper-tokens");
 // 玻璃生效的开关属性，由 index.tsx 按设置写上或摘掉；表里每一组规则都拿它当前缀，开关不必重新生成样式表
 exports.GLASS_ATTRIBUTE = "data-chat-ux-composer-glass";
 // 缺口的上边（卡片顶相对座位顶，单位 px），由 composer-glass.ts 写在座位上；缺席时座位那两层背景回退成整块底
@@ -2204,6 +2200,25 @@ body[${exports.GLASS_ATTRIBUTE}] {
 /* 深色那一档不压灰：那里的输入面色（neutral-bluish-850）本来就比画布（950）亮一档，天然分得开 */
 body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   --dsh-chat-ux-glass-base: color-mix(in srgb, var(--dsw-specific-input-major, #0e1117) 97%, rgb(122 155 240));
+}
+
+/* 纸感开着时的深色玻璃：底的色相跟着纸走，不再掺冷蓝。
+   上面那一条的底是「输入面色 neutral-bluish-850 掺 3% 冷蓝」，合成出来是一块冷近黑（#2d2e2f）；纸感开着时
+   卡片底下压的是暗档葱皮 #2b2b25（暖灰），两者色相差出 160 度，同屏就是读者说的「太冷、太科技感」。
+   所以纸开着时改从纸色与墨色派生：纸色朝墨色混 6%。
+   明度那头：6% 在 srgb 里逐通道 +11 阶，把 #2b2b25 抬到 #363630；乘 70% 的 alpha 压在纸上之后是 #33332d，
+   对纸 1.12——仍比纸深一点，读起来是压在纸上的一层玻璃，没有变成浮起的一块。
+   色相那头：纸与墨在暗档都是暖黄绿家族（R-B 分别 6 与 11），掺出来自然同族；纸色以后改了它自动跟。
+   不掺 --dsw-specific-input-major 了：那是宿主的中性偏冷的近黑，正是另一半「冷」的来源。
+   两条变量名由 paper-tokens 的 PAPER_PREFIX 拼出来，不在这里重抄一遍字面量：两处写法一旦分叉，
+   color-mix 就整条作废、玻璃静默退回 dsh 自己那一档，页面不报错。
+   兜底值取当下这两个字面值，缺席时算出来与现在一致 */
+:root[${paper_tokens_1.PAPER_ROOT_ATTRIBUTE}][${paper_tokens_1.PAPER_DARK_ATTRIBUTE}] body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
+  --dsh-chat-ux-glass-base: color-mix(
+	in srgb,
+	var(${paper_tokens_1.PAPER_PREFIX}ink, #e8e6dd) 6%,
+	var(${paper_tokens_1.PAPER_PREFIX}paper, #2b2b25)
+  );
 }
 
 /* 没有 backdrop-filter 或 color-mix 的浏览器上，只做半透明会变成文字叠文字，比不做更糟，所以整块收在这里 */
@@ -2410,6 +2425,458 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
   }
 }
 `;
+    };
+
+    __registry["chat/paper/paper-tokens.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 纸感的配色令牌。
+ *
+ * 本插件从不写 --dsw-alias-* 里的品牌色：那是宿主的语义别名，也是别的皮肤（dsh-claude-style 之类）
+ * 在改的同一条通道。但纸盖上去之后，正文与底色的令牌必须跟着纸走，否则深色模式配亮纸会把正文
+ * 压成一片看不见的白（正文那一条在暗纸上是 12.8，在亮纸上是 1.08）。所以这里分两步：
+ *   1. 我们自己的一整套 `--dsh-chat-ux-paper-*`，写在根元素上，样式表、光标、辉光都读它；
+ *   2. 宿主的几条令牌（整页底色、侧栏填充色、文字、代码底色、几条照着宿主底色挑的灰底与淡字、
+ *      正文与代码字族），只写纸算出来的那一项值。
+ * 第二条是「纸盖上去之后读得出来」这件事无法绕开的最小代价；每一笔都记着原值与优先级，
+ * 卸载与关掉时逐项还原，别人后写过的就不抢回来
+ *
+ * 写在哪个元素上是有讲究的，这不是风格问题而是层级问题：dsh 的 ui-theme 把 `--dsw-alias-bg-base`
+ * 定义在 `body` 上（design-platform.css 的 `body { … }`），主题包又把 `--dsh-font-family-text`
+ * 写在 body 上。内联写在 `html` 上只是「根元素的声明」，body 自己的声明是本地声明、赢过继承——
+ * 实测就是这么翻的车：html 上是 #efdfbd，body 上算出来仍是 #fff。所以宿主那几条一律写到 body 上
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_DARK_ATTRIBUTE = exports.PAPER_ROOT_ATTRIBUTE = exports.PAPER_PREFIX = void 0;
+exports.setOwned = setOwned;
+exports.releaseOwned = releaseOwned;
+exports.restorePaperTokens = restorePaperTokens;
+exports.applyPaperTokens = applyPaperTokens;
+exports.clearPaperTokens = clearPaperTokens;
+exports.paperTokenSet = paperTokenSet;
+const paper_math_1 = require("./paper-math");
+const paper_tables_1 = require("./paper-tables");
+// 本插件自己的变量前缀
+exports.PAPER_PREFIX = "--dsh-chat-ux-paper-";
+// 挂在根元素上的范围标记：纸开着且有值时才在
+exports.PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper";
+// 暗档的标记。与上面那条同时在场时才表示「此刻用的是暗版葱皮」
+exports.PAPER_DARK_ATTRIBUTE = "data-dsh-chat-ux-paper-dark";
+// 会被改写的宿主令牌：整页底色、侧栏填充色、三档文字、代码块与内联代码的底、几条在纸上一压就
+// 只剩一两个 L* 的灰底与淡字，以及两条字族
+const HOST_BASE_PROPERTY = "--dsw-alias-bg-base";
+const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill";
+const HOST_LABEL_PRIMARY_PROPERTY = "--dsw-alias-label-primary";
+const HOST_LABEL_SECONDARY_PROPERTY = "--dsw-alias-label-secondary";
+const HOST_LABEL_TERTIARY_PROPERTY = "--dsw-alias-label-tertiary";
+const HOST_LABEL_CAPTION_PROPERTY = "--dsw-alias-label-caption";
+const HOST_CODE_BLOCK_PROPERTY = "--dsw-alias-markdown-code-block";
+const HOST_INLINE_CODE_PROPERTY = "--dsw-alias-markdown-inline-code";
+// 宿主的「淡」「空闲」「悬停」「层」「浮层」「文档预览」这几档都是照着它自己的底色挑的。
+// 纸把底色换掉之后，它们与纸的亮度差只剩一两个 L*：不复用，读者要么读不出字，要么看见纸上的斑块
+const HOST_LABEL_DIMMED_PROPERTY = "--dsw-alias-label-dimmed";
+const HOST_STATE_IDLE_PRIMARY_PROPERTY = "--dsw-alias-state-idle-primary";
+const HOST_INTERACTIVE_BG_HOVER_SOLID_PROPERTY = "--dsw-alias-interactive-bg-hover-solid";
+const HOST_BG_OVERLAY_PROPERTY = "--dsw-alias-bg-overlay";
+const HOST_BG_LAYER_1_PROPERTY = "--dsw-alias-bg-layer-1";
+const HOST_BG_DOCUMENT_PREVIEW_PROPERTY = "--dsw-alias-bg-document-preview";
+const HOST_TEXT_FONT_PROPERTY = "--dsh-font-family-text";
+const HOST_CODE_FONT_PROPERTY = "--dsh-font-family-code";
+/**
+ * 墨色按比例压进纸色里的一档。
+ *
+ * 上面那几条要的是「比纸深一点点」的那种底与「比正文淡一点」的那种字，两者的明暗差必须跟着纸走。
+ * 所以值是一条 CSS 表达式而不是算好的 rgb：引用的是我们自己落在根元素上的墨色与纸色两个变量，
+ * 亮纸暗纸两档就自动成立，换纸时也不用在 TS 里按档算两套颜色。参数量是墨色占的比例（百分数）
+ */
+function paperInkMix(inkPercent) {
+    return `color-mix(in srgb, var(${exports.PAPER_PREFIX}ink) ${inkPercent}%, var(${exports.PAPER_PREFIX}paper))`;
+}
+/**
+ * 纸感的正文与代码字族。
+ *
+ * 纸面上的字是衬线，这是纸感的一半——老式数字配衬线字身是 ebook 的读法，配无衬线就只是一块米色。
+ * 栈的写法与 nocturne 逐字一致：自起的名字没有，用字体的本名，后面一路退到各平台的衬线系统字。
+ * dsh 自己的 base.css 把 --dsw-font-family 定义成 var(--dsh-font-family-text, 默认值)，所以写这一条就够
+ */
+const PAPER_TEXT_FONT_STACK = '"EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, '
+    + '"Source Han Serif SC", "Songti SC", "Noto Serif CJK SC", serif';
+// 代码字族：打字机体的那一支，退到 Courier 与 Consolas
+const PAPER_CODE_FONT_STACK = '"Courier Prime", "IBM Plex Mono", "Courier New", "DejaVu Sans Mono", ui-monospace, monospace';
+// 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
+const ownedList = [];
+/**
+ * 记下原值并写入。同一个元素上的同一名字只记第一次的原值。
+ *
+ * 导出是因为「写在宿主身上、又能逐项还原」这件事不止纸色一处要：用户气泡的底色
+ * （paper-bubble.ts）走的是同一条机制。两边共用同一本账，于是 clearPaperTokens() 一次就把
+ * 它们全还回去，不必记得谁先谁后
+ */
+function setOwned(element, name, value, priority = "") {
+    const existing = ownedList.find((owned) => owned.element === element && owned.name === name);
+    if (existing === undefined) {
+        ownedList.push({
+            element,
+            name,
+            valueBefore: element.style.getPropertyValue(name),
+            priorityBefore: element.style.getPropertyPriority(name),
+            valueWritten: value,
+            priorityWritten: priority,
+        });
+    }
+    else {
+        existing.valueWritten = value;
+        existing.priorityWritten = priority;
+    }
+    element.style.setProperty(name, value, priority);
+}
+// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它。
+// 与 setOwned 一并导出，理由同上
+function releaseOwned(element, name) {
+    const index = ownedList.findIndex((owned) => owned.element === element && owned.name === name);
+    if (index < 0)
+        return;
+    const owned = ownedList[index];
+    if (owned === undefined)
+        return;
+    if (element.style.getPropertyValue(name) === owned.valueWritten
+        && element.style.getPropertyPriority(name) === owned.priorityWritten) {
+        if (owned.valueBefore === "")
+            element.style.removeProperty(name);
+        else
+            element.style.setProperty(name, owned.valueBefore, owned.priorityBefore);
+    }
+    ownedList.splice(index, 1);
+}
+// 把写过的全部还回去：当下值仍是我们的写入值才动手
+function restorePaperTokens() {
+    for (const owned of ownedList) {
+        if (owned.element.style.getPropertyValue(owned.name) !== owned.valueWritten
+            || owned.element.style.getPropertyPriority(owned.name) !== owned.priorityWritten)
+            continue;
+        if (owned.valueBefore === "")
+            owned.element.style.removeProperty(owned.name);
+        else
+            owned.element.style.setProperty(owned.name, owned.valueBefore, owned.priorityBefore);
+    }
+    ownedList.length = 0;
+}
+/**
+ * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
+ * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
+ */
+function applyPaperTokens(set, mode, includeSidebar) {
+    const root = document.documentElement;
+    const body = document.body;
+    // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
+    root.setAttribute(exports.PAPER_ROOT_ATTRIBUTE, "");
+    // 暗档单独一条标记：暗角那两个系数差得远，按档分成两条规则比在 CSS 里算更直白
+    if (mode === "dark")
+        root.setAttribute(exports.PAPER_DARK_ATTRIBUTE, "");
+    else
+        root.removeAttribute(exports.PAPER_DARK_ATTRIBUTE);
+    // 自己那一套写在根元素上：没有别人定义过它们，继承就能一路到每个元素
+    const ownPairs = [
+        [exports.PAPER_PREFIX + "paper", set.paper],
+        [exports.PAPER_PREFIX + "ink", set.ink],
+        [exports.PAPER_PREFIX + "ink-muted", set.inkMuted],
+        [exports.PAPER_PREFIX + "room", set.room],
+        [exports.PAPER_PREFIX + "room-edge", set.roomEdge],
+        [exports.PAPER_PREFIX + "light-rgb", set.lightRgb],
+        [exports.PAPER_PREFIX + "selection", set.selection],
+        [exports.PAPER_PREFIX + "vignette", String(set.vignette)],
+    ];
+    for (const [name, value] of ownPairs)
+        setOwned(root, name, value);
+    // 宿主那几条得写在 body 上：ui-theme 在 body 的规则里定义它们，内联写在根元素上只算「根元素的声明」，
+    // 输给 body 自己的本地声明。body 还没建出来（脚本跑得比文档早）时这一帧先跳过，下一帧会再来
+    if (body === null)
+        return;
+    setOwned(body, HOST_BASE_PROPERTY, set.paper);
+    // 文字跟着纸走：纸只有两档，而宿主那三档文字是按它自己的底色挑的。不接这一笔，
+    // 深色模式配亮纸时正文是近白压米白，读不出来
+    setOwned(body, HOST_LABEL_PRIMARY_PROPERTY, set.ink);
+    setOwned(body, HOST_LABEL_SECONDARY_PROPERTY, set.inkMuted);
+    setOwned(body, HOST_LABEL_TERTIARY_PROPERTY, set.inkMuted);
+    setOwned(body, HOST_LABEL_CAPTION_PROPERTY, set.inkMuted);
+    // 代码那两块底同理：dsh 深色给的是近黑的块，压在暗纸上会变成纸上的一块斑
+    setOwned(body, HOST_CODE_BLOCK_PROPERTY, set.codeBlock);
+    setOwned(body, HOST_INLINE_CODE_PROPERTY, set.inlineCode);
+    // 宿主拿这一条当「淡」用（HeroShell、Input、ModelSelect 等处都读它），亮档现值对纸只有 1.11，
+    // 落在纸上等于消失。与次墨同一支混法，两档都还留在 3 线以上
+    setOwned(body, HOST_LABEL_DIMMED_PROPERTY, paperInkMix(52));
+    // 状态点为空闲时的那一档：亮档现值对纸 1.31，那个点会读成纸上抠出来的一个洞
+    setOwned(body, HOST_STATE_IDLE_PRIMARY_PROPERTY, paperInkMix(52));
+    // 输入条加号按钮的悬停底。亮档对纸 1.02，悬停等于没有反馈；深色档它又浅得离谱，压在暗纸上是一块灰
+    setOwned(body, HOST_INTERACTIVE_BG_HOVER_SOLID_PROPERTY, paperInkMix(6));
+    // 浮层与卡片的底。深色现值是 #61666b，压在暗纸上就是一块明显发亮的灰斑
+    setOwned(body, HOST_BG_OVERLAY_PROPERTY, paperInkMix(22));
+    // 往上抬一层的底。深色现值与暗纸只差 0.7 个 L*，层差消失，卡片和纸糊成一片
+    setOwned(body, HOST_BG_LAYER_1_PROPERTY, paperInkMix(8));
+    // 文档预览的底。深色现值比暗纸还深，读成纸上挖下去的一个洞
+    setOwned(body, HOST_BG_DOCUMENT_PREVIEW_PROPERTY, paperInkMix(3));
+    // 字族跟着纸感走：关掉时这两条会被还原，页面回到 dsh 自己那套或读者在设置里填的那套
+    setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK);
+    setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK);
+    // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
+    // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
+    // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着
+    if (includeSidebar)
+        setOwned(body, HOST_SIDEBAR_PROPERTY, set.paper);
+    else
+        releaseOwned(body, HOST_SIDEBAR_PROPERTY);
+}
+/**
+ * 撤掉纸：把我们写过的全部还原，并摘掉范围标记。
+ *
+ * 标记摘得晚一步也行——样式表里所有纸规则都以它为前提，摘掉之后一条都不命中，
+ * 于是即使某条属性没还原成功，页面也只是回到宿主自己的样子
+ */
+function clearPaperTokens() {
+    restorePaperTokens();
+    document.documentElement.removeAttribute(exports.PAPER_ROOT_ATTRIBUTE);
+    document.documentElement.removeAttribute(exports.PAPER_DARK_ATTRIBUTE);
+}
+/** 某一档纸在纸面上压出来的两层底：代码块与内联代码。纸色与墨色之间取一截。
+
+ * 深浅两档各算一次，规则只有这一条：代码底要比纸深一档、又不能深到读成一块斑。
+ * 亮档落在 #e4dccd 左右，暗档落在 #292923 左右
+ */
+function codeSurfaces(paper) {
+    const base = (0, paper_math_1.toUnit)(paper.paper);
+    const ink = (0, paper_math_1.toUnit)(paper.ink);
+    const mix = (amount) => {
+        const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (ink[index] ?? 0) * amount) * 255));
+        return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
+    };
+    return { codeBlock: mix(.1), inlineCode: mix(.06) };
+}
+/**
+ * 从明暗那一档算出这一套颜色。
+ *
+ * 挂载层与安装层都要它：前者在帧里按脏标记重落，后者在装上的那一刻落一次（首帧之前页面就该是纸的调子）。
+ * 两处算出来的必须是同一套，所以只写这一处
+ */
+function paperTokenSet(mode) {
+    const paper = (0, paper_tables_1.paperOf)(mode);
+    const surfaces = codeSurfaces(paper);
+    return {
+        paper: paper.paper,
+        ink: paper.ink,
+        inkMuted: paper.inkMuted,
+        room: paper_tables_1.ROOM.palette.room,
+        roomEdge: paper_tables_1.ROOM.palette.roomEdge,
+        lightRgb: (0, paper_math_1.toUnit)(paper_tables_1.ROOM.light.color).map((channel) => Math.round(channel * 255)).join(" "),
+        selection: paper.selection,
+        vignette: paper.vignette,
+        codeBlock: surfaces.codeBlock,
+        inlineCode: surfaces.inlineCode,
+    };
+}
+    };
+
+    __registry["chat/paper/paper-math.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 纸光要用的那几个小函数：clamp、smoothstep、十六进制转单位向量，以及三个短向量上的点积。
+ *
+ * 照 nocturne 的 core/math.js 搬过来。它原来把 reduceMotion 的 matchMedia 也放在这里，
+ * 这里没有：那是"谁的动效要不要跑"的策略，归 paper-mount 那一层，渲染核只认传进来的数
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.clamp = clamp;
+exports.smoothstep = smoothstep;
+exports.toUnit = toUnit;
+exports.norm = norm;
+exports.dot3 = dot3;
+exports.spreadToCosine = spreadToCosine;
+/**
+ * 把值夹在两个端点之间。
+ *
+ * 三个参数都按"下界在前"读：clamp(value, low, high)。上游就是这个顺序，照搬省得两处对不上
+ */
+function clamp(value, low, high) {
+    return Math.min(high, Math.max(low, value));
+}
+// 三次平滑阶跃。两端相等时退化成硬阶跃，与 GLSL 里那条一致
+function smoothstep(edge0, edge1, value) {
+    if (edge0 === edge1)
+        return value < edge0 ? 0 : 1;
+    const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+}
+/**
+ * "#ffd29a" 这种写法转成三个 0 到 1 的分量。
+ *
+ * 只认 `#rrggbb`：表里的颜色全是这个形状，多一种写法就要多一条分支，而多出来的分支永远走不到
+ */
+function toUnit(hexColor) {
+    return [
+        parseInt(hexColor.slice(1, 3), 16) / 255,
+        parseInt(hexColor.slice(3, 5), 16) / 255,
+        parseInt(hexColor.slice(5, 7), 16) / 255,
+    ];
+}
+// 单位化。长度为零时给回原向量而不是 NaN——光照里一个 NaN 会让整张纸变黑
+function norm(vector) {
+    const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+    return [vector[0] / length, vector[1] / length, vector[2] / length];
+}
+// 三维点积
+function dot3(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+/**
+ * 光锥的张角（度）转成余弦。
+ *
+ * 半角是它的一半，所以在这里先除 360 而不是 180。夹在 5 到 170 度之间：
+ * 0 度是一条射线（除零），180 度是一整片（光锥失效），两头都没有意义
+ */
+function spreadToCosine(degrees) {
+    return Math.cos((clamp(degrees, 5, 170) * Math.PI) / 360);
+}
+    };
+
+    __registry["chat/paper/paper-tables.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PAPER_DEFAULT_SETTINGS = exports.ROOM = exports.PAPER_DARK_RENDER = exports.PAPER_DARK = exports.PAPER_LIGHT = void 0;
+exports.paperOf = paperOf;
+exports.glassColor = glassColor;
+/**
+ * 纸与灯：一张葱皮、一个房间、两档明暗，以及从它们派生出来的颜色。
+ *
+ * 纸只有一张，明暗由 dsh 当前的主题决定：亮档是原来那张葱皮，暗档是它的暗版。
+ * 两者共用同一套纸纹参数与同一盏灯，只有纸色、墨色、选区与暗角跟着分档。
+ *
+ * 明暗这一维单独叫 PaperMode，它的来源不在这份文件里：入口（paper-theme.ts）读 dsh 的主题，
+ * 再把它交给纸上每一处。表里没有任何一档写明"什么时候用我"
+ *
+ * 与 nocturne 的差别在命名与范围：那边的 THEMES 在这里叫房间，而五张纸乘三个房间的组合已经下线，
+ * 只剩葱皮配纸与墨。buildRig 那几路光源原样留着，换光源只改 ROOM 的 light.source
+ */
+const paper_math_1 = require("./paper-math");
+/**
+ * 葱皮的两档。
+ *
+ * 亮档是原样保留的那张葱皮：极薄极平（褶皱 0.08、云斑 0.04），铺满一整扇窗之后几乎没有可看的东西。
+ * 暗档沿用它的纸纹参数与暖调色相，只把明度压下去——夜纸那种偏紫的冷色已经下线，理由是它读起来
+ * 像换了一种材质，而不是同一张纸到了夜里
+ */
+exports.PAPER_LIGHT = {
+    mode: "light",
+    paper: "#f2f1ea",
+    ink: "#2a2019",
+    inkMuted: "#6b5f52",
+    // 亮档用房间的描金，与细边、页码同源
+    selection: "rgba(176, 138, 74, 0.30)",
+    vignette: .35,
+    surface: { crinkle: .08, felt: 0, laid: 0, linen: 0, mottle: .04, age: 0 },
+};
+/**
+ * 暗档。纸比 dsh 的深色画布（#151517）浅一档，铺上去才看得出是一张纸；墨是暖白，与纸的色相相同。
+ *
+ * **纸纹参数与亮档不是同一套，差得还很远。** 亮档极薄极平（褶皱 0.08、云斑 0.04）：米白的纸上
+ * 那点起伏已经够看，再强就是「像墙面」。暗档反过来——同一组参数压在 #22221d 上，纸面层只压出
+ * 29 到 31 的灰度（一共两个色阶），读者看到的是一整块平色，正是"颜色对了但不像纸"。
+ * 所以暗档把褶皱、云斑、纸纹强度与浮雕一起抬上去，压出来的范围落在 15 到 34，纸上才有起伏
+ */
+exports.PAPER_DARK = {
+    mode: "dark",
+    // 纸色比 dsh 的深色画布（#151517）亮 22 阶：暗纸上纸纹只能把纸往下压，纸色压得太低就没有下压空间，
+    // 压出来的是一团脏而不是纹理。提到 #2b2b25 之后纸纹才有 25 阶的起伏，见 PAPER_DARK.surface
+    paper: "#2b2b25",
+    ink: "#e8e6dd",
+    inkMuted: "#a09c8f",
+    // 暗档的描金提亮一档：原来那一笔压在暗纸上几乎看不见
+    selection: "rgba(214, 178, 112, 0.26)",
+    // 暗纸上同样的暗角看不出来，所以比亮档重
+    vignette: .45,
+    // 褶皱与云斑比亮档重，但不能重到把灯吃掉：纸纹在那套着色器里是乘法扰动，扰动一起来，
+    // 灯心那点亮就被淹没（±46% 的扰动配 +21% 的灯差，灯斑一个字都看不出来）。这一组给纸纹 ±8%
+    surface: { crinkle: .5, felt: 0, laid: 0, linen: 0, mottle: .18, age: 0 },
+};
+/**
+ * 暗档的渲染参数。PAPER_DEFAULT_SETTINGS 那一套是按亮档调的：纸纹 0.18 在米白纸上刚好，
+ * 落在暗纸上连两个色阶都压不出来。这里只动四项，其余沿用出厂值
+ */
+exports.PAPER_DARK_RENDER = {
+    // 纸纹强度：0.18 → 0.55。它同时乘在褶皱与法线上，是暗纸上能不能看见起伏的主开关
+    texture: .55,
+    // 浮雕：0.22 → 0.45。纸面层的那道法线扰动由它放大
+    paperIllumination: .45,
+    // 环境光下限：0.86 → 0.72。这是「台灯还看不看得见」的旋钮——环境光把整片纸抬到接近 1，
+    // 灯心那点亮就没有落差可言。0.66 是灯斑最清楚的那一档，但灯外那八成面积偏沉；
+    // 抬到 0.72 之后纸面整体亮一档，灯心仍比中心亮 13 阶，光斑还在
+    ambientFloor: .72,
+};
+// 一张纸的两档都由这里取，调用方不必自己认 mode
+function paperOf(mode) {
+    return mode === "dark" ? exports.PAPER_DARK : exports.PAPER_LIGHT;
+}
+// 房间：纸与墨。三个房间随着换纸一起下线，纸与灯的观感只留这一套
+exports.ROOM = {
+    name: "Paper & Ink",
+    palette: {
+        room: "#241a14",
+        roomEdge: "#070504",
+    },
+    light: { source: "desk-lamp", color: "#ffd29a", position: { x: .5, y: .5 }, shade: .42 },
+    atmosphere: { vignette: .35 },
+};
+/**
+ * 出厂参数。底色仍是 nocturne 的 SETTINGS，改过的四项都在下面各自写着理由：
+ * 开的是静止的台灯，颗粒与尘埃关掉，纸纹与浮雕降下来
+ */
+exports.PAPER_DEFAULT_SETTINGS = {
+    lamp: true,
+    enabled: true,
+    // 灯的强度。静止的台灯光斑只占屏幕一小块，1.1 那点亮度在环境光占到八成之后几乎看不出来，
+    // 所以抬到 2.6：灯下纹丝不差地亮到接近纸的原色，灯外由 ambientLevel 那道下限兜住
+    intensity: 2.6,
+    spread: 74,
+    beam: "pointed",
+    aim: 0,
+    reach: 1,
+    softness: .65,
+    // 胶片颗粒与空气中的尘埃都关掉：它们是「一盏真实的灯照在一张真实的纸上」的一部分，
+    // 但整扇窗的尺度上，颗粒读起来是显示器的噪点，尘埃读起来是脏。0 之后这两样都不会再画
+    grain: 0,
+    cursorGlow: .35,
+    // 纸纹强度。nocturne 的 1 是按 ~660×620 的纸调的，铺到 1440 宽的一整扇窗上，同一组噪声频率
+    // 就显得又密又硬——读者的话是「像墙面而不是纸」。降到 0.28 之后纹理退成纸的底色变化，
+    // 凑近看得出织纹，退开就是一整片纸
+    texture: .18,
+    paperIllumination: .22,
+    particles: 0,
+    window: { x: .5, y: .5, columns: 3, rows: 2, softness: .15, slant: 0 },
+};
+// 输入卡片那块玻璃落到实色之后的样子。深浅两档各一份，与 composer-glass 的
+// --dsh-chat-ux-glass-base 是同一个合成结果：那一层是「近白掺一点冷蓝」再让出三成给纸。
+// 写在这里而不是读那条变量：那一条只在毛玻璃开着时才定义，而气泡的观感不该跟着毛玻璃的开关走
+const GLASS_SOLID_LIGHT = "#f3f5f9";
+/**
+ * 暗档那一档：玻璃的亮面，不是它的底。
+ *
+ * 亮档之所以看得出气泡，一半靠它比纸冷一点点。暗档照搬那个方向就错了：玻璃的底是近黑，
+ * 往它混等于把气泡压进纸里，两者只差 0.02 的亮度，读者看到的是一整片。所以暗档反过来朝亮面混——
+ * 混出来比纸亮一档（#3f4039 对纸 1.52），像纸面上浮起的一块材质，与亮档「浅色卡片压在纸上」同一种读法
+ */
+const GLASS_SOLID_DARK = "#66675d";
+/**
+ * 纸面上那块玻璃的调子：把纸色朝玻璃的实色混一截。
+ *
+ * 用户气泡要与输入框的毛玻璃对上，所以混的是玻璃那一支，不是"朝墨"的那一支——朝墨混出来的是一张
+ * 更暗的纸，与读者按过的那张输入卡片对不上。深浅两档各自成立：亮纸上玻璃比纸亮，混出来浮起一层；
+ * 暗纸上玻璃比纸深，混出来压下去一层，两边都是"纸上的一层材质"
+ */
+function glassColor(mode, amount) {
+    const paper = paperOf(mode);
+    const target = (0, paper_math_1.toUnit)(mode === "dark" ? GLASS_SOLID_DARK : GLASS_SOLID_LIGHT);
+    const base = (0, paper_math_1.toUnit)(paper.paper);
+    const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (target[index] ?? 0) * amount) * 255));
+    return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
+}
     };
 
     __registry["chat/context-meter/context-meter-pie.js"] = function (module, exports, require) {
@@ -3881,7 +4348,8 @@ const markFoldBusy = () => {
 // 装上折叠时推开下方内容的高度动画，只有读者点击引起的变化会补；返回值是卸载函数
 function installFoldGlide() {
     if (typeof document === "undefined" || document.body === null)
-        return () => { };
+        return () => {
+        };
     let intent = null;
     // 收起动画正在跑：这两百毫秒里不接受新的点击，免得两次折叠叠在一起
     let shutting = false;
@@ -4836,12 +5304,15 @@ exports.clearPaperLayer = clearPaperLayer;
  * 纸感的安装入口：按配置装上或卸下这一整块。
  *
  * 它比聊天区其他几块多一层分支。其他几块关掉时只是「不装」，纸关掉时却要让页面回到 dsh 原来的样子，
- * 而那件事有一半落在令牌上（整页底色那一条）。所以这里把两件事分开：装上的那一刻先把令牌落下去，
+ * 而那件事有一半落在令牌上（整页底色与文字那几条）。所以这里把两件事分开：装上的那一刻先把令牌落下去，
  * 免得首帧之前页面还是白的；两片 canvas 由挂载层自己按帧接上来
+ *
+ * 明暗不在这里：纸用哪一档跟着 dsh 的主题走，由挂载层每一帧现读
  */
 const paper_mount_1 = require("./paper-mount");
 const paper_layout_1 = require("./paper-layout");
 const paper_tokens_1 = require("./paper-tokens");
+const paper_theme_1 = require("./paper-theme");
 /**
  * 装上纸。
  *
@@ -4851,14 +5322,19 @@ function installPaperLayer(readSettings) {
     const settings = readSettings();
     if (!settings.on) {
         document.documentElement.removeAttribute(paper_tokens_1.PAPER_ROOT_ATTRIBUTE);
-        return { dispose: () => { }, refresh: () => { } };
+        return {
+            dispose: () => {
+            }, refresh: () => {
+            }
+        };
     }
     // 先落令牌：这一步与 WebGL 无关，显卡起不来的时候页面也该是纸的调子。
     // 侧栏那一项要走同一个平台判据，否则首帧与挂载层的几何会分叉：那一刻侧栏的填充色被写了，纸却让开了
-    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(settings.style), (0, paper_layout_1.paperIncludesSidebar)(settings.sidebar));
+    const mode = (0, paper_theme_1.currentPaperMode)();
+    (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)(settings.sidebar));
     return (0, paper_mount_1.installPaper)(() => {
         const current = readSettings();
-        return { on: current.on, style: current.style, includeSidebar: current.sidebar };
+        return { on: current.on, includeSidebar: current.sidebar };
     });
 }
 // 撤掉纸：两片 canvas、暗角、令牌与全部监听都由挂载层收尾，这里只补摘一次范围标记
@@ -4880,7 +5356,7 @@ exports.installPaper = installPaper;
  * 覆盖范围在 paper-layout
  *
  * 节流的三条照搬 nocturne，它们是这个插件能和长会话共存的原因：
- *   一、纸纹（SURFACE）只在尺寸、纸样、纸纹强度变了时重算；
+ *   一、纸纹（SURFACE）只在尺寸、明暗档、纸纹强度变了时重算；
  *   二、光照（LIGHT）只在灯架变了时重算，不是每帧；
  *   三、辉光（screen 混合，最贵的那一层）只在灯重算过、光标动了、或者开着环境动效时重画
  * 空闲时整条循环压到 8 fps，有动效时才回到 30 fps；页面看不见时整条停掉
@@ -4893,6 +5369,7 @@ const paper_styles_1 = require("./paper-styles");
 const paper_bubble_1 = require("./paper-bubble");
 const paper_tokens_1 = require("./paper-tokens");
 const paper_tables_1 = require("./paper-tables");
+const paper_theme_1 = require("./paper-theme");
 const paper_math_1 = require("./paper-math");
 // 自绘插入符那一根上的标记，由 caret-motion 写。纸只读它，不参与插符的接管
 const CARET_LAYER_ATTRIBUTE = "data-chat-ux-caret-layer";
@@ -4920,7 +5397,7 @@ const PIXEL_BUDGET = 1950000;
  * 挂上纸。
  *
  * options 是现读的函数而不是快照：配置改了不必重装，下一帧自然读到新值；
- * 只有纸样真的变了才需要 refresh()
+ * 只有明暗档真的变了才需要 refresh()
  */
 function installPaper(readOptions) {
     const sheetCanvas = document.createElement("canvas");
@@ -4938,12 +5415,17 @@ function installPaper(readOptions) {
     ensurePaperStyle();
     const paperLight = new paper_light_1.PaperLight(sheetCanvas);
     const glow = new paper_glow_1.GlowLayer(glowCanvas);
-    const settings = { ...paper_tables_1.PAPER_DEFAULT_SETTINGS };
+    // 出厂参数是按亮档调的。切到暗档时换掉那几项（纸纹、浮雕），否则纸面层压不出起伏，
+    // 读者看到的是一整块深色平色。两档各一份快照，换档时整份换掉，不必逐项判断
+    const settingsFor = (mode) => mode === "light"
+        ? { ...paper_tables_1.PAPER_DEFAULT_SETTINGS }
+        : { ...paper_tables_1.PAPER_DEFAULT_SETTINGS, ...paper_tables_1.PAPER_DARK_RENDER };
+    let settings = settingsFor((0, paper_theme_1.currentPaperMode)());
     const reduceMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     let reduceMotion = reduceMotionQuery.matches;
     let rect = { left: 0, top: 0, width: 1, height: 1 };
     let pixelRatio = 1;
-    // 纸纹要重算。尺寸、纸样、纸纹强度任一变了就置起来
+    // 纸纹要重算。尺寸、明暗档、纸纹强度任一变了就置起来
     let needsBuild = true;
     // 光照要重算。灯架变了就置起来
     let needsLight = true;
@@ -4955,8 +5437,8 @@ function installPaper(readOptions) {
     let disposed = false;
     // 上一帧算出来「有没有在动」，它决定下一帧的间隔
     let active = false;
-    // 上一次落地的组合 id 与画布尺寸，用来判断这几样到底变了没有
-    let lastStyle = "";
+    // 上一次落地的是哪一档纸，用来判断明暗到底变了没有
+    let lastMode = null;
     let lastLayoutKey = "";
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
@@ -5001,23 +5483,130 @@ function installPaper(readOptions) {
         const budget = Math.sqrt(PIXEL_BUDGET / (rect.width * rect.height));
         return Math.max(0.5, Math.min(2, window.devicePixelRatio || 1, budget));
     };
-    // 令牌跟着纸样落。纸样换了要重算纸纹，所以这里顺手把脏标记置上
+    /**
+     * 侧栏那层纸纹：按当前该不该画，往侧栏那一列身上增删标记。
+     *
+     * 标记挂在侧栏元素自己身上，不是在根元素上——理由见 paper-styles 那条常量的注释。
+     *
+     * 定位不能每帧做一次：sidebarElement() 要读一次列宽与一次 getBoundingClientRect，
+     * 两者都会让浏览器在帧里补一次布局。所以只在「没有挂过」或「被观察器告知 grid 变了」时
+     * 重新定位，其余时候是一次属性读。摘标记时连同「上一次挂过谁」一起清掉，
+     * 否则侧栏上一块残纹会留在已经不在布局里的节点上
+     */
+    let lastSidebar = null;
+    let sidebarTextureWanted = false;
+    let sidebarObserver = null;
+    // 侧栏还没渲染出来时临时挂的那个观察器，与上面那个（盯 grid）不是同一件事
+    let sidebarWaitObserver = null;
+    /**
+     * 等侧栏出现。只在「开关要它、但还定位不到」的那一小段时间里存在。
+     *
+     * 为什么要等：装上纸的那一刻 React 可能还没渲染出 AppFrame，而静置之后整条帧循环是 0 帧，
+     * 没有谁再来问一次，那层纹理就永远挂不上。
+     *
+     * 为什么带次数上限：它看的是整棵文档的子树（侧栏随时可能出现），比盯 grid 那个贵得多。
+     * 认不出侧栏的结构（dsh 改版）时它得自己退场，不能永久挂着
+     */
+    let sidebarWaitAttempts = 0;
+    const SIDEBAR_WAIT_LIMIT = 240;
+    const stopWaitingForSidebar = () => {
+        sidebarWaitObserver?.disconnect();
+        sidebarWaitObserver = null;
+        sidebarWaitAttempts = 0;
+    };
+    const waitForSidebar = () => {
+        if (sidebarWaitObserver !== null)
+            return;
+        sidebarWaitObserver = new MutationObserver(() => {
+            if (!sidebarTextureWanted) {
+                stopWaitingForSidebar();
+                return;
+            }
+            sidebarWaitAttempts += 1;
+            if (sidebarWaitAttempts > SIDEBAR_WAIT_LIMIT) {
+                stopWaitingForSidebar();
+                return;
+            }
+            if ((0, paper_layout_1.sidebarElement)() === null)
+                return;
+            syncSidebarTexture(true);
+        });
+        sidebarWaitObserver.observe(document.documentElement, { childList: true, subtree: true });
+    };
+    /**
+     * 侧栏那层纸纹：按当前该不该画，往侧栏那一列身上增删标记。
+     *
+     * 标记挂在侧栏元素自己身上，不是在根元素上——理由见 paper-styles 那条常量的注释。
+     *
+     * 定位不能每帧做一次：sidebarElement() 要读一次列宽与一次 getBoundingClientRect，
+     * 两者都会让浏览器在帧里补一次布局。所以只在「还没定位到」时才量，已经挂着时只是一次
+     * isConnected 读。摘标记时连同「上一次挂过谁」一起清掉，否则上一块残纹会留在已经不在
+     * 布局里的节点上
+     */
+    const syncSidebarTexture = (enabled) => {
+        sidebarTextureWanted = enabled;
+        if (!enabled) {
+            lastSidebar?.removeAttribute(paper_styles_1.PAPER_SIDEBAR_ATTRIBUTE);
+            lastSidebar = null;
+            stopWaitingForSidebar();
+            return;
+        }
+        if (lastSidebar !== null && lastSidebar.isConnected)
+            return;
+        const sidebar = (0, paper_layout_1.sidebarElement)();
+        if (sidebar === null) {
+            waitForSidebar();
+            return;
+        }
+        stopWaitingForSidebar();
+        // 只盯 grid 的 childList：侧栏那一列被整列重挂时标记会跟着丢（折叠、布局切换）。
+        // 不观察 subtree——那会把会话列表的每一次变更都算进来，一秒几十次
+        watchSidebarGrid(sidebar.parentElement);
+        lastSidebar = sidebar;
+        sidebar.setAttribute(paper_styles_1.PAPER_SIDEBAR_ATTRIBUTE, "");
+    };
+    // 盯住 grid。只注册一次，而且只在侧栏真的被换下来时才动手：grid 的子元素会在若干种布局
+    // 状态下重排，一律摘了重挂会让纹理闪一下。判断依据是「还连着没有」
+    const watchSidebarGrid = (frame) => {
+        if (frame === null || sidebarObserver !== null)
+            return;
+        sidebarObserver = new MutationObserver(() => {
+            if (!sidebarTextureWanted)
+                return;
+            if (lastSidebar !== null && lastSidebar.isConnected)
+                return;
+            // 换下来的旧节点摘干净：它可能还留在内存里，属性不能跟着漂
+            lastSidebar?.removeAttribute(paper_styles_1.PAPER_SIDEBAR_ATTRIBUTE);
+            lastSidebar = null;
+            syncSidebarTexture(true);
+        });
+        sidebarObserver.observe(frame, { childList: true });
+    };
+    // 令牌跟着当下的明暗档落。换档时纸纹要重算：两档是同一张纸，但纸色与纸纹强度分了两套
     const refreshTokens = () => {
         const options = readOptions();
         if (!options.on) {
             (0, paper_tokens_1.clearPaperTokens)();
+            syncSidebarTexture(false);
             return;
         }
-        (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(options.style), (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar));
-        // 气泡那一层纸色走同一个 style 字符串：两处都从配置里那一个值算，换纸时不会一边换了一边没换。
+        const mode = (0, paper_theme_1.currentPaperMode)();
+        (0, paper_tokens_1.applyPaperTokens)((0, paper_tokens_1.paperTokenSet)(mode), mode, (0, paper_layout_1.paperIncludesSidebar)(options.includeSidebar));
+        // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
+        // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
+        // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
+        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(options.includeSidebar) && (0, paper_layout_1.windowMaterialPresent)());
+        // 气泡那一层纸色走同一个明暗档：两处都从这一处算，切主题时不会一边换了一边没换。
         // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
-        (0, paper_bubble_1.applyPaperBubble)(options.style);
-        if (options.style !== lastStyle) {
-            lastStyle = options.style;
+        (0, paper_bubble_1.applyPaperBubble)(mode);
+        if (mode !== lastMode) {
+            lastMode = mode;
+            // 两档的渲染参数不是同一套：暗档的纸纹与浮雕都重得多，见 PAPER_DARK_RENDER
+            settings = settingsFor(mode);
             needsBuild = true;
         }
     };
-    // 切纸样时只有令牌与纸纹要重算，光与辉光跟着脏标记走
+    // 切明暗档时只有令牌与纸纹要重算，光与辉光跟着脏标记走
     const refresh = () => {
         if (disposed)
             return;
@@ -5040,16 +5629,21 @@ function installPaper(readOptions) {
         if (!options.on || paperLight.state === "failed") {
             setAttached(false);
             (0, paper_tokens_1.clearPaperTokens)();
-            lastStyle = "";
+            // 侧栏那层纹理跟着一起撤：显卡起不来时整块纸感都收掉，留一块纹在侧栏上就成了半张纸
+            syncSidebarTexture(false);
+            lastMode = null;
             lastLayoutKey = "";
             return false;
         }
         setAttached(true);
-        const profile = (0, paper_tables_1.resolveProfile)(options.style);
-        const paper = (0, paper_tables_1.paperOf)(profile);
-        const room = (0, paper_tables_1.roomOf)(profile);
-        // 换了纸样：令牌要重落，纸纹要重算。这两件都不必等调用方来 refresh
-        if (options.style !== lastStyle)
+        // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
+        // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
+        // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
+        syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(options.includeSidebar) && (0, paper_layout_1.windowMaterialPresent)());
+        const mode = (0, paper_theme_1.currentPaperMode)();
+        const paper = (0, paper_tables_1.paperOf)(mode);
+        // 换了明暗档：令牌要重落，纸纹要重算。这两件都不必等调用方来 refresh
+        if (mode !== lastMode)
             refreshTokens();
         // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形
         // 平台判据也在这一句里落地：窗口材质的平台上 includeSidebar 恒为假，几何与令牌一起让开
@@ -5076,7 +5670,7 @@ function installPaper(readOptions) {
         const caret = readCaret();
         // 灯的横向偏移要的是光标在纸上的坐标；纸不覆盖侧栏时那一段要扣掉
         const caretSheetX = caret === null ? rect.width / 2 : caret.x - rect.left;
-        const rig = (0, paper_light_model_1.buildRig)({ width: rect.width, height: rect.height }, caretSheetX, room, settings);
+        const rig = (0, paper_light_model_1.buildRig)({ width: rect.width, height: rect.height }, caretSheetX, paper_tables_1.ROOM, settings);
         const animateGrain = settings.grain > 0 && !reduceMotion;
         const time = animateGrain ? now / 1000 : 0;
         const caretMoved = caret === null
@@ -5090,7 +5684,7 @@ function installPaper(readOptions) {
             paperLight.render({
                 rig,
                 paper,
-                room,
+                room: paper_tables_1.ROOM,
                 settings: { ...settings, lamp: settings.lamp },
                 time,
                 reduceMotion,
@@ -5104,15 +5698,20 @@ function installPaper(readOptions) {
         // 空着还挂在页面上时，浏览器仍要为它付一次全屏 screen 合成——那是实测里帧间隔翻倍的主因
         // （纸开 p95 33.4ms、纸关 16.8ms，而两片 canvas 的 GL 绘制计数都是 0）。
         // 所以这一层按「有没有内容」显式收起来，而不是画一张全透明的图
-        const glowMatters = settings.particles > 0 || settings.cursorGlow > 0 || (0, paper_glow_1.poolStrength)(rig, paper.appearance) > 0;
+        //
+        // 暗档整层不要：这一层是 screen 混合，叠在暗纸上时那几笔暖光（台灯外溢、光标脚下那一圈）
+        // 会变成纸面上凭空浮着的亮斑，读起来像一道光晕而不是纸。亮档上它们被近白的纸吃掉，
+        // 暗档吃不掉，所以按档分开。纸面的灯仍归 LIGHT 那一次 pass
+        const glowMatters = mode === "light"
+            && (settings.particles > 0 || settings.cursorGlow > 0 || (0, paper_glow_1.poolStrength)(rig, mode) > 0);
         if (glowMatters && (lightRan || needsGlow || caretMoved || caretAppeared || dustDue)) {
-            const lightChannels = (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255));
+            const lightChannels = (0, paper_math_1.toUnit)(paper_tables_1.ROOM.light.color).map((channel) => Math.round(channel * 255));
             const frame = {
                 rig,
                 lamp: settings.lamp,
                 rgb: lightChannels.join(", "),
-                poolRgb: (0, paper_glow_1.poolColor)(room, paper.appearance),
-                appearance: paper.appearance,
+                poolRgb: (0, paper_glow_1.poolColor)(paper_tables_1.ROOM, mode),
+                mode,
                 intensity: settings.intensity,
                 particles: settings.particles,
                 cursorGlow: settings.cursorGlow,
@@ -5128,7 +5727,7 @@ function installPaper(readOptions) {
         }
         lastCaret = caret;
         // 只有「跟着光标走」的那一路光源需要持续跟帧：它每挪一次，整片纸的明暗都要重算。
-        // 台灯与月光都只看纸的尺寸与房间预设，静止下来之后一个像素都不会再变，所以这里返回 false
+        // 台灯与月光都只看纸的尺寸与房间，静止下来之后一个像素都不会再变，所以这里返回 false
         return rig.tracksCaret && !reduceMotion;
     };
     /**
@@ -5212,6 +5811,71 @@ function installPaper(readOptions) {
         needsGlow = true;
         wake();
     };
+    /**
+     * 盯窗口材质那两条标记：data-platform 与 data-window-material。
+     *
+     * 为什么非盯不可：data-window-material 不是一辈子不变的。Windows 的 acrylic 在窗口失焦时
+     * 会被系统撤下，dsh 跟着把标记摘掉（apps/desktop 的 syncMaterial 在 blur 时发 none、
+     * focus 时发 translucent），于是 paperIncludesSidebar() 从假翻成真。
+     *
+     * 这一翻的后果很重：paper-tokens 会借这个返回值把 --dsw-specific-sidebar-fill 写成不透明的纸色，
+     * 侧栏那 85% 的 tint 当场被盖死、窗口材质再也透不出来。而 focus 回来后标记虽然恢复，
+     * 插件这边若不重算，那笔不透明纸色就一直留着——表现出来正是「最小化一下窗口，侧栏变成纸色、
+     * 再也不玻璃了」。
+     *
+     * 所以这两条标记一变就整套重来一次：令牌重落（把那一笔还回去）、覆盖矩形重量、纹理标记重挂。
+     * 观察的是根元素的两个属性，不观察子树 */
+    let lastMaterialSignature = "";
+    const readMaterialSignature = () => {
+        const root = document.documentElement;
+        const platform = root.getAttribute("data-platform") ?? "";
+        const material = root.getAttribute("data-window-material") ?? "";
+        const bodyMaterial = document.body === null ? "" : (document.body.getAttribute("data-window-material") ?? "");
+        return platform + "|" + material + "|" + bodyMaterial;
+    };
+    // 上一次判出来的「纸要不要让开侧栏」。两条标记的增减只有落到这个结论上才值得重算：
+    // 失焦时标记被撤下、判据却因为粘性没有变，那时重落一次令牌等于把整篇文档的样式全作废一遍，
+    // 换不来任何变化
+    let lastIncludeSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
+    // 上一次判出来的「此刻底下还有没有玻璃」。失焦与聚焦只翻这一个，粘性那份不动
+    let lastMaterialPresent = (0, paper_layout_1.windowMaterialPresent)();
+    const onMaterialChange = () => {
+        const signature = readMaterialSignature();
+        if (signature === lastMaterialSignature)
+            return;
+        lastMaterialSignature = signature;
+        // 「此刻底下还有没有玻璃」变了，但粘性判据没变——这是失焦/聚焦那一档。
+        // 只动侧栏纸纹，不重落令牌：整块重落会让整篇文档的样式失效一遍，而这里变的是一个开关
+        if ((0, paper_layout_1.windowMaterialPresent)() !== lastMaterialPresent) {
+            lastMaterialPresent = (0, paper_layout_1.windowMaterialPresent)();
+            syncSidebarTexture((0, paper_layout_1.sidebarPaintsOwnTexture)(readOptions().includeSidebar) && lastMaterialPresent);
+        }
+        const includeSidebar = (0, paper_layout_1.paperIncludesSidebar)(readOptions().includeSidebar);
+        if (includeSidebar === lastIncludeSidebar)
+            return;
+        lastIncludeSidebar = includeSidebar;
+        // 布局键清空：纸还覆不覆盖侧栏变了，必须重新量一次
+        lastLayoutKey = "";
+        refresh();
+    };
+    lastMaterialSignature = readMaterialSignature();
+    const materialObserver = new MutationObserver(onMaterialChange);
+    materialObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-platform", "data-window-material"],
+    });
+    // body 也可能带 data-window-material（sidebarRevealsWindowMaterial 一并认）
+    let bodyMaterialObserver = null;
+    if (document.body !== null) {
+        bodyMaterialObserver = new MutationObserver(onMaterialChange);
+        bodyMaterialObserver.observe(document.body, {
+            attributes: true,
+            attributeFilter: ["data-window-material"],
+        });
+    }
+    // dsh 切深浅时只动 body 上那一个属性。纸这边重落令牌、重算纸纹与光照，
+    // 再叫醒帧循环——静置的纸不会自己发现主题变了
+    const unwatchTheme = (0, paper_theme_1.watchThemeMode)(refresh);
     window.addEventListener("resize", onResize);
     window.addEventListener("orientationchange", onResize);
     document.addEventListener("visibilitychange", onVisibility);
@@ -5234,6 +5898,10 @@ function installPaper(readOptions) {
             if (frameHandle !== 0)
                 cancelAnimationFrame(frameHandle);
             frameHandle = 0;
+            unwatchTheme();
+            materialObserver.disconnect();
+            bodyMaterialObserver?.disconnect();
+            bodyMaterialObserver = null;
             window.removeEventListener("resize", onResize);
             window.removeEventListener("orientationchange", onResize);
             document.removeEventListener("visibilitychange", onVisibility);
@@ -5245,6 +5913,11 @@ function installPaper(readOptions) {
             sheetCanvas.remove();
             glowCanvas.remove();
             vignette.remove();
+            // 侧栏那条标记是挂在别人的节点上的，卸载时得自己摘：clearPaperTokens 只管变量
+            syncSidebarTexture(false);
+            stopWaitingForSidebar();
+            sidebarObserver?.disconnect();
+            sidebarObserver = null;
             (0, paper_tokens_1.clearPaperTokens)();
         },
     };
@@ -5298,10 +5971,10 @@ const POOL_COLUMNS = 192;
  * 再补一层 screen 只会让光斑边缘发白。这一项一旦是 0、尘埃与光标余温又都关着，
  * 挂载层就会把整整一层全屏 screen 合成收起来——那是实测里帧间隔翻倍的主因
  */
-function poolStrength(rig, appearance) {
+function poolStrength(rig, mode) {
     if (rig.source === "still" || rig.source === "desk-lamp")
         return 0;
-    if (appearance === "dark")
+    if (mode === "dark")
         return 1;
     if (rig.source === "moonlight")
         return .2;
@@ -5313,9 +5986,9 @@ function poolStrength(rig, appearance) {
  * 亮纸上用灯色即可。暗纸上若照搬"灯色 × 纸色"，screen 会直接烧成一片白（nocturne 实测过），
  * 所以取灯色的 34%——暖，但不刺眼
  */
-function poolColor(room, appearance) {
+function poolColor(room, mode) {
     const light = (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255));
-    const scaled = appearance === "dark" ? light.map((channel) => Math.round(channel * 0.34)) : light;
+    const scaled = mode === "dark" ? light.map((channel) => Math.round(channel * 0.34)) : light;
     return scaled.join(", ");
 }
 /**
@@ -5409,7 +6082,7 @@ class GlowLayer {
     }
     // 光池：把那张 192 列的贴图按纸的大小铺开，两份模糊叠出层次
     paintPool(context, frame, rig) {
-        const strength = poolStrength(rig, frame.appearance);
+        const strength = poolStrength(rig, frame.mode);
         if (strength <= 0)
             return;
         this.ensurePool(rig, frame.poolRgb);
@@ -5417,7 +6090,7 @@ class GlowLayer {
         context.imageSmoothingQuality = "high";
         context.globalAlpha = strength;
         context.drawImage(this.soft, 0, 0, this.width, this.height);
-        context.globalAlpha = strength * (frame.appearance === "dark" ? .4 : .8);
+        context.globalAlpha = strength * (frame.mode === "dark" ? .4 : .8);
         context.drawImage(this.bloom, 0, 0, this.width, this.height);
         context.globalAlpha = 1;
     }
@@ -5429,7 +6102,7 @@ class GlowLayer {
         const y = rig.position[1];
         const radius = Math.max(1, this.height * .55);
         const spill = context.createRadialGradient(x, y, 0, x, y, radius);
-        spill.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.appearance === "light" ? .1 : .16) + ")");
+        spill.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.mode === "light" ? .1 : .16) + ")");
         spill.addColorStop(1, "rgba(" + frame.rgb + ", 0)");
         context.fillStyle = spill;
         context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
@@ -5442,7 +6115,7 @@ class GlowLayer {
         if (frame.particles <= 0)
             return;
         const count = Math.round(MOTES.length * frame.particles);
-        const strength = frame.appearance === "light" ? .5 : .9;
+        const strength = frame.mode === "light" ? .5 : .9;
         for (let index = 0; index < count; index += 1) {
             const mote = MOTES[index];
             if (mote === undefined)
@@ -5470,7 +6143,7 @@ class GlowLayer {
         const y = rig.position[1];
         const radius = Math.max(1, 110 * frame.intensity);
         const glare = context.createRadialGradient(x, y, 0, x, y, radius);
-        glare.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.appearance === "light" ? .26 : .45) + ")");
+        glare.addColorStop(0, "rgba(" + frame.rgb + ", " + (frame.mode === "light" ? .26 : .45) + ")");
         glare.addColorStop(1, "rgba(" + frame.rgb + ", 0)");
         context.fillStyle = glare;
         context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
@@ -5560,6 +6233,7 @@ exports.ambientLevel = ambientLevel;
  * （nocturne 文档 3.2 记了灯座那一处改动：上游挂在小车上，这里钉在纸心，只随光标偏移 ±30%）
  */
 const paper_math_1 = require("./paper-math");
+const paper_tables_1 = require("./paper-tables");
 // 窗格的边宽：夹在 4 到 16 像素之间，取短边的 4%
 function barHalfWidth(width, height) {
     return Math.min(16, Math.max(4, .04 * Math.min(width, height)));
@@ -5734,81 +6408,21 @@ function buildRig(sheet, caretSheetX, room, settings) {
  *
  * 这个数是量出来的，不是随手调的：改它之前先重跑一遍那张对齐表
  */
-function ambientLevel(room, settings, appearance) {
+function ambientLevel(mode) {
     // 静止的台灯只在自己脚下那一圈亮，剩下整片纸全靠这道下限兜住。nocturne 的 0.64 是按一盏
     // 罩住半个屏幕的锥形灯调的；换成圆形光斑之后，灯外那八成面积会整片发灰，下限因此一路抬上来。
     //
     // 这几个数是照着合成结果反推的，不是照抄。分成两件事看：
     //
-    // 一是下限本身。亮纸 0.86、暗纸 0.88——离灯最远的地方也只比纸原色暗一档。它在中途调过两轮
-    // （0.82 → 0.94 → 0.86 / 0.88），改它之前先重跑一遍那张对齐表。
+    // 一是下限本身。亮纸 0.86——离灯最远的地方也只比纸原色暗一档。它在中途调过两轮
+    // （0.82 → 0.94 → 0.86），改它之前先重跑一遍那张对齐表。
     //
     // 二是这件事与强度脱钩。原来那道式子里环境光跟着 intensity 走，强度一抬整片纸一起变亮，
     // 灯的那份好处反而被摊平了。现在写成常数：环境光是环境光，灯是灯，两者各管各的
-    const floor = appearance === "light" ? .86 : .88;
-    return floor;
-}
-    };
-
-    __registry["chat/paper/paper-math.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 纸光要用的那几个小函数：clamp、smoothstep、十六进制转单位向量，以及三个短向量上的点积。
- *
- * 照 nocturne 的 core/math.js 搬过来。它原来把 reduceMotion 的 matchMedia 也放在这里，
- * 这里没有：那是"谁的动效要不要跑"的策略，归 paper-mount 那一层，渲染核只认传进来的数
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.clamp = clamp;
-exports.smoothstep = smoothstep;
-exports.toUnit = toUnit;
-exports.norm = norm;
-exports.dot3 = dot3;
-exports.spreadToCosine = spreadToCosine;
-/**
- * 把值夹在两个端点之间。
- *
- * 三个参数都按"下界在前"读：clamp(value, low, high)。上游就是这个顺序，照搬省得两处对不上
- */
-function clamp(value, low, high) {
-    return Math.min(high, Math.max(low, value));
-}
-// 三次平滑阶跃。两端相等时退化成硬阶跃，与 GLSL 里那条一致
-function smoothstep(edge0, edge1, value) {
-    if (edge0 === edge1)
-        return value < edge0 ? 0 : 1;
-    const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
-    return t * t * (3 - 2 * t);
-}
-/**
- * "#ffd29a" 这种写法转成三个 0 到 1 的分量。
- *
- * 只认 `#rrggbb`：表里的颜色全是这个形状，多一种写法就要多一条分支，而多出来的分支永远走不到
- */
-function toUnit(hexColor) {
-    return [
-        parseInt(hexColor.slice(1, 3), 16) / 255,
-        parseInt(hexColor.slice(3, 5), 16) / 255,
-        parseInt(hexColor.slice(5, 7), 16) / 255,
-    ];
-}
-// 单位化。长度为零时给回原向量而不是 NaN——光照里一个 NaN 会让整张纸变黑
-function norm(vector) {
-    const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
-    return [vector[0] / length, vector[1] / length, vector[2] / length];
-}
-// 三维点积
-function dot3(a, b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-/**
- * 光锥的张角（度）转成余弦。
- *
- * 半角是它的一半，所以在这里先除 360 而不是 180。夹在 5 到 170 度之间：
- * 0 度是一条射线（除零），180 度是一整片（光锥失效），两头都没有意义
- */
-function spreadToCosine(degrees) {
-    return Math.cos((clamp(degrees, 5, 170) * Math.PI) / 360);
+    // 亮档 0.86 是按米白纸调出来的；暗档取 PAPER_DARK_RENDER.ambientFloor——环境光越足，
+    // 纸纹被摊平得越彻底，而暗纸上那点起伏本来就所剩无几，留一点暗部才看得见。
+    // 那一项读者调过一轮（0.84 → 0.66 → 0.72），现值以 paper-tables 里的字面量为准
+    return mode === "light" ? .86 : paper_tables_1.PAPER_DARK_RENDER.ambientFloor;
 }
     };
 
@@ -5821,35 +6435,85 @@ function spreadToCosine(degrees) {
  * 透明的窗口材质（`data-window-material` 与 darwin 平台都会让 dsh 把 frame 的背景交出去），
  * 纸往那一块盖上去，透出来的就不是桌面而是纸纹，那块玻璃当场失效。
  *
- * 所以这里只回答一件事：这一帧纸该占视口的哪一块矩形。判据全部来自 dsh 的语义属性——
- * 列宽在 grid 的 grid-template-columns 里，不认任何带构建期 hash 的 class
+ * 所以这一份回答两件事：这一帧纸该占视口的哪一块矩形，以及侧栏那条竖带由谁来铺。
+ * 让开不等于没有纸感——侧栏自己那层半透明纸纹由 sidebarPaintsOwnTexture() 决定，
+ * 它只叠纹理、不给底色，于是玻璃还透得出来。
+ *
+ * 判据全部来自 dsh 的语义属性——列宽在 grid 的 grid-template-columns 里，
+ * 不认任何带构建期 hash 的 class
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sidebarRevealsWindowMaterial = sidebarRevealsWindowMaterial;
+exports.windowMaterialPresent = windowMaterialPresent;
 exports.sidebarWidth = sidebarWidth;
+exports.sidebarElement = sidebarElement;
 exports.paperIncludesSidebar = paperIncludesSidebar;
+exports.sidebarPaintsOwnTexture = sidebarPaintsOwnTexture;
 exports.measurePaperRect = measurePaperRect;
 // 桌面版把窗口材质交出去的那两个标记：darwin 平台与 Windows 11 的 acrylic
 const WINDOW_MATERIAL_ATTRIBUTE = "data-window-material";
 const PLATFORM_ATTRIBUTE = "data-platform";
 // AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
 const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]";
+// 这一页见过窗口材质没有。见过一次就一直是 true，详见下面那份函数的注释
+let windowMaterialSeen = false;
 /**
- * 左侧栏此刻是不是「透出窗口材质」的状态。
+ * 左侧栏是不是「透出窗口材质」的那种。
  *
  * 两个标记任一在场就说明 dsh 已经把 frame 的底色交了出去（frame 变透明、侧栏只留一层 tint），
  * 侧栏的观感来自它背后的窗口，不是页面自己画的。这种时候纸不能盖上去
+ *
+ * **判据是「见过一次就永远算数」，不是「此刻标记在不在」。** 这一条是被一个真实故障逼出来的：
+ * Windows 的 acrylic 只在窗口有焦点时存在，失焦那一刻 dsh 就把 data-window-material 摘掉
+ * （apps/desktop 的 syncMaterial 在 blur 时发 none、focus 时发 translucent）。若照当下的标记判，
+ * 最小化一下窗口就会让判据翻成「没有材质」，于是纸盖住侧栏、侧栏填充色被写成不透明的纸色；
+ * 回到前台标记虽然恢复了，可那笔不透明色已经写下去，读者看到的就是「最小化一下，侧栏变成
+ * 一张纸、再也不玻璃了」。
+ *
+ * 粘性的依据是「一个页面的窗口材质能力在它的生命周期里不会变」：有材质的平台不会中途变成没有，
+ * 失焦只是系统临时撤下材质、换了不透明底，页面里那层纸不该跟着改成不透明的。
+ * 反过来，没有材质的平台（普通浏览器、Linux）从一开始标记就不在，粘性也不会让它凭空变真
  */
 function sidebarRevealsWindowMaterial() {
+    if (windowMaterialSeen)
+        return true;
     const root = document.documentElement;
-    const platform = root.getAttribute(PLATFORM_ATTRIBUTE);
-    if (platform === "darwin")
-        return true;
-    const material = root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE);
-    if (material === "translucent")
-        return true;
+    if (root.getAttribute(PLATFORM_ATTRIBUTE) === "darwin")
+        return rememberWindowMaterial();
+    if (root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent")
+        return rememberWindowMaterial();
     // 两个标记也可能落在 body 上：一并认，认不到就当作没有材质
-    return document.body !== null && document.body.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent";
+    if (document.body?.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent")
+        return rememberWindowMaterial();
+    return false;
+}
+// 记下「这个页面确实有窗口材质」，之后即使标记被撤也照旧算数
+function rememberWindowMaterial() {
+    windowMaterialSeen = true;
+    return true;
+}
+/**
+ * 此刻窗口材质在不在。与上面那份**故意不粘**，两件事分开：
+ *
+ * 上面那份回答「这个页面有没有玻璃」（生命周期内不变，所以粘性）；
+ * 这一份回答「这一秒底下还有东西可透吗」（会变，所以现读）。
+ *
+ * 为什么要分开：Windows 的 acrylic 在失焦时被系统撤下，dsh 把 data-window-material 摘掉。
+ * 那一刻侧栏底下就没有材质了，宿主的回退路径（.sidebarCol::before 那层实底浮上来）才该生效。
+ * 粘性判据把这条路挡住了，于是失焦期间侧栏只剩一层 85% 的 tint 浮在没底的窗口上——
+ * 底下透出来的是窗口自己的背景色，与别处对不上，读者看到的是一条与周围不同的暗带。
+ *
+ * 所以「纸要不要盖侧栏」继续用粘性那份（不让整页纸压过来），而侧栏那层纸纹要按这一份来：
+ * 材质不在时把纸纹收起来，把底让给宿主的回退填充
+ */
+function windowMaterialPresent() {
+    const root = document.documentElement;
+    if (root.getAttribute(PLATFORM_ATTRIBUTE) === "darwin")
+        return true;
+    if (root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent")
+        return true;
+    // 两个标记也可能落在 body 上，与 sidebarRevealsWindowMaterial 认的是同一组
+    return document.body?.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent";
 }
 /**
  * 左侧栏的宽度。取不到给 0，调用方据此退回「整块视口」。
@@ -5870,15 +6534,55 @@ function sidebarWidth() {
     return Number.isFinite(width) && width > 0 ? width : 0;
 }
 /**
- * 纸到底要不要盖住左侧栏：读者的选择，再让一层平台判据。
+ * 左侧栏那一列的元素。定位不到、或者认出来不是侧栏，都给 null。
+ *
+ * [data-shell-bottom] 是 AppFrame 那张 grid 的子元素，取它的父元素就是 grid；grid 的第一个
+ * 元素子元素就是侧栏那一列（DocumentTitle 什么都不渲染，列次序由 dsh 定死）。这跟 sidebarWidth()
+ * 是同一条前提——那一份读的也是「第一列」。
+ *
+ * 交出之前对一次几何：侧栏是 grid 第一列，它的宽度就该等于第一项列宽。这条校验是给 dsh 升级
+ * 准备的——哪天第一列不再装侧栏，宁可这层纸纹不画，也不要把纹理贴到别的列上。取不到列宽
+ * 或者对不上，一律当作没有侧栏
+ */
+function sidebarElement() {
+    const shellBottom = document.querySelector(SHELL_BOTTOM_SELECTOR);
+    const frame = shellBottom === null ? null : shellBottom.parentElement;
+    const first = frame === null ? null : frame.firstElementChild;
+    if (!(first instanceof HTMLElement))
+        return null;
+    // 容差 8px：列宽动画期间，列自身的矩形与 grid-template-columns 的插值会差一点。
+    // 两边都是 0（侧栏折叠成零宽）同样算通过：标记留在那儿，展开时纹理立刻就在，
+    // 不必等谁再来挂一次
+    return Math.abs(first.getBoundingClientRect().width - sidebarWidth()) < 8 ? first : null;
+}
+/**
+ * 全屏那一层纸要不要盖住左侧栏：读者的选择，再让一层平台判据。
  *
  * 两项都为真才盖。第二项是给自建桌面准备的——那边的左侧栏是仿 macOS 的透明窗口材质，
  * 观感来自它背后的窗口而不是页面自己画的，纸盖上去那块玻璃当场失效。这种平台上无论开关怎么选
- * 都不盖：留一块不铺纸的侧栏，比铺上去把读者的桌面材质弄没要好。判据本身在
- * sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
- */
+ * 都不盖。判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
+ *
+ * 让开之后侧栏并不是没有纸感：纸纹改为由侧栏自己那一层半透明纹理提供，见 sidebarPaintsOwnTexture()
+ *
+ * **这个返回值还是 `--dsw-specific-sidebar-fill` 那一笔的开关**（paper-tokens 的
+ * applyPaperTokens 第三个参数）。它必须在材质平台上恒为假：那一笔写进去的是不透明的纸色，
+ * 落在侧栏上会把 dsh 那层 85% 的 tint（只剩 15% 透光）整个盖死，窗口材质当场消失。
+ * 现在走不到是因为这里的平台判据；哪天有人把判据放宽，侧栏的玻璃会跟着一起没 */
 function paperIncludesSidebar(requested) {
     return requested && !sidebarRevealsWindowMaterial();
+}
+/**
+ * 侧栏要不要由插件自己叠一层纸纹。
+ *
+ * 只有在「开关打开、全屏那一层纸又让开了侧栏」时才画。让开的原因正是窗口材质，所以这一条读作
+ * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」。窗口材质的平台上开关的语义因此保住了：
+ * 打开有纸纹，关掉一条都不留。
+ *
+ * 全屏纸盖住侧栏时（没有窗口材质的平台）这一条为假——那边纸面 canvas 已经用 multiply 压过整列，
+ * 再叠一层细纹只会把侧栏从它右边那半张纸里挑出来
+ */
+function sidebarPaintsOwnTexture(requested) {
+    return requested && !paperIncludesSidebar(requested);
 }
 /**
  * 这一帧纸该占的矩形。
@@ -5929,7 +6633,7 @@ class PaperLight {
     // 两个颜色附件：0 是 albedo，1 是法线
     textures = [];
     framebuffer = null;
-    // 最近一次 build 的输入。render 靠它拿尺寸与纸样，所以它必须在
+    // 最近一次 build 的输入。render 靠它拿尺寸与档位，所以它必须在
     spec = null;
     constructor(canvas) {
         this.canvas = canvas;
@@ -5942,7 +6646,7 @@ class PaperLight {
     /**
      * 重新算纸纹：SURFACE 那次 pass，外加为两个颜色附件重建 FBO 与两张纹理。
      *
-     * 尺寸、纸样、纸纹强度任一项变了才需要它——它比 LIGHT 贵一个量级，所以 mount 拿尺寸与纸样当脏标记
+     * 尺寸、明暗档、纸纹强度任一项变了才需要它——它比 LIGHT 贵一个量级，所以 mount 拿尺寸与档位当脏标记
      */
     build(spec) {
         const gl = this.gl;
@@ -5971,7 +6675,7 @@ class PaperLight {
         this.paintSurface(spec, width, height);
     }
     /**
-     * 点灯：LIGHT 那次 pass。灯动、纸样换、尺寸变、窗口重新聚焦之后都要来一次。
+     * 点灯：LIGHT 那次 pass。灯动、明暗档换、尺寸变、窗口重新聚焦之后都要来一次。
      *
      * 没 build 过、context 丢了、或者已经 dispose 时什么都不做——宁可纸停在上一帧，不要画一片白
      */
@@ -5995,6 +6699,12 @@ class PaperLight {
         const strength = frame.rig.source === "moonlight" ? .3 : .12;
         const tintChannel = (channel) => 1 + ((.6 + channel * 1.5) - 1) * strength;
         const lampOn = frame.settings.lamp && frame.settings.enabled;
+        // 纸的相对亮度：着色器拿它当抖动的除数。这一层是 multiply 压在页面上（最终像素 = 纸色 × 这里的值），
+        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 43 个灰阶、一个台阶 5.9 级，
+        // 亮纸 242 个、只吃 1.1 级，同一个抖动幅度在暗纸上只盖得住台阶的四分之一
+        const paperColor = (0, paper_math_1.toUnit)(frame.paper.paper);
+        // 兜住零：除数取到 0 会把抖动放大成无穷大，整张纸变成一片噪点
+        const paperLuma = Math.max(.05, .2126 * paperColor[0] + .7152 * paperColor[1] + .0722 * paperColor[2]);
         gl.useProgram(this.lightProgram);
         gl.viewport(0, 0, this.canvas.width, this.canvas.height);
         gl.activeTexture(gl.TEXTURE0);
@@ -6015,13 +6725,14 @@ class PaperLight {
         // 归一化到峰值：真正的亮度由 exposure 与 lamp 决定，颜色只负责色相
         gl.uniform3f(uniforms.uTint, lightColor[0] / peak, lightColor[1] / peak, lightColor[2] / peak);
         gl.uniform1f(uniforms.uLamp, lampOn ? 1 : 0);
-        gl.uniform1f(uniforms.uAmbient, (0, paper_light_model_1.ambientLevel)(frame.room, frame.settings, frame.paper.appearance));
+        gl.uniform1f(uniforms.uAmbient, (0, paper_light_model_1.ambientLevel)(frame.paper.mode));
         gl.uniform3f(uniforms.uAmbientTint, tintChannel(roomColor[0]), tintChannel(roomColor[1]), tintChannel(roomColor[2]));
         gl.uniform1f(uniforms.uRelief, 2 * frame.settings.paperIllumination);
         gl.uniform1f(uniforms.uSoft, frame.settings.beam === "soft" ? 1 : 0);
         gl.uniform1f(uniforms.uCrinkle, frame.paper.surface.crinkle * frame.settings.texture);
         gl.uniform1f(uniforms.uGrain, frame.reduceMotion ? 0 : frame.settings.grain);
         gl.uniform1f(uniforms.uTime, frame.time);
+        gl.uniform1f(uniforms.uPaperLuma, paperLuma);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     /**
@@ -6092,7 +6803,7 @@ class PaperLight {
             this.lightUniforms = this.locate(this.lightProgram, [
                 "uAlbedo", "uNormal", "uSize", "uScale", "uSource", "uLightPos", "uLightDir", "uCone", "uExposure",
                 "uWindow", "uPanes", "uTint", "uLamp", "uAmbient", "uAmbientTint", "uRelief", "uCrinkle", "uGrain",
-                "uTime", "uSoft",
+                "uTime", "uSoft", "uPaperLuma",
             ]);
             this.state = "ready";
             return true;
@@ -6295,7 +7006,7 @@ uniform vec2 uSize; uniform float uScale; uniform int uSource;
 uniform vec3 uLightPos; uniform vec3 uLightDir; uniform vec2 uCone; uniform float uExposure;
 uniform vec4 uWindow; uniform vec4 uPanes; uniform vec3 uTint; uniform float uLamp;
 uniform float uAmbient; uniform vec3 uAmbientTint; uniform float uRelief; uniform float uCrinkle;
-uniform float uGrain; uniform float uTime; uniform float uSoft;
+uniform float uGrain; uniform float uTime; uniform float uSoft; uniform float uPaperLuma;
 out vec4 outColor;
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float between(float offset, float cell, float bar, float soft) {
@@ -6313,9 +7024,23 @@ float gobo(vec2 p) {
   return inside.x * inside.y * (0.3 + 0.7 * open);
 }
 const float BULB = 30.0;
+/**
+ * 抖动的幅度（乘在 g 上，g 落在 -0.5 到 0.5）。
+ *
+ * 这一层是 multiply 压在页面上：最终像素 = 纸色 × 这里算出来的值。所以纸越暗，纸上相邻两级
+ * 8 位灰度之间那道坎就越宽——暗纸 #2b2b25 的 R 只有 43 级，一个最终色阶要吃掉 5.93 个 canvas 级；
+ * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有四分之一宽，
+ * 光斑边缘那些同心圆弧就露成几块平台。
+ *
+ * STEP 是「一个最终色阶」换算回 canvas 级：1.0 / uPaperLuma 恰好是半个色阶，也就是 ±0.5 那条线。
+ * 下面取它和 FLOOR 的较大者——FLOOR 就是原来那个常数，它是照着亮纸那一档挑的，在亮纸上正好够用，
+ * 压在暗纸上只有四分之一。两档合起来由下限这条线接住：亮纸不动，暗纸才放大
+ */
+const float DITHER_STEP = 1.0 / 255.0;
+const float DITHER_FLOOR = 1.5 / 255.0;
 float irradiance(vec3 P, vec3 n) {
   // 3 是静止的漫射光：没有灯座、没有光锥、没有热点，只有一片从纸心散开的柔光。
-  // 它不看光标、不看时间，同一个纸样永远算出同一张图——所以这一路只在纸纹重建时算一次，
+  // 它不看光标、不看时间，同一档纸永远算出同一张图——所以这一路只在纸纹重建时算一次，
   // 打字、滚动、切会话都不会再惊动它。椭圆而不是圆：纸是横的，等比扩散会像一块圆斑
   if (uSource == 3) {
     vec2 centre = P.xy / uSize - vec2(0.5, 0.44);
@@ -6345,19 +7070,24 @@ void main() {
   irr *= clamp(1.0 + (-nxy.x * 0.35 - nxy.y * 0.55) * (0.6 + 2.2 * uCrinkle) * relief, 1.0 - bound, 1.0 + bound);
   irr *= mix(0.9, 1.0, smoothstep(0.0, 28.0, min(uv.x, 1.0 - uv.x) * uSize.x));
   float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5;
-  outColor = vec4(clamp(albedo * irr + g * (uGrain * 0.045 + 1.5 / 255.0), 0.0, 1.0), 1.0);
+  // 除零兜在 uPaperLuma 那一侧（paper-light.ts 里夹到 0.05），这里再兜一次：
+  // 万一它还是 0，DITHER_STEP / 0 会算出无穷大，整张纸变成一片噪点而不是纸
+  float step = DITHER_STEP / max(uPaperLuma, 0.05);
+  float dither = max(DITHER_FLOOR, step);
+  outColor = vec4(clamp(albedo * irr + g * (uGrain * 0.045 + dither), 0.0, 1.0), 1.0);
 }`;
     };
 
     __registry["chat/paper/paper-styles.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PAPER_CSS = exports.PAPER_HIDDEN_ATTRIBUTE = exports.PAPER_VIGNETTE_ATTRIBUTE = exports.PAPER_GLOW_ATTRIBUTE = exports.PAPER_SHEET_ATTRIBUTE = void 0;
+exports.PAPER_CSS = exports.PAPER_HIDDEN_ATTRIBUTE = exports.PAPER_SIDEBAR_ATTRIBUTE = exports.PAPER_VIGNETTE_ATTRIBUTE = exports.PAPER_GLOW_ATTRIBUTE = exports.PAPER_SHEET_ATTRIBUTE = void 0;
 /**
  * 纸感的样式。
  *
- * 三件事：给两片全屏 canvas 与那层暗角找位置、把纸色铺到宿主真正画底的几处、以及让侧栏在需要时
- * 躲开纸。整张表都以根元素上的 `data-dsh-chat-ux-paper` 为前提——那个标记不在时一条都不命中，
+ * 四件事：给两片全屏 canvas 与那层暗角找位置、把纸色铺到宿主真正画底的几处、让侧栏在需要时
+ * 躲开全屏那一层纸，以及给躲开之后的侧栏补一层只有纹理、没有底色的纸纹。
+ * 整张表都以根元素上的 `data-dsh-chat-ux-paper` 为前提——那个标记不在时一条都不命中，
  * 于是关掉纸感是彻底的，不必逐条撤销
  */
 const paper_tokens_1 = require("./paper-tokens");
@@ -6365,6 +7095,17 @@ const paper_tokens_1 = require("./paper-tokens");
 exports.PAPER_SHEET_ATTRIBUTE = "data-dsh-chat-ux-paper-sheet";
 exports.PAPER_GLOW_ATTRIBUTE = "data-dsh-chat-ux-paper-glow";
 exports.PAPER_VIGNETTE_ATTRIBUTE = "data-dsh-chat-ux-paper-vignette";
+/**
+ * 侧栏那层纸纹的标记，挂在侧栏那一列自己身上（paper-mount 负责增删）。
+ *
+ * 为什么不写在根元素上、让 CSS 自己去认那一列：那要写成 :has(> [data-shell-bottom]) 再取
+ * 第一个子元素，而 :has 的失效检查会跟着每一次 DOM 变更走——聊天流每吐一个字都要重算一遍。
+ * 反过来由 JS 定位一次、挂一条属性，样式表里就只剩一个属性选择器。
+ *
+ * 为什么这个开关不在 CSS 里再判一次平台：窗口材质那套判据已经有了一份（paper-layout 的
+ * sidebarRevealsWindowMaterial），CSS 里照抄一遍就是两份会分叉的真相
+ */
+exports.PAPER_SIDEBAR_ATTRIBUTE = "data-dsh-chat-ux-paper-sidebar-texture";
 /**
  * 收起标记。写在三件身上就是「这一层此刻不参与绘制」。
  *
@@ -6379,6 +7120,56 @@ exports.PAPER_HIDDEN_ATTRIBUTE = "data-dsh-chat-ux-paper-hidden";
 const SHEET_Z = "2147482000";
 const GLOW_Z = "2147482001";
 const VIGNETTE_Z = "2147482002";
+// 侧栏纸纹那张噪声块的边长，也是 mask-size 的重复周期。180 是读者看着真机一轮轮调出来的：
+// 更小时平铺痕迹要靠放大镜才看得见，更大则白占内存、看不出差别
+const SIDEBAR_NOISE_TILE = 180;
+/**
+ * 侧栏那层纸纹的形状：一张纯噪声的 SVG，只出 alpha、RGB 全黑（颜色归 CSS 给）。
+ *
+ * 为什么不是 CSS 渐变。第一版用的是三条 repeating-linear-gradient，读者看了真机截图说
+ * 「读起来是网格，不是纸纹」。渐变的每个梯度都是周期函数，铺满 280 宽的侧栏就是一张格纸；
+ * 而且三条直线里两条只差 90 度，人眼对「两个正交方向的等间距直线」最敏感，那正是网格的定义。
+ * 纸纹的本质是没有周期，所以换成 feTurbulence 的噪声。
+ *
+ * **两层噪声叠起来，不是一层。**
+ *   低频（baseFrequency 0.50、4 个八度）出纸的不匀，负责「这张纸不是一块平色」；
+ *   高频（1.70、2 个八度、alpha 乘 0.5）出纸齿，负责凑近看时的颗粒。
+ * 两层用 screen 合成：alpha 互相补足，低频淡的地方由高频兜住，不会出现大片空白。
+ *
+ * **频率调过一轮，这两个数是读者看了真机之后定的。** 第一版是 0.12 / 0.70，读者的原话是
+ * 「看着有点像是一张很糊的图片放大后的某一个局部视图」——0.12 那层出的是跨几十像素的大块
+ * 云斑，铺在 280 宽的侧栏上正是「低分辨率图被放大」的样子。改成 0.32 之后斑块缩到十几像素，
+ * 不再是糊图；高频从 0.70 提到 1.50，纸齿更细。这一步渲染成图对比过（0.25 / 0.32 / 0.40 配
+ * 1.20 / 1.50），0.32 / 1.50 那一组既没有大团块、也没有砂纸感。**读者之后又手动细了一档到
+ * 0.50 / 1.70，并把画布从 220 收到 180**，现值以字面量为准。
+ *
+ * 屏幕上的颗粒尺寸由两处相乘决定：baseFrequency 相对 SVG 自己那张 220 画布，而 mask-size 是
+ * 180px，整块被缩到 0.818 再平铺。想整体缩一圈颗粒就改 SIDEBAR_NOISE_TILE，但那会让接缝变密，
+ * 所以先调频率这一档。
+ *
+ * 单层 0.65（最初按建议写的那个数）在 20% 浓度下渲染出来像砂纸，不像纸。单层噪声只有一种
+ * 颗粒大小，纸上没有那种东西。也**没有**写各向异性的 baseFrequency（比如 0.9 0.12 拉出横向
+ * 纤维）：单方向会回到「有方向感」的老问题，与网格是同一类错。
+ *
+ * **stitchTiles 必须留。** 不加它，220px 那块噪声的四条边对不上，平铺出来是一张可见的网格，
+ * 比渐变那版还糟。频率改过之后这一条重新验了一遍（不同频率的平铺边界行为会变，不能沿用旧结论）：
+ * 接缝处相邻像素的平均差是 0.054 / 0.055，同一张图内部相邻像素的差是 0.065 / 0.058——
+ * 接缝仍比内部平，2x2 平铺放大 8 倍目检也看不出那条缝。
+ *
+ * 编码只把 # 换成 %23，属性一律用单引号包。于是这个字符串里没有双引号、没有反引号、
+ * 也没有美元加大括号，直接塞进 CSS 的 url("...") 是安全的（这张样式表本身是模板字符串）
+ */
+const SIDEBAR_NOISE_DATA_URI = "data:image/svg+xml,"
+    + "<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'>"
+    + "<filter id='n' x='0' y='0' width='100%' height='100%'>"
+    + "<feTurbulence type='fractalNoise' baseFrequency='0.50' numOctaves='4' result='low' stitchTiles='stitch'/>"
+    + "<feColorMatrix in='low' type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0' result='lowA'/>"
+    + "<feTurbulence type='fractalNoise' baseFrequency='1.70' numOctaves='2' result='high' stitchTiles='stitch'/>"
+    + "<feColorMatrix in='high' type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5 0' result='highA'/>"
+    + "<feBlend in='lowA' in2='highA' mode='screen'/>"
+    + "</filter>"
+    + "<rect width='100%' height='100%' filter='url(%23n)'/>"
+    + "</svg>";
 // 根元素上的选择器前缀，整张表的共同前提
 const ROOT = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
 /**
@@ -6437,6 +7228,90 @@ ${ROOT} [${exports.PAPER_HIDDEN_ATTRIBUTE}] {
   height: 0;
 }
 
+/* 暗档的暗角比亮档重，但不能重到四角比画布还黑。亮档那个 0.30 的乘子是给米白纸调的，
+   压到暗纸上几乎看不出来；这一路是 0.85 → 0.70 → 0.45 → 0.25 收下来的：0.70 那一档算出来
+   四角是 19，比 dsh 的深色画布（21）还黑，整张纸的四边像被啃掉一圈；0.45 之后四角 24，纸
+   从画布上浮起来；最后读者又收到 0.25，四角更亮一档 */
+${ROOT}[${paper_tokens_1.PAPER_DARK_ATTRIBUTE}] [${exports.PAPER_VIGNETTE_ATTRIBUTE}] {
+  background: radial-gradient(
+    ellipse 92% 88% at 50% 46%,
+    transparent 46%,
+    rgba(0, 0, 0, calc(var(${paper_tokens_1.PAPER_PREFIX}vignette, 0.25) * 0.25)) 100%
+  );
+}
+
+/* 侧栏自己那层纸纹。
+   位置：paper-mount 找到侧栏那一列（AppFrame grid 的第一个元素子元素）并在它身上挂
+   PAPER_SIDEBAR_ATTRIBUTE，样式表只认那条属性。为什么不用 :has 去找那一列，见 paper-styles
+   顶部那条常量的注释。
+
+   **这一层只给纹理，不给底色，也不加灯光。** 侧栏的观感在材质平台上由三层叠出来：
+   窗口材质（页面之下）、::before 那层实底（材质平台上 opacity: 0）、以及侧栏自己的 tint
+   （color-mix 85% 叠 transparent，只剩 15% 透光）。往上再加任何不透明的底，都是乘在那 15% 上：
+   一层 85% 的纸色会把透光打到 2.25%，玻璃当场失效。
+
+   **纹理用一张噪声图当 mask，不用渐变。** 这里换过一次：先做的是三条 repeating-linear-gradient
+   （帘纹加两道斜纤维），读者看了真机截图说「读起来是网格，不是纸纹」。原因不在浓淡在规整——
+   渐变的每一个梯度都是周期函数，4.2 / 9 / 13px 精确重复铺满 280 宽的侧栏就是一张格纸；
+   而且三条直线里两条只差 90 度，人眼对「两个正交方向的等间距直线」最敏感，那正是网格的定义。
+   纸纹的本质是没有周期：纤维走向随机、长度不一、疏密不均。CSS 渐变做不出这个，
+   所以换成 feTurbulence 的噪声，用 mask 套色。
+
+   为什么是 mask 而不是把噪声上成颜色：mask 只读 alpha，颜色仍归 CSS 给。于是「哪里的纹理密」
+   与「纹理是什么色」分成两件事：明暗两档只换颜色（ink 跟着纸走），噪声图一个字都不用改。
+   换成把噪声直接当图片上色的话，两档就得两张图。
+
+   **稠密程度由两处决定**：background-color 那个百分比（当前 10%）与噪声自己的 alpha 分布。
+   这张噪声在 Chromium 里量出来的 alpha 分布是：均值 0.625、p50 0.627、p90 0.745、最浓 0.945，
+   最小值 0.251（没有全透明像素，因为两层 screen 合成把低谷兜住了）。于是：
+
+     整层平均不透明度      10% × 0.625 = 6.25%
+     最浓的像素            10% × 0.945 = 9.45%
+
+   折算到透光（起点是 dsh 那层 tint 留下的 15%）：
+
+     整层平均   15% × (1 - 0.0625) = 14.06%
+     最浓的像素 15% × (1 - 0.0945) = 13.58%
+
+   也就是这层把玻璃平均压掉 0.94 个百分点、最浓处压掉 1.42 个——纹路在，玻璃照样透。
+
+   调浓淡有两个旋钮：抬 background-color 那个百分比（线性、直观，先动这个），
+   或者抬 feFuncA 的 amplitude（改分布形状，颗粒对比更跳）。**整层 opacity 别动**——
+   它会把「没有噪声的地方」一起乘进去，那是这条设计里唯一不能碰的东西。
+
+   10% 这个数是三档（8 / 10 / 12）在亮暗两档上叠着真实合成链看过的：8% 在暗档上几乎看不出，
+   12% 在亮档上开始抢字。10% 两档都刚好。
+
+   为什么不用 backdrop-filter：侧栏底下已经是系统 vibrancy，页面里再叠一层 backdrop-filter 会
+   造一个新的 backdrop root，把 vibrancy 的透出路径切断——比不透明更隐蔽的失效方式。
+
+   颜色从 --dsh-chat-ux-paper-ink 派生，不写死色值，两档因此自动成立：亮档的墨是深棕，
+   压在浅玻璃上是深色细纹；暗档的墨是暖白 #e8e6dd，压在深玻璃上是浅色细纹。
+   **混的是 ink 不是 paper**：paper 是纸的本色，混进来等于给侧栏铺一层纸色底，正是上面要避开的。
+
+   噪声那块图见文件顶部的 SIDEBAR_NOISE_DATA_URI，那边写了每个参数在管什么。 */
+${ROOT} [${exports.PAPER_SIDEBAR_ATTRIBUTE}]::after {
+  position: absolute;
+  inset: 0;
+  /* 负一层：压在这一列的 tint 之上、侧栏内容之下。.sidebarCol 带 isolation: isolate，
+     它形成自己的层叠上下文，于是负 z-index 的伪元素画在那条 background 之后、内容之前——
+     纹理是纸面的痕，字与控件印在它上面；反过来盖在字上就成了在文字上蒙一层纱 */
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  /* 只给颜色，不给形状：整块铺满，露多少由 mask 决定。混 transparent 而不是配 rgba()，
+     是为了让颜色跟着 ink 走、不写死色号 */
+  background-color: color-mix(in srgb, var(${paper_tokens_1.PAPER_PREFIX}ink) 10%, transparent);
+  /* 噪声只决定「哪里显示」。四个属性各写两遍：不带前缀的那一组是新语法，
+     -webkit- 那一组给旧版 Chromium 兜底（Electron 的版本跟着 dsh 走，不能假定够新） */
+  mask-image: url("${SIDEBAR_NOISE_DATA_URI}");
+  mask-size: ${SIDEBAR_NOISE_TILE}px ${SIDEBAR_NOISE_TILE}px;
+  mask-repeat: repeat;
+  -webkit-mask-image: url("${SIDEBAR_NOISE_DATA_URI}");
+  -webkit-mask-size: ${SIDEBAR_NOISE_TILE}px ${SIDEBAR_NOISE_TILE}px;
+  -webkit-mask-repeat: repeat;
+}
+
 /* 纸面下的字与背景：宿主的底色与侧栏填充色由 paper-tokens 内联写，这里只管那些靠自己的色值画底、
    不认令牌的地方 */
 ${ROOT} ::selection {
@@ -6445,495 +7320,6 @@ ${ROOT} ::selection {
 }
 
 `;
-    };
-
-    __registry["chat/paper/paper-tokens.js"] = function (module, exports, require) {
-"use strict";
-/**
- * 纸感的配色令牌。
- *
- * 本插件从不写 --dsw-alias-*：那是宿主的语义别名，也是别的皮肤（dsh-claude-style 之类）在改的同一条通道。
- * 纸只需要把底色、墨色、房间色这几样交给自己的一套变量，样式表再从这些变量派生。
- *
- * 但纸色必须先落到宿主真正画底的那条令牌上，否则 canvas 的 multiply 只能压出光照，纸会透成
- * 宿主原来的米白（shader 里的 albedo 是接近白的）。所以这里分两步：
- *   1. 我们自己的一整套 `--dsh-chat-ux-paper-*`，写在根元素上，样式表、光标、辉光都读它；
- *   2. 宿主的几条令牌（整页底色、侧栏填充色、正文与代码字族），只写纸自己那一项值。
- * 第二条是「纸盖上去之后底色得是纸色」这件事无法绕开的最小代价；每一笔都记着原值与优先级，
- * 卸载与关掉时逐项还原，别人后写过的就不抢回来
- *
- * 写在哪个元素上是有讲究的，这不是风格问题而是层级问题：dsh 的 ui-theme 把 `--dsw-alias-bg-base`
- * 定义在 `body` 上（design-platform.css 的 `body { … }`），主题包又把 `--dsh-font-family-text`
- * 写在 body 上。内联写在 `html` 上只是「根元素的声明」，body 自己的声明是本地声明、赢过继承——
- * 实测就是这么翻的车：html 上是 #efdfbd，body 上算出来仍是 #fff。所以宿主那几条一律写到 body 上
- */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PAPER_ROOT_ATTRIBUTE = exports.PAPER_PREFIX = void 0;
-exports.setOwned = setOwned;
-exports.releaseOwned = releaseOwned;
-exports.restorePaperTokens = restorePaperTokens;
-exports.applyPaperTokens = applyPaperTokens;
-exports.clearPaperTokens = clearPaperTokens;
-exports.paperTokenSet = paperTokenSet;
-const paper_math_1 = require("./paper-math");
-const paper_tables_1 = require("./paper-tables");
-// 本插件自己的变量前缀
-exports.PAPER_PREFIX = "--dsh-chat-ux-paper-";
-// 会被改写的宿主令牌。三条：整页底色、侧栏填充色、正文与代码的字族
-const HOST_BASE_PROPERTY = "--dsw-alias-bg-base";
-const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill";
-const HOST_TEXT_FONT_PROPERTY = "--dsh-font-family-text";
-const HOST_CODE_FONT_PROPERTY = "--dsh-font-family-code";
-/**
- * 纸感的正文与代码字族。
- *
- * 纸面上的字是衬线，这是纸感的一半——老式数字配衬线字身是 ebook 的读法，配无衬线就只是一块米色。
- * 栈的写法与 nocturne 逐字一致：自起的名字没有，用字体的本名，后面一路退到各平台的衬线系统字。
- * dsh 自己的 base.css 把 --dsw-font-family 定义成 var(--dsh-font-family-text, 默认值)，所以写这一条就够
- */
-const PAPER_TEXT_FONT_STACK = '"EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, '
-    + '"Source Han Serif SC", "Songti SC", "Noto Serif CJK SC", serif';
-// 代码字族：打字机体的那一支，退到 Courier 与 Consolas
-const PAPER_CODE_FONT_STACK = '"Courier Prime", "IBM Plex Mono", "Courier New", "DejaVu Sans Mono", ui-monospace, monospace';
-// 写过的那几笔。同一个名字在根元素与 body 上是两条，所以认的是「元素 + 名字」
-const ownedList = [];
-/**
- * 记下原值并写入。同一个元素上的同一名字只记第一次的原值。
- *
- * 导出是因为「写在宿主身上、又能逐项还原」这件事不止纸色一处要：用户气泡的底色
- * （paper-bubble.ts）走的是同一条机制。两边共用同一本账，于是 clearPaperTokens() 一次就把
- * 它们全还回去，不必记得谁先谁后
- */
-function setOwned(element, name, value, priority = "") {
-    const existing = ownedList.find((owned) => owned.element === element && owned.name === name);
-    if (existing === undefined) {
-        ownedList.push({
-            element,
-            name,
-            valueBefore: element.style.getPropertyValue(name),
-            priorityBefore: element.style.getPropertyPriority(name),
-            valueWritten: value,
-            priorityWritten: priority,
-        });
-    }
-    else {
-        existing.valueWritten = value;
-        existing.priorityWritten = priority;
-    }
-    element.style.setProperty(name, value, priority);
-}
-// 还回一元素上的一笔。当下值已经不等于我们写的那一个时不动手——那说明别家后写过，抢回去会抹掉它。
-// 与 setOwned 一并导出，理由同上
-function releaseOwned(element, name) {
-    const index = ownedList.findIndex((owned) => owned.element === element && owned.name === name);
-    if (index < 0)
-        return;
-    const owned = ownedList[index];
-    if (owned === undefined)
-        return;
-    if (element.style.getPropertyValue(name) === owned.valueWritten
-        && element.style.getPropertyPriority(name) === owned.priorityWritten) {
-        if (owned.valueBefore === "")
-            element.style.removeProperty(name);
-        else
-            element.style.setProperty(name, owned.valueBefore, owned.priorityBefore);
-    }
-    ownedList.splice(index, 1);
-}
-// 把写过的全部还回去：当下值仍是我们的写入值才动手
-function restorePaperTokens() {
-    for (const owned of ownedList) {
-        if (owned.element.style.getPropertyValue(owned.name) !== owned.valueWritten
-            || owned.element.style.getPropertyPriority(owned.name) !== owned.priorityWritten)
-            continue;
-        if (owned.valueBefore === "")
-            owned.element.style.removeProperty(owned.name);
-        else
-            owned.element.style.setProperty(owned.name, owned.valueBefore, owned.priorityBefore);
-    }
-    ownedList.length = 0;
-}
-/**
- * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
- * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
- */
-function applyPaperTokens(set, includeSidebar) {
-    const root = document.documentElement;
-    const body = document.body;
-    // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
-    root.setAttribute(exports.PAPER_ROOT_ATTRIBUTE, "");
-    // 自己那一套写在根元素上：没有别人定义过它们，继承就能一路到每个元素
-    const ownPairs = [
-        [exports.PAPER_PREFIX + "paper", set.paper],
-        [exports.PAPER_PREFIX + "ink", set.ink],
-        [exports.PAPER_PREFIX + "ink-muted", set.inkMuted],
-        [exports.PAPER_PREFIX + "room", set.room],
-        [exports.PAPER_PREFIX + "room-edge", set.roomEdge],
-        [exports.PAPER_PREFIX + "light-rgb", set.lightRgb],
-        [exports.PAPER_PREFIX + "selection", set.selection],
-        [exports.PAPER_PREFIX + "vignette", String(set.vignette)],
-    ];
-    for (const [name, value] of ownPairs)
-        setOwned(root, name, value);
-    // 宿主那几条得写在 body 上：ui-theme 在 body 的规则里定义它们，内联写在根元素上只算「根元素的声明」，
-    // 输给 body 自己的本地声明。body 还没建出来（脚本跑得比文档早）时这一帧先跳过，下一帧会再来
-    if (body === null)
-        return;
-    setOwned(body, HOST_BASE_PROPERTY, set.paper);
-    // 字族跟着纸感走：关掉时这两条会被还原，页面回到 dsh 自己那套或读者在设置里填的那套
-    setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK);
-    setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK);
-    // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
-    // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
-    // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着
-    if (includeSidebar)
-        setOwned(body, HOST_SIDEBAR_PROPERTY, set.paper);
-    else
-        releaseOwned(body, HOST_SIDEBAR_PROPERTY);
-}
-/**
- * 撤掉纸：把我们写过的全部还原，并摘掉范围标记。
- *
- * 标记摘得晚一步也行——样式表里所有纸规则都以它为前提，摘掉之后一条都不命中，
- * 于是即使某条属性没还原成功，页面也只是回到宿主自己的样子
- */
-function clearPaperTokens() {
-    restorePaperTokens();
-    document.documentElement.removeAttribute(exports.PAPER_ROOT_ATTRIBUTE);
-}
-// 挂在根元素上的范围标记：纸开着且有值时才在
-exports.PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper";
-/**
- * 从纸样那一串算出这一套颜色。
- *
- * 挂载层与安装层都要它：前者在帧里按脏标记重落，后者在装上的那一刻落一次（首帧之前页面就该是纸的调子）。
- * 两处算出来的必须是同一套，所以只写这一处
- */
-function paperTokenSet(style) {
-    const profile = (0, paper_tables_1.resolveProfile)(style);
-    const paper = (0, paper_tables_1.paperOf)(profile);
-    const room = (0, paper_tables_1.roomOf)(profile);
-    return {
-        paper: paper.paper,
-        ink: paper.ink,
-        inkMuted: paper.inkMuted,
-        room: room.palette.room,
-        roomEdge: room.palette.roomEdge,
-        lightRgb: (0, paper_math_1.toUnit)(room.light.color).map((channel) => Math.round(channel * 255)).join(" "),
-        // 选区色：暗纸用纸自带的那一支，亮纸用房间的描金。与 nocturne 的 washColor 同一条规则
-        selection: paper.appearance === "dark" ? paper.selection : (room.selection === "" ? paper.selection : room.selection),
-        vignette: room.atmosphere.vignette,
-    };
-}
-    };
-
-    __registry["chat/paper/paper-tables.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PAPER_DEFAULT_SETTINGS = exports.DEFAULT_ROOM_ID = exports.DEFAULT_PAPER_ID = exports.PROFILE_SEPARATOR = exports.ROOM_ID_LIST = exports.ROOMS = exports.PAPER_ID_LIST = exports.PAPERS = exports.NIGHT_ANSI = exports.LIGHT_ANSI = void 0;
-exports.resolveProfile = resolveProfile;
-exports.profileId = profileId;
-exports.paperAndRoomOf = paperAndRoomOf;
-exports.paperOf = paperOf;
-exports.roomOf = roomOf;
-exports.washColor = washColor;
-exports.glassColor = glassColor;
-exports.surfaceColor = surfaceColor;
-/**
- * 纸与房间：五张纸、三个房间，以及从它们派生出来的颜色。
- *
- * 纸管纸面与墨，房间管纸面的光色与暗角，两者正交，所以是 5 × 3 = 15 种组合。
- * 组合 id 就用双下划线把两段拼起来：cotton__paper-and-ink。它既是配置里存的那一个字符串，
- * 也是本模块唯一接受的输入形式，认不出的两半各自落到默认
- *
- * 与 nocturne 的差别只在命名：那边的 THEMES 在这里叫 ROOMS。字段一个没动——它们直接喂给
- * buildRig 与 paper-light 的 uniform，改名只会让对照原文变难
- */
-const paper_math_1 = require("./paper-math");
-// 16 色 ANSI 的浅色那一套。纸感目前不画终端，但纸的墨色与选择色跟它是同一组来源，留着以便一致
-exports.LIGHT_ANSI = {
-    black: "#2b231c",
-    red: "#9c3a2a",
-    green: "#4c6b2f",
-    yellow: "#8a6a1c",
-    blue: "#2f5277",
-    magenta: "#7b3f6e",
-    cyan: "#2e6b6a",
-    white: "#7d7060",
-    lightBlack: "#6e6153",
-    lightRed: "#b0452a",
-    lightGreen: "#557a33",
-    lightYellow: "#94701a",
-    lightBlue: "#3a6491",
-    lightMagenta: "#8c4a7e",
-    lightCyan: "#317876",
-    lightWhite: "#5b4f43",
-};
-// 深色那一套
-exports.NIGHT_ANSI = {
-    black: "#2a2b42",
-    red: "#d88a9a",
-    green: "#9cc3a4",
-    yellow: "#e2cf9a",
-    blue: "#8ea8e0",
-    magenta: "#b79ce0",
-    cyan: "#8cc8d6",
-    white: "#c9cadf",
-    lightBlack: "#6f7192",
-    lightRed: "#eba5b3",
-    lightGreen: "#b4d8bc",
-    lightYellow: "#efdfb2",
-    lightBlue: "#aac0ef",
-    lightMagenta: "#cbb5ef",
-    lightCyan: "#a8dbe6",
-    lightWhite: "#f0f0fa",
-};
-/**
- * 五张纸。名字与 nocturne 文档 4.5 那张表的「性格」列一一对应，除了羊皮纸——它已经下线。
- * 默认也不用上游的 onionskin：它极薄极平，铺满一整扇窗之后几乎没有可看的东西
- */
-exports.PAPERS = {
-    cotton: {
-        id: "cotton",
-        name: "Cotton",
-        appearance: "light",
-        paper: "#eee6d5",
-        ink: "#2a2019",
-        inkMuted: "#6b5f52",
-        cursor: "#3a2c20",
-        selection: "rgba(52, 64, 112, 0.2)",
-        ansi: exports.LIGHT_ANSI,
-        surface: { crinkle: .3, felt: 1, laid: 0, linen: 0, mottle: .08, age: 0 },
-    },
-    laid: {
-        id: "laid",
-        name: "Laid",
-        appearance: "light",
-        paper: "#f1e9d6",
-        ink: "#2a2019",
-        inkMuted: "#6b5f52",
-        cursor: "#3a2c20",
-        selection: "rgba(52, 64, 112, 0.2)",
-        ansi: exports.LIGHT_ANSI,
-        surface: { crinkle: .22, felt: 0, laid: 1, linen: 0, mottle: .18, age: 0 },
-    },
-    linen: {
-        id: "linen",
-        name: "Linen",
-        appearance: "light",
-        paper: "#ebe5d8",
-        ink: "#2a2019",
-        inkMuted: "#6b5f52",
-        cursor: "#3a2c20",
-        selection: "rgba(52, 64, 112, 0.2)",
-        ansi: exports.LIGHT_ANSI,
-        surface: { crinkle: .2, felt: 0, laid: 0, linen: 1, mottle: .08, age: 0 },
-    },
-    onionskin: {
-        id: "onionskin",
-        name: "Onionskin",
-        appearance: "light",
-        paper: "#f2f1ea",
-        ink: "#2a2019",
-        inkMuted: "#6b5f52",
-        cursor: "#3a2c20",
-        selection: "rgba(52, 64, 112, 0.2)",
-        ansi: exports.LIGHT_ANSI,
-        surface: { crinkle: .08, felt: 0, laid: 0, linen: 0, mottle: .04, age: 0 },
-    },
-    night: {
-        id: "night",
-        name: "Night",
-        appearance: "dark",
-        paper: "#1d1a20",
-        ink: "#e6e1ea",
-        inkMuted: "#9a94a6",
-        cursor: "#e9e7ff",
-        selection: "rgba(196, 188, 255, 0.2)",
-        ansi: exports.NIGHT_ANSI,
-        surface: { crinkle: .3, felt: 0, laid: 0, linen: 0, mottle: .1, age: 0 },
-    },
-};
-/**
- * 纸的 id 列表。顺序是界面上那几张卡片的顺序，不与 PAPERS 的书写顺序绑定。
- *
- * 羊皮纸（parchment）已下线：它那套 mottle 1.0 + age .75 的做旧——狐斑、水渍、折痕、烧边——在
- * 一整扇窗的尺度上读起来是脏，不是旧。纸纹参数留在别处也不用，整块删掉比留个默认落点更省心
- */
-exports.PAPER_ID_LIST = ["onionskin", "cotton", "laid", "linen", "night"];
-// 三个房间。角色上对应 nocturne 的 THEMES，改名是因为这里的纸与房间是正交的两件事
-exports.ROOMS = {
-    "paper-and-ink": {
-        id: "paper-and-ink",
-        name: "Paper & Ink",
-        selection: "rgba(176,138,74,.30)",
-        palette: {
-            room: "#241a14", roomEdge: "#070504", paper: "#f4ecdb", paperEdge: "#e1d1b0",
-            ink: "#2b231c", inkMuted: "#6e6153", inkFaint: "#a89a85",
-            accent: "#b08a4a", accentSoft: "#d9c08a", border: "#c9b48e",
-        },
-        light: { source: "desk-lamp", color: "#ffd29a", position: { x: .5, y: .5 }, shade: .42 },
-        atmosphere: { particles: .1, filmGrain: .08, vignette: .35 },
-    },
-    "midnight-study": {
-        id: "midnight-study",
-        name: "Midnight Study",
-        selection: "rgba(201,164,92,.30)",
-        palette: {
-            room: "#140f0b", roomEdge: "#030202", paper: "#1c1714", paperEdge: "#2c241e",
-            ink: "#eadfc8", inkMuted: "#a39580", inkFaint: "#6b5f52",
-            accent: "#c9a45c", accentSoft: "#8a6f3d", border: "#3a2f27",
-        },
-        light: { source: "desk-lamp", color: "#ffb35c", position: { x: .5, y: .5 }, shade: .5 },
-        atmosphere: { particles: .2, filmGrain: .12, vignette: .6 },
-    },
-    "moonlit-poetry": {
-        id: "moonlit-poetry",
-        name: "Moonlit Poetry",
-        selection: "rgba(160,168,214,.28)",
-        palette: {
-            room: "#0e0e1a", roomEdge: "#030307", paper: "#171826", paperEdge: "#26283e",
-            ink: "#dcdcec", inkMuted: "#9496b4", inkFaint: "#5c5e7c",
-            accent: "#b7bdd6", accentSoft: "#6e7396", border: "#2c2e48",
-        },
-        light: { source: "desk-lamp", color: "#c9d4ff", position: { x: .5, y: .5 }, shade: .48 },
-        atmosphere: { particles: .35, filmGrain: .1, vignette: .55 },
-    },
-};
-// 房间的 id 列表，顺序就是界面上的顺序
-exports.ROOM_ID_LIST = ["paper-and-ink", "midnight-study", "moonlit-poetry"];
-// 纸与房间之间的分隔符，组合 id 靠它拼
-exports.PROFILE_SEPARATOR = "__";
-// 默认的那张纸：棉浆纸。上游默认是 onionskin（极薄极平，几乎没有纹理），
-// 一整扇窗铺下来反而像没铺；棉浆纸有毡压的纸齿，空处也有东西可看
-exports.DEFAULT_PAPER_ID = "cotton";
-// 默认的那个房间
-exports.DEFAULT_ROOM_ID = "paper-and-ink";
-/**
- * 出厂参数。底色仍是 nocturne 的 SETTINGS，改过的四项都在下面各自写着理由：
- * 开的是静止的台灯，颗粒与尘埃关掉，纸纹与浮雕降下来
- */
-exports.PAPER_DEFAULT_SETTINGS = {
-    lamp: true,
-    enabled: true,
-    // 灯的强度。静止的台灯光斑只占屏幕一小块，1.1 那点亮度在环境光占到八成之后几乎看不出来，
-    // 所以抬到 2.6：灯下纹丝不差地亮到接近纸的原色，灯外由 ambientLevel 那道下限兜住
-    intensity: 2.6,
-    spread: 74,
-    beam: "pointed",
-    aim: 0,
-    reach: 1,
-    softness: .65,
-    // 胶片颗粒与空气中的尘埃都关掉：它们是「一盏真实的灯照在一张真实的纸上」的一部分，
-    // 但整扇窗的尺度上，颗粒读起来是显示器的噪点，尘埃读起来是脏。0 之后这两样都不会再画
-    grain: 0,
-    cursorGlow: .35,
-    // 纸纹强度。nocturne 的 1 是按 ~660×620 的纸调的，铺到 1440 宽的一整扇窗上，同一组噪声频率
-    // 就显得又密又硬——读者的话是「像墙面而不是纸」。降到 0.28 之后纹理退成纸的底色变化，
-    // 凑近看得出织纹，退开就是一整片纸
-    texture: .18,
-    paperIllumination: .22,
-    particles: 0,
-    window: { x: .5, y: .5, columns: 3, rows: 2, softness: .15, slant: 0 },
-};
-/**
- * 把配置里那个组合 id 拆成纸与房间。
- *
- * 认不出的一律落到默认：配置是读者手改过的历史值、或者两个字段的拼法变过，
- * 都不该让整块纸不画。空值、只有一个分隔符、多出第二段，走的都是这条路
- */
-function resolveProfile(profileId) {
-    const [paperPart, roomPart] = (profileId ?? "").split(exports.PROFILE_SEPARATOR);
-    const paperId = paperPart ?? "";
-    const roomId = roomPart ?? "";
-    return {
-        paperId: exports.PAPERS[paperId] === undefined ? exports.DEFAULT_PAPER_ID : paperId,
-        roomId: exports.ROOMS[roomId] === undefined ? exports.DEFAULT_ROOM_ID : roomId,
-    };
-}
-// 组合 id 拼回去。界面上那 5 乘 3 共 15 种组合与配置里存的值走的都是它
-function profileId(paperId, roomId) {
-    return paperId + exports.PROFILE_SEPARATOR + roomId;
-}
-/**
- * 配置里那个值直接查纸与房间，一步到位——挂载那一层每帧都要的结果。
- *
- * 认不出的组合由 resolveProfile 落到默认，所以这里永远拿得到
- */
-function paperAndRoomOf(profileId) {
-    const profile = resolveProfile(profileId);
-    return { paper: paperOf(profile), room: roomOf(profile) };
-}
-/**
- * 一份 profile 对应的纸。
- *
- * resolveProfile 已经保证 id 在表里，所以这里取第二次仍然为空只可能是表自己坏了——
- * 那是同一份文件里的字面量，编译期就该发现，所以直接抛，不把一张没有参数的纸喂进着色器
- */
-function paperOf(profile) {
-    const paper = exports.PAPERS[profile.paperId];
-    if (paper === undefined)
-        throw new Error("dsh-chat-ux paper: unknown paper " + profile.paperId);
-    return paper;
-}
-// 一份 profile 对应的房间。空值的处置同 paperOf
-function roomOf(profile) {
-    const room = exports.ROOMS[profile.roomId];
-    if (room === undefined)
-        throw new Error("dsh-chat-ux paper: unknown room " + profile.roomId);
-    return room;
-}
-/**
- * 选区的底色：纸自己的调子，不是浏览器的蓝。
- *
- * 浅色纸用房间的描金（与细边、页码同源），深色纸用纸自带的月白。nocturne 那边的规则是
- * "主题选色优先、纸选色兜底"；这里的纸与房间正交，所以按纸的明暗分流
- */
-function washColor(profile) {
-    const paper = paperOf(profile);
-    if (paper.appearance === "dark")
-        return paper.selection;
-    // 房间没有自己的选区色时退回纸自带的那一支：空字符串在 CSS 里等于没写，
-    // 而选区总得有个颜色
-    const roomSelection = roomOf(profile).selection;
-    return roomSelection === "" ? paper.selection : roomSelection;
-}
-/**
- * 输入卡片那块玻璃落到实色之后的样子。深浅两档各一份，与 composer-glass 的
- * `--dsh-chat-ux-glass-base` 是同一个合成结果：那一层是「近白掺一点冷蓝」再让出三成给纸。
- *
- * 写在这里而不是读那条变量：那一条只在毛玻璃开着时才定义，而气泡的观感不该跟着毛玻璃的开关走
- */
-const GLASS_SOLID_LIGHT = "#f3f5f9";
-// 深色那一档：玻璃的底在深色下是冷的近黑，比夜纸本身还深一档
-const GLASS_SOLID_DARK = "#14161d";
-/**
- * 纸面上那块玻璃的调子：把纸色朝玻璃的实色混一截。
- *
- * 用户气泡要与输入框的毛玻璃对上，所以混的是玻璃那一支，不是 surfaceColor 的"朝墨"——
- * 朝墨混出来的是一张更暗的纸，与读者按过的那张输入卡片对不上。深浅两档自动成立：
- * 亮纸上玻璃比纸亮，混出来浮起一层；夜纸上玻璃比纸深，混出来压下去一层，两边都是"纸上的一层材质"
- */
-function glassColor(profile, amount) {
-    const paper = paperOf(profile);
-    const target = (0, paper_math_1.toUnit)(paper.appearance === "dark" ? GLASS_SOLID_DARK : GLASS_SOLID_LIGHT);
-    const base = (0, paper_math_1.toUnit)(paper.paper);
-    const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (target[index] ?? 0) * amount) * 255));
-    return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
-}
-/**
- * 纸面上的"另一层纸"：把纸色朝墨色调一点。
- *
- * 气泡、输入框、菜单、侧栏都用它——整扇窗是一张纸，这些是纸上压出来的一层，不是浮在纸上的白卡片。
- * 深色纸上 ink 是浅的，所以这条在夜纸上会自动变成"略亮"，不需要第二套值
- */
-function surfaceColor(profile, amount) {
-    const paper = paperOf(profile);
-    const base = (0, paper_math_1.toUnit)(paper.paper);
-    const ink = (0, paper_math_1.toUnit)(paper.ink);
-    const mixed = [0, 1, 2].map((index) => Math.round(((base[index] ?? 0) * (1 - amount) + (ink[index] ?? 0) * amount) * 255));
-    return "#" + mixed.map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("");
-}
     };
 
     __registry["chat/paper/paper-bubble.js"] = function (module, exports, require) {
@@ -6953,22 +7339,22 @@ exports.applyPaperBubble = applyPaperBubble;
  * 一张更暗的纸，与那张卡片对不上，落定那一下看起来就像换了个控件。
  *
  * 为什么写在这一条而不是另起一条自己的变量：气泡的底由 dsh 自己那条规则直接吃令牌，
- * 本插件拿不到那个元素，只能改写令牌。这是继整页底色与侧栏填充色之后的第三条，与前两条同性质。
+ * 本插件拿不到那个元素，只能改写令牌。这是继整页底色与文字之后的又一条，与它们同性质。
  *
  * **只写一条。** `--dsw-specific-bubble-highlight` 与它挨着定义、名字也像，但 dsh 里用它的是
- * 会话检查器那圈高亮框（experimental/session-inspector 的 .chatReveal），气泡本身一个都没用；
+ * 会话检查器那圈高亮框（experimental/session-inspector 的 .chatReveal），气泡自己一个都没用；
  * 改写它只会让那圈框跟着变色，换来的是没有收益的副作用。
  *
- * 深浅两张纸只算一次色：glassColor 的两支目标色按纸的明暗二选一，于是同一条公式在暗纸上自动变成
- * "比纸更深的冷面"。不需要按 data-ds-dark-theme 各写一套。
+ * 深浅两档只算一次色：glassColor 的两支目标色按明暗二选一，于是同一条公式在暗档上自动变成
+ * "比纸更深的冷面"。哪一档由调用方传进来，这个函数不认识 dsh 的主题
  */
 const paper_tokens_1 = require("./paper-tokens");
 const paper_tables_1 = require("./paper-tables");
 /**
  * 气泡朝玻璃实色混多少。
  *
- * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的
- * 白」，混七成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
+ * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的那块底」，
+ * 混六成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
  */
 const BUBBLE_MIX = 0.62;
 // 宿主画气泡底的那条令牌
@@ -6984,12 +7370,12 @@ exports.PAPER_BUBBLE_PROPERTY = "--dsh-chat-ux-paper-bubble";
 /**
  * 把气泡的底色落到纸上。
  *
- * style 必须是配置里那一个字符串（与 paperTokenSet 的入参同源），否则换纸时两处会分叉：
- * 令牌这边换了纸，气泡还停在上一张。重复调用是幂等的——setOwned 只在值变了时才真的写 DOM，
+ * mode 必须是当下那一档（与 paperTokenSet 的入参同源），否则切主题时两处会分叉：
+ * 令牌这边换了档，气泡还停在上一档。重复调用是幂等的——setOwned 只在值变了时才真的写 DOM，
  * 而改一条 custom property 会让整篇文档的样式重算，那是这个插件最贵的一次操作
  */
-function applyPaperBubble(style) {
-    const color = (0, paper_tables_1.glassColor)((0, paper_tables_1.resolveProfile)(style), BUBBLE_MIX);
+function applyPaperBubble(mode) {
+    const color = (0, paper_tables_1.glassColor)(mode, BUBBLE_MIX);
     // 自己那一笔先写，而且不依赖 body 在不在：发送替身那截 CSS 读的是它，那一层要的首帧就有值。
     // 写在根元素上：没有别人定义过它，继承就能到每个元素
     (0, paper_tokens_1.setOwned)(document.documentElement, exports.PAPER_BUBBLE_PROPERTY, color);
@@ -6999,6 +7385,37 @@ function applyPaperBubble(style) {
     if (document.body === null)
         return;
     (0, paper_tokens_1.setOwned)(document.body, HOST_BUBBLE_PROPERTY, color);
+}
+    };
+
+    __registry["chat/paper/paper-theme.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.currentPaperMode = currentPaperMode;
+exports.watchThemeMode = watchThemeMode;
+// dsh 在 body 上标深色配色的属性
+const DARK_THEME_ATTRIBUTE = "data-ds-dark-theme";
+// 当下是哪一档。body 还没建出来时按亮档：那种时候页面还什么都没画
+function currentPaperMode() {
+    return document.body?.hasAttribute(DARK_THEME_ATTRIBUTE) === true ? "dark" : "light";
+}
+/**
+ * 主题变了就叫一次。
+ *
+ * 只盯 body 那一个属性：dsh 切深浅时只动它（从无到有、从有到无），一次切换一条记录。
+ * 叫醒之后由调用方重落令牌、重算光照；纸纹不必重算，两档是同一张纸的两种颜色
+ */
+function watchThemeMode(onChange) {
+    const observer = new MutationObserver((records) => {
+        for (const record of records) {
+            if (record.attributeName !== DARK_THEME_ATTRIBUTE)
+                continue;
+            onChange();
+            return;
+        }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_THEME_ATTRIBUTE] });
+    return () => observer.disconnect();
 }
     };
 
@@ -8377,7 +8794,10 @@ function startSlab(frame, bubble, end) {
                 animation.startTime = start + ahead;
         }
     };
-    return { wrapper, compact: () => { }, progress, play, alignStart, animations, finished: settled(travel) };
+    return {
+        wrapper, compact: () => {
+        }, progress, play, alignStart, animations, finished: settled(travel)
+    };
 }
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */
 const GHOST_ATTRIBUTE = 'data-chat-ux-send-ghost';
@@ -8850,11 +9270,9 @@ const jsx_runtime_1 = require("react/jsx-runtime");
 const react_1 = require("react");
 const dsh_client_ui_primitives_1 = require("@deepseek-ai/dsh-client-ui-primitives");
 const config_card_styles_1 = require("./config-card-styles");
-const paper_styles_1 = require("./paper-styles");
 const settings_scope_1 = require("./settings-scope");
 // 设置分节里的字段名，必须与 host 侧 index.ts 的 schema 一致
 const PAPER_ON_FIELD = "paperOn";
-const PAPER_STYLE_FIELD = "paperStyle";
 const PAPER_SIDEBAR_FIELD = "paperSidebar";
 const AUTO_FOLD_FIELD = "autoFold";
 const CARET_FIELD = "caretMotion";
@@ -8869,23 +9287,6 @@ const ZH_COPY = {
     paperLabel: "纸感",
     paperHint: "整页铺一张纸，页面底色换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层。"
         + "关掉就回到 dsh 原来的样子。",
-    paperStyleLabel: "纸样",
-    paperStyleHint: "纸与房间是两个维度，各自挑一个，五张纸乘三个房间共十五种。纸决定纸面的颜色与纹理，"
-        + "房间决定纸面的光色与暗角。纸感关掉时这一项不起作用。",
-    paperDimension: "纸",
-    roomDimension: "房间",
-    paperNames: {
-        cotton: "棉浆",
-        linen: "亚麻",
-        laid: "帘纹",
-        onionskin: "葱皮",
-        night: "夜纸",
-    },
-    roomNames: {
-        "paper-and-ink": "纸与墨",
-        "midnight-study": "子夜书斋",
-        "moonlit-poetry": "月下诗稿",
-    },
     paperSidebarLabel: "左侧栏也铺纸",
     paperSidebarHint: "左侧栏那一列也换成同一张纸，整扇窗看起来是一张纸。关掉时左侧栏保持 dsh 自己的底色，"
         + "只有聊天区铺纸；纸感关掉时这一项同样不起作用。",
@@ -8927,24 +9328,6 @@ const EN_COPY = {
     paperLabel: "Paper",
     paperHint: "The whole page lies on a sheet of paper: the page background takes that paper's tone, so the composer and the "
         + "bubbles read as layers pressed into it. Off restores dsh's own look.",
-    paperStyleLabel: "Paper and room",
-    paperStyleHint: "Paper and room are two separate dimensions — pick one of each, five papers by three rooms, fifteen in all. "
-        + "The paper sets the colour and grain of the sheet; the room sets where the light comes from and how dark "
-        + "the surroundings go. This row does nothing while paper is off.",
-    paperDimension: "Paper",
-    roomDimension: "Room",
-    paperNames: {
-        cotton: "Cotton",
-        linen: "Linen",
-        laid: "Laid",
-        onionskin: "Onionskin",
-        night: "Night",
-    },
-    roomNames: {
-        "paper-and-ink": "Paper and ink",
-        "midnight-study": "Midnight study",
-        "moonlit-poetry": "Moonlit poetry",
-    },
     paperSidebarLabel: "Paper the sidebar",
     paperSidebarHint: "The left sidebar takes the same sheet, so the whole window reads as one piece of paper. Off leaves the "
         + "sidebar on dsh's own fill and papers the chat area only; it does nothing while paper is off either.",
@@ -8992,7 +9375,8 @@ const EN_COPY = {
 function ChatUxConfigCard({ scope, locale, view }) {
     const snapshot = (0, react_1.useSyncExternalStore)((0, react_1.useCallback)((listener) => scope.subscribe(listener), [scope]), () => scope.getSnapshot());
     // 跟着 host 的语言偏好走，每次切换都重新渲染；locale 服务缺席时问浏览器，认不出英文就落中文
-    const subscribeLanguage = (0, react_1.useCallback)((listener) => locale ? locale.subscribe(listener) : () => { }, [locale]);
+    const subscribeLanguage = (0, react_1.useCallback)((listener) => locale ? locale.subscribe(listener) : () => {
+    }, [locale]);
     const readLanguage = (0, react_1.useCallback)(() => locale ? locale.getSnapshot().active : null, [locale]);
     const activeLanguage = (0, react_1.useSyncExternalStore)(subscribeLanguage, readLanguage);
     const browserLanguage = typeof navigator === "undefined" ? null : navigator.language;
@@ -9004,7 +9388,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
     const [saveFailed, setSaveFailed] = (0, react_1.useState)(false);
     const fieldId = (0, react_1.useId)();
     const paperOn = storedPaperOn(snapshot.value);
-    const paperSelection = (0, paper_styles_1.splitPaperStyle)(snapshot.value?.paperStyle);
     const paperSidebarOn = storedPaperSidebar(snapshot.value);
     const autoFoldOn = storedAutoFold(snapshot.value);
     const followOn = storedFollow(snapshot.value);
@@ -9022,9 +9405,6 @@ function ChatUxConfigCard({ scope, locale, view }) {
         { value: "move", label: copy.caretMove },
         { value: "typing", label: copy.caretTyping },
     ];
-    // 纸样那两排色片。挑一个只是把同一个字段的另一半接上，于是换纸不动房间、换房间不动纸
-    const paperLane = (laneLabel, names, values, selected, onPick) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.lane, children: [(0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.laneTitle, children: laneLabel }), (0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.laneChips, role: "group", "aria-label": laneLabel, children: values.map((value) => ((0, jsx_runtime_1.jsx)("button", { type: "button", className: value === selected ? config_card_styles_1.CARD_CLASS.chip + " " + config_card_styles_1.CARD_CLASS.chipOn : config_card_styles_1.CARD_CLASS.chip, "aria-pressed": value === selected, disabled: controlsDisabled, onClick: () => { if (value !== selected)
-                        onPick(value); }, children: names[value] ?? value }, value))) })] }));
     if (view === "summary")
         return (0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, { children: copy.summary() });
     // 没有东西服务的命名空间，给的是页面自己那些卡片给的同一行回答，而不是 host 会拒绝的控件
@@ -9047,17 +9427,12 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
         setSaving(false);
     };
-    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
-    // 控件装不进右侧那一格的行（纸样那一行有两个维度）用 className 换成上下排
-    const rowChrome = (field, label, hint, control, className) => ((0, jsx_runtime_1.jsxs)("div", { className: className === undefined ? config_card_styles_1.CARD_CLASS.row : config_card_styles_1.CARD_CLASS.row + " " + className, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_STYLE_FIELD, copy.paperStyleLabel, copy.paperStyleHint, ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [paperLane(copy.paperDimension, copy.paperNames, paper_styles_1.PAPER_IDS, paperSelection.paper, (next) => void writeField(PAPER_STYLE_FIELD, (0, paper_styles_1.joinPaperStyle)(next, paperSelection.room), storedPaperStyle)), paperLane(copy.roomDimension, copy.roomNames, paper_styles_1.ROOM_IDS, paperSelection.room, (next) => void writeField(PAPER_STYLE_FIELD, (0, paper_styles_1.joinPaperStyle)(paperSelection.paper, next), storedPaperStyle))] })), config_card_styles_1.CARD_CLASS.stacked), rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperSidebarOn, disabled: controlsDisabled, label: copy.paperSidebarLabel, onChange: (next) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置
+    const rowChrome = (field, label, hint, control) => ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_SIDEBAR_FIELD, copy.paperSidebarLabel, copy.paperSidebarHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperSidebarOn, disabled: controlsDisabled, label: copy.paperSidebarLabel, onChange: (next) => void writeField(PAPER_SIDEBAR_FIELD, next, storedPaperSidebar) }))), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 function storedPaperOn(value) {
     return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
-}
-// 读回来的是原始字符串：认不出的取值由 splitPaperStyle 兜底，这里只把缺席补成默认那一对
-function storedPaperStyle(value) {
-    return value?.paperStyle ?? settings_scope_1.DEFAULT_PAPER_STYLE;
 }
 function storedPaperSidebar(value) {
     return value?.paperSidebar ?? settings_scope_1.DEFAULT_PAPER_SIDEBAR;
@@ -9125,13 +9500,6 @@ exports.CARD_CLASS = {
     hint: "dsh-chat-ux-card-hint",
     failed: "dsh-chat-ux-card-failed",
     segment: "dsh-chat-ux-card-segment",
-    // 纸样那一行：文字在上、两排色片在下，一行里装下一张纸与一个房间两个维度
-    stacked: "dsh-chat-ux-card-row-stacked",
-    lane: "dsh-chat-ux-card-lane",
-    laneTitle: "dsh-chat-ux-card-lane-title",
-    laneChips: "dsh-chat-ux-card-lane-chips",
-    chip: "dsh-chat-ux-card-chip",
-    chipOn: "dsh-chat-ux-card-chip-on",
 };
 // 每种颜色都来自主题令牌，所以卡片跟随深浅色切换，不需要第二套规则
 exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
@@ -9227,134 +9595,7 @@ exports.CARD_CSS = `/* dsh-chat-ux —— 插件配置卡片 */
 .${exports.CARD_CLASS.segment} {
   flex: none;
 }
-
-/* 纸样那一行：一行里要摆下两个维度，控件没法靠右跟文字并排，于是文字在上、色片铺满下层 */
-.${exports.CARD_CLASS.stacked} {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.${exports.CARD_CLASS.lane} {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.${exports.CARD_CLASS.laneTitle} {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* 色片按内容排，一行装不下就换行：纸那排五枚、房间那排三枚，两种屏幕宽度下都不会横向溢出 */
-.${exports.CARD_CLASS.laneChips} {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-/* 一枚色片复用的是这一页自己的控件几何：高度 28、水平 16 的内边距、6 的圆角，
-   底色与描边也来自同一套主题令牌，所以深浅色两套主题都不用第二条规则 */
-.${exports.CARD_CLASS.chip} {
-  box-sizing: border-box;
-  height: 28px;
-  padding: 0 16px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 120ms ease;
-}
-
-@media (hover: hover) {
-  .${exports.CARD_CLASS.chip}:hover:not(:disabled) {
-    color: var(--dsw-alias-label-primary);
-  }
-}
-
-/* 选中的那枚抬起来：底色换成最上面那一层、边去掉，和分段控件那颗滑动指示器同一套观感 */
-.${exports.CARD_CLASS.chipOn} {
-  border-color: transparent;
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: var(--dsw-elevation-soft);
-  color: var(--dsw-alias-label-primary);
-}
-
-.${exports.CARD_CLASS.chip}:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 2px;
-}
-
-.${exports.CARD_CLASS.chip}:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .${exports.CARD_CLASS.chip} {
-    transition: none;
-  }
-}
 `;
-    };
-
-    __registry["settings/paper-styles.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PAPER_STYLE_SEPARATOR = exports.ROOM_IDS = exports.PAPER_IDS = void 0;
-exports.joinPaperStyle = joinPaperStyle;
-exports.splitPaperStyle = splitPaperStyle;
-/**
- * 纸样的取值：五张纸乘三个房间，一个配置字段里存一对。
- *
- * 字面量是 纸__房间（双下划线），比如 cotton__paper-and-ink。两个 id 必须与渲染核
- * （src/client/chat/paper/paper-tables.ts）里 PAPERS 与 ROOMS 的键一字不差：卡片这一侧认不出的
- * 取值在下面兜底成标定那一对，渲染核那边认不出的 id 自己退回默认那张纸，两边都不会因为一个生词整块不装
- */
-const settings_scope_1 = require("./settings-scope");
-// 五张纸，顺序就是卡片上色片网格的顺序，取值与渲染核的 PAPERS 键一致。
-// 羊皮纸已下线：它那套做旧在一整扇窗的尺度上读起来是脏
-exports.PAPER_IDS = ["cotton", "linen", "laid", "onionskin", "night"];
-// 三个房间，取值与渲染核的 ROOMS 键一致
-exports.ROOM_IDS = ["paper-and-ink", "midnight-study", "moonlit-poetry"];
-// 纸与房间在一个字段里的分隔符
-exports.PAPER_STYLE_SEPARATOR = "__";
-// 最后一道保险：连 DEFAULT_PAPER_STYLE 都拆不开时才落到这一对。正常路径上轮不到它，
-// 它存在只是为了让这个函数永远有一个认得出来的选择可以返回
-const LAST_RESORT_SELECTION = { paper: "cotton", room: "paper-and-ink" };
-// 把一对值拼回一个字段：换纸或换房间，都只重写这一个字段
-function joinPaperStyle(paper, room) {
-    return paper + exports.PAPER_STYLE_SEPARATOR + room;
-}
-// 拆开一个字段里的取值。空的、没有分隔符的、有一段是生词的，都退回标定那一对：
-// 读者手改过 profile 也不该让这一行读不出当前选择
-function splitPaperStyle(value) {
-    const known = readPaperSelection(value) ?? readPaperSelection(settings_scope_1.DEFAULT_PAPER_STYLE);
-    return known ?? LAST_RESORT_SELECTION;
-}
-function readPaperSelection(value) {
-    const parts = value?.split(exports.PAPER_STYLE_SEPARATOR) ?? [];
-    const paper = parts[0];
-    const room = parts[1];
-    if (paper === undefined || room === undefined)
-        return null;
-    if (!isPaperId(paper) || !isRoomId(room))
-        return null;
-    return { paper, room };
-}
-function isPaperId(value) {
-    return exports.PAPER_IDS.includes(value);
-}
-function isRoomId(value) {
-    return exports.ROOM_IDS.includes(value);
-}
     };
 
     __registry["settings/transcript-default.js"] = function (module, exports, require) {
@@ -9586,7 +9827,7 @@ body[data-ds-dark-theme] {
 }
 
 /* 铺了纸：起手块的底就是纸面上那一层，与落点气泡同一个值，整段飞行颜色不变。
-   深浅两档不分开写——纸色本身就是按纸算好的，夜纸那一份是"略亮的纸"，与主题无关。
+   深浅两档不分开写——纸色与气泡色都是按当下那一档算好的内联值，这里只引用它们。
 
    这条必须排在最后、也必须带 !important：上面那几条没有它时都在 body 上写同一个变量，
    而以 body[data-ds-dark-theme] 与 body[data-chat-ux-composer-glass] 起头的那几条特异度更高，

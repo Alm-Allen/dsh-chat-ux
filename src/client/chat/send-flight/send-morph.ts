@@ -700,7 +700,6 @@ export function startMorph(frame: GhostFrame, bubble: HTMLElement, end: DOMRect)
     }
 
 
-
     // 字：先在沿途每个宽度上排一遍，再按「折行一样、行高一档」归段。第一段是克隆卡片里那份草稿
     // 自己，其余每段一层。
     const bottomPadding = pixel(style.paddingBottom) + pixel(style.borderBottomWidth)
@@ -1158,7 +1157,10 @@ function startSlab(frame: SlabFrame, bubble: HTMLElement, end: DOMRect): Morph |
             if (typeof start === 'number') animation.startTime = start + ahead
         }
     }
-    return {wrapper, compact: () => {}, progress, play, alignStart, animations, finished: settled(travel)}
+    return {
+        wrapper, compact: () => {
+        }, progress, play, alignStart, animations, finished: settled(travel)
+    }
 }
 
 /** 替身最外层上的标记。它只是个排查用的把手，样式一条都不挂在它上面。 */

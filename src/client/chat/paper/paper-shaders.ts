@@ -102,7 +102,7 @@ uniform vec2 uSize; uniform float uScale; uniform int uSource;
 uniform vec3 uLightPos; uniform vec3 uLightDir; uniform vec2 uCone; uniform float uExposure;
 uniform vec4 uWindow; uniform vec4 uPanes; uniform vec3 uTint; uniform float uLamp;
 uniform float uAmbient; uniform vec3 uAmbientTint; uniform float uRelief; uniform float uCrinkle;
-uniform float uGrain; uniform float uTime; uniform float uSoft;
+uniform float uGrain; uniform float uTime; uniform float uSoft; uniform float uPaperLuma;
 out vec4 outColor;
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float between(float offset, float cell, float bar, float soft) {
@@ -120,9 +120,23 @@ float gobo(vec2 p) {
   return inside.x * inside.y * (0.3 + 0.7 * open);
 }
 const float BULB = 30.0;
+/**
+ * 抖动的幅度（乘在 g 上，g 落在 -0.5 到 0.5）。
+ *
+ * 这一层是 multiply 压在页面上：最终像素 = 纸色 × 这里算出来的值。所以纸越暗，纸上相邻两级
+ * 8 位灰度之间那道坎就越宽——暗纸 #2b2b25 的 R 只有 43 级，一个最终色阶要吃掉 5.93 个 canvas 级；
+ * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有四分之一宽，
+ * 光斑边缘那些同心圆弧就露成几块平台。
+ *
+ * STEP 是「一个最终色阶」换算回 canvas 级：1.0 / uPaperLuma 恰好是半个色阶，也就是 ±0.5 那条线。
+ * 下面取它和 FLOOR 的较大者——FLOOR 就是原来那个常数，它是照着亮纸那一档挑的，在亮纸上正好够用，
+ * 压在暗纸上只有四分之一。两档合起来由下限这条线接住：亮纸不动，暗纸才放大
+ */
+const float DITHER_STEP = 1.0 / 255.0;
+const float DITHER_FLOOR = 1.5 / 255.0;
 float irradiance(vec3 P, vec3 n) {
   // 3 是静止的漫射光：没有灯座、没有光锥、没有热点，只有一片从纸心散开的柔光。
-  // 它不看光标、不看时间，同一个纸样永远算出同一张图——所以这一路只在纸纹重建时算一次，
+  // 它不看光标、不看时间，同一档纸永远算出同一张图——所以这一路只在纸纹重建时算一次，
   // 打字、滚动、切会话都不会再惊动它。椭圆而不是圆：纸是横的，等比扩散会像一块圆斑
   if (uSource == 3) {
     vec2 centre = P.xy / uSize - vec2(0.5, 0.44);
@@ -152,5 +166,9 @@ void main() {
   irr *= clamp(1.0 + (-nxy.x * 0.35 - nxy.y * 0.55) * (0.6 + 2.2 * uCrinkle) * relief, 1.0 - bound, 1.0 + bound);
   irr *= mix(0.9, 1.0, smoothstep(0.0, 28.0, min(uv.x, 1.0 - uv.x) * uSize.x));
   float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5;
-  outColor = vec4(clamp(albedo * irr + g * (uGrain * 0.045 + 1.5 / 255.0), 0.0, 1.0), 1.0);
+  // 除零兜在 uPaperLuma 那一侧（paper-light.ts 里夹到 0.05），这里再兜一次：
+  // 万一它还是 0，DITHER_STEP / 0 会算出无穷大，整张纸变成一片噪点而不是纸
+  float step = DITHER_STEP / max(uPaperLuma, 0.05);
+  float dither = max(DITHER_FLOOR, step);
+  outColor = vec4(clamp(albedo * irr + g * (uGrain * 0.045 + dither), 0.0, 1.0), 1.0);
 }`;

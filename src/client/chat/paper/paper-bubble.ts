@@ -10,23 +10,24 @@
  * 一张更暗的纸，与那张卡片对不上，落定那一下看起来就像换了个控件。
  *
  * 为什么写在这一条而不是另起一条自己的变量：气泡的底由 dsh 自己那条规则直接吃令牌，
- * 本插件拿不到那个元素，只能改写令牌。这是继整页底色与侧栏填充色之后的第三条，与前两条同性质。
+ * 本插件拿不到那个元素，只能改写令牌。这是继整页底色与文字之后的又一条，与它们同性质。
  *
  * **只写一条。** `--dsw-specific-bubble-highlight` 与它挨着定义、名字也像，但 dsh 里用它的是
- * 会话检查器那圈高亮框（experimental/session-inspector 的 .chatReveal），气泡本身一个都没用；
+ * 会话检查器那圈高亮框（experimental/session-inspector 的 .chatReveal），气泡自己一个都没用；
  * 改写它只会让那圈框跟着变色，换来的是没有收益的副作用。
  *
- * 深浅两张纸只算一次色：glassColor 的两支目标色按纸的明暗二选一，于是同一条公式在暗纸上自动变成
- * "比纸更深的冷面"。不需要按 data-ds-dark-theme 各写一套。
+ * 深浅两档只算一次色：glassColor 的两支目标色按明暗二选一，于是同一条公式在暗档上自动变成
+ * "比纸更深的冷面"。哪一档由调用方传进来，这个函数不认识 dsh 的主题
  */
 import {setOwned} from "./paper-tokens"
-import {glassColor, resolveProfile} from "./paper-tables"
+import {glassColor} from "./paper-tables"
+import type {PaperMode} from "./paper-tables"
 
 /**
  * 气泡朝玻璃实色混多少。
  *
- * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的
- * 白」，混七成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
+ * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的那块底」，
+ * 混六成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
  */
 const BUBBLE_MIX = 0.62
 
@@ -45,18 +46,18 @@ export const PAPER_BUBBLE_PROPERTY = "--dsh-chat-ux-paper-bubble"
 /**
  * 把气泡的底色落到纸上。
  *
- * style 必须是配置里那一个字符串（与 paperTokenSet 的入参同源），否则换纸时两处会分叉：
- * 令牌这边换了纸，气泡还停在上一张。重复调用是幂等的——setOwned 只在值变了时才真的写 DOM，
+ * mode 必须是当下那一档（与 paperTokenSet 的入参同源），否则切主题时两处会分叉：
+ * 令牌这边换了档，气泡还停在上一档。重复调用是幂等的——setOwned 只在值变了时才真的写 DOM，
  * 而改一条 custom property 会让整篇文档的样式重算，那是这个插件最贵的一次操作
  */
-export function applyPaperBubble(style: string): void {
-	const color = glassColor(resolveProfile(style), BUBBLE_MIX)
-	// 自己那一笔先写，而且不依赖 body 在不在：发送替身那截 CSS 读的是它，那一层要的首帧就有值。
-	// 写在根元素上：没有别人定义过它，继承就能到每个元素
-	setOwned(document.documentElement, PAPER_BUBBLE_PROPERTY, color)
-	// 宿主那条必须写在 body 上：ui-theme 把 --dsw-specific-bubble 定义在 body 自己的规则里，
-	// 内联写在根元素上只算"根元素的声明"，输给 body 的本地声明（与整页底色同一条坑）。
-	// body 还没建出来时这一条先跳过，下一次 refresh 会再来
-	if (document.body === null) return
-	setOwned(document.body, HOST_BUBBLE_PROPERTY, color)
+export function applyPaperBubble(mode: PaperMode): void {
+    const color = glassColor(mode, BUBBLE_MIX)
+    // 自己那一笔先写，而且不依赖 body 在不在：发送替身那截 CSS 读的是它，那一层要的首帧就有值。
+    // 写在根元素上：没有别人定义过它，继承就能到每个元素
+    setOwned(document.documentElement, PAPER_BUBBLE_PROPERTY, color)
+    // 宿主那条必须写在 body 上：ui-theme 把 --dsw-specific-bubble 定义在 body 自己的规则里，
+    // 内联写在根元素上只算"根元素的声明"，输给 body 的本地声明（与整页底色同一条坑）。
+    // body 还没建出来时这一条先跳过，下一次 refresh 会再来
+    if (document.body === null) return
+    setOwned(document.body, HOST_BUBBLE_PROPERTY, color)
 }

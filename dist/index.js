@@ -7,9 +7,6 @@ export const SETTINGS_NAMESPACE = "dsh-chat-ux";
 // 下面每个默认值在前端 client/settings/settings-scope.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色与左侧栏也跟着换成这张纸的调子。默认开着
 export const DEFAULT_PAPER_ON = true;
-// 纸样的默认值：五张纸乘三个房间，字面量是 纸__房间（双下划线），这里取棉浆纸配纸与墨。
-// 前后两段 id 与渲染核（client/chat/paper/paper-tables.ts）的 PAPERS 与 ROOMS 键一致
-export const DEFAULT_PAPER_STYLE = "cotton__paper-and-ink";
 // 左侧栏是否也跟着铺同一张纸。默认开着
 export const DEFAULT_PAPER_SIDEBAR = true;
 // 思考行与过程组自己开合。默认开着：这两块自己开合是本插件的主要效果，关掉时两块都整块不装，
@@ -33,12 +30,8 @@ export const DEFAULT_FOLLOW_ON_APPEAR = true;
 // 发送气泡的形变：提交那一下整张输入卡片收成落点那条气泡。默认开着
 export const DEFAULT_SEND_FLIGHT = true;
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
-//
-// 纸样不写取值集合：Schema.union 会把取值钉死，profile 里留着一个旧的纸名就整份解析失败、
-// 插件整块不加载。认不出的取值由前端与渲染核各自退回默认那一对
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
-    paperStyle: Schema.string().default(DEFAULT_PAPER_STYLE).volatile(),
     paperSidebar: Schema.boolean().default(DEFAULT_PAPER_SIDEBAR).volatile(),
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(["off", "move", "typing"]).default(DEFAULT_CARET_MOTION).volatile(),

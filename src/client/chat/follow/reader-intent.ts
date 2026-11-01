@@ -10,7 +10,7 @@ import {COMPOSER_SELECTOR, SCROLL_KEYS} from "../../dom-contract"
 
 // 落在输入区里、或是与滚动无关的按键时为假
 export function isReaderScrollIntent(event: Event): boolean {
-	if (event.target instanceof Element && event.target.closest(COMPOSER_SELECTOR) !== null) return false
-	if (event.type !== "keydown") return true
-	return event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key)
+    if (event.target instanceof Element && event.target.closest(COMPOSER_SELECTOR) !== null) return false
+    if (event.type !== "keydown") return true
+    return event instanceof KeyboardEvent && SCROLL_KEYS.has(event.key)
 }
