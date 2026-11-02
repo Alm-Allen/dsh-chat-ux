@@ -1290,6 +1290,8 @@ function placeQuillCaret(element, caretHeight) {
 
     __registry["chat/notify/ask-notify.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installAskNotify = installAskNotify;
 /**
  * 等读者动手时弹一条系统通知。
  *
@@ -1304,8 +1306,7 @@ function placeQuillCaret(element, caretHeight) {
  * 回调本身只置一个标记，真正的扫描合到下一帧做一次，那一帧里也只有两次座位内的 querySelector。
  * 失焦与聚焦各自补一次扫描——「仅在未聚焦时」这一档要的正是那一刻。
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.installAskNotify = installAskNotify;
+const notice_tag_1 = require("./notice-tag");
 // 输入区座位。dsh 把提问、计划审阅与审批的面板都渲染在它里面
 const SEAT_SELECTOR = "[data-composer-seat]";
 // 座位在会话内容里，切会话时整块可能重挂。盯它的父容器（只看直接子元素）就能重新定位，
@@ -1434,9 +1435,11 @@ function installAskNotify(readMode) {
                 continue;
             notified.add(request.key);
             try {
+                // tag 走短哈希，不用 request.key：它带着 sessionId 与 callId，长度可能顶破系统那一侧
+                // 通知标识的 64 字符上限，那条通知就会被静默丢弃。见 notice-tag
                 const notice = new Notification(request.title, {
                     body: request.body,
-                    tag: request.key,
+                    tag: (0, notice_tag_1.noticeTag)("ask", request.key),
                     silent: false,
                 });
                 notice.onclick = () => {
@@ -1545,8 +1548,36 @@ function installAskNotify(readMode) {
 }
     };
 
+    __registry["chat/notify/notice-tag.js"] = function (module, exports, require) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.noticeTag = noticeTag;
+/**
+ * 系统通知的 tag。
+ *
+ * 它与 origin 一起被拼成系统那一侧的通知标识，那条标识在 Windows 上卡在 64 个字符
+ * （Win10 15063 之前只有 16）。Electron 44 把整条标识原样当 toast 的 Tag 交给系统，超限时
+ * put_Tag 失败、通知被销毁，而销毁前的失败回调在 JS 侧没有对应实现——既不会有 show，也不会有 error。
+ * 2026-11-02 那次「shown 在涨、屏幕不画」就是这样：done 那条把 sessionId 拼进 tag，53 个字符越了界。
+ *
+ * 所以 tag 只从种子算一个短哈希：同一个种子稳定落到同一条通知，不同种子几不碰撞，长度固定。
+ * 通道前缀让两条通道互不替换——同一个哈希在两处同时出现时，后一条会把前一条顶掉。
+ */
+function noticeTag(channel, seed) {
+    // FNV-1a 32 位。这里不需要抗碰撞强度，只要同一种子稳定、不同种子分开、越短越好
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < seed.length; index += 1) {
+        hash ^= seed.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return channel + "-" + hash.toString(36);
+}
+    };
+
     __registry["chat/notify/done-notify.js"] = function (module, exports, require) {
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installDoneNotify = installDoneNotify;
 /**
  * 任务结束时弹一条系统通知。
  *
@@ -1566,8 +1597,7 @@ function installAskNotify(readMode) {
  *
  * 几条同时到齐时排队，相邻两条之间至少隔 QUEUE_GAP_MS。
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.installDoneNotify = installDoneNotify;
+const notice_tag_1 = require("./notice-tag");
 // 相邻两条通知之间至少隔这么久。几条同时到齐时按这一档排队，不一起糊在屏幕上
 const QUEUE_GAP_MS = 3000;
 // running 落回 false 之后再等这么久才确认。同一批状态里它可能已经被下一轮重新叫起来
@@ -1650,13 +1680,30 @@ function installDoneNotify(ctx, readMode) {
     const lastRunning = new Map();
     // 排查用的一本账。挂在 window 上而不是只打控制台：console.debug 在 DevTools 里默认被滤掉，
     // 「什么都没看到」与「一次都没发生」长得一模一样。2026-11-02 就卡在这一步
-    const tally = { listEvents: 0, statusEvents: 0, settles: 0, enqueued: 0, shown: 0, failures: 0, last: "" };
+    // installed / closed 两栏是给「弹出来了又被收走」这一类问题用的：
+    // ctx.inject 在依赖服务变化时会卸下重装，而 dispose 会 close 掉所有还开着的通知。
+    // 若那一瞬间正好弹了一条，页面上就是 shown 加一、屏幕什么都不出现
+    // drawn / errors 两栏来自通知自己的 onshow 与 onerror。shown 只说明 new Notification 没抛错，
+    // 系统那一侧画没画只有这两个事件知道——2026-11-02 的「shown 在涨、屏幕不画」就卡在这一层
+    // lastTitle / lastBody / lastSessionId / lastTag 留着最近一条真实通知的原料，可以在控制台原样重放它
+    // lastTag 也要留着：Windows 那条 tag 的上限是 64 个字符，而它由 origin 与 tag 拼出来，
+    // 一条画不出来、把 tag 换成短的又能画的形状，就长在这里
+    const tally = {
+        listEvents: 0, statusEvents: 0, settles: 0, enqueued: 0, shown: 0, failures: 0,
+        installed: 0, closed: 0, drawn: 0, errors: 0,
+        lastTitle: "", lastBody: "", lastSessionId: "", lastTag: "", last: "",
+    };
+    tally.installed += 1;
     const publishTally = () => {
-        // 挂在 window 上方便控制台直接取；tsconfig 的 lib 里没有这个自定义字段，所以走断言
+        // 挂在 window 上方便控制台直接取；tsconfig 的 lib 里没有这个自定义字段，所以走断言。
+        // 全局那份跨实例累积，所以 installed 涨到 2 就说明这一块被卸下重装过
         ;
         window.__dshDoneNotify = tally;
         document.documentElement.setAttribute(ROOT_ATTRIBUTE + "-tally", "list=" + tally.listEvents + " status=" + tally.statusEvents + " settle=" + tally.settles
-            + " queue=" + tally.enqueued + " shown=" + tally.shown + " fail=" + tally.failures);
+            + " queue=" + tally.enqueued + " shown=" + tally.shown + " fail=" + tally.failures
+            + " closed=" + tally.closed + " inst=" + tally.installed
+            + " drawn=" + tally.drawn + " err=" + tally.errors
+            + " taglen=" + tally.lastTag.length);
     };
     // 窗口此刻在不在读者眼前。最小化、切到别的应用、页面被隐藏都算不在
     const windowInSight = () => document.hasFocus() && document.visibilityState === "visible";
@@ -1722,13 +1769,17 @@ function installDoneNotify(ctx, readMode) {
     };
     // 弹出队首那一条。失败只丢这一条，不要影响读者继续用页面
     const show = (notice) => {
+        // 最近一条真实通知的原料。控制台里可以原样重放它，用来分辨「内容画不出来」
+        // 与「这一次画不出来」——probe 不带 detail 时用的就是这三项
+        tally.lastSessionId = notice.sessionId;
+        tally.lastTitle = notice.title;
+        tally.lastBody = notice.body;
         try {
-            // tag 只留字母数字与连字符。ask 那条用的是 callId，本身就干净；这一条带上 sessionId
-            // 与分隔符，而 tag 最终要参与系统那一侧的通知标识，字符集越窄越不会有意外。
-            // 这是一条防御，不是已证的成因：2026-11-02 那次「shown 加一但屏幕不画」还没定位到具体原因
+            const tag = (0, notice_tag_1.noticeTag)("done", notice.sessionId);
+            tally.lastTag = tag;
             const notification = new Notification(notice.title, {
                 body: notice.body,
-                tag: "dsh-done-" + notice.sessionId.replace(/[^A-Za-z0-9-]/g, ""),
+                tag,
                 silent: false,
             });
             notification.onclick = () => {
@@ -1736,6 +1787,19 @@ function installDoneNotify(ctx, readMode) {
             };
             notification.onclose = () => {
                 open.delete(notification);
+            };
+            // 系统那一侧到底画没画。new Notification 不抛错只说明请求递出去了，画没画是另一回事。
+            // 注意这两个事件不一定成对出现：tag 越界那一类拒绝会让宿主在生成阶段直接销毁通知，
+            // 连 error 都不会派发——2026-11-02 就是靠 drawn 一直是 0 才把方向转到 tag 上的
+            notification.onshow = () => {
+                tally.drawn += 1;
+                tally.last = "drawn " + notice.sessionId;
+                publishTally();
+            };
+            notification.onerror = () => {
+                tally.errors += 1;
+                tally.last = "error " + notice.sessionId;
+                publishTally();
             };
             open.add(notification);
             tally.shown += 1;
@@ -1827,13 +1891,16 @@ function installDoneNotify(ctx, readMode) {
             return;
         errored.add(sessionId);
     };
-    // 只验「这条调用画不画得出来」：走与真实通知完全相同的 show()，只是标题正文由调用方给
+    // 只验「这条调用画不画得出来」：走与真实通知完全相同的 show()。不带 detail 时重放
+    // 最近一条真实通知的原文与 sessionId（tag 也跟着一样），于是它与真实那一条只差触发时机；
+    // 带 detail 时用它给的标题正文，sessionId 固定成 probe，tag 与真实那一条不同
     const onProbe = (event) => {
         const detail = event.detail;
+        const replay = tally.lastTitle !== "";
         show({
-            sessionId: "probe",
-            title: detail?.title ?? copy.completed,
-            body: detail?.body ?? "probe",
+            sessionId: detail?.sessionId ?? (replay ? tally.lastSessionId : "probe"),
+            title: detail?.title ?? (replay ? tally.lastTitle : copy.completed),
+            body: detail?.body ?? (replay ? tally.lastBody : "probe"),
         });
     };
     // 排查用：把还在等着确认的那几条立即确认掉，并放行队列。
@@ -1915,6 +1982,10 @@ function installDoneNotify(ctx, readMode) {
                 window.clearTimeout(timer);
             settleTimers.clear();
             queue.length = 0;
+            tally.closed += open.size;
+            if (open.size > 0)
+                tally.last = "dispose closed " + open.size;
+            publishTally();
             for (const notification of open)
                 notification.close();
             open.clear();

@@ -12,6 +12,7 @@
  * 回调本身只置一个标记，真正的扫描合到下一帧做一次，那一帧里也只有两次座位内的 querySelector。
  * 失焦与聚焦各自补一次扫描——「仅在未聚焦时」这一档要的正是那一刻。
  */
+import {noticeTag} from "./notice-tag"
 
 // 三档：关掉、只在窗口没聚焦时弹、任何时候都弹。默认那一档在 settings-scope 里
 export type AskNotifyMode = "off" | "unfocused" | "always"
@@ -168,9 +169,11 @@ export function installAskNotify(readMode: () => AskNotifyMode): AskNotifyHandle
             if (notified.has(request.key)) continue
             notified.add(request.key)
             try {
+                // tag 走短哈希，不用 request.key：它带着 sessionId 与 callId，长度可能顶破系统那一侧
+                // 通知标识的 64 字符上限，那条通知就会被静默丢弃。见 notice-tag
                 const notice = new Notification(request.title, {
                     body: request.body,
-                    tag: request.key,
+                    tag: noticeTag("ask", request.key),
                     silent: false,
                 })
                 notice.onclick = () => {

@@ -17,6 +17,7 @@
  *
  * 几条同时到齐时排队，相邻两条之间至少隔 QUEUE_GAP_MS。
  */
+import {noticeTag} from "./notice-tag"
 
 // 三档：关掉、只在窗口没聚焦时弹、任何时候都弹
 export type DoneNotifyMode = "off" | "unfocused" | "always"
@@ -40,6 +41,9 @@ const RESCAN_EVENT = "dsh-chat-ux:done-notify-now"
 //   dispatchEvent(new CustomEvent("dsh-chat-ux:done-notify-test", {detail: {title: "标题", body: "正文"}}))
 // 它绕开「什么时候触发」与「判定滤没滤」，只验这一条调用本身画不画得出来
 const PROBE_EVENT = "dsh-chat-ux:done-notify-test"
+
+// 探针能单独覆盖的三项。不给就重放最近一条真实通知那一份；给了 sessionId 也就换了 tag
+type ProbeDetail = { sessionId?: string, title?: string, body?: string }
 
 // 这一轮是怎么结束的
 type TurnOutcome = "completed" | "failed" | "interrupted"
@@ -126,13 +130,30 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
     const lastRunning = new Map<string, boolean>()
     // 排查用的一本账。挂在 window 上而不是只打控制台：console.debug 在 DevTools 里默认被滤掉，
     // 「什么都没看到」与「一次都没发生」长得一模一样。2026-11-02 就卡在这一步
-    const tally = {listEvents: 0, statusEvents: 0, settles: 0, enqueued: 0, shown: 0, failures: 0, last: ""}
+    // installed / closed 两栏是给「弹出来了又被收走」这一类问题用的：
+    // ctx.inject 在依赖服务变化时会卸下重装，而 dispose 会 close 掉所有还开着的通知。
+    // 若那一瞬间正好弹了一条，页面上就是 shown 加一、屏幕什么都不出现
+    // drawn / errors 两栏来自通知自己的 onshow 与 onerror。shown 只说明 new Notification 没抛错，
+    // 系统那一侧画没画只有这两个事件知道——2026-11-02 的「shown 在涨、屏幕不画」就卡在这一层
+    // lastTitle / lastBody / lastSessionId / lastTag 留着最近一条真实通知的原料，可以在控制台原样重放它
+    // lastTag 也要留着：Windows 那条 tag 的上限是 64 个字符，而它由 origin 与 tag 拼出来，
+    // 一条画不出来、把 tag 换成短的又能画的形状，就长在这里
+    const tally = {
+        listEvents: 0, statusEvents: 0, settles: 0, enqueued: 0, shown: 0, failures: 0,
+        installed: 0, closed: 0, drawn: 0, errors: 0,
+        lastTitle: "", lastBody: "", lastSessionId: "", lastTag: "", last: "",
+    }
+    tally.installed += 1
     const publishTally = (): void => {
-        // 挂在 window 上方便控制台直接取；tsconfig 的 lib 里没有这个自定义字段，所以走断言
+        // 挂在 window 上方便控制台直接取；tsconfig 的 lib 里没有这个自定义字段，所以走断言。
+        // 全局那份跨实例累积，所以 installed 涨到 2 就说明这一块被卸下重装过
         ;(window as unknown as Record<string, unknown>).__dshDoneNotify = tally
         document.documentElement.setAttribute(ROOT_ATTRIBUTE + "-tally",
             "list=" + tally.listEvents + " status=" + tally.statusEvents + " settle=" + tally.settles
-            + " queue=" + tally.enqueued + " shown=" + tally.shown + " fail=" + tally.failures)
+            + " queue=" + tally.enqueued + " shown=" + tally.shown + " fail=" + tally.failures
+            + " closed=" + tally.closed + " inst=" + tally.installed
+            + " drawn=" + tally.drawn + " err=" + tally.errors
+            + " taglen=" + tally.lastTag.length)
     }
 
     // 窗口此刻在不在读者眼前。最小化、切到别的应用、页面被隐藏都算不在
@@ -196,13 +217,17 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
 
     // 弹出队首那一条。失败只丢这一条，不要影响读者继续用页面
     const show = (notice: { sessionId: string, title: string, body: string }): void => {
+        // 最近一条真实通知的原料。控制台里可以原样重放它，用来分辨「内容画不出来」
+        // 与「这一次画不出来」——probe 不带 detail 时用的就是这三项
+        tally.lastSessionId = notice.sessionId
+        tally.lastTitle = notice.title
+        tally.lastBody = notice.body
         try {
-            // tag 只留字母数字与连字符。ask 那条用的是 callId，本身就干净；这一条带上 sessionId
-            // 与分隔符，而 tag 最终要参与系统那一侧的通知标识，字符集越窄越不会有意外。
-            // 这是一条防御，不是已证的成因：2026-11-02 那次「shown 加一但屏幕不画」还没定位到具体原因
+            const tag = noticeTag("done", notice.sessionId)
+            tally.lastTag = tag
             const notification = new Notification(notice.title, {
                 body: notice.body,
-                tag: "dsh-done-" + notice.sessionId.replace(/[^A-Za-z0-9-]/g, ""),
+                tag,
                 silent: false,
             })
             notification.onclick = () => {
@@ -210,6 +235,19 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
             }
             notification.onclose = () => {
                 open.delete(notification)
+            }
+            // 系统那一侧到底画没画。new Notification 不抛错只说明请求递出去了，画没画是另一回事。
+            // 注意这两个事件不一定成对出现：tag 越界那一类拒绝会让宿主在生成阶段直接销毁通知，
+            // 连 error 都不会派发——2026-11-02 就是靠 drawn 一直是 0 才把方向转到 tag 上的
+            notification.onshow = () => {
+                tally.drawn += 1
+                tally.last = "drawn " + notice.sessionId
+                publishTally()
+            }
+            notification.onerror = () => {
+                tally.errors += 1
+                tally.last = "error " + notice.sessionId
+                publishTally()
             }
             open.add(notification)
             tally.shown += 1
@@ -296,13 +334,16 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
         errored.add(sessionId)
     }
 
-    // 只验「这条调用画不画得出来」：走与真实通知完全相同的 show()，只是标题正文由调用方给
+    // 只验「这条调用画不画得出来」：走与真实通知完全相同的 show()。不带 detail 时重放
+    // 最近一条真实通知的原文与 sessionId（tag 也跟着一样），于是它与真实那一条只差触发时机；
+    // 带 detail 时用它给的标题正文，sessionId 固定成 probe，tag 与真实那一条不同
     const onProbe = (event: Event): void => {
-        const detail = (event as CustomEvent<{title?: string, body?: string}>).detail
+        const detail = (event as CustomEvent<ProbeDetail | undefined>).detail
+        const replay = tally.lastTitle !== ""
         show({
-            sessionId: "probe",
-            title: detail?.title ?? copy.completed,
-            body: detail?.body ?? "probe",
+            sessionId: detail?.sessionId ?? (replay ? tally.lastSessionId : "probe"),
+            title: detail?.title ?? (replay ? tally.lastTitle : copy.completed),
+            body: detail?.body ?? (replay ? tally.lastBody : "probe"),
         })
     }
 
@@ -378,6 +419,9 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
             for (const timer of settleTimers.values()) window.clearTimeout(timer)
             settleTimers.clear()
             queue.length = 0
+            tally.closed += open.size
+            if (open.size > 0) tally.last = "dispose closed " + open.size
+            publishTally()
             for (const notification of open) notification.close()
             open.clear()
             document.documentElement.removeAttribute(ROOT_ATTRIBUTE)
