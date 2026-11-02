@@ -1642,6 +1642,18 @@ function installDoneNotify(ctx, readMode) {
     let lastShownAt = 0;
     let pumpTimer = 0;
     let disposed = false;
+    // 上一次见到的 running，用来从 sessions.list 的通知里认出「刚刚落回 false」
+    const lastRunning = new Map();
+    // 排查用的一本账。挂在 window 上而不是只打控制台：console.debug 在 DevTools 里默认被滤掉，
+    // 「什么都没看到」与「一次都没发生」长得一模一样。2026-11-02 就卡在这一步
+    const tally = { listEvents: 0, statusEvents: 0, settles: 0, enqueued: 0, shown: 0, failures: 0, last: "" };
+    const publishTally = () => {
+        // 挂在 window 上方便控制台直接取；tsconfig 的 lib 里没有这个自定义字段，所以走断言
+        ;
+        window.__dshDoneNotify = tally;
+        document.documentElement.setAttribute(ROOT_ATTRIBUTE + "-tally", "list=" + tally.listEvents + " status=" + tally.statusEvents + " settle=" + tally.settles
+            + " queue=" + tally.enqueued + " shown=" + tally.shown + " fail=" + tally.failures);
+    };
     // 窗口此刻在不在读者眼前。最小化、切到别的应用、页面被隐藏都算不在
     const windowInSight = () => document.hasFocus() && document.visibilityState === "visible";
     const sessionTitleOf = (sessionId) => sessions.list.getSnapshot().byId[sessionId]?.displayTitle ?? sessionId;
@@ -1688,7 +1700,9 @@ function installDoneNotify(ctx, readMode) {
             return;
         if (waitingForReader(sessionId))
             return;
-        console.debug("dsh-chat-ux: done notify enqueue", sessionId, mode);
+        tally.enqueued += 1;
+        tally.last = "enqueue " + sessionId;
+        publishTally();
         const outcome = outcomeOf(sessionId);
         const title = outcome === "failed"
             ? copy.failed
@@ -1717,8 +1731,14 @@ function installDoneNotify(ctx, readMode) {
                 open.delete(notification);
             };
             open.add(notification);
+            tally.shown += 1;
+            tally.last = "shown " + notice.sessionId;
+            publishTally();
         }
         catch (error) {
+            tally.failures += 1;
+            tally.last = "failed: " + (error instanceof Error ? error.message : String(error));
+            publishTally();
             console.warn("dsh-chat-ux: done notification failed", error);
         }
     };
@@ -1752,7 +1772,9 @@ function installDoneNotify(ctx, readMode) {
             settleTimers.delete(sessionId);
             if (disposed)
                 return;
-            console.debug("dsh-chat-ux: done notify settle", sessionId, sessions.list.getSnapshot().byId[sessionId]?.running);
+            tally.settles += 1;
+            tally.last = "settle " + sessionId;
+            publishTally();
             if (sessions.list.getSnapshot().byId[sessionId]?.running === true)
                 return;
             const since = runningSince.get(sessionId);
@@ -1762,12 +1784,12 @@ function installDoneNotify(ctx, readMode) {
         }, SETTLE_MS);
         settleTimers.set(sessionId, timer);
     };
+    // 次触发源：remote.$on 的 status 事件。它比 list 快（不经过合批），负责补齐起点与出错标记；
+    // 收不到也不影响主路——两条一起喂同一套桶，重复的翻转由 lastRunning 去重
     const onSessionStatus = (sessionId, running) => {
         if (disposed)
             return;
-        // 收到事件的第一手证据。排查「弹窗不来」时看这条有没有出现，就能把「订阅没接上」
-        // 与「判定把它们全滤掉了」分开
-        console.debug("dsh-chat-ux: done notify status", sessionId, running);
+        tally.statusEvents += 1;
         if (running) {
             // 上一轮刚落回 false、还没到确认点就又起来了：撤掉那次确认，重记起点，
             // 否则第二轮会接着第一轮的起点算耗时
@@ -1777,10 +1799,14 @@ function installDoneNotify(ctx, readMode) {
                 settleTimers.delete(sessionId);
             }
             runningSince.set(sessionId, Date.now());
+            lastRunning.set(sessionId, true);
             errored.delete(sessionId);
+            publishTally();
             return;
         }
+        lastRunning.set(sessionId, false);
         settle(sessionId);
+        publishTally();
     };
     // 只有正在跑的那一轮才记账：这条事件也会在后台激活失败时报一次，那时它不属于任何一轮
     const onSessionError = (sessionId) => {
@@ -1790,16 +1816,11 @@ function installDoneNotify(ctx, readMode) {
             return;
         errored.add(sessionId);
     };
-    // 排查用：把还在等着确认的那几条立即确认掉，并放行队列
+    // 排查用：把还在等着确认的那几条立即确认掉，并放行队列。
+    // 先看根属性上的 -tally 那一条：list= 是列表通知的次数，它一直是 0 就说明这条订阅也没在工作
     const onRescan = () => {
-        // 排查时最要紧的一条：先确认订阅真的收到了事件。走到这里而桶里什么都没有，
-        // 说明 status 事件压根没到这一侧（连接、权限、或者 $on 没接上）
-        console.info("dsh-chat-ux: done notify rescan", {
-            running: [...runningSince.keys()],
-            settling: [...settleTimers.keys()],
-            errored: [...errored],
-            queued: queue.length,
-        });
+        tally.last = "rescan";
+        publishTally();
         for (const [sessionId, timer] of settleTimers) {
             window.clearTimeout(timer);
             settleTimers.delete(sessionId);
@@ -1810,27 +1831,60 @@ function installDoneNotify(ctx, readMode) {
         }
         pump();
     };
-    // 装上那一刻就在跑的会话没有真实起点：按现在算，那一轮的耗时比真实值短。
-    // 这一条只影响装上后的第一轮，之后每一条 status 都会自己记起点
+    // 主触发源：sessions.list 的订阅。它走客户端自己的 Notifier（microtask 合批），
+    // 不依赖 remote.$on 那条通道——那条要求连接是 interactions=answer，桌面端未必满足。
+    // 这里只认「上一次是 true、这一次是 false」那一次翻转，别的一概不管
+    const onListChange = () => {
+        if (disposed)
+            return;
+        tally.listEvents += 1;
+        const byId = sessions.list.getSnapshot().byId;
+        for (const [sessionId, summary] of Object.entries(byId)) {
+            const running = summary?.running === true;
+            const previous = lastRunning.get(sessionId);
+            lastRunning.set(sessionId, running);
+            if (previous !== true || running)
+                continue;
+            if (!runningSince.has(sessionId))
+                runningSince.set(sessionId, Date.now());
+            settle(sessionId);
+        }
+        if (queue.length > 0)
+            pump();
+        publishTally();
+    };
+    // 起点：装上那一刻正在跑的会话按现在算
     const baseline = Date.now();
     for (const [sessionId, summary] of Object.entries(sessions.list.getSnapshot().byId)) {
-        if (summary?.running === true)
+        const running = summary?.running === true;
+        lastRunning.set(sessionId, running);
+        if (running)
             runningSince.set(sessionId, baseline);
     }
-    // 先订阅、后挂标记。反过来走的话，$on 抛错（例如这个连接不是 interactions=answer）时
-    // 标记已经挂上了，页面上看是「装着」，实际一条事件都收不到——2026-11-02 排查时正是这个形状：
-    // 标记 true、弹窗不来。顺序换过来之后，失败就在加载器那里报出来，不会静默
-    const unsubscribeStatus = remote.$on("api-session/status", onSessionStatus);
-    const unsubscribeError = remote.$on("api-session/error", onSessionError);
+    // 主路先接上。列表订阅不需要任何前提，它一定在
+    const unsubscribeList = sessions.list.subscribe(onListChange);
     document.addEventListener(RESCAN_EVENT, onRescan);
+    // 次路（status 与 error 事件）挂不上就算了：连接不是 interactions=answer 时 $on 会抛，
+    // 那时只走列表那条路，起点记不精确、出错认不出，但完成通知照常。
+    // 2026-11-02 排查到的形状正是「标记在、弹窗不来」——那时 $on 是唯一的路，而它没接上
+    const unsubscribers = [unsubscribeList];
+    try {
+        unsubscribers.push(remote.$on("api-session/status", onSessionStatus));
+        unsubscribers.push(remote.$on("api-session/error", onSessionError));
+    }
+    catch (error) {
+        tally.last = "events unavailable: " + (error instanceof Error ? error.message : String(error));
+        console.warn("dsh-chat-ux: done notify falls back to the session list", error);
+    }
+    publishTally();
     document.documentElement.setAttribute(ROOT_ATTRIBUTE, "");
     return {
         dispose: () => {
             if (disposed)
                 return;
             disposed = true;
-            unsubscribeStatus();
-            unsubscribeError();
+            for (const unsubscribe of unsubscribers)
+                unsubscribe();
             document.removeEventListener(RESCAN_EVENT, onRescan);
             if (pumpTimer !== 0)
                 window.clearTimeout(pumpTimer);
