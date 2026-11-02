@@ -47,6 +47,7 @@ exports.inject = void 0;
 exports.apply = apply;
 const caret_motion_1 = require("./chat/caret/caret-motion");
 const ask_notify_1 = require("./chat/notify/ask-notify");
+const done_notify_1 = require("./chat/notify/done-notify");
 const cache_hit_pill_1 = require("./chat/cache-hit/cache-hit-pill");
 const composer_glass_1 = require("./chat/composer-glass/composer-glass");
 const composer_glass_styles_1 = require("./chat/composer-glass/composer-glass-styles");
@@ -104,6 +105,7 @@ function apply(ctx) {
         paperOn: settings_scope_1.DEFAULT_PAPER_ON,
         paperFont: settings_scope_1.DEFAULT_PAPER_FONT,
         notifyAsk: settings_scope_1.DEFAULT_ASK_NOTIFY,
+        notifyDone: settings_scope_1.DEFAULT_DONE_NOTIFY,
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
@@ -184,18 +186,26 @@ function apply(ctx) {
         }
         paper = (0, install_1.installPaperLayer)(paperSettings);
     };
-    // 等读者动手时的系统通知。关掉时整块卸下；unfocused 与 always 两档都由模块现读，
-    // 所以档位一变不必重新安装——换了档之后的第一条请求才用得上新值
+    // 系统通知的两条通道：等读者动手（ask）与任务结束（done）。卡片上那一个三档控件同时写两个字段，
+    // 所以两档一起读；各自关掉时只有自己那一块卸下。unfocused 与 always 两档都由模块现读，
+    // 档位一变不必重新安装——换档之后的下一条请求才用得上新值
     let notifyDispose = null;
+    let doneNotifyDispose = null;
     const syncNotify = () => {
         if (settings.notifyAsk === "off") {
             notifyDispose?.();
             notifyDispose = null;
-            return;
         }
-        if (notifyDispose !== null)
-            return;
-        notifyDispose = (0, ask_notify_1.installAskNotify)(() => settings.notifyAsk).dispose;
+        else if (notifyDispose === null) {
+            notifyDispose = (0, ask_notify_1.installAskNotify)(() => settings.notifyAsk).dispose;
+        }
+        if (settings.notifyDone === "off") {
+            doneNotifyDispose?.();
+            doneNotifyDispose = null;
+        }
+        else if (doneNotifyDispose === null) {
+            doneNotifyDispose = (0, done_notify_1.installDoneNotify)(services, () => settings.notifyDone).dispose;
+        }
     };
     let followDispose = null;
     const syncFollow = () => {
@@ -220,6 +230,7 @@ function apply(ctx) {
         settings.paperOn = value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
         settings.paperFont = value?.paperFont ?? settings_scope_1.DEFAULT_PAPER_FONT;
         settings.notifyAsk = value?.notifyAsk ?? settings_scope_1.DEFAULT_ASK_NOTIFY;
+        settings.notifyDone = value?.notifyDone ?? settings_scope_1.DEFAULT_DONE_NOTIFY;
         syncGlass();
         syncNotify();
         caret.resync();
@@ -246,14 +257,16 @@ function apply(ctx) {
             document.body.removeAttribute(composer_glass_styles_1.GLASS_ATTRIBUTE);
         };
     }, "dsh-chat-ux: composer glass");
-    // 通知这一块自己管观察器与监听，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
+    // 通知这两块自己管监听与排队，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
     ctx.effect(() => {
         syncNotify();
         return () => {
             notifyDispose?.();
             notifyDispose = null;
+            doneNotifyDispose?.();
+            doneNotifyDispose = null;
         };
-    }, "dsh-chat-ux: ask notifications");
+    }, "dsh-chat-ux: notifications");
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
     // 是照着「标准」与「简洁」两档做的，所以网页端在读者没自己选过时补一次「标准」；读者选过之后一次都不再动手
     ctx.effect(() => (0, transcript_default_1.applyTranscriptViewDefault)(services.configForms), "dsh-chat-ux: work details default");
@@ -1519,6 +1532,290 @@ function installAskNotify(readMode) {
 }
     };
 
+    __registry["chat/notify/done-notify.js"] = function (module, exports, require) {
+"use strict";
+/**
+ * 任务结束时弹一条系统通知。
+ *
+ * 与 ask-notify 是两条独立通道。那一条读输入区座位上的三条语义属性——「有面板挂上来了」在 DOM 上
+ * 有一个落点；「这一轮跑完了」没有，它只有会话的 running 落回 false。所以这一条不装观察器、不轮询，
+ * 全部走 dsh 客户端本来就有的推送：
+ *
+ *   remote.$on('api-session/status')   agent 状态机，宿主 session-controller 直接转出来
+ *   remote.$on('api-session/error')    agent 报错，同样由宿主转出来
+ *   sessions.list                      会话标题，以及落回 false 时的二次确认
+ *   sessions.binding(id).eventSource   这一轮怎么结束的：完成 / 出错 / 中断
+ *   sessions.list.projectionsBySession 这一轮说了什么：turnOutline 的 response 预览
+ *
+ * 一条通知的来源可能不在当前窗口里：后台会话没有 window 里的事件，读不到 turn/end 的 reason，
+ * 那时靠 api-session/error 这条并行的推送认出「出过错」，再认不出就按完成处理；
+ * 没有 turnOutline 投影的会话，正文就退回成只有会话名与耗时。
+ *
+ * 几条同时到齐时排队，相邻两条之间至少隔 QUEUE_GAP_MS。
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.installDoneNotify = installDoneNotify;
+// 相邻两条通知之间至少隔这么久。几条同时到齐时按这一档排队，不一起糊在屏幕上
+const QUEUE_GAP_MS = 3000;
+// running 落回 false 之后再等这么久才确认。同一批状态里它可能已经被下一轮重新叫起来
+const SETTLE_MS = 600;
+// 正文片段的截断长度。Windows 的通知卡片两行就折了
+const BODY_LIMIT = 120;
+// 「这一块在跑」的回执，挂在根元素上。与那两片样式表同一个用途：出问题时先看它在不在
+const ROOT_ATTRIBUTE = "data-dsh-chat-ux-done-notify";
+// 手动补扫的口子，给排查用：document.dispatchEvent(new Event("dsh-chat-ux:done-notify-now"))
+const RESCAN_EVENT = "dsh-chat-ux:done-notify-now";
+const ZH_COPY = {
+    completed: "DSH 完成了这一轮",
+    failed: "DSH 这一轮出错了",
+    interrupted: "DSH 这一轮被中断了",
+    elapsed: (duration) => "耗时 " + duration,
+};
+const EN_COPY = {
+    completed: "DSH finished",
+    failed: "DSH hit an error",
+    interrupted: "DSH was interrupted",
+    elapsed: (duration) => "took " + duration,
+};
+// 这一页的文案跟着浏览器语言走。dsh 的语言服务刻意没有注入：通知只有四行标题，
+// 为它拉一份必须依赖会让没有那个服务的部署整块不加载
+function doneCopy() {
+    const language = typeof navigator === "undefined" ? "" : navigator.language;
+    return language.toLowerCase().split("-")[0] === "en" ? EN_COPY : ZH_COPY;
+}
+// 一分钟以内只报秒，一小时以内报分秒，再长报时分
+function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    if (total < 60)
+        return total + "s";
+    const minutes = Math.floor(total / 60);
+    if (minutes < 60)
+        return minutes + "m " + (total % 60) + "s";
+    return Math.floor(minutes / 60) + "h " + (minutes % 60) + "m";
+}
+/**
+ * 装上完成通知。
+ *
+ * @param ctx - 客户端根 context，用来现读 remote 与 sessions 两个服务
+ * @param readMode - 现读的档位。每一条要弹之前读一次，插件管理页上改完不必重新安装
+ * @returns 卸下这一块，把还在排队的与已经弹出来的一起收掉
+ */
+function installDoneNotify(ctx, readMode) {
+    // 这个环境没有通知能力（普通浏览器里被策略关掉），什么都不装
+    if (typeof Notification === "undefined")
+        return { dispose: () => undefined };
+    const remote = ctx.reflect.get("remote");
+    const sessions = ctx.reflect.get("sessions");
+    // 两个服务都在才装。它们缺席时整块插件照常加载，只是没有这一条通知
+    if (remote === undefined || remote === null || sessions === undefined || sessions === null) {
+        return { dispose: () => undefined };
+    }
+    // 可选：这一轮结束时有没有面板正等着读者。拿不到就不做这条互斥
+    const sessionStatus = ctx.reflect.get("uiSession")?.sessionStatus ?? null;
+    const copy = doneCopy();
+    document.documentElement.setAttribute(ROOT_ATTRIBUTE, "");
+    // 这一轮是什么时候开始的。装上那一刻已经在跑的那一轮按装上的时刻起算，比真实值短
+    const runningSince = new Map();
+    // 这一轮里报过错。下一轮起来时清掉，于是错只算在出错的那一轮上
+    const errored = new Set();
+    // 每个会话各自等一次确认。同一批 status 里可能有好几个会话一起落回 false
+    const settleTimers = new Map();
+    // 还开着的通知，卸下时一起关掉
+    const open = new Set();
+    // 等着弹的。几条同时到齐时按 QUEUE_GAP_MS 一条一条放
+    const queue = [];
+    let lastShownAt = 0;
+    let pumpTimer = 0;
+    let disposed = false;
+    // 窗口此刻在不在读者眼前。最小化、切到别的应用、页面被隐藏都算不在
+    const windowInSight = () => document.hasFocus() && document.visibilityState === "visible";
+    const sessionTitleOf = (sessionId) => sessions.list.getSnapshot().byId[sessionId]?.displayTitle ?? sessionId;
+    // 这一轮是怎么结束的。窗口里最后一条 turn/end 说了算；读不到就看这一轮报没报过错
+    const outcomeOf = (sessionId) => {
+        const entries = sessions.binding(sessionId)?.eventSource.getSnapshot().entries ?? [];
+        for (let index = entries.length - 1; index >= 0; index -= 1) {
+            const entry = entries[index];
+            if (entry?.type !== "event")
+                continue;
+            const event = entry.event;
+            if (event?.type !== "turn/end")
+                continue;
+            const kind = event.data?.reason?.kind;
+            if (kind === "error")
+                return "failed";
+            if (kind === "aborted" || kind === "interrupted")
+                return "interrupted";
+            return "completed";
+        }
+        return errored.has(sessionId) ? "failed" : "completed";
+    };
+    // 这一轮它说了什么。turnOutline 只对连上来的会话持有，读不到就空着
+    const snippetOf = (sessionId) => {
+        const outline = sessions.list.getSnapshot().projectionsBySession[sessionId]?.values.turnOutline;
+        if (!Array.isArray(outline) || outline.length === 0)
+            return "";
+        const last = outline[outline.length - 1];
+        const text = (last?.response ?? "").trim();
+        if (text === "")
+            return "";
+        return text.length > BODY_LIMIT ? text.slice(0, BODY_LIMIT) + "…" : text;
+    };
+    // 这一轮结束时还有面板在等读者：ask-notify 已经弹过那一条，这一条不再弹
+    const waitingForReader = (sessionId) => sessionStatus?.getSnapshot().get(sessionId)?.pendingInteraction !== undefined;
+    // 把一条放进队列，并叫一次泵
+    const enqueue = (sessionId, since) => {
+        if (disposed)
+            return;
+        const mode = readMode();
+        if (mode === "off")
+            return;
+        if (mode === "unfocused" && windowInSight())
+            return;
+        if (waitingForReader(sessionId))
+            return;
+        const outcome = outcomeOf(sessionId);
+        const title = outcome === "failed"
+            ? copy.failed
+            : outcome === "interrupted" ? copy.interrupted : copy.completed;
+        const lines = [sessionTitleOf(sessionId)];
+        if (since !== undefined)
+            lines.push(copy.elapsed(formatElapsed(Date.now() - since)));
+        const snippet = snippetOf(sessionId);
+        if (snippet !== "")
+            lines.push(snippet);
+        queue.push({ sessionId, title, body: lines.join("\n") });
+        pump();
+    };
+    // 弹出队首那一条。失败只丢这一条，不要影响读者继续用页面
+    const show = (notice) => {
+        try {
+            const notification = new Notification(notice.title, {
+                body: notice.body,
+                tag: "done:" + notice.sessionId,
+                silent: false,
+            });
+            notification.onclick = () => {
+                window.focus();
+            };
+            notification.onclose = () => {
+                open.delete(notification);
+            };
+            open.add(notification);
+        }
+        catch (error) {
+            console.warn("dsh-chat-ux: done notification failed", error);
+        }
+    };
+    // 队列泵：第一条立即弹，之后每 QUEUE_GAP_MS 弹一条
+    const pump = () => {
+        if (disposed || queue.length === 0)
+            return;
+        const wait = Math.max(0, lastShownAt + QUEUE_GAP_MS - Date.now());
+        if (wait > 0) {
+            if (pumpTimer !== 0)
+                return;
+            pumpTimer = window.setTimeout(() => {
+                pumpTimer = 0;
+                pump();
+            }, wait);
+            return;
+        }
+        const next = queue.shift();
+        if (next === undefined)
+            return;
+        lastShownAt = Date.now();
+        show(next);
+        pump();
+    };
+    // running 落回 false：等 SETTLE_MS 再确认一次，期间又被叫起来就不算结束
+    const settle = (sessionId) => {
+        const pending = settleTimers.get(sessionId);
+        if (pending !== undefined)
+            window.clearTimeout(pending);
+        const timer = window.setTimeout(() => {
+            settleTimers.delete(sessionId);
+            if (disposed)
+                return;
+            if (sessions.list.getSnapshot().byId[sessionId]?.running === true)
+                return;
+            const since = runningSince.get(sessionId);
+            runningSince.delete(sessionId);
+            enqueue(sessionId, since);
+            errored.delete(sessionId);
+        }, SETTLE_MS);
+        settleTimers.set(sessionId, timer);
+    };
+    const onSessionStatus = (sessionId, running) => {
+        if (disposed)
+            return;
+        if (running) {
+            // 上一轮刚落回 false、还没到确认点就又起来了：撤掉那次确认，重记起点，
+            // 否则第二轮会接着第一轮的起点算耗时
+            const pending = settleTimers.get(sessionId);
+            if (pending !== undefined) {
+                window.clearTimeout(pending);
+                settleTimers.delete(sessionId);
+            }
+            runningSince.set(sessionId, Date.now());
+            errored.delete(sessionId);
+            return;
+        }
+        settle(sessionId);
+    };
+    // 只有正在跑的那一轮才记账：这条事件也会在后台激活失败时报一次，那时它不属于任何一轮
+    const onSessionError = (sessionId) => {
+        if (disposed)
+            return;
+        if (!runningSince.has(sessionId))
+            return;
+        errored.add(sessionId);
+    };
+    // 排查用：把还在等着确认的那几条立即确认掉，并放行队列
+    const onRescan = () => {
+        for (const [sessionId, timer] of settleTimers) {
+            window.clearTimeout(timer);
+            settleTimers.delete(sessionId);
+            const since = runningSince.get(sessionId);
+            runningSince.delete(sessionId);
+            enqueue(sessionId, since);
+            errored.delete(sessionId);
+        }
+        pump();
+    };
+    // 装上那一刻就在跑的会话没有真实起点：按现在算，那一轮的耗时比真实值短。
+    // 这一条只影响装上后的第一轮，之后每一条 status 都会自己记起点
+    const baseline = Date.now();
+    for (const [sessionId, summary] of Object.entries(sessions.list.getSnapshot().byId)) {
+        if (summary?.running === true)
+            runningSince.set(sessionId, baseline);
+    }
+    const unsubscribeStatus = remote.$on("api-session/status", onSessionStatus);
+    const unsubscribeError = remote.$on("api-session/error", onSessionError);
+    document.addEventListener(RESCAN_EVENT, onRescan);
+    return {
+        dispose: () => {
+            if (disposed)
+                return;
+            disposed = true;
+            unsubscribeStatus();
+            unsubscribeError();
+            document.removeEventListener(RESCAN_EVENT, onRescan);
+            if (pumpTimer !== 0)
+                window.clearTimeout(pumpTimer);
+            pumpTimer = 0;
+            for (const timer of settleTimers.values())
+                window.clearTimeout(timer);
+            settleTimers.clear();
+            queue.length = 0;
+            for (const notification of open)
+                notification.close();
+            open.clear();
+            document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+        },
+    };
+}
+    };
+
     __registry["chat/cache-hit/cache-hit-pill.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -1736,7 +2033,7 @@ const hitReelMirror = createSettingMirror(settings_scope_1.DEFAULT_HIT_REEL, sec
     __registry["settings/settings-scope.js"] = function (module, exports, require) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_ASK_NOTIFY = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_FONT = exports.DEFAULT_PAPER_ON = void 0;
+exports.DEFAULT_DONE_NOTIFY = exports.DEFAULT_ASK_NOTIFY = exports.DEFAULT_SEND_FLIGHT = exports.DEFAULT_FOLLOW_ON_APPEAR = exports.DEFAULT_LIVE_DIFF = exports.DEFAULT_COMPOSER_GLASS = exports.DEFAULT_CONTEXT_PIE = exports.DEFAULT_HIT_REEL = exports.DEFAULT_CARET_MOTION = exports.DEFAULT_AUTO_FOLD = exports.DEFAULT_PAPER_FONT = exports.DEFAULT_PAPER_ON = void 0;
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 // 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
 exports.DEFAULT_PAPER_ON = true;
@@ -1760,6 +2057,8 @@ exports.DEFAULT_FOLLOW_ON_APPEAR = true;
 exports.DEFAULT_SEND_FLIGHT = true;
 // 等读者动手时的系统通知。默认一律弹：它停下来等你这件事本身就要紧，不挑窗口在不在前台
 exports.DEFAULT_ASK_NOTIFY = "always";
+// 任务结束时的系统通知。默认也一律弹：跑完了正是读者想知道的时刻，与「等读者动手」同一档
+exports.DEFAULT_DONE_NOTIFY = "always";
     };
 
     __registry["chat/cache-hit/cache-hit-styles.js"] = function (module, exports, require) {
@@ -9742,7 +10041,10 @@ const COMPOSER_GLASS_FIELD = "composerGlass";
 const LIVE_DIFF_FIELD = "liveDiff";
 const FOLLOW_FIELD = "followOnAppear";
 const SEND_FLIGHT_FIELD = "sendFlight";
+// 通知这一行管两个字段：读者动手时的提问/审批，与任务结束。控件只有一个，
+// 改动时两个字段一起写，于是「关掉通知」是一下子关掉两条通道
 const NOTIFY_FIELD = "notifyAsk";
+const NOTIFY_DONE_FIELD = "notifyDone";
 const ZH_COPY = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
@@ -9779,7 +10081,9 @@ const ZH_COPY = {
     sendFlightHint: "发出之后，一块与输入框同形同色的方块从输入框上沿升起，带在里面的就是刚发的那句话，一边收窄一边折行、"
         + "换成气泡的颜色，落成落点那条气泡。关掉就回到 dsh 原来的样子。",
     notifyLabel: "窗口通知",
-    notifyHint: "AI 在等你回答、等你确认、或者交了一份计划时，弹一条 Windows 通知，正文就是它写的那段内容。"
+    notifyHint: "两件事各弹一条 Windows 通知，这一个档位管住两条：AI 在等你回答、等你确认、或者交了一份计划；"
+        + "以及它把这一轮跑完了。等待那一条的正文是它写的那段内容，完成那一条是会话名、耗时与它最后说的几句，"
+        + "几条同时到齐时依次弹出，间隔三秒。"
         + "「未聚焦时」只在窗口不在前台时弹，你正看着它就不打扰；「无论何时」一律弹。",
     notifyOff: "关",
     notifyUnfocused: "未聚焦时",
@@ -9833,8 +10137,10 @@ const EN_COPY = {
         + "It narrows and re-wraps as it goes, then turns into the colour of the bubble it lands on. "
         + "Off restores dsh's own behaviour.",
     notifyLabel: "Window notifications",
-    notifyHint: "When the AI is waiting on your answer or your approval, or hands you a plan, a Windows notification pops up "
-        + "carrying what it wrote. \"Unfocused\" only fires while the window sits in the background, so it never "
+    notifyHint: "Two things pop a Windows notification, and this one setting governs both: the AI waiting on your answer, "
+        + "your approval, or a plan it handed you; and it finishing a turn. The waiting note carries what it wrote, "
+        + "the finished one carries the session name, how long it took and its closing lines; several at once queue "
+        + "up three seconds apart. \"Unfocused\" only fires while the window sits in the background, so it never "
         + "interrupts you while you are reading; \"Always\" fires every time.",
     notifyOff: "Off",
     notifyUnfocused: "Unfocused",
@@ -9908,10 +10214,34 @@ function ChatUxConfigCard({ scope, locale, view }) {
         setSaveFailed(userLayerHasField(scope.getSnapshot().user, field));
         setSaving(false);
     };
+    // 通知这一行管两个字段：读者动手时的提问/审批，与任务结束。一个控件同时写两条，
+    // 读回时两个都要落地才算成功，重置也成对——「关掉通知」于是是一下子关掉两条通道
+    const writeNotify = async (next) => {
+        setSaving(true);
+        setSaveFailed(false);
+        const accepted = await scope.set(NOTIFY_FIELD, next);
+        const doneAccepted = await scope.set(NOTIFY_DONE_FIELD, next);
+        const value = scope.getSnapshot().value;
+        const landed = accepted && doneAccepted
+            && storedNotify(value) === next
+            && storedNotifyDone(value) === next;
+        setSaveFailed(!landed);
+        setSaving(false);
+    };
+    const resetNotify = async () => {
+        setSaving(true);
+        setSaveFailed(false);
+        await scope.unset(NOTIFY_FIELD);
+        await scope.unset(NOTIFY_DONE_FIELD);
+        const user = scope.getSnapshot().user;
+        setSaveFailed(userLayerHasField(user, NOTIFY_FIELD) || userLayerHasField(user, NOTIFY_DONE_FIELD));
+        setSaving(false);
+    };
     // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
-    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行
-    const rowChrome = (field, label, hint, control, indented = false) => ((0, jsx_runtime_1.jsxs)("div", { className: indented ? config_card_styles_1.CARD_CLASS.row + " " + config_card_styles_1.CARD_CLASS.childRow : config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), userLayerHasField(snapshot.user, field) && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: () => void resetField(field), children: copy.reset })] })), control] }));
-    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperFontOn, disabled: controlsDisabled, label: copy.paperFontLabel, onChange: (next) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont) })), true), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(NOTIFY_FIELD, copy.notifyLabel, copy.notifyHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-notify", value: notifyMode, options: notifyOptionList, onChange: (next) => void writeField(NOTIFY_FIELD, next, storedNotify), label: copy.notifyLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
+    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行。
+    // 通知那一行是个例外：一个控件管两个字段（见 writeNotify），所以覆盖徽标与重置都看那两个
+    const rowChrome = (field, label, hint, control, indented = false, overridden = userLayerHasField(snapshot.user, field), onReset = () => void resetField(field)) => ((0, jsx_runtime_1.jsxs)("div", { className: indented ? config_card_styles_1.CARD_CLASS.row + " " + config_card_styles_1.CARD_CLASS.childRow : config_card_styles_1.CARD_CLASS.row, children: [(0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.rowText, children: [(0, jsx_runtime_1.jsx)("div", { className: config_card_styles_1.CARD_CLASS.labelLine, children: (0, jsx_runtime_1.jsx)("span", { className: config_card_styles_1.CARD_CLASS.label, children: label }) }), (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.hint, children: hint })] }), overridden && ((0, jsx_runtime_1.jsxs)("span", { className: config_card_styles_1.CARD_CLASS.badges, children: [(0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Tag, { tone: "neutral", children: copy.overridden }), (0, jsx_runtime_1.jsx)("button", { type: "button", className: config_card_styles_1.CARD_CLASS.reset, disabled: controlsDisabled, onClick: onReset, children: copy.reset })] })), control] }));
+    return ((0, jsx_runtime_1.jsxs)("div", { className: config_card_styles_1.CARD_CLASS.form, "data-plugin-config-form": "dsh-chat-ux", children: [readOnly && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.notice, role: "status", children: copy.readOnly }), rowChrome(PAPER_ON_FIELD, copy.paperLabel, copy.paperHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperOn, disabled: controlsDisabled, label: copy.paperLabel, onChange: (next) => void writeField(PAPER_ON_FIELD, next, storedPaperOn) }))), rowChrome(PAPER_FONT_FIELD, copy.paperFontLabel, copy.paperFontHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: paperFontOn, disabled: controlsDisabled, label: copy.paperFontLabel, onChange: (next) => void writeField(PAPER_FONT_FIELD, next, storedPaperFont) })), true), rowChrome(AUTO_FOLD_FIELD, copy.autoFoldLabel, copy.autoFoldHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: autoFoldOn, disabled: controlsDisabled, label: copy.autoFoldLabel, onChange: (next) => void writeField(AUTO_FOLD_FIELD, next, storedAutoFold) }))), rowChrome(FOLLOW_FIELD, copy.followLabel, copy.followHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: followOn, disabled: controlsDisabled, label: copy.followLabel, onChange: (next) => void writeField(FOLLOW_FIELD, next, storedFollow) }))), rowChrome(CARET_FIELD, copy.caretLabel, copy.caretHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-caret", value: caretMode, options: caretOptionList, onChange: (next) => void writeField(CARET_FIELD, next, storedCaret), label: copy.caretLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment }))), rowChrome(NOTIFY_FIELD, copy.notifyLabel, copy.notifyHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.SegmentedControl, { id: fieldId + "-notify", value: notifyMode, options: notifyOptionList, onChange: (next) => void writeNotify(next), label: copy.notifyLabel, disabled: controlsDisabled, className: config_card_styles_1.CARD_CLASS.segment })), false, userLayerHasField(snapshot.user, NOTIFY_FIELD) || userLayerHasField(snapshot.user, NOTIFY_DONE_FIELD), () => void resetNotify()), rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: reelOn, disabled: controlsDisabled, label: copy.reelLabel, onChange: (next) => void writeField(HIT_REEL_FIELD, next, storedHitReel) }))), rowChrome(CONTEXT_PIE_FIELD, copy.pieLabel, copy.pieHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: pieOn, disabled: controlsDisabled, label: copy.pieLabel, onChange: (next) => void writeField(CONTEXT_PIE_FIELD, next, storedContextPie) }))), rowChrome(COMPOSER_GLASS_FIELD, copy.glassLabel, copy.glassHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: glassOn, disabled: controlsDisabled, label: copy.glassLabel, onChange: (next) => void writeField(COMPOSER_GLASS_FIELD, next, storedGlass) }))), rowChrome(LIVE_DIFF_FIELD, copy.liveDiffLabel, copy.liveDiffHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: liveDiffOn, disabled: controlsDisabled, label: copy.liveDiffLabel, onChange: (next) => void writeField(LIVE_DIFF_FIELD, next, storedLiveDiff) }))), rowChrome(SEND_FLIGHT_FIELD, copy.sendFlightLabel, copy.sendFlightHint, ((0, jsx_runtime_1.jsx)(dsh_client_ui_primitives_1.Switch, { checked: sendFlightOn, disabled: controlsDisabled, label: copy.sendFlightLabel, onChange: (next) => void writeField(SEND_FLIGHT_FIELD, next, storedSendFlight) }))), saveFailed && (0, jsx_runtime_1.jsx)("p", { className: config_card_styles_1.CARD_CLASS.failed, role: "status", children: copy.failed })] }));
 }
 function storedPaperOn(value) {
     return value?.paperOn ?? settings_scope_1.DEFAULT_PAPER_ON;
@@ -9943,8 +10273,13 @@ function storedCaret(value) {
 function storedSendFlight(value) {
     return value?.sendFlight ?? settings_scope_1.DEFAULT_SEND_FLIGHT;
 }
+// 控件显示的档位。两个字段理论上可以不同（旧版本的配置里只有 ask 这一个），
+// 这时按 ask 显示：它先来，读者认的也是它
 function storedNotify(value) {
     return value?.notifyAsk ?? settings_scope_1.DEFAULT_ASK_NOTIFY;
+}
+function storedNotifyDone(value) {
+    return value?.notifyDone ?? settings_scope_1.DEFAULT_DONE_NOTIFY;
 }
 function nonEmpty(value) {
     if (typeof value !== "string" || value === "")

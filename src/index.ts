@@ -58,8 +58,15 @@ export const DEFAULT_SEND_FLIGHT = true
 // 等读者动手时的系统通知：off 不弹，unfocused 只在窗口没聚焦时弹，always 任何时候都弹
 export type AskNotifyMode = "off" | "unfocused" | "always"
 
+// 任务结束时的系统通知档位。取值与上一条一样，只是分成两个字段存：两条通道各自可关
+export type DoneNotifyMode = "off" | "unfocused" | "always"
+
 // 默认一律弹。三档里「关闭」与「未聚焦时」都留给了不想被它打断的人
 export const DEFAULT_ASK_NOTIFY: AskNotifyMode = "always"
+
+// 任务结束时的系统通知。卡片上与上一条共用同一个三档控件（那个控件同时写这两个字段），
+// 默认值同样是一律弹
+export const DEFAULT_DONE_NOTIFY: DoneNotifyMode = "always"
 
 // 这个插件拥有的配置字段
 export interface Config {
@@ -85,6 +92,8 @@ export interface Config {
     sendFlight: Volatile<boolean>
     // 等读者动手时是否弹系统通知，以及什么时候弹
     notifyAsk: Volatile<AskNotifyMode>
+    // 任务结束时是否弹系统通知，以及什么时候弹。它与上一条共用卡片上那一个控件
+    notifyDone: Volatile<DoneNotifyMode>
 }
 
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
@@ -100,6 +109,7 @@ export const Config = Schema.object({
     followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     notifyAsk: Schema.union(["off", "unfocused", "always"] as const).default(DEFAULT_ASK_NOTIFY).volatile(),
+    notifyDone: Schema.union(["off", "unfocused", "always"] as const).default(DEFAULT_DONE_NOTIFY).volatile(),
 })
 
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写

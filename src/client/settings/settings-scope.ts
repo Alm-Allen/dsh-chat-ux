@@ -7,6 +7,7 @@
  */
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
 import type {AskNotifyMode} from "../chat/notify/ask-notify"
+import type {DoneNotifyMode} from "../chat/notify/done-notify"
 
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 
@@ -43,6 +44,9 @@ export const DEFAULT_SEND_FLIGHT = true
 // 等读者动手时的系统通知。默认一律弹：它停下来等你这件事本身就要紧，不挑窗口在不在前台
 export const DEFAULT_ASK_NOTIFY: AskNotifyMode = "always"
 
+// 任务结束时的系统通知。默认也一律弹：跑完了正是读者想知道的时刻，与「等读者动手」同一档
+export const DEFAULT_DONE_NOTIFY: DoneNotifyMode = "always"
+
 
 // host 解析出来的、本插件占用的那个配置条目
 export interface ChatUxSection {
@@ -68,6 +72,8 @@ export interface ChatUxSection {
     sendFlight?: boolean
     // 等读者动手时的系统通知档位。关掉时一条都不弹
     notifyAsk?: AskNotifyMode
+    // 任务结束时的系统通知档位。与上一条共用同一个控件
+    notifyDone?: DoneNotifyMode
 }
 
 

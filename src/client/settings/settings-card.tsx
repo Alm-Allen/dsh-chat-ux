@@ -15,11 +15,12 @@ import {SegmentedControl, Switch, Tag} from "@deepseek-ai/dsh-client-ui-primitiv
 import type {SegmentedControlOption} from "@deepseek-ai/dsh-client-ui-primitives"
 import type {CaretMotionMode} from "../chat/caret/caret-motion"
 import type {AskNotifyMode} from "../chat/notify/ask-notify"
+import type {DoneNotifyMode} from "../chat/notify/done-notify"
 import {CARD_CLASS} from "./config-card-styles"
 import {
     DEFAULT_ASK_NOTIFY, DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-    DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL, DEFAULT_LIVE_DIFF,
-    DEFAULT_PAPER_FONT, DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
+    DEFAULT_CONTEXT_PIE, DEFAULT_DONE_NOTIFY, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_HIT_REEL,
+    DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT, DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings-scope"
 
@@ -34,7 +35,10 @@ const COMPOSER_GLASS_FIELD = "composerGlass"
 const LIVE_DIFF_FIELD = "liveDiff"
 const FOLLOW_FIELD = "followOnAppear"
 const SEND_FLIGHT_FIELD = "sendFlight"
+// 通知这一行管两个字段：读者动手时的提问/审批，与任务结束。控件只有一个，
+// 改动时两个字段一起写，于是「关掉通知」是一下子关掉两条通道
 const NOTIFY_FIELD = "notifyAsk"
+const NOTIFY_DONE_FIELD = "notifyDone"
 
 // 一种语言的文案
 interface Copy {
@@ -121,7 +125,9 @@ const ZH_COPY: Copy = {
         + "换成气泡的颜色，落成落点那条气泡。关掉就回到 dsh 原来的样子。",
     notifyLabel: "窗口通知",
     notifyHint:
-        "AI 在等你回答、等你确认、或者交了一份计划时，弹一条 Windows 通知，正文就是它写的那段内容。"
+        "两件事各弹一条 Windows 通知，这一个档位管住两条：AI 在等你回答、等你确认、或者交了一份计划；"
+        + "以及它把这一轮跑完了。等待那一条的正文是它写的那段内容，完成那一条是会话名、耗时与它最后说的几句，"
+        + "几条同时到齐时依次弹出，间隔三秒。"
         + "「未聚焦时」只在窗口不在前台时弹，你正看着它就不打扰；「无论何时」一律弹。",
     notifyOff: "关",
     notifyUnfocused: "未聚焦时",
@@ -189,8 +195,10 @@ const EN_COPY: Copy = {
         + "Off restores dsh's own behaviour.",
     notifyLabel: "Window notifications",
     notifyHint:
-        "When the AI is waiting on your answer or your approval, or hands you a plan, a Windows notification pops up "
-        + "carrying what it wrote. \"Unfocused\" only fires while the window sits in the background, so it never "
+        "Two things pop a Windows notification, and this one setting governs both: the AI waiting on your answer, "
+        + "your approval, or a plan it handed you; and it finishing a turn. The waiting note carries what it wrote, "
+        + "the finished one carries the session name, how long it took and its closing lines; several at once queue "
+        + "up three seconds apart. \"Unfocused\" only fires while the window sits in the background, so it never "
         + "interrupts you while you are reading; \"Always\" fires every time.",
     notifyOff: "Off",
     notifyUnfocused: "Unfocused",
@@ -292,15 +300,43 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
         setSaving(false)
     }
 
+    // 通知这一行管两个字段：读者动手时的提问/审批，与任务结束。一个控件同时写两条，
+    // 读回时两个都要落地才算成功，重置也成对——「关掉通知」于是是一下子关掉两条通道
+    const writeNotify = async (next: AskNotifyMode): Promise<void> => {
+        setSaving(true)
+        setSaveFailed(false)
+        const accepted = await scope.set(NOTIFY_FIELD, next)
+        const doneAccepted = await scope.set(NOTIFY_DONE_FIELD, next)
+        const value = scope.getSnapshot().value
+        const landed = accepted && doneAccepted
+            && storedNotify(value) === next
+            && storedNotifyDone(value) === next
+        setSaveFailed(!landed)
+        setSaving(false)
+    }
+
+    const resetNotify = async (): Promise<void> => {
+        setSaving(true)
+        setSaveFailed(false)
+        await scope.unset(NOTIFY_FIELD)
+        await scope.unset(NOTIFY_DONE_FIELD)
+        const user = scope.getSnapshot().user
+        setSaveFailed(userLayerHasField(user, NOTIFY_FIELD) || userLayerHasField(user, NOTIFY_DONE_FIELD))
+        setSaving(false)
+    }
+
 
     // 一行开关的骨架：标签、说明、覆盖徽标、控件；用户层盖过这个字段时才挂徽标与重置。
-    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行
+    // indented 只给子开关用：缩进一格、左边挂一条竖线，读起来属于上面那一行。
+    // 通知那一行是个例外：一个控件管两个字段（见 writeNotify），所以覆盖徽标与重置都看那两个
     const rowChrome = (
         field: string,
         label: string,
         hint: string,
         control: ReactElement,
         indented = false,
+        overridden = userLayerHasField(snapshot.user, field),
+        onReset = () => void resetField(field),
     ): ReactElement => (
         <div className={indented ? CARD_CLASS.row + " " + CARD_CLASS.childRow : CARD_CLASS.row}>
             <div className={CARD_CLASS.rowText}>
@@ -309,14 +345,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                 </div>
                 <p className={CARD_CLASS.hint}>{hint}</p>
             </div>
-            {userLayerHasField(snapshot.user, field) && (
+            {overridden && (
                 <span className={CARD_CLASS.badges}>
 					<Tag tone="neutral">{copy.overridden}</Tag>
 					<button
                         type="button"
                         className={CARD_CLASS.reset}
                         disabled={controlsDisabled}
-                        onClick={() => void resetField(field)}
+                        onClick={onReset}
                     >
 						{copy.reset}
 					</button>
@@ -377,12 +413,14 @@ export function ChatUxConfigCard({scope, locale, view}: ChatUxConfigCardProps): 
                     id={fieldId + "-notify"}
                     value={notifyMode}
                     options={notifyOptionList}
-                    onChange={(next) => void writeField(NOTIFY_FIELD, next, storedNotify)}
+                    onChange={(next) => void writeNotify(next)}
                     label={copy.notifyLabel}
                     disabled={controlsDisabled}
                     className={CARD_CLASS.segment}
                 />
-            ))}
+            ), false,
+                userLayerHasField(snapshot.user, NOTIFY_FIELD) || userLayerHasField(snapshot.user, NOTIFY_DONE_FIELD),
+                () => void resetNotify())}
             {rowChrome(HIT_REEL_FIELD, copy.reelLabel, copy.reelHint, (
                 <Switch
                     checked={reelOn}
@@ -470,8 +508,14 @@ function storedSendFlight(value: ChatUxSection | undefined): boolean {
     return value?.sendFlight ?? DEFAULT_SEND_FLIGHT
 }
 
+// 控件显示的档位。两个字段理论上可以不同（旧版本的配置里只有 ask 这一个），
+// 这时按 ask 显示：它先来，读者认的也是它
 function storedNotify(value: ChatUxSection | undefined): AskNotifyMode {
     return value?.notifyAsk ?? DEFAULT_ASK_NOTIFY
+}
+
+function storedNotifyDone(value: ChatUxSection | undefined): DoneNotifyMode {
+    return value?.notifyDone ?? DEFAULT_DONE_NOTIFY
 }
 
 

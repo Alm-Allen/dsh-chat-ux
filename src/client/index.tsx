@@ -13,6 +13,8 @@ import {installCaretMotion} from "./chat/caret/caret-motion"
 import type {CaretMotionMode} from "./chat/caret/caret-motion"
 import {installAskNotify} from "./chat/notify/ask-notify"
 import type {AskNotifyMode} from "./chat/notify/ask-notify"
+import {installDoneNotify} from "./chat/notify/done-notify"
+import type {DoneNotifyMode} from "./chat/notify/done-notify"
 import {installCacheHitPill} from "./chat/cache-hit/cache-hit-pill"
 import {installComposerGlass} from "./chat/composer-glass/composer-glass"
 import {GLASS_ATTRIBUTE} from "./chat/composer-glass/composer-glass-styles"
@@ -30,8 +32,8 @@ import {installSendFlight} from "./chat/send-flight/send-flight"
 import {ChatUxConfigCard} from "./settings/settings-card"
 import {
     DEFAULT_ASK_NOTIFY, DEFAULT_AUTO_FOLD, DEFAULT_CARET_MOTION, DEFAULT_COMPOSER_GLASS,
-    DEFAULT_CONTEXT_PIE, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF, DEFAULT_PAPER_FONT,
-    DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
+    DEFAULT_CONTEXT_PIE, DEFAULT_DONE_NOTIFY, DEFAULT_FOLLOW_ON_APPEAR, DEFAULT_LIVE_DIFF,
+    DEFAULT_PAPER_FONT, DEFAULT_PAPER_ON, DEFAULT_SEND_FLIGHT,
 } from "./settings/settings-scope"
 import type {ChatUxSection, ConfigForm, LocaleLike} from "./settings/settings-scope"
 import {applyTranscriptViewDefault} from "./settings/transcript-default"
@@ -82,6 +84,7 @@ export function apply(ctx: ClientContext): void {
         paperOn: DEFAULT_PAPER_ON,
         paperFont: DEFAULT_PAPER_FONT,
         notifyAsk: DEFAULT_ASK_NOTIFY,
+        notifyDone: DEFAULT_DONE_NOTIFY,
     }
 
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
@@ -162,17 +165,24 @@ export function apply(ctx: ClientContext): void {
         paper = installPaperLayer(paperSettings)
     }
 
-    // 等读者动手时的系统通知。关掉时整块卸下；unfocused 与 always 两档都由模块现读，
-    // 所以档位一变不必重新安装——换了档之后的第一条请求才用得上新值
+    // 系统通知的两条通道：等读者动手（ask）与任务结束（done）。卡片上那一个三档控件同时写两个字段，
+    // 所以两档一起读；各自关掉时只有自己那一块卸下。unfocused 与 always 两档都由模块现读，
+    // 档位一变不必重新安装——换档之后的下一条请求才用得上新值
     let notifyDispose: (() => void) | null = null
+    let doneNotifyDispose: (() => void) | null = null
     const syncNotify = (): void => {
         if (settings.notifyAsk === "off") {
             notifyDispose?.()
             notifyDispose = null
-            return
+        } else if (notifyDispose === null) {
+            notifyDispose = installAskNotify(() => settings.notifyAsk).dispose
         }
-        if (notifyDispose !== null) return
-        notifyDispose = installAskNotify(() => settings.notifyAsk).dispose
+        if (settings.notifyDone === "off") {
+            doneNotifyDispose?.()
+            doneNotifyDispose = null
+        } else if (doneNotifyDispose === null) {
+            doneNotifyDispose = installDoneNotify(services, () => settings.notifyDone).dispose
+        }
     }
 
     let followDispose: (() => void) | null = null
@@ -197,6 +207,7 @@ export function apply(ctx: ClientContext): void {
         settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
         settings.paperFont = value?.paperFont ?? DEFAULT_PAPER_FONT
         settings.notifyAsk = value?.notifyAsk ?? DEFAULT_ASK_NOTIFY
+        settings.notifyDone = value?.notifyDone ?? DEFAULT_DONE_NOTIFY
         syncGlass()
         syncNotify()
         caret.resync()
@@ -230,16 +241,18 @@ export function apply(ctx: ClientContext): void {
         "dsh-chat-ux: composer glass",
     )
 
-    // 通知这一块自己管观察器与监听，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
+    // 通知这两块自己管监听与排队，所以这里只负责按开关装卸，卸的时候把还开着的通知一起关掉
     ctx.effect(
         () => {
             syncNotify()
             return () => {
                 notifyDispose?.()
                 notifyDispose = null
+                doneNotifyDispose?.()
+                doneNotifyDispose = null
             }
         },
-        "dsh-chat-ux: ask notifications",
+        "dsh-chat-ux: notifications",
     )
 
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
@@ -342,6 +355,8 @@ interface ChatUxSettings {
     paperFont: boolean
     // 等读者动手时的系统通知档位。关掉时整块卸下，其余两档现读，改档位不必重装
     notifyAsk: AskNotifyMode
+    // 任务结束时的系统通知档位。与上一条同一套三档，卡片上用同一个控件写
+    notifyDone: DoneNotifyMode
 }
 
 // dsh 那份 ui-chat 表单里这一处只读一个字段：completion（默认）或 next-input

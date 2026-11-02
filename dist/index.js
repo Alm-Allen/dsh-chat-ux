@@ -32,6 +32,9 @@ export const DEFAULT_FOLLOW_ON_APPEAR = true;
 export const DEFAULT_SEND_FLIGHT = true;
 // 默认一律弹。三档里「关闭」与「未聚焦时」都留给了不想被它打断的人
 export const DEFAULT_ASK_NOTIFY = "always";
+// 任务结束时的系统通知。卡片上与上一条共用同一个三档控件（那个控件同时写这两个字段），
+// 默认值同样是一律弹
+export const DEFAULT_DONE_NOTIFY = "always";
 // 设置表单只投影标了 .volatile() 的字段，也只对带这类字段的条目暴露表单，插件管理页正是靠这一点认出这个条目
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
@@ -45,6 +48,7 @@ export const Config = Schema.object({
     followOnAppear: Schema.boolean().default(DEFAULT_FOLLOW_ON_APPEAR).volatile(),
     sendFlight: Schema.boolean().default(DEFAULT_SEND_FLIGHT).volatile(),
     notifyAsk: Schema.union(["off", "unfocused", "always"]).default(DEFAULT_ASK_NOTIFY).volatile(),
+    notifyDone: Schema.union(["off", "unfocused", "always"]).default(DEFAULT_DONE_NOTIFY).volatile(),
 });
 // host 侧入口。这一半不持有运行时状态，配置值全部由浏览器侧读写
 export function apply() {
