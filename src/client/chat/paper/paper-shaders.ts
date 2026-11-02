@@ -124,7 +124,7 @@ const float BULB = 30.0;
  * 抖动的幅度（乘在 g 上，g 落在 -0.5 到 0.5）。
  *
  * 这一层是 multiply 压在页面上：最终像素 = 纸色 × 这里算出来的值。所以纸越暗，纸上相邻两级
- * 8 位灰度之间那道坎就越宽——暗纸 #3a3a32 的 R 是 58 级，一个最终色阶要吃掉 4.4 个 canvas 级；
+ * 8 位灰度之间那道坎就越宽——暗纸 #46463d 的 R 是 70 级，一个最终色阶要吃 3.7 个 canvas 级；
  * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有四分之一宽，
  * 光斑边缘那些同心圆弧就露成几块平台。
  *
@@ -158,13 +158,16 @@ void main() {
   vec2 uv = p / uSize;
   float vignette = smoothstep(0.15, 1.1, length((uv - vec2(0.5, 0.55)) * vec2(1.0, 1.15)));
   // 这一项是灯亮着时压给环境光的那一点暗角。nocturne 的 0.3 配的是一盏罩住半个屏幕的灯，
-  // 换成圆形光斑之后那三成正好落在唯一还亮着的地方，于是边角整片发闷。一路降到 0.04
-  float ambient = mix(1.0, uAmbient * (1.0 - 0.04 * vignette), uLamp);
+  // 换成圆形光斑之后那三成正好落在唯一还亮着的地方，于是边角整片发闷。一路降到 0.04，
+  // 2026-11-02 再收到 0.006：亮档要的是一张亮纸，四角那点压暗只留个语气，不该读出一圈边
+  float ambient = mix(1.0, uAmbient * (1.0 - 0.006 * vignette), uLamp);
   vec3 irr = uAmbientTint * ambient + (1.0 - ambient) * lit * uTint;
   float relief = uRelief * (1.0 - 0.4 * lit);
   float bound = (0.16 * uCrinkle + 0.04) * relief;
   irr *= clamp(1.0 + (-nxy.x * 0.35 - nxy.y * 0.55) * (0.6 + 2.2 * uCrinkle) * relief, 1.0 - bound, 1.0 + bound);
-  irr *= mix(0.9, 1.0, smoothstep(0.0, 28.0, min(uv.x, 1.0 - uv.x) * uSize.x));
+  // 左右两缘各 28px 的那条窄边。它与上面那圈暗角是两件事：那圈是四角的渐变，这条是贴边的直边。
+  // 0.9 时最外侧比纸心暗 10%，亮档上读起来是一条灰边，收到 0.97 只当压边
+  irr *= mix(0.97, 1.0, smoothstep(0.0, 28.0, min(uv.x, 1.0 - uv.x) * uSize.x));
   float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 113.0) - 0.5;
   // 除零兜在 uPaperLuma 那一侧（paper-light.ts 里夹到 0.05），这里再兜一次：
   // 万一它还是 0，DITHER_STEP / 0 会算出无穷大，整张纸变成一片噪点而不是纸
