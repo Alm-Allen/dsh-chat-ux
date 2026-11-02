@@ -1578,6 +1578,10 @@ const BODY_LIMIT = 120;
 const ROOT_ATTRIBUTE = "data-dsh-chat-ux-done-notify";
 // 手动补扫的口子，给排查用：document.dispatchEvent(new Event("dsh-chat-ux:done-notify-now"))
 const RESCAN_EVENT = "dsh-chat-ux:done-notify-now";
+// 手动弹一条的口子，参数与走完整条链路时完全一样：
+//   dispatchEvent(new CustomEvent("dsh-chat-ux:done-notify-test", {detail: {title: "标题", body: "正文"}}))
+// 它绕开「什么时候触发」与「判定滤没滤」，只验这一条调用本身画不画得出来
+const PROBE_EVENT = "dsh-chat-ux:done-notify-test";
 const ZH_COPY = {
     completed: "DSH 完成了这一轮",
     failed: "DSH 这一轮出错了",
@@ -1719,9 +1723,12 @@ function installDoneNotify(ctx, readMode) {
     // 弹出队首那一条。失败只丢这一条，不要影响读者继续用页面
     const show = (notice) => {
         try {
+            // tag 只留字母数字与连字符。ask 那条用的是 callId，本身就干净；这一条带上 sessionId
+            // 与分隔符，而 tag 最终要参与系统那一侧的通知标识，字符集越窄越不会有意外。
+            // 这是一条防御，不是已证的成因：2026-11-02 那次「shown 加一但屏幕不画」还没定位到具体原因
             const notification = new Notification(notice.title, {
                 body: notice.body,
-                tag: "done:" + notice.sessionId,
+                tag: "dsh-done-" + notice.sessionId.replace(/[^A-Za-z0-9-]/g, ""),
                 silent: false,
             });
             notification.onclick = () => {
@@ -1732,7 +1739,11 @@ function installDoneNotify(ctx, readMode) {
             };
             open.add(notification);
             tally.shown += 1;
-            tally.last = "shown " + notice.sessionId;
+            // 弹出去那一刻窗口在不在前台。Windows 对「前台窗口所在的应用」会抑制 toast 横幅，
+            // 只把它收进通知中心；记下这一项，才知道「没看到」是系统没画，还是我们没弹
+            tally.last = "shown " + notice.sessionId
+                + " focused=" + (document.hasFocus() ? "1" : "0")
+                + " visible=" + document.visibilityState;
             publishTally();
         }
         catch (error) {
@@ -1816,6 +1827,15 @@ function installDoneNotify(ctx, readMode) {
             return;
         errored.add(sessionId);
     };
+    // 只验「这条调用画不画得出来」：走与真实通知完全相同的 show()，只是标题正文由调用方给
+    const onProbe = (event) => {
+        const detail = event.detail;
+        show({
+            sessionId: "probe",
+            title: detail?.title ?? copy.completed,
+            body: detail?.body ?? "probe",
+        });
+    };
     // 排查用：把还在等着确认的那几条立即确认掉，并放行队列。
     // 先看根属性上的 -tally 那一条：list= 是列表通知的次数，它一直是 0 就说明这条订阅也没在工作
     const onRescan = () => {
@@ -1864,6 +1884,7 @@ function installDoneNotify(ctx, readMode) {
     // 主路先接上。列表订阅不需要任何前提，它一定在
     const unsubscribeList = sessions.list.subscribe(onListChange);
     document.addEventListener(RESCAN_EVENT, onRescan);
+    document.addEventListener(PROBE_EVENT, onProbe);
     // 次路（status 与 error 事件）挂不上就算了：连接不是 interactions=answer 时 $on 会抛，
     // 那时只走列表那条路，起点记不精确、出错认不出，但完成通知照常。
     // 2026-11-02 排查到的形状正是「标记在、弹窗不来」——那时 $on 是唯一的路，而它没接上
@@ -1886,6 +1907,7 @@ function installDoneNotify(ctx, readMode) {
             for (const unsubscribe of unsubscribers)
                 unsubscribe();
             document.removeEventListener(RESCAN_EVENT, onRescan);
+            document.removeEventListener(PROBE_EVENT, onProbe);
             if (pumpTimer !== 0)
                 window.clearTimeout(pumpTimer);
             pumpTimer = 0;
