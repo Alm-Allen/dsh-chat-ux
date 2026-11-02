@@ -1629,7 +1629,6 @@ function installDoneNotify(ctx, readMode) {
     // 可选：这一轮结束时有没有面板正等着读者。拿不到就不做这条互斥
     const sessionStatus = ctx.reflect.get("uiSession")?.sessionStatus ?? null;
     const copy = doneCopy();
-    document.documentElement.setAttribute(ROOT_ATTRIBUTE, "");
     // 这一轮是什么时候开始的。装上那一刻已经在跑的那一轮按装上的时刻起算，比真实值短
     const runningSince = new Map();
     // 这一轮里报过错。下一轮起来时清掉，于是错只算在出错的那一轮上
@@ -1689,6 +1688,7 @@ function installDoneNotify(ctx, readMode) {
             return;
         if (waitingForReader(sessionId))
             return;
+        console.debug("dsh-chat-ux: done notify enqueue", sessionId, mode);
         const outcome = outcomeOf(sessionId);
         const title = outcome === "failed"
             ? copy.failed
@@ -1752,6 +1752,7 @@ function installDoneNotify(ctx, readMode) {
             settleTimers.delete(sessionId);
             if (disposed)
                 return;
+            console.debug("dsh-chat-ux: done notify settle", sessionId, sessions.list.getSnapshot().byId[sessionId]?.running);
             if (sessions.list.getSnapshot().byId[sessionId]?.running === true)
                 return;
             const since = runningSince.get(sessionId);
@@ -1764,6 +1765,9 @@ function installDoneNotify(ctx, readMode) {
     const onSessionStatus = (sessionId, running) => {
         if (disposed)
             return;
+        // 收到事件的第一手证据。排查「弹窗不来」时看这条有没有出现，就能把「订阅没接上」
+        // 与「判定把它们全滤掉了」分开
+        console.debug("dsh-chat-ux: done notify status", sessionId, running);
         if (running) {
             // 上一轮刚落回 false、还没到确认点就又起来了：撤掉那次确认，重记起点，
             // 否则第二轮会接着第一轮的起点算耗时
@@ -1788,6 +1792,14 @@ function installDoneNotify(ctx, readMode) {
     };
     // 排查用：把还在等着确认的那几条立即确认掉，并放行队列
     const onRescan = () => {
+        // 排查时最要紧的一条：先确认订阅真的收到了事件。走到这里而桶里什么都没有，
+        // 说明 status 事件压根没到这一侧（连接、权限、或者 $on 没接上）
+        console.info("dsh-chat-ux: done notify rescan", {
+            running: [...runningSince.keys()],
+            settling: [...settleTimers.keys()],
+            errored: [...errored],
+            queued: queue.length,
+        });
         for (const [sessionId, timer] of settleTimers) {
             window.clearTimeout(timer);
             settleTimers.delete(sessionId);
@@ -1805,9 +1817,13 @@ function installDoneNotify(ctx, readMode) {
         if (summary?.running === true)
             runningSince.set(sessionId, baseline);
     }
+    // 先订阅、后挂标记。反过来走的话，$on 抛错（例如这个连接不是 interactions=answer）时
+    // 标记已经挂上了，页面上看是「装着」，实际一条事件都收不到——2026-11-02 排查时正是这个形状：
+    // 标记 true、弹窗不来。顺序换过来之后，失败就在加载器那里报出来，不会静默
     const unsubscribeStatus = remote.$on("api-session/status", onSessionStatus);
     const unsubscribeError = remote.$on("api-session/error", onSessionError);
     document.addEventListener(RESCAN_EVENT, onRescan);
+    document.documentElement.setAttribute(ROOT_ATTRIBUTE, "");
     return {
         dispose: () => {
             if (disposed)
