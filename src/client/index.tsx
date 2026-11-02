@@ -14,7 +14,7 @@ import type {CaretMotionMode} from "./chat/caret/caret-motion"
 import {installAskNotify} from "./chat/notify/ask-notify"
 import type {AskNotifyMode} from "./chat/notify/ask-notify"
 import {installDoneNotify} from "./chat/notify/done-notify"
-import type {DoneNotifyMode} from "./chat/notify/done-notify"
+import type {DoneNotifyMode, NotifyContext} from "./chat/notify/done-notify"
 import {installCacheHitPill} from "./chat/cache-hit/cache-hit-pill"
 import {installComposerGlass} from "./chat/composer-glass/composer-glass"
 import {GLASS_ATTRIBUTE} from "./chat/composer-glass/composer-glass-styles"
@@ -46,6 +46,9 @@ import {ALL_CSS, STYLE_ID} from "./styles"
  *
  * locale 服务刻意不在其中：卡片通过 ctx.reflect 读它，而没有 locale 插件时 reflect 返回 undefined、不抛错，
  * 所以没有它的部署照样能得到一张能用的卡片
+ *
+ * remote 与 sessions 也不在这里，理由不同：它们缺席时整块插件都不该消失，只有完成通知那一条用不了。
+ * 那一条自己用 ctx.inject(["remote", "sessions"], …) 等它们就绪，见下面 syncNotify 之前那段注释
  */
 export const inject: string[] = ["slots", "configForms"]
 
@@ -169,7 +172,23 @@ export function apply(ctx: ClientContext): void {
     // 所以两档一起读；各自关掉时只有自己那一块卸下。unfocused 与 always 两档都由模块现读，
     // 档位一变不必重新安装——换档之后的下一条请求才用得上新值
     let notifyDispose: (() => void) | null = null
-    let doneNotifyDispose: (() => void) | null = null
+    // 完成通知要读 remote 与 sessions 两个服务。它们不在这半区的 inject 里（那两个是必须依赖，
+    // 缺了整块插件都不加载），所以由下面的 ctx.inject 等它们就绪；这里存的是那条等待的把手
+    let doneNotifyFiber: NotifyFiber | null = null
+    const stopDoneNotify = (): void => {
+        void doneNotifyFiber?.dispose()
+        doneNotifyFiber = null
+    }
+    const startDoneNotify = (): void => {
+        if (doneNotifyFiber !== null) return
+        doneNotifyFiber = services.inject(
+            ["remote", "sessions"],
+            (scoped: ClientContext) => {
+                const installed = installDoneNotify(scoped as unknown as NotifyContext, () => settings.notifyDone)
+                return () => installed.dispose()
+            },
+        )
+    }
     const syncNotify = (): void => {
         if (settings.notifyAsk === "off") {
             notifyDispose?.()
@@ -177,12 +196,8 @@ export function apply(ctx: ClientContext): void {
         } else if (notifyDispose === null) {
             notifyDispose = installAskNotify(() => settings.notifyAsk).dispose
         }
-        if (settings.notifyDone === "off") {
-            doneNotifyDispose?.()
-            doneNotifyDispose = null
-        } else if (doneNotifyDispose === null) {
-            doneNotifyDispose = installDoneNotify(services, () => settings.notifyDone).dispose
-        }
+        if (settings.notifyDone === "off") stopDoneNotify()
+        else startDoneNotify()
     }
 
     let followDispose: (() => void) | null = null
@@ -248,8 +263,7 @@ export function apply(ctx: ClientContext): void {
             return () => {
                 notifyDispose?.()
                 notifyDispose = null
-                doneNotifyDispose?.()
-                doneNotifyDispose = null
+                stopDoneNotify()
             }
         },
         "dsh-chat-ux: notifications",
@@ -377,6 +391,14 @@ interface ClientServices {
     slots: SlotsService
     configForms: ConfigFormsService
     reflect: { get(name: string): unknown }
+    // 等一组服务就绪再执行：服务变化时回调被卸下重来，dispose 收掉整条等待。
+    // 完成通知靠它，不能靠装载那一刻现读一次——那一次读空了就再没有第二次
+    inject: (deps: string[], callback: (scoped: ClientContext) => () => void) => NotifyFiber
+}
+
+// ctx.inject 交回来的那条 fiber。这里只用到 dispose
+interface NotifyFiber {
+    dispose: () => Promise<void>
 }
 
 /**

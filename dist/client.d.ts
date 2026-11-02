@@ -16,6 +16,9 @@ import type { Context as ClientContext } from "@deepseek-ai/cordis";
  *
  * locale 服务刻意不在其中：卡片通过 ctx.reflect 读它，而没有 locale 插件时 reflect 返回 undefined、不抛错，
  * 所以没有它的部署照样能得到一张能用的卡片
+ *
+ * remote 与 sessions 也不在这里，理由不同：它们缺席时整块插件都不该消失，只有完成通知那一条用不了。
+ * 那一条自己用 ctx.inject(["remote", "sessions"], …) 等它们就绪，见下面 syncNotify 之前那段注释
  */
 export declare const inject: string[];
 export declare function apply(ctx: ClientContext): void;

@@ -91,10 +91,13 @@ function formatElapsed(ms: number): string {
 export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotifyMode): DoneNotifyHandle {
     // 这个环境没有通知能力（普通浏览器里被策略关掉），什么都不装
     if (typeof Notification === "undefined") return {dispose: () => undefined}
+    // 调用方用 ctx.inject 等这两个服务就绪，所以这里一定读得到。真读不到时留一条 warn：
+    // 这一块在 2026-11-02 静默失效过一次——装载那一刻服务还没提供，函数提前返回空句柄，
+    // 之后没有任何时机再试，页面上就是「什么都不发生」而控制台一个字都没有
     const remote = ctx.reflect.get("remote") as RemoteLike | undefined
     const sessions = ctx.reflect.get("sessions") as SessionsLike | undefined
-    // 两个服务都在才装。它们缺席时整块插件照常加载，只是没有这一条通知
     if (remote === undefined || remote === null || sessions === undefined || sessions === null) {
+        console.warn("dsh-chat-ux: done notify needs the remote and sessions services")
         return {dispose: () => undefined}
     }
     // 可选：这一轮结束时有没有面板正等着读者。拿不到就不做这条互斥
@@ -299,7 +302,9 @@ export function installDoneNotify(ctx: NotifyContext, readMode: () => DoneNotify
 // 平台包的完整类型不进这个 bundle（client 产物必须是单个自包含文件）
 // ---------------------------------------------------------------------------
 
-interface NotifyContext {
+// 只要求能按名字现读服务。入口把 ctx.inject 交回来的那层子 context 直接传进来，
+// 于是读到的 remote 与 sessions 一定是已经就绪的那两个
+export interface NotifyContext {
     readonly reflect: { get(name: string): unknown }
 }
 

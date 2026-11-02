@@ -71,6 +71,9 @@ const styles_1 = require("./styles");
  *
  * locale 服务刻意不在其中：卡片通过 ctx.reflect 读它，而没有 locale 插件时 reflect 返回 undefined、不抛错，
  * 所以没有它的部署照样能得到一张能用的卡片
+ *
+ * remote 与 sessions 也不在这里，理由不同：它们缺席时整块插件都不该消失，只有完成通知那一条用不了。
+ * 那一条自己用 ctx.inject(["remote", "sessions"], …) 等它们就绪，见下面 syncNotify 之前那段注释
  */
 exports.inject = ["slots", "configForms"];
 // 浏览器侧入口
@@ -190,7 +193,21 @@ function apply(ctx) {
     // 所以两档一起读；各自关掉时只有自己那一块卸下。unfocused 与 always 两档都由模块现读，
     // 档位一变不必重新安装——换档之后的下一条请求才用得上新值
     let notifyDispose = null;
-    let doneNotifyDispose = null;
+    // 完成通知要读 remote 与 sessions 两个服务。它们不在这半区的 inject 里（那两个是必须依赖，
+    // 缺了整块插件都不加载），所以由下面的 ctx.inject 等它们就绪；这里存的是那条等待的把手
+    let doneNotifyFiber = null;
+    const stopDoneNotify = () => {
+        void doneNotifyFiber?.dispose();
+        doneNotifyFiber = null;
+    };
+    const startDoneNotify = () => {
+        if (doneNotifyFiber !== null)
+            return;
+        doneNotifyFiber = services.inject(["remote", "sessions"], (scoped) => {
+            const installed = (0, done_notify_1.installDoneNotify)(scoped, () => settings.notifyDone);
+            return () => installed.dispose();
+        });
+    };
     const syncNotify = () => {
         if (settings.notifyAsk === "off") {
             notifyDispose?.();
@@ -199,13 +216,10 @@ function apply(ctx) {
         else if (notifyDispose === null) {
             notifyDispose = (0, ask_notify_1.installAskNotify)(() => settings.notifyAsk).dispose;
         }
-        if (settings.notifyDone === "off") {
-            doneNotifyDispose?.();
-            doneNotifyDispose = null;
-        }
-        else if (doneNotifyDispose === null) {
-            doneNotifyDispose = (0, done_notify_1.installDoneNotify)(services, () => settings.notifyDone).dispose;
-        }
+        if (settings.notifyDone === "off")
+            stopDoneNotify();
+        else
+            startDoneNotify();
     };
     let followDispose = null;
     const syncFollow = () => {
@@ -263,8 +277,7 @@ function apply(ctx) {
         return () => {
             notifyDispose?.();
             notifyDispose = null;
-            doneNotifyDispose?.();
-            doneNotifyDispose = null;
+            stopDoneNotify();
         };
     }, "dsh-chat-ux: notifications");
     // dsh 自己按客户端给「工作步骤展示」的默认值：桌面端「标准」、网页端「详细」。这个插件的过程组行为
@@ -1604,10 +1617,13 @@ function installDoneNotify(ctx, readMode) {
     // 这个环境没有通知能力（普通浏览器里被策略关掉），什么都不装
     if (typeof Notification === "undefined")
         return { dispose: () => undefined };
+    // 调用方用 ctx.inject 等这两个服务就绪，所以这里一定读得到。真读不到时留一条 warn：
+    // 这一块在 2026-11-02 静默失效过一次——装载那一刻服务还没提供，函数提前返回空句柄，
+    // 之后没有任何时机再试，页面上就是「什么都不发生」而控制台一个字都没有
     const remote = ctx.reflect.get("remote");
     const sessions = ctx.reflect.get("sessions");
-    // 两个服务都在才装。它们缺席时整块插件照常加载，只是没有这一条通知
     if (remote === undefined || remote === null || sessions === undefined || sessions === null) {
+        console.warn("dsh-chat-ux: done notify needs the remote and sessions services");
         return { dispose: () => undefined };
     }
     // 可选：这一轮结束时有没有面板正等着读者。拿不到就不做这条互斥
