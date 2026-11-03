@@ -24,12 +24,17 @@ import {glassColor} from "./paper-tables"
 import type {PaperMode} from "./paper-tables"
 
 /**
- * 气泡朝玻璃实色混多少。
+ * 气泡朝目标色混多少。两档各一个。
  *
- * 比 surfaceColor 在 nocturne 那边的 7% 高一截：那个混的是墨，混多了发脏；这里混的是「输入卡片的那块底」，
- * 混六成才真的像同一块玻璃。取 0.62 是让气泡仍带着纸的温度、又不至于被纸吃掉一档
+ * 暗档仍是 0.62：暗纸（#55554a）朝玻璃那一档（#75766c）混六成，混出来比纸亮 20 阶，
+ * 像纸面上浮起的一块材质。
+ *
+ * 亮档 2026-11-03 抬到 0.75，并跟着把目标色换成纯白（paper-tables 的 GLASS_SOLID_LIGHT）：
+ * 台灯关掉之后纸面整片均匀，原先靠灯下那一片挣来的「浮起」没有了，气泡与纸只差一两个色阶。
+ * 0.75 配纯白把差拉到 10 到 16 阶，仍是一层薄纸而不是一块白卡
  */
-const BUBBLE_MIX = 0.62
+const BUBBLE_MIX_LIGHT = 0.75
+const BUBBLE_MIX_DARK = 0.62
 
 // 宿主画气泡底的那条令牌
 const HOST_BUBBLE_PROPERTY = "--dsw-specific-bubble"
@@ -51,7 +56,7 @@ export const PAPER_BUBBLE_PROPERTY = "--dsh-chat-ux-paper-bubble"
  * 而改一条 custom property 会让整篇文档的样式重算，那是这个插件最贵的一次操作
  */
 export function applyPaperBubble(mode: PaperMode): void {
-    const color = glassColor(mode, BUBBLE_MIX)
+    const color = glassColor(mode, mode === "dark" ? BUBBLE_MIX_DARK : BUBBLE_MIX_LIGHT)
     // 自己那一笔先写，而且不依赖 body 在不在：发送替身那截 CSS 读的是它，那一层要的首帧就有值。
     // 写在根元素上：没有别人定义过它，继承就能到每个元素
     setOwned(document.documentElement, PAPER_BUBBLE_PROPERTY, color)

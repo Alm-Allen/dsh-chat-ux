@@ -82,8 +82,8 @@ const ZH_COPY: Copy = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
     paperHint:
-        "整页铺一张纸：页面底色与左侧栏都换成这张纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
-        + "输入光标也变成一支羽毛笔。关掉就一起收掉，回到 dsh 原来的样子。",
+        "聊天区铺一张纸：那一列的底色换成纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
+        + "输入光标也变成一支羽毛笔；左右两栏不受影响，仍是 dsh 自己的样子。关掉就一起收掉。",
     paperFontLabel: "纸面字体",
     paperFontHint:
         "正文与代码换成纸上的那套：正文是衬线，代码是打字机。关掉就回到你自己在 dsh 里配的字体，"
@@ -145,9 +145,9 @@ const EN_COPY: Copy = {
         "The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
     paperLabel: "Paper",
     paperHint:
-        "The whole page lies on a sheet of paper: the page background and the sidebar take that paper's tone, so the "
-        + "composer and the bubbles read as layers pressed into it, and the caret becomes a quill. Off takes all of it "
-        + "away and restores dsh's own look.",
+        "The chat column lies on a sheet of paper: its background takes that paper's tone, so the composer and the "
+        + "bubbles read as layers pressed into it, and the caret becomes a quill. The side columns keep dsh's own "
+        + "look. Off takes all of it away.",
     paperFontLabel: "Paper typeface",
     paperFontHint:
         "Body text and code take the paper's own faces — a serif for prose, a typewriter for code. Off keeps the font "

@@ -1,16 +1,14 @@
 /**
  * 纸的覆盖范围。
  *
- * 纸是挂在 body 下的一片全屏 canvas，但它不一定覆盖整个视口：读者自建的桌面把左侧栏做成了
- * 透明的窗口材质（`data-window-material` 与 darwin 平台都会让 dsh 把 frame 的背景交出去），
- * 纸往那一块盖上去，透出来的就不是桌面而是纸纹，那块玻璃当场失效。
+ * 纸是挂在 body 下的一片全屏 canvas，但它只铺聊天那一列：左侧栏与右侧栏保持 dsh 自己的样子，
+ * 底色、纹理、字体、文字色一件都不经纸感的手。所以这一份回答两件事：这一帧纸该占视口哪一块矩形，
+ * 以及主列之外那几列是哪几个元素（插件要在它们身上写回宿主原值，见 paper-tokens）。
  *
- * 所以这一份回答两件事：这一帧纸该占视口的哪一块矩形，以及侧栏那条竖带由谁来铺。
- * 让开不等于没有纸感——侧栏自己那层半透明纸纹由 sidebarPaintsOwnTexture() 决定，
- * 它只叠纹理、不给底色，于是玻璃还透得出来。
+ * 盖住整个视口的浮层是唯一的例外：设置面板这类 body-portal 的模态横跨三列，纸那时铺满整窗，
+ * 否则面板左缘那一截露在纸外、与右边被纸压过的那一截不是一个颜色。
  *
- * 判据全部来自 dsh 的语义属性——列宽在 grid 的 grid-template-columns 里，
- * 不认任何带构建期 hash 的 class
+ * 判据全部来自 dsh 的语义属性——列宽在 grid 的 grid-template-columns 里，不认任何带构建期 hash 的 class
  */
 import { PAPER_GLOW_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE } from "./paper-styles"
 
@@ -22,79 +20,21 @@ export interface PaperRect {
     height: number
 }
 
-// 桌面版把窗口材质交出去的那两个标记：darwin 平台与 Windows 11 的 acrylic
-const WINDOW_MATERIAL_ATTRIBUTE = "data-window-material"
-const PLATFORM_ATTRIBUTE = "data-platform"
-
 // AppFrame 给底部那一行放的标记；它的父元素就是那张 grid
 const SHELL_BOTTOM_SELECTOR = "[data-shell-bottom]"
 
+// dsh 在 AppFrame 那张 grid 上标的侧栏折叠态。它比列宽可靠：折叠后的列宽按平台是 0 或 56，
+// 而纸要铺过那条图标轨道（读者收起的正是侧栏，那一条已经不是侧栏的内容区了）
+export const SIDEBAR_COLLAPSED_ATTRIBUTE = "data-sidebar-collapsed"
+
 // 纸自己那两片也满足「body 下、fixed、盖住视口」，量浮层时得先跳过，否则量到的是纸自己的左缘
 const PAPER_LAYER_SELECTOR = `[${PAPER_SHEET_ATTRIBUTE}], [${PAPER_GLOW_ATTRIBUTE}]`
-
-// 这一页见过窗口材质没有。见过一次就一直是 true，详见下面那份函数的注释
-let windowMaterialSeen = false
-
-/**
- * 左侧栏是不是「透出窗口材质」的那种。
- *
- * 两个标记任一在场就说明 dsh 已经把 frame 的底色交了出去（frame 变透明、侧栏只留一层 tint），
- * 侧栏的观感来自它背后的窗口，不是页面自己画的。这种时候纸不能盖上去
- *
- * **判据是「见过一次就永远算数」，不是「此刻标记在不在」。** 这一条是被一个真实故障逼出来的：
- * Windows 的 acrylic 只在窗口有焦点时存在，失焦那一刻 dsh 就把 data-window-material 摘掉
- * （apps/desktop 的 syncMaterial 在 blur 时发 none、focus 时发 translucent）。若照当下的标记判，
- * 最小化一下窗口就会让判据翻成「没有材质」，于是纸盖住侧栏、侧栏填充色被写成不透明的纸色；
- * 回到前台标记虽然恢复了，可那笔不透明色已经写下去，读者看到的就是「最小化一下，侧栏变成
- * 一张纸、再也不玻璃了」。
- *
- * 粘性的依据是「一个页面的窗口材质能力在它的生命周期里不会变」：有材质的平台不会中途变成没有，
- * 失焦只是系统临时撤下材质、换了不透明底，页面里那层纸不该跟着改成不透明的。
- * 反过来，没有材质的平台（普通浏览器、Linux）从一开始标记就不在，粘性也不会让它凭空变真
- */
-export function sidebarRevealsWindowMaterial(): boolean {
-    if (windowMaterialSeen) return true
-    const root = document.documentElement
-    if (root.getAttribute(PLATFORM_ATTRIBUTE) === "darwin") return rememberWindowMaterial()
-    if (root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent") return rememberWindowMaterial()
-    // 两个标记也可能落在 body 上：一并认，认不到就当作没有材质
-    if (document.body?.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent") return rememberWindowMaterial()
-    return false
-}
-
-// 记下「这个页面确实有窗口材质」，之后即使标记被撤也照旧算数
-function rememberWindowMaterial(): boolean {
-    windowMaterialSeen = true
-    return true
-}
-
-/**
- * 此刻窗口材质在不在。与上面那份**故意不粘**，两件事分开：
- *
- * 上面那份回答「这个页面有没有玻璃」（生命周期内不变，所以粘性）；
- * 这一份回答「这一秒底下还有东西可透吗」（会变，所以现读）。
- *
- * 为什么要分开：Windows 的 acrylic 在失焦时被系统撤下，dsh 把 data-window-material 摘掉。
- * 那一刻侧栏底下就没有材质了，宿主的回退路径（.sidebarCol::before 那层实底浮上来）才该生效。
- * 粘性判据把这条路挡住了，于是失焦期间侧栏只剩一层 85% 的 tint 浮在没底的窗口上——
- * 底下透出来的是窗口自己的背景色，与别处对不上，读者看到的是一条与周围不同的暗带。
- *
- * 所以「纸要不要盖侧栏」继续用粘性那份（不让整页纸压过来），而侧栏那层纸纹要按这一份来：
- * 材质不在时把纸纹收起来，把底让给宿主的回退填充
- */
-export function windowMaterialPresent(): boolean {
-    const root = document.documentElement
-    if (root.getAttribute(PLATFORM_ATTRIBUTE) === "darwin") return true
-    if (root.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent") return true
-    // 两个标记也可能落在 body 上，与 sidebarRevealsWindowMaterial 认的是同一组
-    return document.body?.getAttribute(WINDOW_MATERIAL_ATTRIBUTE) === "translucent"
-}
 
 /**
  * AppFrame 那张 grid 元素。
  *
  * 三列的宽度写在它的 grid-template-columns 上：侧栏折叠、展开、拖宽都只改这一条。
- * 纸的左缘与宽度都从那里量，所以它是纸的几何唯一的输入。[data-shell-bottom] 是它的子元素，
+ * 纸的左右缘都从那里量，所以它是纸的几何唯一的输入。[data-shell-bottom] 是它的子元素，
  * 取父元素就是它
  */
 export function frameElement(): HTMLElement | null {
@@ -103,82 +43,84 @@ export function frameElement(): HTMLElement | null {
     return frame instanceof HTMLElement ? frame : null
 }
 
+// frame 的子元素里不占列的那几个：底部那一行横跨三列，浮层容器盖住整块，桌面窗口的座位只贴一角。
+// 它们不是列，不该被当成侧栏去还原令牌
+const NON_COLUMN_SELECTOR = "[data-shell-bottom], [data-shell-overlay], [data-shell-leading]"
+
 /**
- * 左侧栏的宽度。取不到给 0，调用方据此退回「整块视口」。
+ * 每一列的宽度，按次序。
  *
- * 列宽写在 AppFrame 那层 grid 的 grid-template-columns 上，形如 `280px minmax(...) minmax(...)`。
- * 只读第一项：sidebar | center | rightbar 的三列顺序由 dsh 定死，第一个数字就是左栏
+ * grid-template-columns 的计算值就是这一串像素，形如 `280px 976px 280px`。读不到给空表，
+ * 调用方据此让纸从视口最左边铺起
  */
-export function sidebarWidth(): number {
+function columnWidths(): number[] {
     const frame = frameElement()
-    if (frame === null) return 0
-    const columns = getComputedStyle(frame).gridTemplateColumns
-    const first = columns.trim().split(/\s+/)[0]
-    if (first === undefined) return 0
-    const width = Number.parseFloat(first)
-    return Number.isFinite(width) && width > 0 ? width : 0
+    if (frame === null) return []
+    return getComputedStyle(frame).gridTemplateColumns.trim().split(/\s+/)
+        .map((track) => Number.parseFloat(track))
+        .filter((width) => Number.isFinite(width))
 }
 
 /**
- * 左侧栏那一列的元素。定位不到、或者认出来不是侧栏，都给 null。
+ * 左侧栏此刻是不是收起的。
  *
- * [data-shell-bottom] 是 AppFrame 那张 grid 的子元素，取它的父元素就是 grid；grid 的第一个
- * 元素子元素就是侧栏那一列（DocumentTitle 什么都不渲染，列次序由 dsh 定死）。这跟 sidebarWidth()
- * 是同一条前提——那一份读的也是「第一列」。
- *
- * 交出之前对一次几何：侧栏是 grid 第一列，它的宽度就该等于第一项列宽。这条校验是给 dsh 升级
- * 准备的——哪天第一列不再装侧栏，宁可这层纸纹不画，也不要把纹理贴到别的列上。取不到列宽
- * 或者对不上，一律当作没有侧栏
+ * 收起之后 dsh 在 Windows 这类平台上留一条 56px 的图标轨道（darwin 与带 caption titlebar 的
+ * 桌面是 0）。纸要一直铺到视口最左边：读者收起的正是那一列，留着一条没有纸的竖带比铺上去更显眼。
+ * 判据用的是 dsh 自己那条属性，不按平台推——推出来的结果在两种收起宽度上会分叉
  */
-export function sidebarElement(): HTMLElement | null {
+export function sidebarCollapsed(): boolean {
     const frame = frameElement()
-    const first = frame === null ? null : frame.firstElementChild
-    if (!(first instanceof HTMLElement)) return null
-    // 容差 8px：列宽动画期间，列自身的矩形与 grid-template-columns 的插值会差一点。
-    // 两边都是 0（侧栏折叠成零宽）同样算通过：标记留在那儿，展开时纹理立刻就在，
-    // 不必等谁再来挂一次
-    return Math.abs(first.getBoundingClientRect().width - sidebarWidth()) < 8 ? first : null
+    if (frame === null) return false
+    // closest 连自己一起认：dsh 把这条属性写在 frame 那一层 div 上
+    return frame.closest(`[${SIDEBAR_COLLAPSED_ATTRIBUTE}]`) !== null
 }
 
 /**
- * 全屏那一层纸要不要盖住左侧栏：只看平台，没有读者开关。
+ * 主列之外那几列：左侧栏与右侧栏。
  *
- * 自建桌面的左侧栏是仿 macOS 的透明窗口材质，观感来自它背后的窗口而不是页面自己画的，
- * 纸盖上去那块玻璃当场失效。所以这种平台上纸让开侧栏，其余平台一律盖满。
- * 判据本身在 sidebarRevealsWindowMaterial()，它认的是 dsh 的语义属性
+ * 主列是第二列（左 | 主 | 右 的次序由 dsh 定死）。插件在这几列身上写回宿主自己的令牌，
+ * 于是它们内部读到的就是「没有这个插件时」的那一套。
  *
- * 让开之后侧栏并不是没有纸感：纸纹改为由侧栏自己那一层半透明纹理提供，见 sidebarPaintsOwnTexture()
- *
- * **这个返回值还是 `--dsw-specific-sidebar-fill` 那一笔的开关**（paper-tokens 的
- * applyPaperTokens 第三个参数）。它必须在材质平台上恒为假：那一笔写进去的是不透明的纸色，
- * 落在侧栏上会把 dsh 那层 85% 的 tint（只剩 15% 透光）整个盖死，窗口材质当场消失。
- * 现在走不到是因为这里的平台判据；哪天有人把判据放宽，侧栏的玻璃会跟着一起没 */
-export function paperIncludesSidebar(): boolean {
-    return !sidebarRevealsWindowMaterial()
-}
-
-/**
- * 侧栏要不要由插件自己叠一层纸纹。
- *
- * 只在「全屏那一层纸让开了侧栏」时画。让开的原因正是窗口材质，所以这一条读作
- * 「玻璃要透出来，纸纹改用一层不挡光的纹理补上」——纸感在这一列上仍然成立，只是换了个画法；
- * 纸感总开关关掉时它跟整块纸一起收。
- *
- * 全屏纸盖住侧栏时（没有窗口材质的平台）这一条为假——那边纸面 canvas 已经用 multiply 压过整列，
- * 再叠一层细纹只会把侧栏从它右边那半张纸里挑出来
+ * **判据是几何，不是子元素次序。** frame 的子元素不止三列：底部那一行、浮层容器、拖拽把手都在里面，
+ * 按序号取会认错——认错的方向有两个，都很糟：主列被当成侧栏（聊天区丢掉纸的字与墨），
+ * 或者底部行被当成侧栏（输入框那些纸感的底回到宿主）。所以只认「左缘落在某一列的起点上、
+ * 宽度也等于那一列」的元素，主列那一项跳过。列宽正在过渡时会对不上，那时交空表就行——
+ * 已经写下去的还原值留在元素上，不会因为一次没认到就被抹掉
  */
-export function sidebarPaintsOwnTexture(): boolean {
-    return !paperIncludesSidebar()
+export function sideColumns(): HTMLElement[] {
+    const frame = frameElement()
+    if (frame === null) return []
+    const widths = columnWidths()
+    if (widths.length < 2) return []
+    // 每一列的起点，相对 frame 的左缘。grid 的列从内容盒排起，frame 自己不带内边距，8px 容差兜住边框
+    const starts: number[] = []
+    let offset = 0
+    for (const width of widths) {
+        starts.push(offset)
+        offset += width
+    }
+    const frameLeft = frame.getBoundingClientRect().left
+    const columns: HTMLElement[] = []
+    for (const child of frame.children) {
+        if (!(child instanceof HTMLElement)) continue
+        if (child.matches(NON_COLUMN_SELECTOR)) continue
+        const box = child.getBoundingClientRect()
+        const slot = starts.findIndex((start, index) => index !== 1
+            && Math.abs(box.left - (frameLeft + start)) < 8
+            && Math.abs(box.width - (widths[index] ?? 0)) < 8)
+        if (slot >= 0) columns.push(child)
+    }
+    return columns
 }
 
 /**
  * 这一帧有没有盖住整个视口的浮层——设置面板这类 body-portal 的模态。
  *
  * 有它时纸铺满整窗。理由：这种浮层是「整屏遮罩加一块居中的面板」，窗口不够宽时面板左缘会
- * 伸进侧栏；纸平时让开侧栏，那一条上就露着面板自己的不透明底，与它右边被纸压过的那一截
- * 不是一个颜色。铺满之后整块面板都在纸下，侧栏的玻璃让位到浮层关闭为止。
+ * 伸进侧栏；纸平时让开左右两栏，那一条上就露着面板自己的不透明底，与它右边被纸压过的那一截
+ * 不是一个颜色。铺满之后整块面板都在纸下，两栏让位到浮层关闭为止。
  *
- * 怎么认：body 的直接子元素里，位置是 fixed、且盖住视口九成以上的；纸自己那三片也满足
+ * 怎么认：body 的直接子元素里，位置是 fixed、且盖住视口九成以上的；纸自己那两片也满足
  * 这几条，先跳过；#root 是页面本身，不算浮层
  */
 export function overlayCoversViewport(): boolean {
@@ -199,13 +141,20 @@ export function overlayCoversViewport(): boolean {
 /**
  * 这一帧纸该占的矩形。
  *
- * coversSidebar 为 false 时把左栏那条竖带让出去，为 true 时铺满整个视口。
+ * overlayCovers 为假时把左栏与右栏那两条竖带让出去，为真时铺满整个视口。
  * 这个函数只在尺寸真的变了的时候才算一次（见 paper-mount 的脏标记）
  */
-export function measurePaperRect(coversSidebar: boolean): PaperRect {
+export function measurePaperRect(overlayCovers: boolean): PaperRect {
     const viewportWidth = Math.max(1, Math.round(window.innerWidth))
     const viewportHeight = Math.max(1, Math.round(window.innerHeight))
-    if (coversSidebar) return {left: 0, top: 0, width: viewportWidth, height: viewportHeight}
-    const inset = Math.min(viewportWidth - 1, Math.max(0, Math.round(sidebarWidth())))
-    return {left: inset, top: 0, width: Math.max(1, viewportWidth - inset), height: viewportHeight}
+    if (overlayCovers) return {left: 0, top: 0, width: viewportWidth, height: viewportHeight}
+    const widths = columnWidths()
+    // 侧栏收起时那条轨道归纸：纸一下铺到最左边，侧栏在它底下收回（展开时反过来，纸跟着列宽滑开）
+    const left = sidebarCollapsed()
+        ? 0
+        : Math.min(viewportWidth - 1, Math.max(0, Math.round(widths[0] ?? 0)))
+    // 右侧栏只在三列时存在。两列时最后那一项就是主列，不能扣
+    const right = widths.length >= 3 ? Math.max(0, Math.round(widths[widths.length - 1] ?? 0)) : 0
+    const width = Math.max(1, viewportWidth - left - Math.min(right, viewportWidth - left - 1))
+    return {left, top: 0, width, height: viewportHeight}
 }

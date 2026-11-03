@@ -101,7 +101,7 @@ uniform sampler2D uAlbedo; uniform sampler2D uNormal;
 uniform vec2 uSize; uniform float uScale; uniform int uSource;
 uniform vec3 uLightPos; uniform vec3 uLightDir; uniform vec2 uCone; uniform float uExposure;
 uniform vec4 uWindow; uniform vec4 uPanes; uniform vec3 uTint; uniform float uLamp;
-uniform float uAmbient; uniform vec3 uAmbientTint; uniform float uRelief; uniform float uCrinkle;
+uniform float uAmbient; uniform float uAmbientLevel; uniform vec3 uAmbientTint; uniform float uRelief; uniform float uCrinkle;
 uniform float uGrain; uniform float uTime; uniform float uSoft; uniform float uPaperLuma;
 out vec4 outColor;
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -124,9 +124,9 @@ const float BULB = 30.0;
  * 抖动的幅度（乘在 g 上，g 落在 -0.5 到 0.5）。
  *
  * 这一层是 multiply 压在页面上：最终像素 = 纸色 × 这里算出来的值。所以纸越暗，纸上相邻两级
- * 8 位灰度之间那道坎就越宽——暗纸 #46463d 的 R 是 70 级，一个最终色阶要吃 3.7 个 canvas 级；
- * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有四分之一宽，
- * 光斑边缘那些同心圆弧就露成几块平台。
+ * 8 位灰度之间那道坎就越宽——暗纸 #55554a 的 R 是 85 级，一个最终色阶要吃 3.0 个 canvas 级；
+ * 亮纸 #f2f1ea 的 R 是 242 级，一个最终色阶只吃 1.05 个。同一个固定幅度落在暗纸上只有三分之一宽，
+ * 纸纹那点缓坡就露成几块平台（暗档原来还有一圈灯光斑的圆弧，2026-11-03 那盏灯关掉之后只剩纸纹）。
  *
  * STEP 是「一个最终色阶」换算回 canvas 级：1.0 / uPaperLuma 恰好是半个色阶，也就是 ±0.5 那条线。
  * 下面取它和 FLOOR 的较大者——FLOOR 就是原来那个常数，它是照着亮纸那一档挑的，在亮纸上正好够用，
@@ -160,7 +160,10 @@ void main() {
   // 这一项是灯亮着时压给环境光的那一点暗角。nocturne 的 0.3 配的是一盏罩住半个屏幕的灯，
   // 换成圆形光斑之后那三成正好落在唯一还亮着的地方，于是边角整片发闷。一路降到 0.04，
   // 2026-11-02 再收到 0.006：亮档要的是一张亮纸，四角那点压暗只留个语气，不该读出一圈边
-  float ambient = mix(1.0, uAmbient * (1.0 - 0.006 * vignette), uLamp);
+  //
+  // uLamp 现在是 0，这一支取到 uAmbientLevel——关灯之后它就是整片纸的明度。uAmbient 那条
+  // （灯亮着时压给环境光的暗角）没有读者了，paper-light 不再给它赋值；灯回来时两样一起接回
+  float ambient = mix(uAmbientLevel, uAmbient * (1.0 - 0.006 * vignette), uLamp);
   vec3 irr = uAmbientTint * ambient + (1.0 - ambient) * lit * uTint;
   float relief = uRelief * (1.0 - 0.4 * lit);
   float bound = (0.16 * uCrinkle + 0.04) * relief;

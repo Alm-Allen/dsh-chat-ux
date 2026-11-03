@@ -5,11 +5,11 @@
  * 双通道 FBO 与着色器原文都照 nocturne 的 core/paper-light.js 搬，只做类型化。两个 pass 拆开的原因
  * 是纸纹太贵：SURFACE 只在尺寸、明暗档或纸纹强度变了时重跑，LIGHT 却每次灯动都要跑
  *
- * 这一层画出来的东西接近白：albedo 在亮纸上就是 1.0，灯把它乘成 0.8 到 1.0 之间的一片。
- * 所以纸色本身不归这里——底色由 paper-tokens 写 token 提供，这一层只负责"灯照在纸上"这个明暗与纹理
+ * 这一层画出来的东西接近白：albedo 在亮纸上就是 1.0，灯关着时整片是环境光那一档（约 0.97），
+ * 灯打开时它会灯下乘成 0.8 到 1.0 之间的一片。所以纸色本身不归这里——底色由 paper-tokens 写 token
+ * 提供，这一层只负责"光照在纸上"这个明暗与纹理
  */
 import type {LightRig} from "./paper-light-model"
-import {ambientLevel} from "./paper-light-model"
 import {clamp, toUnit} from "./paper-math"
 import {LIGHT, SURFACE, VERTEX} from "./paper-shaders"
 import type {PaperDefinition, PaperSettings, RoomDefinition} from "./paper-tables"
@@ -72,7 +72,7 @@ interface LightUniforms {
     uPanes: WebGLUniformLocation | null
     uTint: WebGLUniformLocation | null
     uLamp: WebGLUniformLocation | null
-    uAmbient: WebGLUniformLocation | null
+    uAmbientLevel: WebGLUniformLocation | null
     uAmbientTint: WebGLUniformLocation | null
     uRelief: WebGLUniformLocation | null
     uCrinkle: WebGLUniformLocation | null
@@ -172,13 +172,14 @@ export class PaperLight {
         const peak = Math.max(lightColor[0], lightColor[1], lightColor[2], 1e-6)
         const roomColor = toUnit(frame.room.palette.room)
         // 房间色往纸面推多少。nocturne 用 0.4：那时环境光只占三成，房间色把整片纸染凉是它想要的观感。
-        // 现在环境光占九成多，同样的强度会把一整张纸统统压灰，所以收到 0.12——房间里那点暖只留在灯下面
+        // 现在环境光占九成多，同样的强度会把一整张纸统统压灰，所以收到 0.12——亮档下那点暖只留在灯下面。
+        // 暗档的灯关着，整片纸只剩这一层环境色调，它给的正好是那张纸的暖色相
         const strength = frame.rig.source === "moonlight" ? .3 : .12
         const tintChannel = (channel: number): number => 1 + ((.6 + channel * 1.5) - 1) * strength
         const lampOn = frame.settings.lamp && frame.settings.enabled
         // 纸的相对亮度：着色器拿它当抖动的除数。这一层是 multiply 压在页面上（最终像素 = 纸色 × 这里的值），
-        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 70 个灰阶、一个台阶 3.7 级，
-        // 亮纸 242 个、只吃 1.1 级，同一个抖动幅度在暗纸上只盖得住台阶的四分之一
+        // 所以纸越暗，纸上一个最终色阶就吃掉越多 canvas 级——暗纸 85 个灰阶、一个台阶 3.0 级，
+        // 亮纸 242 个、只吃 1.05 级，同一个抖动幅度在暗纸上只盖得住台阶的三分之一
         const paperColor = toUnit(frame.paper.paper)
         // 兜住零：除数取到 0 会把抖动放大成无穷大，整张纸变成一片噪点
         const paperLuma = Math.max(.05, .2126 * paperColor[0] + .7152 * paperColor[1] + .0722 * paperColor[2])
@@ -202,8 +203,11 @@ export class PaperLight {
         gl.uniform4f(uniforms.uPanes, frame.rig.window.columns, frame.rig.window.rows, frame.rig.window.softness, frame.rig.window.skew)
         // 归一化到峰值：真正的亮度由 exposure 与 lamp 决定，颜色只负责色相
         gl.uniform3f(uniforms.uTint, lightColor[0] / peak, lightColor[1] / peak, lightColor[2] / peak)
+        // 灯关着的这段时间里 uLamp 恒为 0，着色器里 ambient 取的是 uAmbientLevel（关灯后整片纸的明度），
+        // 带暗角的那一支（uAmbient）不被求值，所以 uAmbient 不再赋值。哪天把灯打开，记得把环境光
+        // 那一条接回来，否则灯外会是一片没有底的暗
         gl.uniform1f(uniforms.uLamp, lampOn ? 1 : 0)
-        gl.uniform1f(uniforms.uAmbient, ambientLevel(frame.paper.mode))
+        gl.uniform1f(uniforms.uAmbientLevel, frame.settings.ambientLevel)
         gl.uniform3f(uniforms.uAmbientTint, tintChannel(roomColor[0]), tintChannel(roomColor[1]), tintChannel(roomColor[2]))
         gl.uniform1f(uniforms.uRelief, 2 * frame.settings.paperIllumination)
         gl.uniform1f(uniforms.uSoft, frame.settings.beam === "soft" ? 1 : 0)
@@ -281,7 +285,7 @@ export class PaperLight {
             ]) as unknown as SurfaceUniforms
             this.lightUniforms = this.locate(this.lightProgram, [
                 "uAlbedo", "uNormal", "uSize", "uScale", "uSource", "uLightPos", "uLightDir", "uCone", "uExposure",
-                "uWindow", "uPanes", "uTint", "uLamp", "uAmbient", "uAmbientTint", "uRelief", "uCrinkle", "uGrain",
+                "uWindow", "uPanes", "uTint", "uLamp", "uAmbientLevel", "uAmbientTint", "uRelief", "uCrinkle", "uGrain",
                 "uTime", "uSoft", "uPaperLuma",
             ]) as unknown as LightUniforms
             this.state = "ready"

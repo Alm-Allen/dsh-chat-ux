@@ -16,9 +16,11 @@ export const SETTINGS_NAMESPACE = "dsh-chat-ux"
 
 // 下面每个默认值在前端 client/settings/settings-scope.ts 里都有一份，改一处就要改另一处
 
-// 纸感总开关：整页铺一张纸，页面底色与左侧栏也跟着换成这张纸的调子。默认开着。
-// 开着时纸感这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩
-export const DEFAULT_PAPER_ON = true
+// 纸感总开关：整页铺一张纸，页面底色与左侧栏也跟着换成这张纸的调子。默认关着。
+// 开着时纸感这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩。
+// 2026-11-03 从开改成关：整页材质的改动太大，不该是装完插件就落下来的默认状态。
+// 老读者的配置里已经写着 paperOn: true，改默认值盖不到它，那一次强关由浏览器侧做（见 PAPER_OFF_MIGRATION_TAG）
+export const DEFAULT_PAPER_ON = false
 
 // 纸感要不要接管字族（正文与代码那两栈）。默认开着；关掉时纸照铺，字回到 dsh 自己的或读者自己配的那套
 export const DEFAULT_PAPER_FONT = true
@@ -74,6 +76,8 @@ export interface Config {
     paperOn: Volatile<boolean>
     // 纸感是否接管字族。它挂在纸感底下：纸感关掉时这一项不起作用
     paperFont: Volatile<boolean>
+    // 纸感被强制关掉那一次留下的标记，由浏览器侧写一次。它不是设置项，只用来让那次强关只发生一次
+    paperOffMigratedAt: string
     // 思考行与过程组是否自己开合。关掉时两块都整块不装
     autoFold: Volatile<boolean>
     // 插入符动效的档位
@@ -100,6 +104,9 @@ export interface Config {
 export const Config = Schema.object({
     paperOn: Schema.boolean().default(DEFAULT_PAPER_ON).volatile(),
     paperFont: Schema.boolean().default(DEFAULT_PAPER_FONT).volatile(),
+    // 必须带 volatile：settings 服务只允许写 volatile 字段（非 volatile 的写入直接被拒）。
+    // 它不会出现在设置卡片上——那张卡片由浏览器侧自己渲染，只画写死的那几行
+    paperOffMigratedAt: Schema.string().default("").volatile(),
     autoFold: Schema.boolean().default(DEFAULT_AUTO_FOLD).volatile(),
     caretMotion: Schema.union(["off", "move", "typing"] as const).default(DEFAULT_CARET_MOTION).volatile(),
     hitReel: Schema.boolean().default(DEFAULT_HIT_REEL).volatile(),

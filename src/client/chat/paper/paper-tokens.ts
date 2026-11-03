@@ -5,8 +5,9 @@
  * 在改的同一条通道。但纸盖上去之后，正文与底色的令牌必须跟着纸走，否则深色模式配亮纸会把正文
  * 压成一片看不见的白（正文那一条在暗纸上是 12.8，在亮纸上是 1.08）。所以这里分两步：
  *   1. 我们自己的一整套 `--dsh-chat-ux-paper-*`，写在根元素上，样式表、光标、辉光都读它；
- *   2. 宿主的几条令牌（整页底色、侧栏填充色、文字、代码底色、几条照着宿主底色挑的灰底与淡字、
- *      正文与代码字族），只写纸算出来的那一项值。
+ *   2. 宿主的几条令牌（整页底色、文字、代码底色、几条照着宿主底色挑的灰底与淡字、
+ *      正文与代码字族），只写纸算出来的那一项值。左右两栏不在这份纸里：那两列拿到的是宿主原值，
+ *      见 applySidebarHostTokens。
  * 第二条是「纸盖上去之后读得出来」这件事无法绕开的最小代价；每一笔都记着原值与优先级，
  * 卸载与关掉时逐项还原，别人后写过的就不抢回来
  *
@@ -29,10 +30,9 @@ export const PAPER_ROOT_ATTRIBUTE = "data-dsh-chat-ux-paper"
 // 暗档的标记。与上面那条同时在场时才表示「此刻用的是暗版葱皮」
 export const PAPER_DARK_ATTRIBUTE = "data-dsh-chat-ux-paper-dark"
 
-// 会被改写的宿主令牌：整页底色、侧栏填充色、三档文字、代码块与内联代码的底、几条在纸上一压就
+// 会被改写的宿主令牌：整页底色、三档文字、代码块与内联代码的底、几条在纸上一压就
 // 只剩一两个 L* 的灰底与淡字，以及两条字族（字族可以单独关掉，见 applyPaperTokens 的 includeFont）
 const HOST_BASE_PROPERTY = "--dsw-alias-bg-base"
-const HOST_SIDEBAR_PROPERTY = "--dsw-specific-sidebar-fill"
 const HOST_LABEL_PRIMARY_PROPERTY = "--dsw-alias-label-primary"
 const HOST_LABEL_SECONDARY_PROPERTY = "--dsw-alias-label-secondary"
 const HOST_LABEL_TERTIARY_PROPERTY = "--dsw-alias-label-tertiary"
@@ -55,6 +55,29 @@ const HOST_BG_DOCUMENT_PREVIEW_PROPERTY = "--dsw-alias-bg-document-preview"
 // 插件直接在 body 内联这两条：内联声明赢过样式表规则，两代 dsh 都吃得到，也不必与谁抢上游
 const HOST_TEXT_FONT_PROPERTY = "--dsw-font-family"
 const HOST_CODE_FONT_PROPERTY = "--ds-font-family-code"
+
+/**
+ * 我们会改写的那一组宿主令牌：既是逐条落纸色的清单，也是要抄给左右两栏的原值清单。
+ *
+ * 两处共用一份：少写一条，那一件就会从侧栏漏进纸感（读者看到的是一列字色或字族被悄悄换掉）
+ */
+const HOST_TOKEN_NAMES: readonly string[] = [
+    HOST_BASE_PROPERTY,
+    HOST_LABEL_PRIMARY_PROPERTY,
+    HOST_LABEL_SECONDARY_PROPERTY,
+    HOST_LABEL_TERTIARY_PROPERTY,
+    HOST_LABEL_CAPTION_PROPERTY,
+    HOST_CODE_BLOCK_PROPERTY,
+    HOST_INLINE_CODE_PROPERTY,
+    HOST_LABEL_DIMMED_PROPERTY,
+    HOST_STATE_IDLE_PRIMARY_PROPERTY,
+    HOST_INTERACTIVE_BG_HOVER_SOLID_PROPERTY,
+    HOST_BG_OVERLAY_PROPERTY,
+    HOST_BG_LAYER_1_PROPERTY,
+    HOST_BG_DOCUMENT_PREVIEW_PROPERTY,
+    HOST_TEXT_FONT_PROPERTY,
+    HOST_CODE_FONT_PROPERTY,
+]
 
 /**
  * 墨色按比例压进纸色里的一档。
@@ -128,9 +151,15 @@ const ownedList: OwnedProperty[] = []
  * 导出是因为「写在宿主身上、又能逐项还原」这件事不止纸色一处要：用户气泡的底色
  * （paper-bubble.ts）走的是同一条机制。两边共用同一本账，于是 clearPaperTokens() 一次就把
  * 它们全还回去，不必记得谁先谁后
+ *
+ * **值没变就一根手指都不动。** 写一条 custom property 会让整篇文档的样式失效一遍，是这里最贵
+ * 的一次操作；而拉宽侧栏、折叠、切主题都会连着来好几轮同一批值。早先这段无条件 setProperty，
+ * 靠的是「浏览器自己去重」，实测代价仍在。别人后来抢写过的也不抢回来——那与 releaseOwned
+ * 是同一条规矩：不抹掉别家写下的东西
  */
 export function setOwned(element: HTMLElement, name: string, value: string, priority = ""): void {
     const existing = ownedList.find((owned) => owned.element === element && owned.name === name)
+    if (existing !== undefined && existing.valueWritten === value && existing.priorityWritten === priority) return
     if (existing === undefined) {
         ownedList.push({
             element,
@@ -177,12 +206,7 @@ export function restorePaperTokens(): void {
  * 把一套纸色写进页面。重复调用是幂等的，只有值变了的属性才会真的落到 DOM 上——
  * 改一条 custom property 会让整篇文档的样式失效，那是这个插件最贵的一次操作
  */
-export function applyPaperTokens(
-    set: PaperTokenSet,
-    mode: PaperMode,
-    includeSidebar: boolean,
-    includeFont: boolean,
-): void {
+export function applyPaperTokens(set: PaperTokenSet, mode: PaperMode, includeFont: boolean): void {
     const root = document.documentElement
     const body = document.body
     // 先在 root 上挂一条范围标记，样式表靠它决定纸层与光标那几张表要不要生效
@@ -229,7 +253,7 @@ export function applyPaperTokens(
     // 文档预览的底。深色现值比暗纸还深，读成纸上挖下去的一个洞
     setOwned(body, HOST_BG_DOCUMENT_PREVIEW_PROPERTY, paperInkMix(3))
     // 字族跟着纸感走，但在卡片上是一个可以单独关掉的子开关：读者自己配过字体时，
-    // 纸只换底与墨，字留给他自己那套。关掉时把写过的还回去，与侧栏填充色同一套还法
+    // 纸只换底与墨，字留给他自己那套。关掉时把写过的还回去，与左右两栏抄过去的那几笔同一套还法
     if (includeFont) {
         setOwned(body, HOST_TEXT_FONT_PROPERTY, PAPER_TEXT_FONT_STACK)
         setOwned(body, HOST_CODE_FONT_PROPERTY, PAPER_CODE_FONT_STACK)
@@ -237,11 +261,51 @@ export function applyPaperTokens(
         releaseOwned(body, HOST_TEXT_FONT_PROPERTY)
         releaseOwned(body, HOST_CODE_FONT_PROPERTY)
     }
-    // 侧栏填充色只在纸真的盖住侧栏时才改。纸让开侧栏时，那一列还归宿主自己画——
-    // 改了这一条，没有窗口材质的平台上侧栏会变成一片没有纹理的纸色，与它右边那块接不上。
-    // 从「盖」切到「让开」时要把写过的还回去，否则上次那一笔会一直留着
-    if (includeSidebar) setOwned(body, HOST_SIDEBAR_PROPERTY, set.paper)
-    else releaseOwned(body, HOST_SIDEBAR_PROPERTY)
+}
+
+/**
+ * 宿主那组令牌的原值。没取过是 null，字符串为空表示宿主自己没有定义那一条。
+ *
+ * 左右两栏要回到「没有这个插件」的样子：插件把纸色与从纸算出来的墨、底、字族写在 body 上，
+ * 那两列是 body 的子元素，读到的就是被我们盖住的那一版。所以这里另存一份宿主原值，
+ * 由 applySidebarHostTokens 抄到那两列身上——列内部所有消费点于是读回宿主自己的值。
+ *
+ * **取快照之前先把我们写过的还回去**，否则量到的是自己上一轮写的值。还回去与读取在同一个同步块里，
+ * 浏览器不会在中间画出一帧，读者看不到那一下
+ */
+let hostSnapshot: ReadonlyMap<string, string> | null = null
+
+/**
+ * 量一份宿主令牌的原值。每次明暗档变了都要重量：宿主那组值按主题分两套。
+ *
+ * 代价是一次强制样式计算，只在首次安装与切主题时发生
+ */
+export function captureHostTokens(): void {
+    const body = document.body
+    if (body === null) return
+    for (const name of HOST_TOKEN_NAMES) releaseOwned(body, name)
+    const computed = getComputedStyle(body)
+    hostSnapshot = new Map(HOST_TOKEN_NAMES.map((name) => [name, computed.getPropertyValue(name).trim()]))
+}
+
+/**
+ * 把宿主原值抄到主列之外那两列身上。
+ *
+ * 写的是内联声明：内联赢过样式表，而 body 那一份已经换成了纸的调子，列内元素读继承值拿到的是我们写的纸。
+ * 抄过之后这两列里一个字、一个底、一条悬停色都不再经纸感的手。重复调用是幂等的——setOwned
+ * 只在值变了时才真的写 DOM，而写一条 custom property 会让整篇文档的样式失效一遍
+ *
+ * 宿主自己没有定义的那几条（旧版 dsh 的 `--dsw-font-family` 之类）不写：没有原值可还，
+ * 那一条在这两列上只能跟着 body 走
+ */
+export function applySidebarHostTokens(columns: readonly HTMLElement[]): void {
+    if (hostSnapshot === null) return
+    for (const column of columns) {
+        for (const [name, value] of hostSnapshot) {
+            if (value === "") releaseOwned(column, name)
+            else setOwned(column, name, value)
+        }
+    }
 }
 
 /**

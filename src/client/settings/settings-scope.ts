@@ -11,8 +11,8 @@ import type {DoneNotifyMode} from "../chat/notify/done-notify"
 
 // 下面每个默认值在 host 侧 src/index.ts 里都有一份，改一处就要改另一处
 
-// 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子
-export const DEFAULT_PAPER_ON = true
+// 纸感总开关：整页铺一张纸，页面底色也换成这张纸的调子。2026-11-03 起默认关着
+export const DEFAULT_PAPER_ON = false
 
 // 纸感要不要接管字族。它在卡片上是纸感底下的子开关，关掉时纸照铺，字回到读者自己那套
 export const DEFAULT_PAPER_FONT = true
@@ -54,6 +54,8 @@ export interface ChatUxSection {
     paperOn?: boolean
     // 纸感是否接管字族。它是纸感底下的子开关，纸感关掉时不起作用
     paperFont?: boolean
+    // 纸感被强制关掉那一次留下的标记。卡片上不显示，只由客户端在强关时写一次
+    paperOffMigratedAt?: string
     // 思考行与过程组是否自己开合，关掉时两块都整块不装
     autoFold?: boolean
     // 插入符动效的档位
@@ -98,6 +100,13 @@ export interface ConfigFormSnapshot<T> {
     mode: "host" | "memory"
 }
 
+// 一次字段改动。path 是字段名路径，本插件只用单段
+export interface ConfigFieldOp {
+    op: "set" | "unset"
+    path: readonly string[]
+    value?: unknown
+}
+
 // 一份共享表单：读它、观察它、写它
 export interface ConfigForm<T = ChatUxSection> {
     getSnapshot(): ConfigFormSnapshot<T>
@@ -108,6 +117,9 @@ export interface ConfigForm<T = ChatUxSection> {
     set(field: string, value: unknown): Promise<boolean>
 
     unset(field: string): Promise<boolean>
+
+    // 一次提交多个字段：要么全落，要么一个都不落。强关纸感要「把纸写成关」与「把标记写上去」同时成立
+    mutate(ops: readonly ConfigFieldOp[], expectedRevision?: number): Promise<boolean>
 }
 
 // locale 服务通过 ctx.reflect 读，而不是声明成依赖：没有它的部署里卡片退化成按浏览器语言显示，而不是不挂载

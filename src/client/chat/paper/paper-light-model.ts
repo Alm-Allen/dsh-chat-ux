@@ -8,8 +8,7 @@
  * （nocturne 文档 3.2 记了灯座那一处改动：上游挂在小车上，这里钉在纸心，只随光标偏移 ±30%）
  */
 import {clamp, dot3, norm, smoothstep, spreadToCosine} from "./paper-math"
-import {PAPER_DARK_RENDER} from "./paper-tables"
-import type {PaperMode, PaperSettings, RoomDefinition} from "./paper-tables"
+import type {PaperSettings, RoomDefinition} from "./paper-tables"
 
 // 纸在视口里的尺寸，单位是 CSS 像素
 export interface SheetSize {
@@ -224,32 +223,4 @@ export function buildRig(sheet: SheetSize, caretSheetX: number, room: RoomDefini
     return {...rig, exposure: facing > 0 ? settings.intensity / facing : 0}
 }
 
-/**
- * 环境光的水平，0 到 1。
- *
- * 它是一道下限，不是一项加光：灯照不到的地方靠它兜住，正文才不会糊进纸里。nocturne 把上游的
- * 0.55 抬到 0.64——理由写在它文档 3.3：那只够等宽的终端字，衬线散文笔画细、字面小，
- * 同样的下限让正文发灰（实测 p3 亮度 70，上游同区域 45）。抬到 0.64 之后 p3 落到 52
- *
- * 这个数是量出来的，不是随手调的：改它之前先重跑一遍那张对齐表
- */
-export function ambientLevel(mode: PaperMode): number {
-    // 静止的台灯只在自己脚下那一圈亮，剩下整片纸全靠这道下限兜住。nocturne 的 0.64 是按一盏
-    // 罩住半个屏幕的锥形灯调的；换成圆形光斑之后，灯外那八成面积会整片发灰，下限因此一路抬上来。
-    //
-    // 这几个数是照着合成结果反推的，不是照抄。分成两件事看：
-    //
-    // 一是下限本身。亮纸 0.96——整片纸只比纸原色暗几个色阶，灯外几乎就是纸的本色。它在中途调过三轮
-    // （0.82 → 0.94 → 0.86 → 0.96），改它之前先重跑一遍那张对齐表。
-    //
-    // 0.96 是 2026-11-02 按读者的要求抬上来的：亮档要「整体更明亮」，光照对比可以让掉。0.86 那一档
-    // 一头是灯心 235、另一头是四角 182，一屏里差 53 个色阶，读起来是一块被灯照着的纸；0.96 之后
-    // 均值 232、最暗 219，落差 17 阶——灯还在，只是退成纸面上的一点暖。
-    //
-    // 二是这件事与强度脱钩。原来那道式子里环境光跟着 intensity 走，强度一抬整片纸一起变亮，
-    // 灯的那份好处反而被摊平了。现在写成常数：环境光是环境光，灯是灯，两者各管各的
-    // 亮档 0.96 是按米白纸调出来的；暗档取 PAPER_DARK_RENDER.ambientFloor——环境光越足，
-    // 纸纹被摊平得越彻底，而暗纸上那点起伏本来就所剩无几，留一点暗部才看得见。
-    // 那一项读者调过一轮（0.84 → 0.66 → 0.72），现值以 paper-tables 里的字面量为准
-    return mode === "light" ? .96 : PAPER_DARK_RENDER.ambientFloor
-}
+

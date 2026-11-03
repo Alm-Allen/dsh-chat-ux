@@ -14,17 +14,16 @@
 import {GlowLayer, poolColor, poolStrength} from "./paper-glow"
 import type {GlowFrame} from "./paper-glow"
 import {
-    frameElement, measurePaperRect, overlayCoversViewport, paperIncludesSidebar, sidebarElement,
-    sidebarPaintsOwnTexture, windowMaterialPresent,
+    SIDEBAR_COLLAPSED_ATTRIBUTE, frameElement, measurePaperRect, overlayCoversViewport, sideColumns,
 } from "./paper-layout"
 import type {PaperRect} from "./paper-layout"
 import {PaperLight} from "./paper-light"
 import {buildRig} from "./paper-light-model"
-import {
-    PAPER_CSS, PAPER_GLOW_ATTRIBUTE, PAPER_HIDDEN_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE, PAPER_SIDEBAR_ATTRIBUTE,
-} from "./paper-styles"
+import {PAPER_CSS, PAPER_GLOW_ATTRIBUTE, PAPER_HIDDEN_ATTRIBUTE, PAPER_SHEET_ATTRIBUTE} from "./paper-styles"
 import {applyPaperBubble} from "./paper-bubble"
-import {applyPaperTokens, clearPaperTokens, paperTokenSet} from "./paper-tokens"
+import {
+    applyPaperTokens, applySidebarHostTokens, captureHostTokens, clearPaperTokens, paperTokenSet,
+} from "./paper-tokens"
 import {PAPER_DARK_RENDER, PAPER_DEFAULT_SETTINGS, paperOf, ROOM} from "./paper-tables"
 import type {PaperMode, PaperSettings} from "./paper-tables"
 import {currentPaperMode, watchThemeMode} from "./paper-theme"
@@ -33,7 +32,7 @@ import {toUnit} from "./paper-math"
 // 读者那边的开关。每帧现读，所以运行期改配置不必重新安装。
 // 明暗不在这里：它跟着 dsh 的主题走，由 paper-theme 现读
 export interface PaperOptions {
-    // 纸感总开关。关掉时这一整块一起收：两片 canvas、令牌、侧栏那层纹理
+    // 纸感总开关。关掉时这一整块一起收：两片 canvas、令牌、侧栏列上抄过的宿主原值
     on: boolean
     // 纸感要不要接管字族。只影响令牌那两笔，纸本身照画
     font: boolean
@@ -140,9 +139,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     let overlayPresent = false
     // body 的直接子元素变了要重算上面那一项
     let overlayDirty = true
-    // 这一帧纸盖不盖侧栏：平时只看平台判据，浮层在场时恒为真。
-    // 几何、令牌、侧栏纹理三处都问它
-    let coversSidebar = paperIncludesSidebar()
+    // 这一帧纸铺不铺满整个视窗：平时只铺聊天那一列，盖住视口的浮层在场时为真。
+    // 几何与令牌两处都问它
+    let overlayCovers = false
 
     // 页面上还在不在。整块纸关掉时把它撤了，省下一次全屏 multiply 的合成。
     //
@@ -166,7 +165,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         return {x: box.left, y: box.top + box.height / 2}
     }
 
-    // 把两片的几何落到 DOM 上。纸不覆盖侧栏时那几项就是侧栏右边那一块，
+    // 把两片的几何落到 DOM 上。那几项就是聊天那一列（折叠时连同左边那条轨道）在视口里的矩形，
     // canvas 的 CSS 尺寸与它在视口里的偏移一起改，着色器里的坐标系仍以 canvas 自己为准
     const applyRect = (): void => {
         for (const canvas of [sheetCanvas, glowCanvas]) {
@@ -183,123 +182,26 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         return Math.max(0.5, Math.min(2, window.devicePixelRatio || 1, budget))
     }
 
-    /**
-     * 侧栏那层纸纹：按当前该不该画，往侧栏那一列身上增删标记。
-     *
-     * 标记挂在侧栏元素自己身上，不是在根元素上——理由见 paper-styles 那条常量的注释。
-     *
-     * 定位不能每帧做一次：sidebarElement() 要读一次列宽与一次 getBoundingClientRect，
-     * 两者都会让浏览器在帧里补一次布局。所以只在「没有挂过」或「被观察器告知 grid 变了」时
-     * 重新定位，其余时候是一次属性读。摘标记时连同「上一次挂过谁」一起清掉，
-     * 否则侧栏上一块残纹会留在已经不在布局里的节点上
-     */
-    let lastSidebar: HTMLElement | null = null
-    let sidebarTextureWanted = false
-    let sidebarObserver: MutationObserver | null = null
-    // 侧栏还没渲染出来时临时挂的那个观察器，与上面那个（盯 grid）不是同一件事
-    let sidebarWaitObserver: MutationObserver | null = null
-
-    /**
-     * 等侧栏出现。只在「这一列该有纸纹、但还定位不到」的那一小段时间里存在。
-     *
-     * 为什么要等：装上纸的那一刻 React 可能还没渲染出 AppFrame，而静置之后整条帧循环是 0 帧，
-     * 没有谁再来问一次，那层纹理就永远挂不上。
-     *
-     * 为什么带次数上限：它看的是整棵文档的子树（侧栏随时可能出现），比盯 grid 那个贵得多。
-     * 认不出侧栏的结构（dsh 改版）时它得自己退场，不能永久挂着
-     */
-    let sidebarWaitAttempts = 0
-    const SIDEBAR_WAIT_LIMIT = 240
-    const stopWaitingForSidebar = (): void => {
-        sidebarWaitObserver?.disconnect()
-        sidebarWaitObserver = null
-        sidebarWaitAttempts = 0
-    }
-    const waitForSidebar = (): void => {
-        if (sidebarWaitObserver !== null) return
-        sidebarWaitObserver = new MutationObserver(() => {
-            if (!sidebarTextureWanted) {
-                stopWaitingForSidebar()
-                return
-            }
-            sidebarWaitAttempts += 1
-            if (sidebarWaitAttempts > SIDEBAR_WAIT_LIMIT) {
-                stopWaitingForSidebar()
-                return
-            }
-            if (sidebarElement() === null) return
-            syncSidebarTexture(true)
-        })
-        sidebarWaitObserver.observe(document.documentElement, {childList: true, subtree: true})
-    }
-
-    /**
-     * 侧栏那层纸纹：按当前该不该画，往侧栏那一列身上增删标记。
-     *
-     * 标记挂在侧栏元素自己身上，不是在根元素上——理由见 paper-styles 那条常量的注释。
-     *
-     * 定位不能每帧做一次：sidebarElement() 要读一次列宽与一次 getBoundingClientRect，
-     * 两者都会让浏览器在帧里补一次布局。所以只在「还没定位到」时才量，已经挂着时只是一次
-     * isConnected 读。摘标记时连同「上一次挂过谁」一起清掉，否则上一块残纹会留在已经不在
-     * 布局里的节点上
-     */
-    const syncSidebarTexture = (enabled: boolean): void => {
-        sidebarTextureWanted = enabled
-        if (!enabled) {
-            lastSidebar?.removeAttribute(PAPER_SIDEBAR_ATTRIBUTE)
-            lastSidebar = null
-            stopWaitingForSidebar()
-            return
-        }
-        if (lastSidebar !== null && lastSidebar.isConnected) return
-        const sidebar = sidebarElement()
-        if (sidebar === null) {
-            waitForSidebar()
-            return
-        }
-        stopWaitingForSidebar()
-        // 只盯 grid 的 childList：侧栏那一列被整列重挂时标记会跟着丢（折叠、布局切换）。
-        // 不观察 subtree——那会把会话列表的每一次变更都算进来，一秒几十次
-        watchSidebarGrid(sidebar.parentElement)
-        lastSidebar = sidebar
-        sidebar.setAttribute(PAPER_SIDEBAR_ATTRIBUTE, "")
-    }
-
-    // 盯住 grid。只注册一次，而且只在侧栏真的被换下来时才动手：grid 的子元素会在若干种布局
-    // 状态下重排，一律摘了重挂会让纹理闪一下。判断依据是「还连着没有」
-    const watchSidebarGrid = (frame: HTMLElement | null): void => {
-        if (frame === null || sidebarObserver !== null) return
-        sidebarObserver = new MutationObserver(() => {
-            if (!sidebarTextureWanted) return
-            if (lastSidebar !== null && lastSidebar.isConnected) return
-            // 换下来的旧节点摘干净：它可能还留在内存里，属性不能跟着漂
-            lastSidebar?.removeAttribute(PAPER_SIDEBAR_ATTRIBUTE)
-            lastSidebar = null
-            syncSidebarTexture(true)
-        })
-        sidebarObserver.observe(frame, {childList: true})
-    }
-
     // 令牌跟着当下的明暗档落。换档时纸纹要重算：两档是同一张纸，但纸色与纸纹强度分了两套
     const refreshTokens = (): void => {
         const options = readOptions()
         if (!options.on) {
             clearPaperTokens()
-            syncSidebarTexture(false)
             return
         }
         const mode = currentPaperMode()
-        applyPaperTokens(paperTokenSet(mode), mode, coversSidebar, options.font)
-        // 侧栏纸纹与纸色同一个入口：几何、令牌、纹理三处都问同一个判据，不会一边让开一边还在叠纹。
-        // 第三个条件是「此刻底下还有没有玻璃」——失焦时材质被系统撤下，纸纹要收起来让位给
-        // 宿主的回退填充，否则半透明噪声就叠在一块没有底的窗口背景上（读者报的那条暗带）
-        syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && windowMaterialPresent())
+        // 切档时宿主那组令牌整套换了一遍，快照要跟着重量：左右两栏抄的是宿主自己的值，
+        // 停在上一档就会在深色里用浅色的字
+        if (mode !== lastMode) captureHostTokens()
+        applyPaperTokens(paperTokenSet(mode), mode, options.font)
+        // 左右两栏回到没有这个插件的样子：宿主原值抄在那两列身上，列里的字、底、悬停色都不经纸感的手
+        applySidebarHostTokens(sideColumns())
         // 气泡那一层纸色走同一个明暗档：两处都从这一处算，切主题时不会一边换了一边没换。
         // 它写的是宿主令牌，与纸色同性质，所以也归这一处落
         applyPaperBubble(mode)
         if (mode !== lastMode) {
             lastMode = mode
-            // 两档的渲染参数不是同一套：暗档的纸纹与浮雕都重得多，见 PAPER_DARK_RENDER
+            // 两档的渲染参数不是同一套：暗档的纸纹与浮雕都重得多，而且不点灯，见 PAPER_DARK_RENDER
             settings = settingsFor(mode)
             needsBuild = true
         }
@@ -308,12 +210,12 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     // 切明暗档时只有令牌与纸纹要重算，光与辉光跟着脏标记走
     const refresh = (): void => {
         if (disposed) return
-        // 浮层状态可能还没落到 coversSidebar 上（配置或主题先变）：先对一次
+        // 浮层状态可能还没落到 overlayCovers 上（配置或主题先变）：先对一次
         overlayDirty = false
         overlayPresent = overlayCoversViewport()
-        coversSidebar = paperIncludesSidebar() || overlayPresent
+        overlayCovers = overlayPresent
         refreshTokens()
-        rect = measurePaperRect(coversSidebar)
+        rect = measurePaperRect(overlayCovers)
         pixelRatio = computePixelRatio()
         applyRect()
         needsBuild = true
@@ -331,8 +233,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         if (!options.on || paperLight.state === "failed") {
             setAttached(false)
             clearPaperTokens()
-            // 侧栏那层纹理跟着一起撤：显卡起不来时整块纸感都收掉，留一块纹在侧栏上就成了半张纸
-            syncSidebarTexture(false)
             lastMode = null
             lastLayoutKey = ""
             return false
@@ -341,10 +241,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // AppFrame 被整块换下来时（布局切换、重挂）观察器还盯着旧节点，这里补一次。
         // 正常帧只是一次 isConnected 读，只有节点真的没了才去 querySelector
         if (frameGrid === null || !frameGrid.isConnected) watchFrame()
-        // 每一帧补一次侧栏标记。两件事靠它兜住：装上那一刻侧栏可能还没渲染出来，
-        // 以及静置期间侧栏被整列重挂（折叠、拖宽）之后标记跟着丢了。幂等，已有标记时是一次属性读。
-        // 材质那条判据门在这里：失焦时它翻假，于是这一帧就把纸纹摘掉
-        syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && windowMaterialPresent())
         const mode = currentPaperMode()
         const paper = paperOf(mode)
 
@@ -352,23 +248,22 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         if (mode !== lastMode) refreshTokens()
 
         // 浮层挂上或摘掉之后量一次；其余帧用缓存，免得每帧都为它强制一次布局。
-        // 「纸盖不盖侧栏」变了就重落令牌：侧栏填充色与那层纹理都跟着它
+        // 浮层在场时纸铺满整窗，所以它一翻就要重落令牌
         if (overlayDirty) {
             overlayDirty = false
             overlayPresent = overlayCoversViewport()
-            const coverage = paperIncludesSidebar() || overlayPresent
-            if (coverage !== coversSidebar) {
-                coversSidebar = coverage
+            if (overlayPresent !== overlayCovers) {
+                overlayCovers = overlayPresent
                 refreshTokens()
             }
         }
-        // 布局变了才重新量。窗口尺寸、侧栏宽度、是否覆盖侧栏，三者合起来能唯一确定那块矩形。
+        // 布局变了才重新量。窗口尺寸、左右两栏的宽度、浮层在不在，合起来能唯一确定那块矩形。
         //
-        // 这里不重落令牌。侧栏宽度不进任何一条令牌，覆盖范围那一维在上面 overlayDirty 分支里
+        // 这里不重落令牌。列宽不进任何一条令牌，覆盖范围那一维在上面 overlayDirty 分支里
         // 变了就落过一次；而拖宽侧栏时每帧重写十几条 custom property 会让整篇文档的样式作废一遍，
         // 那是这个插件最贵的一次操作，换不来任何像素
-        const desired = measurePaperRect(coversSidebar)
-        const layoutKey = coversSidebar + ":" + desired.left + ":" + desired.width + "x" + desired.height
+        const desired = measurePaperRect(overlayCovers)
+        const layoutKey = overlayCovers + ":" + desired.left + ":" + desired.width + "x" + desired.height
         if (layoutKey !== lastLayoutKey) {
             lastLayoutKey = layoutKey
             const changed =
@@ -387,7 +282,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         }
 
         const caret = readCaret()
-        // 灯的横向偏移要的是光标在纸上的坐标；纸不覆盖侧栏时那一段要扣掉
+        // 灯的横向偏移要的是光标在纸上的坐标：聊天列从纸的左缘起算，减去纸的 left 才对得上
         const caretSheetX = caret === null ? rect.width / 2 : caret.x - rect.left
         const rig = buildRig({width: rect.width, height: rect.height}, caretSheetX, ROOM, settings)
         const animateGrain = settings.grain > 0 && !reduceMotion
@@ -406,7 +301,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
                 rig,
                 paper,
                 room: ROOM,
-                settings: {...settings, lamp: settings.lamp},
+                settings,
                 time,
                 reduceMotion,
             })
@@ -421,10 +316,12 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         // （纸开 p95 33.4ms、纸关 16.8ms，而两片 canvas 的 GL 绘制计数都是 0）。
         // 所以这一层按「有没有内容」显式收起来，而不是画一张全透明的图
         //
-        // 暗档整层不要：这一层是 screen 混合，叠在暗纸上时那几笔暖光（台灯外溢、光标脚下那一圈）
-        // 会变成纸面上凭空浮着的亮斑，读起来像一道光晕而不是纸。亮档上它们被近白的纸吃掉，
-        // 暗档吃不掉，所以按档分开。纸面的灯仍归 LIGHT 那一次 pass
-        const glowMatters = mode === "light"
+        // 两档都不点灯之后这一层整个不画：它画的是灯的外溢与光标脚下那圈余温，而 paper-glow 的
+        // render 在 lamp 为假时直接早退。留着它只会多付一次全屏 screen 合成
+        //
+        // 暗档另外一条理由：这一层是 screen 混合，叠在暗纸上时那几笔暖光会变成纸面上凭空浮着的亮斑，
+        // 读起来像一道光晕而不是纸；亮档上它们本来被近白的纸吃掉
+        const glowMatters = settings.lamp && mode === "light"
             && (settings.particles > 0 || settings.cursorGlow > 0 || poolStrength(rig, mode) > 0)
         if (glowMatters && (lightRan || needsGlow || caretMoved || caretAppeared || dustDue)) {
             const lightChannels = toUnit(ROOM.light.color).map((channel) => Math.round(channel * 255))
@@ -502,8 +399,8 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
      *
      * 三列的宽度写在它的 grid-template-columns 内联样式上：侧栏折叠、展开、拖宽都只改这一条，
      * 既不触发 resize，也不落在 body 的 childList 里。纸的覆盖矩形只从那里量，少了这个观察器，
-     * 纸的左缘就停在收起/展开之前的宽度上——收起时纸不铺过去，右侧露出一条没有纸的竖带；
-     * 展开时纸不让开，全屏那层 multiply 压住侧栏，窗口材质透不出来
+     * 纸的左缘就停在收起/展开之前的宽度上——收起时纸不铺过去，左边露出一条没有纸的竖带；
+     * 展开时纸不收回来，那一列被压在一张纸底下
      */
     let frameGrid: HTMLElement | null = null
     let frameObserver: MutationObserver | null = null
@@ -543,7 +440,8 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
     }
 
     // 定位 frame 并把观察器挂上去。已经挂在同一张 grid 上时是一次比较就返回。
-    // 回调只置一个脏标记，走 8 fps 那道节流：拖宽侧栏时列宽每帧都在变，按帧重画纸纹是主线程掉帧的来源
+    // 列宽那条记录只置一个脏标记，走 8 fps 那道节流：拖宽侧栏时列宽每帧都在变，
+    // 按帧重画纸纹是主线程掉帧的来源。列本身被换下来是另一件事，见回调里那一支
     const watchFrame = (): void => {
         const frame = frameElement()
         if (frame === null) {
@@ -554,8 +452,24 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         frameObserver?.disconnect()
         stopFrameProbe()
         frameGrid = frame
-        frameObserver = new MutationObserver(() => wake(false))
-        frameObserver.observe(frame, {attributes: true, attributeFilter: ["style"]})
+        frameObserver = new MutationObserver((records) => {
+            // 左右两栏被整列换下来时（布局切换、React 重挂），写在那两列上的宿主原值跟着丢了，
+            // 得重抄一次——否则那一列会当场换上纸的字与墨
+            if (records.some((record) => record.type === "childList")) applySidebarHostTokens(sideColumns())
+            // **两条记录不能互相短路。** 折叠与展开既改列宽（attributes）又顺手摘挂那条拖拽把手
+            // （childList），两者落在同一个批次里；早先这里在 childList 上 return，于是折叠之后
+            // 纸停在展开时的宽度、没有铺过去
+            wake(false)
+        })
+        // 折叠态也得盯：折叠之后那条图标轨道归纸（paper-layout 的 sidebarCollapsed），
+        // 而有些布局切换只翻这一条属性、列宽一动不动
+        frameObserver.observe(frame, {
+            attributes: true,
+            attributeFilter: ["style", SIDEBAR_COLLAPSED_ATTRIBUTE],
+            childList: true,
+        })
+        // 刚认出 frame 时补抄一次：安装那一刻 AppFrame 还没渲染，那一次抄写是空跑
+        applySidebarHostTokens(sideColumns())
     }
 
     /**
@@ -565,6 +479,8 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
      */
     const onColumnTransitionEnd = (event: TransitionEvent): void => {
         if (event.propertyName !== "grid-template-columns") return
+        // 过渡结束才算得出稳定的列几何：期间读到的是插值宽度，sideColumns 认不准
+        applySidebarHostTokens(sideColumns())
         wake()
     }
     document.addEventListener("transitionend", onColumnTransitionEnd, true)
@@ -623,67 +539,6 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
         wake()
     }
 
-    /**
-     * 盯窗口材质那两条标记：data-platform 与 data-window-material。
-     *
-     * 为什么非盯不可：data-window-material 不是一辈子不变的。Windows 的 acrylic 在窗口失焦时
-     * 会被系统撤下，dsh 跟着把标记摘掉（apps/desktop 的 syncMaterial 在 blur 时发 none、
-     * focus 时发 translucent），于是 paperIncludesSidebar() 从假翻成真。
-     *
-     * 这一翻的后果很重：paper-tokens 会借这个返回值把 --dsw-specific-sidebar-fill 写成不透明的纸色，
-     * 侧栏那 85% 的 tint 当场被盖死、窗口材质再也透不出来。而 focus 回来后标记虽然恢复，
-     * 插件这边若不重算，那笔不透明纸色就一直留着——表现出来正是「最小化一下窗口，侧栏变成纸色、
-     * 再也不玻璃了」。
-     *
-     * 所以这两条标记一变就整套重来一次：令牌重落（把那一笔还回去）、覆盖矩形重量、纹理标记重挂。
-     * 观察的是根元素的两个属性，不观察子树 */
-    let lastMaterialSignature = ""
-    const readMaterialSignature = (): string => {
-        const root = document.documentElement
-        const platform = root.getAttribute("data-platform") ?? ""
-        const material = root.getAttribute("data-window-material") ?? ""
-        const bodyMaterial = document.body === null ? "" : (document.body.getAttribute("data-window-material") ?? "")
-        return platform + "|" + material + "|" + bodyMaterial
-    }
-    // 上一次判出来的「纸要不要让开侧栏」。两条标记的增减只有落到这个结论上才值得重算：
-    // 失焦时标记被撤下、判据却因为粘性没有变，那时重落一次令牌等于把整篇文档的样式全作废一遍，
-    // 换不来任何变化
-    let lastIncludeSidebar = paperIncludesSidebar()
-    // 上一次判出来的「此刻底下还有没有玻璃」。失焦与聚焦只翻这一个，粘性那份不动
-    let lastMaterialPresent = windowMaterialPresent()
-    const onMaterialChange = (): void => {
-        const signature = readMaterialSignature()
-        if (signature === lastMaterialSignature) return
-        lastMaterialSignature = signature
-        // 「此刻底下还有没有玻璃」变了，但粘性判据没变——这是失焦/聚焦那一档。
-        // 只动侧栏纸纹，不重落令牌：整块重落会让整篇文档的样式失效一遍，而这里变的是一个开关
-        if (windowMaterialPresent() !== lastMaterialPresent) {
-            lastMaterialPresent = windowMaterialPresent()
-            syncSidebarTexture(sidebarPaintsOwnTexture() && !coversSidebar && lastMaterialPresent)
-        }
-        const includeSidebar = paperIncludesSidebar()
-        if (includeSidebar === lastIncludeSidebar) return
-        lastIncludeSidebar = includeSidebar
-        // 布局键清空：纸还覆不覆盖侧栏变了，必须重新量一次
-        lastLayoutKey = ""
-        refresh()
-    }
-    lastMaterialSignature = readMaterialSignature()
-    const materialObserver = new MutationObserver(onMaterialChange)
-    materialObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["data-platform", "data-window-material"],
-    })
-    // body 也可能带 data-window-material（sidebarRevealsWindowMaterial 一并认）
-    let bodyMaterialObserver: MutationObserver | null = null
-    if (document.body !== null) {
-        bodyMaterialObserver = new MutationObserver(onMaterialChange)
-        bodyMaterialObserver.observe(document.body, {
-            attributes: true,
-            attributeFilter: ["data-window-material"],
-        })
-    }
-
     // dsh 切深浅时只动 body 上那一个属性。纸这边重落令牌、重算纸纹与光照，
     // 再叫醒帧循环——静置的纸不会自己发现主题变了
     const unwatchTheme = watchThemeMode(refresh)
@@ -696,9 +551,9 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
 
     overlayPresent = overlayCoversViewport()
     overlayDirty = false
-    coversSidebar = paperIncludesSidebar() || overlayPresent
+    overlayCovers = overlayPresent
     refreshTokens()
-    rect = measurePaperRect(coversSidebar)
+    rect = measurePaperRect(overlayCovers)
     pixelRatio = computePixelRatio()
     applyRect()
     // 列宽那条观察器跟着挂载一起装。此刻 AppFrame 多半还没渲染出来，watchFrame 会自己等
@@ -714,15 +569,12 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             if (frameHandle !== 0) cancelAnimationFrame(frameHandle)
             frameHandle = 0
             unwatchTheme()
-            materialObserver.disconnect()
-            bodyMaterialObserver?.disconnect()
             overlayObserver.disconnect()
             frameObserver?.disconnect()
             frameObserver = null
             frameGrid = null
             stopFrameProbe()
             document.removeEventListener("transitionend", onColumnTransitionEnd, true)
-            bodyMaterialObserver = null
             window.removeEventListener("resize", onResize)
             window.removeEventListener("orientationchange", onResize)
             document.removeEventListener("visibilitychange", onVisibility)
@@ -732,11 +584,7 @@ export function installPaper(readOptions: () => PaperOptions): PaperMountHandle 
             paperLight.destroy()
             sheetCanvas.remove()
             glowCanvas.remove()
-            // 侧栏那条标记是挂在别人的节点上的，卸载时得自己摘：clearPaperTokens 只管变量
-            syncSidebarTexture(false)
-            stopWaitingForSidebar()
-            sidebarObserver?.disconnect()
-            sidebarObserver = null
+            // 侧栏列上抄过的那几笔走同一本账，clearPaperTokens 一并还回去
             clearPaperTokens()
         },
     }

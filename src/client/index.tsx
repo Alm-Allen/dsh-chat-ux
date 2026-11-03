@@ -210,8 +210,50 @@ export function apply(ctx: ClientContext): void {
         if (followDispose !== null) return
         followDispose = installCallAppearFollow()
     }
+    // 2026-11-03 那一版把纸感默认值从开改成关。老读者的配置里存着 paperOn: true，改默认值盖不到它，
+    // 所以升级后的第一个客户端实例强关一次：把 paperOn 写成 false，再把这一版的日子写进 paperOffMigratedAt。
+    // 标记存在配置里、不存在 localStorage：桌面版每次启动的端口不一样，localStorage 按 origin 隔离，标记会跟着丢
+    const PAPER_OFF_MIGRATION_TAG = "2026-11-03"
+    const PAPER_OFF_MIGRATION_FIELD = "paperOffMigratedAt"
+    // 那次强关的进度。pending 与 running 期间纸感一律按关显示；标记写完转 done；
+    // 写不进去转 failed、之后照读者自己的配置走——一次失败不该让人永远开不了纸感
+    let paperOffMigration: "pending" | "running" | "done" | "failed" = "pending"
+    // 推进那次强关：配置还没到、或读者已经带着标记时都不动手；写入失败就把状态交给 failed
+    const pushPaperOffMigration = (value: ChatUxSection | undefined): void => {
+        if (paperOffMigration !== "pending" || value === undefined) return
+        if (value.paperOffMigratedAt === PAPER_OFF_MIGRATION_TAG) {
+            paperOffMigration = "done"
+            // 状态刚从 pending 翻过来，上面那次 syncSettings 是把它按关闭算的，这里再落一次
+            syncSettings()
+            return
+        }
+        const snapshot = scope.getSnapshot()
+        if (!snapshot.writable) return
+        // 读者从没在配置里显式开过纸感（默认值本来就是关）时不必强关、也不必留标记：
+        // 这样即使标记写不进去，也不会因为他每次启动都重跑一遍而反复关掉纸感
+        const user = snapshot.user
+        const userPaperOn = typeof user === "object" && user !== null ? (user as ChatUxSection).paperOn : undefined
+        if (userPaperOn !== true) {
+            paperOffMigration = "done"
+            syncSettings()
+            return
+        }
+        paperOffMigration = "running"
+        void (async () => {
+            // 两件事一次提交：settings 服务按 revision 做乐观锁，分开写会留下「关了纸、标记没落」的半截状态
+            const accepted = await scope.mutate([
+                {op: "set", path: ["paperOn"], value: false},
+                {op: "set", path: [PAPER_OFF_MIGRATION_FIELD], value: PAPER_OFF_MIGRATION_TAG},
+            ])
+            paperOffMigration = accepted ? "done" : "failed"
+            syncSettings()
+        })()
+    }
+
     const syncSettings = (): void => {
         const value = scope.getSnapshot().value
+        // 强关纸感还没落地时一律按关显示，免得纸先铺上来、写完标记再收回去
+        const paperOffPending = paperOffMigration === "pending" || paperOffMigration === "running"
         settings.autoFold = value?.autoFold ?? DEFAULT_AUTO_FOLD
         settings.caret = value?.caretMotion ?? DEFAULT_CARET_MOTION
         settings.pie = value?.contextPie ?? DEFAULT_CONTEXT_PIE
@@ -219,7 +261,7 @@ export function apply(ctx: ClientContext): void {
         settings.liveDiff = value?.liveDiff ?? DEFAULT_LIVE_DIFF
         settings.followOn = value?.followOnAppear ?? DEFAULT_FOLLOW_ON_APPEAR
         settings.sendFlight = value?.sendFlight ?? DEFAULT_SEND_FLIGHT
-        settings.paperOn = value?.paperOn ?? DEFAULT_PAPER_ON
+        settings.paperOn = paperOffPending ? false : (value?.paperOn ?? DEFAULT_PAPER_ON)
         settings.paperFont = value?.paperFont ?? DEFAULT_PAPER_FONT
         settings.notifyAsk = value?.notifyAsk ?? DEFAULT_ASK_NOTIFY
         settings.notifyDone = value?.notifyDone ?? DEFAULT_DONE_NOTIFY
@@ -232,7 +274,14 @@ export function apply(ctx: ClientContext): void {
         syncPaper()
     }
     syncSettings()
-    ctx.effect(() => scope.subscribe(syncSettings), "dsh-chat-ux: settings mirror")
+    pushPaperOffMigration(scope.getSnapshot().value)
+    ctx.effect(
+        () => scope.subscribe(() => {
+            syncSettings()
+            pushPaperOffMigration(scope.getSnapshot().value)
+        }),
+        "dsh-chat-ux: settings mirror",
+    )
     ctx.effect(() => caret.dispose, "dsh-chat-ux: caret motion")
     ctx.effect(
         () => {
