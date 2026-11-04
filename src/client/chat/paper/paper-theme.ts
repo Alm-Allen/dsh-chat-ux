@@ -6,10 +6,8 @@
  *
  * 纸这边不缓存这个值：每帧现读一次属性，代价是一次 hasAttribute，比维护一份可能与宿主分叉的副本便宜
  */
+import {DARK_THEME_ATTRIBUTE} from "../../dom-contract"
 import type {PaperMode} from "./paper-tables"
-
-// dsh 在 body 上标深色配色的属性
-const DARK_THEME_ATTRIBUTE = "data-ds-dark-theme"
 
 // 当下是哪一档。body 还没建出来时按亮档：那种时候页面还什么都没画
 export function currentPaperMode(): PaperMode {

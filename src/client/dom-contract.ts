@@ -53,12 +53,6 @@ export const COMPOSER_SELECTOR = "[data-composer-seat]"
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 export const COMPOSER_INPUT_SELECTOR = "[data-composer-input]"
 
-/**
- * 输入框空着时压在里面那行提示。它与可编辑面同级、用同一套内边距，绝对定位盖在插入点那一行上。
- * 纸感那支羽毛从插入点朝右上伸出去，会横过它最前面几个字，所以提示要按这支笔让开一段
- */
-export const COMPOSER_PLACEHOLDER_SELECTOR = "[data-composer-placeholder]"
-
 // 输入卡片（那条胶囊）。落在它里面的点击可能是提交
 export const COMPOSER_CARD_SELECTOR = "[data-composer-card]"
 
@@ -76,7 +70,7 @@ export const COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea"
 
 /**
  * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
- * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
+ * 认坞只认它，不认类名——类名带构建期 hash
  */
 export const COMPOSER_DOCK_SELECTOR = "[data-composer-dock]"
 
@@ -112,14 +106,18 @@ export const PROCESS_BODY_SELECTOR = "[data-step-process-body]"
 export const PROCESS_CONTENT_SELECTOR = "[data-step-process-content]"
 
 /**
- * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
- * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
+ * DisclosureRow 的被点那一行。展开体不在它身上，而在外层 header 的兄弟位置上，见下面那条
  */
 export const DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]"
 
 /**
- * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
- * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
- * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
+ * DisclosureRow 的外层头：把被点行与 headerAccessory 槽位一起裹住，展开体是它的兄弟。
+ * 取展开体必须先认它——只认被点行的话取到的是那个空槽位，不报错、只是不动了
  */
 export const DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]"
+
+/**
+ * dsh 把配色方案投影到 body 上的属性：在就是深色。
+ * 纸的明暗与光标的颜色都按它分，宿主切主题时只动这一个属性（从无到有、从有到无）
+ */
+export const DARK_THEME_ATTRIBUTE = "data-ds-dark-theme"

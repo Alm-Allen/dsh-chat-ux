@@ -4,18 +4,17 @@
  * 三条规则：按掉原生插入符、给挂那根的父元素补定位上下文、把自绘的那根画出来
  * 前两条只认 caret-motion.ts 写上的标记，脚本半途没跑起来时一条都不命中，原生插入符还在
  * 这是这套动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏
- *
- * 纸感开着时那根画成一支羽毛，那一份表在 ../paper/caret/quill-styles，拼在最后面：
- * 它要求根元素上有纸感标记、并且那根带着羽毛标记，条件不成立时这里一个字节都不受影响
  */
 import {
     CARET_ATTRIBUTE, CARET_BLINK_NAME, CARET_COLOR_PROPERTY, CARET_HOST_ATTRIBUTE, CARET_LAYER_ATTRIBUTE,
     CARET_VISIBLE_ATTRIBUTE,
 } from "./caret-motion"
-import {QUILL_CSS} from "../paper/caret/quill-styles"
+import {DARK_THEME_ATTRIBUTE} from "../../dom-contract"
 
-// 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px，与这里同档
-const CARET_WIDTH = "2px"
+// 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px；这里比它粗一点
+// 这一份只是兜底：caret-motion 每画一帧都按 devicePixelRatio 写回一个对齐到物理像素的宽度
+// （DPR 1.25 时是 2.4px，也就是整 3 个物理像素），不按物理像素对齐的话左右各留半格灰边
+const CARET_WIDTH = "2.5px"
 
 // 位移时长，与 VS Code 的平滑光标同档
 const CARET_TRAVEL_MS = "80ms"
@@ -60,17 +59,28 @@ ${LAYER} {
   border: 0;
   visibility: hidden;
   pointer-events: none;
-  /* 颜色是接管那一刻从这个面的原生插入符上读下来的；读到之前退回 dsh 给主输入框定的那一支 */
-  background: var(${CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
+  /* 颜色跟着 dsh 的明暗走：浅色黑、深色白（深色那一条在下面），写成一个变量再由 background 取用 */
+  ${CARET_COLOR_PROPERTY}: #000000d9;
+  background: var(${CARET_COLOR_PROPERTY});
+  /* 两端圆角。这根只有两三个像素宽，999px 会被 CSS 按边长收成两端半圆，看起来是一根圆头的条 */
+  border-radius: 999px;
   /* 过渡的是 transform 而不是 top 与 left：VS Code 那边过渡的是布局属性，这里没有理由跟着付那份代价 */
   transition: transform ${CARET_TRAVEL_MS} ease;
-  will-change: transform;
+  /* 这里不写 will-change：常驻的合成层会让落在非整数偏移上的这一根被合成器重采样，边缘反而更糊。
+     过渡真在跑的那一段由 caret-motion 的 armWillChange 临时提上去，过完就撤 */
+
   /* 原生那根被按下去了，闪烁得自己来 */
   animation: ${CARET_BLINK_NAME} ${CARET_BLINK_PERIOD} step-end infinite;
 }
 
 ${LAYER}[${CARET_VISIBLE_ATTRIBUTE}] {
   visibility: visible;
+}
+
+/* 深色配色：dsh 把配色方案投影在 body 上，纸感的明暗认的也是这一个属性。
+   选择器比上面那条多一段，赢的是它，切换主题时当场生效、不必重建那根 */
+body[${DARK_THEME_ATTRIBUTE}] ${LAYER} {
+  ${CARET_COLOR_PROPERTY}: #ffffffe7;
 }
 
 @keyframes ${CARET_BLINK_NAME} {
@@ -86,5 +96,3 @@ ${LAYER}[${CARET_VISIBLE_ATTRIBUTE}] {
 }
 `
 
-    // 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
-    + QUILL_CSS

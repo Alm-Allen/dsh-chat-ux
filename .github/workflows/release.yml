@@ -1,24 +1,32 @@
 name: Release
 
-# 推一个 v* 标签，自动开一次 GitHub Release。
+# 推一个 v* 标签，自动做两件事：
+#   release     —— 开一次 GitHub Release，报告取自 CHANGELOG.md 里与标签同名的那一段；
+#   publish-npm —— 把同一个版本发布到 npm 公开 registry（@alm-allen/dsh-chat-ux）。
 #
-# GitHub 不会把标签自动变成 Release —— 它只为显式创建的标签建 Release，
-# 所以这里在打标签的那一刻替你做掉那一步。
+# 两个 job 并行、互不依赖：Release 那边出问题（比如标签重复）不该挡住 npm，反之也一样。
 #
-# 报告取自 CHANGELOG.md 里与这个标签同名的那一段（`## [0.2.4] …`）：发版前的规矩只有一条 ——
-# **先在 CHANGELOG.md 顶上补一段，再打标签**。仓库里没有这一段、或者这一段是空的，
-# 就退回 GitHub 自动生成的提交清单（不会因此挂掉）。
+# 发版前的规矩没变，还是那一条：**先在 CHANGELOG.md 顶上补一段，再打标签**。
+# 仓库里没有这一段、或者这一段是空的，Release 就退回 GitHub 自动生成的提交清单（不会挂掉）。
 #
 # 注意：本文件与 CHANGELOG.md 都必须存在于标签指向的那个提交里才会被用到。
 # 改过本文件之后打的标签才享受自动发布；之前的标签要手动建 Release，或者把标签挪到含本文件的提交上。
+#
+# npm 那半边要一个仓库 secret：Settings → Secrets and variables → Actions → New repository secret，
+# 名字写成 NPM_TOKEN，值就是 npm 上的令牌（Automation 令牌，或者勾了 Bypass 2FA 的 granular 令牌）。
+# 想先确认令牌配没配对：在 Actions 页手动跑一次本工作流，它只做 --dry-run，不会真发。
 
 on:
   push:
     tags:
       - 'v[0-9]*'
+  # 手动触发：不建 Release、不真发布，只验令牌与打包内容。
+  workflow_dispatch:
 
 jobs:
   release:
+    # 手动触发只跑 npm 那半边。
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # gh release create 需要写权限
@@ -43,3 +51,72 @@ jobs:
             echo "CHANGELOG.md 里没有 $GITHUB_REF_NAME 这一段，退回自动生成的提交清单。"
             gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --verify-tag --generate-notes
           fi
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24   # package.json 的 engines 是 ^22.19.0 || >=24.0.0
+
+      - name: Check the tag against package.json
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$version" != "$tag" ]; then
+              echo "::error::package.json 的版本是 $version，标签是 $tag，对不上；npm 那边会发错号，先改齐再推。"
+              exit 1
+            fi
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          # 0.4.0-beta.1 这种带预发布后缀的号发到 next，别让它顶掉 latest。
+          if [[ "$version" == *-* ]]; then
+            echo "DIST_TAG=next" >> "$GITHUB_ENV"
+          else
+            echo "DIST_TAG=latest" >> "$GITHUB_ENV"
+          fi
+          echo "版本 $version，dist-tag 用 $DIST_TAG"
+
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::error::没有 NPM_TOKEN 这个 secret。Settings → Secrets and variables → Actions 里加一条，值是 npm 上的令牌。"
+            exit 1
+          fi
+          pkg="$(node -p "require('./package.json').name")"
+
+          # 仓库里的 .npmrc 把 registry 指到了 npmmirror（本机拉依赖快），
+          # 所以发布时另写一份临时 config；命令行 --registry 优先级最高，覆盖仓库那份。
+          # 令牌这一行用单引号写：文件里只留 ${NPM_TOKEN} 这个占位符，由 npm 自己从环境变量取值，
+          # 磁盘上从头到尾没有明文令牌，日志里也不会出现。
+          npmrc="$RUNNER_TEMP/npmrc"
+          {
+            echo "registry=https://registry.npmjs.org"
+            echo '//registry.npmjs.org/:_authToken=${NPM_TOKEN}'
+          } > "$npmrc"
+
+          # whoami 会真的问一次 registry：令牌没权限、或者被 2FA 拦下，这一步就报出来。
+          npm whoami --userconfig "$npmrc" --registry https://registry.npmjs.org
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "手动触发：只做 --dry-run，把要发的文件清单打出来。"
+            npm publish --dry-run --userconfig "$npmrc" --registry https://registry.npmjs.org --access public --tag "$DIST_TAG"
+            exit 0
+          fi
+
+          # 同一个号已经在 npm 上就不重复发：重推一次标签不该让 CI 变红。
+          if npm view "${pkg}@${VERSION}" version --registry https://registry.npmjs.org > /dev/null 2>&1; then
+            echo "${pkg}@${VERSION} 已经在 npm 上了，这次跳过。"
+            exit 0
+          fi
+
+          npm publish --userconfig "$npmrc" --registry https://registry.npmjs.org --access public --tag "$DIST_TAG"

@@ -112,9 +112,7 @@ function apply(ctx) {
     };
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
-    // 纸感开着时那根自绘插入符画成羽毛，关掉时回到 2px 的竖线。几何、位移与闪烁仍归 caret-motion，
-    // 羽毛只是它里面的一种画法——两套自绘互相覆盖是这套动效最容易翻车的地方，所以不另起一根
-    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret, () => settings.paperOn);
+    const caret = (0, caret_motion_1.installCaretMotion)(() => settings.caret);
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那一个），
     // 接不过来，所以从 DOM 上认它，只写读数与档位，形状与颜色由样式表接。
     // 开关关掉时整块卸下：写过的属性、内联样式与数字滚动一起撤干净，读者看到的是 dsh 原来那圈环
@@ -408,7 +406,6 @@ exports.installCaretMotion = installCaretMotion;
  * ⚠️ 原生被按下去、自绘没画出来就是读者看不见光标，所以量不出来一律退回原生，绝不维持现状
  */
 const dom_contract_1 = require("../../dom-contract");
-const quill_1 = require("../paper/caret/quill");
 // 闪烁动画的名字。caret-motion-styles.ts 用它拼 keyframes，两处必须一字不差
 exports.CARET_BLINK_NAME = "dsh-chat-ux-caret-blink";
 // 挂在可编辑面上的标记：有它原生插入符才被按掉，规则在 caret-motion-styles.ts
@@ -421,10 +418,16 @@ exports.CARET_VISIBLE_ATTRIBUTE = "data-chat-ux-caret-visible";
 const CHIP_SELECTED_ATTRIBUTE = "data-composer-chip-selected";
 // 挂在不是定位上下文的父元素上：样式表见到它就补一条 position: relative
 exports.CARET_HOST_ATTRIBUTE = "data-chat-ux-caret-host";
-// 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来
+// 自绘那根的颜色。由样式表按 dsh 的明暗直接写在根上（浅色黑、深色白），脚本不再从原生插入符上读
 exports.CARET_COLOR_PROPERTY = "--dsh-chat-ux-caret-color";
 // 聚焦之后隔多久补看一次。切会话时，聚焦与选区就绪之间隔着几帧
 const FOCUS_SETTLE_MS = 120;
+// 自绘那根的基准宽度，以及位移时长。caret-motion-styles.ts 里有同一组值（CARET_WIDTH、CARET_TRAVEL_MS）：
+// 宽度那份由这里按设备像素改写，时长那份用来定 will-change 撤除的时刻，改一处就要改另一处
+// 2.5 是「比 VS Code 的 2px 粗一点」的取值：吸到物理像素之后实际落在三个物理像素上（DPR 1 时 3px，
+// 1.25 时 2.4px，2 时 2.5px），比原来的 2px 明显，又不至于像一条色块
+const CARET_BASE_WIDTH_PX = 1.8;
+const CARET_TRAVEL_MS = 80;
 // 镜像层要从 textarea 上抄的样式：影响字形宽度与折行位置的都在这里
 // 少抄一条，镜像里的折行就和 textarea 里的对不上，插入符会落到别的行上
 const MIRRORED_PROPERTY_LIST = [
@@ -435,7 +438,7 @@ const MIRRORED_PROPERTY_LIST = [
     "padding-top", "padding-right", "padding-bottom", "padding-left",
 ];
 // 给整页装上插入符动效。档位在每次同步时现读，所以运行期改档不必重新安装
-function installCaretMotion(readMotionMode, readQuillOn = () => false) {
+function installCaretMotion(readMotionMode) {
     // 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项
     const caretLayerMap = new Map();
     // 一次同步已经排在下一帧
@@ -448,6 +451,8 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
     let disposed = false;
     // 这一帧里来过一次输入。move 档靠它把打字和显式移动分开
     let typedThisFrame = false;
+    // 减少动效偏好。开着时位移过渡整条被样式表停掉，也就没有合成层要提
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     // 上一次移动插入符的是 End 键
     // 软换行处的同一个偏移有两个位置：上一行行尾与下一行行首。textarea 不交出偏向哪一边，
     // 而 Chromium 在 End 之后画在行尾、其余时候画在行首，所以记住这一下
@@ -706,10 +711,9 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
     };
     // 把一个面的自绘状态整个撤掉：那一根、按掉标记、以及替它补过的定位上下文
     const release = (input, layer) => {
+        window.clearTimeout(layer.willChangeTimer);
+        layer.willChangeTimer = 0;
         layer.caret.remove();
-        // 那根连同它怀里的羽毛一起撤掉了；引用留着会让下一次重建接回旧节点
-        layer.quill = null;
-        layer.quillHeight = 0;
         input.removeAttribute(exports.CARET_ATTRIBUTE);
         if (layer.markedHost)
             layer.host.removeAttribute(exports.CARET_HOST_ATTRIBUTE);
@@ -747,62 +751,47 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
         host.appendChild(caret);
         if (input.isContentEditable)
             observeComposer(input);
-        const layer = { caret, visible: false, host, markedHost, quill: null, quillHeight: 0 };
+        const layer = { caret, visible: false, host, markedHost, willChangeTimer: 0 };
         caretLayerMap.set(input, layer);
         return layer;
     };
-    // 接管那一刻读下原生插入符的颜色，自绘的那根照着画
-    // 只在按掉标记还没写上时读得到：写上之后算出来的就是 transparent 了。auto 的意思是跟字色走
-    const adoptCaretColor = (input, layer) => {
-        const style = getComputedStyle(input);
-        const color = style.caretColor === "auto" ? style.color : style.caretColor;
-        layer.caret.style.setProperty(exports.CARET_COLOR_PROPERTY, color);
-    };
-    // 给这一根装上一支羽毛，并按插入符高度摆好
-    // 先挂笔、再打标记：标记一到，样式表就把 2px 的底色撤掉；反过来写的话，
-    // 中间那一帧读者看到的是一根没有底色的条
-    const markQuill = (layer, caretHeight) => {
-        // React 重渲染会把那根连同里面那支笔一起摘掉再挂回来，所以每次按「笔还在不在」判一次。
-        // 重复调用是幂等的，标记在不在都一样走
-        if (layer.quill === null || layer.quill.parentElement !== layer.caret) {
-            layer.quill = (0, quill_1.buildQuillCaret)();
-            layer.caret.appendChild(layer.quill);
-            layer.quillHeight = 0;
-        }
-        // 高度没变就不重写尺寸与偏移：这一帧 DOM 已经写够了
-        if (Math.abs(layer.quillHeight - caretHeight) > 0.01) {
-            (0, quill_1.placeQuillCaret)(layer.quill, caretHeight);
-            layer.quillHeight = caretHeight;
-        }
-        layer.caret.setAttribute(quill_1.QUILL_ATTRIBUTE, "");
-    };
-    // 撤掉怀里那支笔，把 2px 条要回来
-    // 先摘标记、后撤笔：摘标记那一刻样式表已经把条画回来，笔留着一瞬也只是叠着；
-    // 反过来先撤笔的话，中途只要有谁强制回流，那一瞬就是一根没有底色的空盒子
-    const dropQuill = (layer) => {
-        if (!layer.caret.hasAttribute(quill_1.QUILL_ATTRIBUTE))
-            return;
-        layer.caret.removeAttribute(quill_1.QUILL_ATTRIBUTE);
-        layer.quill?.remove();
-        layer.quill = null;
-        layer.quillHeight = 0;
+    /**
+     * 只在过渡真的会跑的那一段把这一层提成合成层，过完就撤。
+     *
+     * 常驻的 will-change 会让它变成一个常驻合成层，而落在非整数偏移上的合成层会被合成器重采样，
+     * 边缘比普通绘制更糊——那正是这一轮要消掉的那种糊。连续打字时每一格都会重新计时，
+     * 停手一百毫秒之后这一层才落回去。
+     */
+    const armWillChange = (layer) => {
+        window.clearTimeout(layer.willChangeTimer);
+        layer.caret.style.willChange = "transform";
+        layer.willChangeTimer = window.setTimeout(() => {
+            layer.willChangeTimer = 0;
+            layer.caret.style.willChange = "";
+        }, CARET_TRAVEL_MS + 20);
     };
     // 把自绘的光标放到这个视口矩形上
     // paused 为真时这一帧不播位移过渡：刚出现，或者 move 档下的一次打字
     const draw = (layer, box, paused) => {
         // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量
         const hostRect = layer.host.getBoundingClientRect();
-        // 对齐到整像素。原生插入符就落在像素网格上，落在分数位置的矩形会被抗锯齿抹开一圈灰边，
-        // 看起来和它不是一套。代价是位置最多偏半像素，看不出来
-        const left = Math.round(box.left - hostRect.left - layer.host.clientLeft + layer.host.scrollLeft);
-        const top = Math.round(box.top - hostRect.top - layer.host.clientTop + layer.host.scrollTop);
+        // 对齐到设备像素，不是 CSS 像素。对齐的是最终视口坐标：只把「相对容器」的偏移取整的话，
+        // 容器自己落在半个像素上时它仍然是半个像素，2px 的条照样横跨两个物理像素、两边各留半格灰边
+        const left = snapToDevicePixel(box.left) - (hostRect.left + layer.host.clientLeft - layer.host.scrollLeft);
+        const top = snapToDevicePixel(box.top) - (hostRect.top + layer.host.clientTop - layer.host.scrollTop);
+        // 宽度与高度同理：19px 在 DPR 1.25 下是 23.75 个物理像素，上下各差四分之一个像素，一样会糊
+        const width = snapToDevicePixel(CARET_BASE_WIDTH_PX);
+        const height = snapToDevicePixel(box.height);
         // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来
         const fresh = !layer.visible;
         const instant = fresh || paused;
         if (instant)
             layer.caret.style.transitionProperty = "none";
         layer.caret.style.transform = "translate(" + left + "px, " + top + "px)";
-        layer.caret.style.height = box.height + "px";
+        layer.caret.style.width = width + "px";
+        layer.caret.style.height = height + "px";
+        if (!instant && !reducedMotion.matches)
+            armWillChange(layer);
         if (instant) {
             requestAnimationFrame(() => {
                 layer.caret.style.transitionProperty = "";
@@ -812,19 +801,10 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
             layer.visible = true;
             layer.caret.setAttribute(exports.CARET_VISIBLE_ATTRIBUTE, "");
         }
-        // 纸感开着就把怀里那支笔摆到这一帧的高度上，关着就把它撤掉、把 2px 条要回来。
-        // 两档都在这里落，是因为只有这里才拿到刚量出来的高度
-        if (readQuillOn())
-            markQuill(layer, box.height);
-        else
-            dropQuill(layer);
         // 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
         // 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
         // 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
         //
-        // 纸感开着、羽毛在场时这里什么都不做，这是有意的：羽毛那一档把闪烁整个关掉了
-        // （quill-styles 给这根写了 animation: none），getAnimations() 里根本没有叫这个名字的动画，
-        // 循环空转一圈就过去。留着它是因为 2px 条那条路径还要靠它，两条路径共用这一段
         for (const animation of layer.caret.getAnimations()) {
             if (animation instanceof CSSAnimation && animation.animationName === exports.CARET_BLINK_NAME)
                 animation.currentTime = 0;
@@ -839,13 +819,6 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
                 release(input, layer);
             caretLayerMap.clear();
             return;
-        }
-        // 纸感关掉而光标还开着：把怀里的羽毛撤掉，让 2px 条回来。
-        // 样式表也挡得住（它要求根上有纸感标记），但那认的是纸挂没挂上、不是配置；
-        // 配置先落、纸下一帧才摘的那一段，两边都不动的话读者会看到一支笔和一根条叠着
-        if (!readQuillOn()) {
-            for (const layer of caretLayerMap.values())
-                dropQuill(layer);
         }
         const selection = document.getSelection();
         const activeElement = document.activeElement;
@@ -906,8 +879,6 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
             hide(layer);
             return;
         }
-        if (!caretSurface.hasAttribute(exports.CARET_ATTRIBUTE))
-            adoptCaretColor(caretSurface, layer);
         // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写
         let caretBox = measured;
         if (caretSurface instanceof HTMLTextAreaElement)
@@ -954,6 +925,19 @@ function installCaretMotion(readMotionMode, readQuillOn = () => false) {
         },
     };
 }
+/**
+ * 把一个视口坐标吸到设备像素网格上。
+ *
+ * 只按 CSS 像素取整是不够的：它只保证「相对容器」是整数，容器自己落在半个像素上时
+ * （输入卡片居中、窗口宽被除成奇数、显示缩放不是 100%），加回去仍然是半个像素。
+ * DPR 是 1.25、1.5 这类值时，半个 CSS 像素就是四分之一个物理像素，2px 宽的条会被抗锯齿抹开一圈灰边。
+ */
+function snapToDevicePixel(value) {
+    const ratio = window.devicePixelRatio;
+    if (!(ratio > 0) || !Number.isFinite(ratio))
+        return Math.round(value);
+    return Math.round(value * ratio) / ratio;
+}
 // 一个元素是不是本模块接管的可编辑面，是哪一种
 // rich 是主输入框，plain 是输入区里可编辑的 textarea，都不是给 null
 function surfaceOf(element) {
@@ -974,7 +958,7 @@ function surfaceOf(element) {
  * 所以本插件只认这些属性。一个契约被两个以上的模块读到就放到这里，散在各处各写一份，改一处就会漏一处
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_PLACEHOLDER_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_ATTRIBUTE = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
+exports.DARK_THEME_ATTRIBUTE = exports.DISCLOSURE_HEADER_SELECTOR = exports.DISCLOSURE_ROW_SELECTOR = exports.PROCESS_CONTENT_SELECTOR = exports.PROCESS_BODY_SELECTOR = exports.MOTION_ATTRIBUTE = exports.MOTION_ROW_SELECTOR = exports.PROCESS_EXPANDED_MODE_ATTRIBUTE = exports.PROCESS_GROUP_SELECTOR = exports.SCROLL_KEYS = exports.COMPOSER_DOCK_SELECTOR = exports.COMPOSER_TEXTAREA_SELECTOR = exports.SUBMISSION_ECHO_SELECTOR = exports.COMPOSER_CARD_SELECTOR = exports.COMPOSER_INPUT_SELECTOR = exports.COMPOSER_SELECTOR = exports.FOLLOW_THRESHOLD_PX = exports.FOLLOWING_TAIL_SELECTOR = exports.FOLLOWING_TAIL_ATTRIBUTE = exports.CONVERSATION_SCROLL_SELECTOR = exports.SHIMMER_ATTRIBUTE = exports.SHIMMER_SELECTOR = exports.RUNNING_STATE = exports.CALL_ROW_SELECTOR = exports.THINK_ROW_SELECTOR = exports.CHAT_FLOW_SELECTOR = void 0;
 // 聊天列
 exports.CHAT_FLOW_SELECTOR = "[data-chat-flow]";
 // 每一行思考行；它的阶段看 data-state
@@ -1011,11 +995,6 @@ exports.FOLLOW_THRESHOLD_PX = 25;
 exports.COMPOSER_SELECTOR = "[data-composer-seat]";
 // 输入框那层可编辑面。它是 contenteditable，插入符动效按它定位
 exports.COMPOSER_INPUT_SELECTOR = "[data-composer-input]";
-/**
- * 输入框空着时压在里面那行提示。它与可编辑面同级、用同一套内边距，绝对定位盖在插入点那一行上。
- * 纸感那支羽毛从插入点朝右上伸出去，会横过它最前面几个字，所以提示要按这支笔让开一段
- */
-exports.COMPOSER_PLACEHOLDER_SELECTOR = "[data-composer-placeholder]";
 // 输入卡片（那条胶囊）。落在它里面的点击可能是提交
 exports.COMPOSER_CARD_SELECTOR = "[data-composer-card]";
 /**
@@ -1030,7 +1009,7 @@ exports.SUBMISSION_ECHO_SELECTOR = "[data-submission-echo]";
 exports.COMPOSER_TEXTAREA_SELECTOR = "[data-composer-seat] textarea";
 /**
  * 输入框下方的统计坞那一层：统计胶囊与上下文比例圆都住在它里面。
- * 它是 dsh 0.2.1-alpha.1 起才有的，0.2.0-rc.2 及更早的坞只有带构建期 hash 的类名，那一版里统计只有一枚胶囊
+ * 认坞只认它，不认类名——类名带构建期 hash
  */
 exports.COMPOSER_DOCK_SELECTOR = "[data-composer-dock]";
 // 会滚动视口的按键；其余的（打字、复制）与滚动无关。与 dsh 自己认的那一组一致
@@ -1058,281 +1037,19 @@ exports.PROCESS_BODY_SELECTOR = "[data-step-process-body]";
 // 过程组体里的内容层；组体滚的就是它
 exports.PROCESS_CONTENT_SELECTOR = "[data-step-process-content]";
 /**
- * DisclosureRow 的被点那一行。展开体是它的兄弟：0.2.1-alpha.2 起改成外层 header 的兄弟。
- * 谁取展开体就得同时认下面那个 header，只认这一个的话 alpha.2 上取到的是空槽位，于是不报错、只是不动了
+ * DisclosureRow 的被点那一行。展开体不在它身上，而在外层 header 的兄弟位置上，见下面那条
  */
 exports.DISCLOSURE_ROW_SELECTOR = "[data-disclosure-row]";
 /**
- * DisclosureRow 的外层头（0.2.1-alpha.2 起）。
- * 它把被点行与 headerAccessory 槽位一起裹住，展开体因此从行的兄弟变成它的兄弟。
- * 旧版没有这一层，closest 返回 null，两处取展开体的地方都按有就用、没有就退回行自己
+ * DisclosureRow 的外层头：把被点行与 headerAccessory 槽位一起裹住，展开体是它的兄弟。
+ * 取展开体必须先认它——只认被点行的话取到的是那个空槽位，不报错、只是不动了
  */
 exports.DISCLOSURE_HEADER_SELECTOR = "[data-disclosure-header]";
-    };
-
-    __registry["chat/paper/caret/quill.js"] = function (module, exports, require) {
-"use strict";
 /**
- * 羽毛笔光标：一支由几何算出来的笔，笔尖压在插入点上，整支向右倾 35°
- *
- * 鎏金笔尖装在笔箍里，裸露的角质笔杆，两侧羽枝一窄一宽、各带分叉，笔尖上有一点光。没有位图。
- * 曲线、比例与每一段手画的路径都照搬 nocturne 的 core/quill.js；按「这是一根光标」重算的只有三样，
- * 各自在旁边写着理由：整支的缩放倍率（QUILL_HEIGHT_SCALE）、羽枝的根数、笔尖的横向落点
- *
- * **它不是独立的一根光标，而是 ../../caret/caret-motion 那根自绘插入符里面的一种画法。**
- * 位置、位移过渡、什么时候出现与藏起来、按掉原生插入符，全部仍归 caret-motion；这里只负责
- * 「按给定高度画成什么样」。不这么做的话就会有两套测量、两套事件、两套让位逻辑互相打架，
- * 而且纸感那一层是拿 [data-chat-ux-caret-layer] 的矩形去点灯的，多一根浮层会让它量到别处去
- *
- * 形状上有四处与 nocturne 不同，都是因为「这是光标，不是装饰」：
- * · 去掉 sway（3.4s 的左右微摆）。笔尖必须钉在插入点上，摆动等于光标位置在漂
- * · 去掉羽片上那道上下扫过的光。羽片本身只有几十像素宽，扫光几乎看不出来，却多一条一直在跑的动画
- * · 笔尖那一点光不再循环：nocturne 让它 2.8s 亮一次，那是「这根还活着」的信号；这支笔整体是静止的，
- *   那点光就留成一点固定的高光（写在 quill-styles 里），它只是不再随时间变
- * · 不去量光标后面那个字的字宽。nocturne 拿它把笔尖横向推进半格；本模块只管几何，笔尖就压在插入符
- *   左缘上，与那根 2px 的条同一列，两种画法互换时位置不跳
- *
- * 于是整支笔在屏幕上是不动的：不闪、不呼吸、笔尖的光不来回亮。会变的只有位置——
- * 读者挪光标时那一趟 80 ms 位移过渡归 caret-motion，不归这里
- *
- * 颜色不在这里，写在 quill-styles.ts，变量一律 --dsh-chat-ux-paper-quill-*：
- * 与纸感渲染色板（--dsh-chat-ux-paper-*）刻意不共用一套名字，换纸、换房间时羽毛只按墨色与纸色派生
+ * dsh 把配色方案投影到 body 上的属性：在就是深色。
+ * 纸的明暗与光标的颜色都按它分，宿主切主题时只动这一个属性（从无到有、从有到无）
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.QUILL_ID = exports.QUILL_ROOT_CLASS = exports.QUILL_ATTRIBUTE = void 0;
-exports.buildQuillCaret = buildQuillCaret;
-exports.placeQuillCaret = placeQuillCaret;
-// 挂在 caret-motion 那根自绘插入符上的标记：有它，样式表就把那一根画成羽毛，而不是 2px 的条
-exports.QUILL_ATTRIBUTE = "data-chat-ux-paper-quill";
-// 羽毛根元素的 class，与 quill-styles.ts 里的选择器同名
-exports.QUILL_ROOT_CLASS = "dsh-chat-ux-paper-quill";
-// 羽毛在它自己坐标系里的可见范围。原点是笔尖：横向 -4 到 60，纵向 -74 到 4
-const QUILL_VIEW = { left: 4, top: 74, width: 64, height: 78 };
-/**
- * 整支按插入符高度的多少倍画。
- *
- * 这一条是**改过 nocturne 的**：它用 1.15。放大有个上限，来自挂载位置——那根自绘插入符挂在
- * `.grow` 里，`.grow` 的父元素 `.scroll` 是 `overflow-y: auto`，**伸出去的部分会被裁掉**，
- * 而插入符离那一行顶端只有 `.input` 的 4px 上内边距加行内居中那一点点。
- *
- * 在真页面上量过（dsh 默认档：16px 字、26px 行高、字盒 22px、那一行上方留 6px）：
- * 1.15 时羽梢比插入符顶高 5.52px，**只剩 0.48px 余量**——读者把字号调大一档就会被切掉一片羽枝。
- * 1.0 时整支 22px、羽梢只高 2.39px，余量 3.6px，而且余量随字号等比增长
- * （上方空间与字盒都随字号线性放大），所以任何字号档下都还留得住。
- *
- * 降到 1.0 之后形状仍然认得出：羽片在 16px 字号下约 13×17px，羽枝之间的缝还有一两个像素。
- * 要整支都不被裁只有一条路：挂到 body 下用 position: fixed，那就得自己再量一遍视口坐标、
- * 再做一套视口裁剪，与「位置与位移仍然只由 caret-motion 负责」这条冲突——
- * 而正是这条让纸感那一层拿 [data-chat-ux-caret-layer] 的矩形去点灯时不会量错
- */
-const QUILL_HEIGHT_SCALE = 1;
-// 笔尖落在字盒纵向的哪个位置，羽毛的笔尖就压在这个点上
-const QUILL_NIB_Y = 0.84;
-// 整支右倾的角度
-const QUILL_LEAN = 35;
-// 取越界的邻居时用的空点
-const ZERO_POINT = [0, 0];
-// 两位小数：路径与尺寸都按它收，字符串稳定，也不会冒出 0.30000000000000004 这种位数
-const round2 = (value) => Number(value.toFixed(2));
-// 穿过一串点的样条：每个点的控制点取前后邻居差的三分之一（Catmull-Rom 转三次贝塞尔）
-const curveThrough = (points) => {
-    let path = "";
-    for (let index = 0; index < points.length - 1; index += 1) {
-        const previous = points[Math.max(0, index - 1)] ?? ZERO_POINT;
-        const from = points[index] ?? ZERO_POINT;
-        const to = points[index + 1] ?? ZERO_POINT;
-        const next = points[Math.min(points.length - 1, index + 2)] ?? to;
-        const control1 = round2(from[0] + (to[0] - previous[0]) / 6) + " " + round2(from[1] + (to[1] - previous[1]) / 6);
-        const control2 = round2(to[0] - (next[0] - from[0]) / 6) + " " + round2(to[1] - (next[1] - from[1]) / 6);
-        path += " C" + control1 + " " + control2 + " " + to[0] + " " + to[1];
-    }
-    return path;
-};
-const pathThrough = (points) => {
-    const first = points[0] ?? ZERO_POINT;
-    return "M" + first[0] + " " + first[1] + curveThrough(points);
-};
-// 羽脊：笔尖之上那段弯曲的脊，羽枝都长在它上面
-const QUILL_RACHIS = [[0, -24], [0.4, -46], [2.4, -70], [5.6, -90]];
-// 羽脊上参数 t 处的位置与两根方向。法向朝一侧，羽枝沿它长出去
-const alongRachis = (t) => {
-    const [head, first, second, tail] = QUILL_RACHIS;
-    const rest = 1 - t;
-    const weight0 = rest * rest * rest;
-    const weight1 = 3 * rest * rest * t;
-    const weight2 = 3 * rest * t * t;
-    const weight3 = t * t * t;
-    const at = [
-        weight0 * head[0] + weight1 * first[0] + weight2 * second[0] + weight3 * tail[0],
-        weight0 * head[1] + weight1 * first[1] + weight2 * second[1] + weight3 * tail[1],
-    ];
-    const dx = 3 * rest * rest * (first[0] - head[0]) + 6 * rest * t * (second[0] - first[0]) + 3 * t * t * (tail[0] - second[0]);
-    const dy = 3 * rest * rest * (first[1] - head[1]) + 6 * rest * t * (second[1] - first[1]) + 3 * t * t * (tail[1] - second[1]);
-    const length = Math.hypot(dx, dy) || 1;
-    const tangent = [dx / length, dy / length];
-    return { at, tangent, normal: [-tangent[1], tangent[0]] };
-};
-// 羽枝从羽脊往外伸多远。两侧各一条曲线，各带一道缺口，那就是羽枝的分叉
-const QUILL_VANE_FROM = 0.05;
-const gauss = (offset, center, width) => Math.exp(-(((offset - center) / width) ** 2));
-const trailingReach = (s) => 8.4 * Math.sin(Math.PI * s ** 0.75) ** 0.85 * (1 - 0.3 * gauss(s, 0.42, 0.018) - 0.24 * gauss(s, 0.67, 0.016));
-const leadingReach = (s) => 3.4 * Math.sin(Math.PI * s ** 0.65) ** 0.9 * (1 - 0.32 * gauss(s, 0.56, 0.02));
-/**
- * 羽片边缘上 s 处、某一侧的那一点
- *
- * side 是 1（宽的那一侧）或 -1（窄的一侧）；reach 按比例把羽枝缩短，
- * 羽枝的端点用它收到 0.94，才不伸出羽片轮廓
- */
-const edgeOn = (s, side, reach) => {
-    const t = QUILL_VANE_FROM + (1 - QUILL_VANE_FROM) * s;
-    const curve = alongRachis(t);
-    const width = (side > 0 ? trailingReach(s) : leadingReach(s)) * reach;
-    return [
-        round2(curve.at[0] + curve.normal[0] * width * side + curve.tangent[0] * width * 0.38),
-        round2(curve.at[1] + curve.normal[1] * width * side + curve.tangent[1] * width * 0.38),
-    ];
-};
-/**
- * 羽枝的根数。
- *
- * nocturne 画的是 30（宽侧）与 22（窄侧），那是给它的皮肤当装饰用的。这里整支笔只有二十来个像素高，
- * 五十多根羽枝挤在不到二十个像素里，线一叠就是一小片均匀的灰，读者看到的是一块污渍而不是羽毛。
- * 减到 14 与 10 之后，相邻两根之间隔开约两个像素，羽片才认得出是一根羽毛
- */
-const QUILL_TRAILING_BARB_COUNT = 14;
-const QUILL_LEADING_BARB_COUNT = 10;
-// 羽脊整根取样的位置，0 到 1 均分
-const QUILL_SAMPLES = Array.from({ length: 61 }, (_, index) => index / 60);
-// 羽片轮廓：窄的一侧从根到梢，宽的一侧从梢回根，首尾相接
-const QUILL_VANE_PATH = (() => {
-    const leading = QUILL_SAMPLES.map((s) => edgeOn(s, -1, 1));
-    const trailing = QUILL_SAMPLES.slice().reverse().map((s) => edgeOn(s, 1, 1));
-    return pathThrough(leading.concat(trailing.slice(1))) + " Z";
-})();
-// 羽枝：从羽脊上每隔一段伸出去一根，端点收进羽片轮廓里
-const barbPaths = (side, count) => {
-    let path = "";
-    for (let index = 0; index < count; index += 1) {
-        const s = 0.04 + (index / (count - 1)) * 0.9;
-        const curve = alongRachis(QUILL_VANE_FROM + (1 - QUILL_VANE_FROM) * s);
-        const end = edgeOn(Math.min(1, s + 0.05), side, 0.94);
-        const width = (side > 0 ? trailingReach(s) : leadingReach(s)) * 0.55;
-        const control = [
-            round2(curve.at[0] + curve.normal[0] * width * side),
-            round2(curve.at[1] + curve.normal[1] * width * side),
-        ];
-        path += "M" + round2(curve.at[0]) + " " + round2(curve.at[1]) + " Q" + control[0] + " " + control[1]
-            + " " + end[0] + " " + end[1] + " ";
-    }
-    return path.trim();
-};
-const QUILL_TRAILING_BARBS = barbPaths(1, QUILL_TRAILING_BARB_COUNT);
-const QUILL_LEADING_BARBS = barbPaths(-1, QUILL_LEADING_BARB_COUNT);
-// 羽脊自己的实体：根粗梢细的一条带子，左边从根到梢、右边从梢回根
-const QUILL_RACHIS_SHAPE = (() => {
-    const steps = Array.from({ length: 25 }, (_, index) => (index / 24) * 0.98);
-    const side = (sign) => steps.map((t) => {
-        const curve = alongRachis(t);
-        const half = 0.62 * (1 - t) + 0.08;
-        return [round2(curve.at[0] + curve.normal[0] * half * sign), round2(curve.at[1] + curve.normal[1] * half * sign)];
-    });
-    return pathThrough(side(-1).concat(side(1).reverse())) + " Z";
-})();
-// 笔杆、笔箍、笔尖与它们的刻线。这几段是手画的定值，原样照搬
-const QUILL_RACHIS_LINE = "M-0.15 -24 C0.25 -46 2.25 -70 5.6 -90";
-const QUILL_CALAMUS_PATH = "M-1.15 -10.4 C-1.2 -15 -1.05 -20 -0.82 -24.6 L0.82 -24.6 C1.05 -20 1.2 -15 1.15 -10.4 Z";
-const QUILL_DOWN_PATH = "M0 -25.2 q-2.6 0.5 -4.6 -1.4 M0 -26.6 q-3 -0.2 -4.8 -3.2 M0.1 -28 q-2.4 -0.9 -3.6 -4.2 "
-    + "M0.2 -25.4 q2.8 0.7 4.8 -0.8 M0.2 -27 q3.3 -0.1 5.2 -2.9 M0.3 -28.6 q2.7 -0.8 4 -4";
-const QUILL_FERRULE_PATH = "M-1.55 -9 L1.55 -9 L1.4 -11.2 L-1.4 -11.2 Z";
-const QUILL_NIB_PATH = "M0 0.3 C-0.6 -2 -1.9 -5.4 -1.7 -9.1 L1.7 -9.1 C1.9 -5.4 0.6 -2 0 0.3 Z";
-const QUILL_SLIT_PATH = "M0 -0.2 L0 -5.4";
-const QUILL_SHOULDERS_PATH = "M-1.5 -7.6 Q0 -8.3 1.5 -7.6";
-// 渐变与裁剪共用的 id 前缀。同页只有这一份，不会被谁盖掉
-// 样式表按它拼 fill: url(#…)，两处引用的是同一个 id
-exports.QUILL_ID = "dsh-chat-ux-paper-quill";
-const QUILL_VIEW_BOX = -QUILL_VIEW.left + " " + -QUILL_VIEW.top + " " + QUILL_VIEW.width + " " + QUILL_VIEW.height;
-// 各部件身上的 class。下面写好、样式在 quill-styles.ts，两处必须一字不差
-const PART = {
-    vane: exports.QUILL_ROOT_CLASS + "-vane",
-    barbs: exports.QUILL_ROOT_CLASS + "-barbs",
-    rachis: exports.QUILL_ROOT_CLASS + "-rachis",
-    rachisLight: exports.QUILL_ROOT_CLASS + "-rachis-light",
-    down: exports.QUILL_ROOT_CLASS + "-down",
-    engraving: exports.QUILL_ROOT_CLASS + "-engraving",
-    hole: exports.QUILL_ROOT_CLASS + "-hole",
-    glint: exports.QUILL_ROOT_CLASS + "-glint",
-};
-// 整支笔的标记。先在原点画好，再整体右倾 QUILL_LEAN 度
-const QUILL_MARKUP = [
-    '<svg viewBox="', QUILL_VIEW_BOX, '" aria-hidden="true">',
-    "<defs>",
-    '<linearGradient id="', exports.QUILL_ID, '-vane" x1="0" x2="1" y1="0" y2="0">',
-    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-edge)"/>',
-    '<stop offset="0.3" stop-color="var(--dsh-chat-ux-paper-quill-sheen)"/>',
-    '<stop offset="0.5" stop-color="var(--dsh-chat-ux-paper-quill-body)"/>',
-    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-edge)"/>',
-    "</linearGradient>",
-    '<linearGradient id="', exports.QUILL_ID, '-gilt" x1="0" x2="1" y1="0" y2="0">',
-    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-metal-lo)"/>',
-    '<stop offset="0.35" stop-color="var(--dsh-chat-ux-paper-quill-metal-hi)"/>',
-    '<stop offset="0.6" stop-color="var(--dsh-chat-ux-paper-quill-metal)"/>',
-    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-metal-lo)"/>',
-    "</linearGradient>",
-    '<linearGradient id="', exports.QUILL_ID, '-horn" x1="0" x2="1" y1="0" y2="0">',
-    '<stop offset="0" stop-color="var(--dsh-chat-ux-paper-quill-horn-lo)"/>',
-    '<stop offset="0.35" stop-color="var(--dsh-chat-ux-paper-quill-horn-hi)"/>',
-    '<stop offset="1" stop-color="var(--dsh-chat-ux-paper-quill-horn-lo)"/>',
-    "</linearGradient>",
-    '<clipPath id="', exports.QUILL_ID, '-clip"><path d="', QUILL_VANE_PATH, '"/></clipPath>',
-    "</defs>",
-    '<g transform="rotate(', QUILL_LEAN, ')">',
-    '<path d="', QUILL_DOWN_PATH, '" class="', PART.down, '"/>',
-    '<path d="', QUILL_VANE_PATH, '" class="', PART.vane, '"/>',
-    '<g clip-path="url(#', exports.QUILL_ID, '-clip)">',
-    '<path d="', QUILL_TRAILING_BARBS, '" class="', PART.barbs, '"/>',
-    '<path d="', QUILL_LEADING_BARBS, '" class="', PART.barbs, '"/>',
-    "</g>",
-    '<path d="', QUILL_RACHIS_SHAPE, '" class="', PART.rachis, '"/>',
-    '<path d="', QUILL_RACHIS_LINE, '" class="', PART.rachisLight, '"/>',
-    '<path d="', QUILL_CALAMUS_PATH, '" fill="url(#', exports.QUILL_ID, '-horn)"/>',
-    '<path d="', QUILL_FERRULE_PATH, '" fill="url(#', exports.QUILL_ID, '-gilt)"/>',
-    '<path d="', QUILL_NIB_PATH, '" fill="url(#', exports.QUILL_ID, '-gilt)"/>',
-    '<path d="', QUILL_SHOULDERS_PATH, '" class="', PART.engraving, '"/>',
-    '<path d="', QUILL_SLIT_PATH, '" class="', PART.engraving, '"/>',
-    '<circle cx="0" cy="-6" r="0.5" class="', PART.hole, '"/>',
-    '<circle class="', PART.glint, '" cx="0.4" cy="-1.8" r="0.9"/>',
-    "</g></svg>",
-].join("");
-/**
- * 一支新的羽毛，返回它的根元素
- *
- * 调用方负责把它塞进 caret-motion 那根自绘插入符里。两件事的次序不能颠倒：
- * **先塞好、再打 QUILL_ATTRIBUTE**。属性一到，样式表就把那根的 2px 底色让掉；
- * 反过来写的话，让掉底色到笔挂上之间只要有一次强制回流，读者看到的就是一根空盒子。
- * 真颠倒了也不会永远空着——quill-styles 里那条 :not(:has(> …)) 会把 2px 条还回来
- */
-function buildQuillCaret() {
-    const element = document.createElement("div");
-    element.className = exports.QUILL_ROOT_CLASS;
-    element.setAttribute("aria-hidden", "true");
-    element.innerHTML = QUILL_MARKUP;
-    return element;
-}
-/**
- * 按插入符的高度把这支笔摆好
- *
- * 写的是相对那根 2px 条左上角的偏移：条的左上角就是插入符的左上角，所以这里的 left 与 top
- * 都可能是负数，羽枝朝右上伸出去，笔尖落在插入符左缘、纵向 QUILL_NIB_Y 处。
- * 尺寸写像素、不写 transform: scale：SVG 按 CSS 尺寸栅格化，0.28 倍缩放会把 0.28 单位的笔画糊成一片
- */
-function placeQuillCaret(element, caretHeight) {
-    const height = caretHeight * QUILL_HEIGHT_SCALE;
-    const scale = height / QUILL_VIEW.height;
-    element.style.width = round2(QUILL_VIEW.width * scale) + "px";
-    element.style.height = round2(height) + "px";
-    element.style.left = round2(-QUILL_VIEW.left * scale) + "px";
-    element.style.top = round2(caretHeight * QUILL_NIB_Y - QUILL_VIEW.top * scale) + "px";
-}
+exports.DARK_THEME_ATTRIBUTE = "data-ds-dark-theme";
     };
 
     __registry["chat/notify/ask-notify.js"] = function (module, exports, require) {
@@ -3167,15 +2884,6 @@ body[${exports.GLASS_ATTRIBUTE}][data-ds-dark-theme] {
 	  inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
   }
 
-  /* rc.2 那条「不可用就整枚淡到四成」在这里收回来 */
-  /* dsh 0.2.0-rc.2 给这枚按钮的 :disabled 是 opacity: .4（0.2.1-alpha.2 已经不用这条，空输入框时
-     照旧实心），不收回来的话同一块玻璃在「输入框为空」时会整枚淡掉，两版观感就此分叉（实测 rc.2 空输
-     入时按钮面 #b8cbf2、打字之后 #5d89e5，alpha.2 一直是 #5e8ae7）。代价照实说：收回来之后「还不能发
-     送」没有视觉提示了，按钮仍由 dsh 端拒收、点不动，这与 alpha.2 一致；深色档一样收 */
-  body[${exports.GLASS_ATTRIBUTE}] [data-composer-card] :is([${exports.GLASS_PRIMARY_ATTRIBUTE}], [${exports.GLASS_STOP_ATTRIBUTE}]):disabled {
-	opacity: 1 !important;
-  }
-
   /* 左下角那枚加号（添加文件或调指令）：同一块玻璃上的一片灰 */
   /* 与主按钮同一套做法：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），让出两成之后
      卡片那层玻璃底从小圆底下透上来。三笔质感按 28px 的小圆收一遍（主按钮那三笔是给 34px 写的），
@@ -3276,7 +2984,7 @@ const HOST_BG_DOCUMENT_PREVIEW_PROPERTY = "--dsw-alias-bg-document-preview";
 // --dsh-font-family-text 与 --dsh-font-family-code（FONT_FAMILY_VARIABLES），插件写同一对名字
 // 就是与它抢同一个变量，而且它的撤销集会 removeProperty 把插件写的那一笔一起删掉。
 // body 上的 --dsw-font-family 与 --ds-font-family-code 是 base.css 由那两条算出来的消费点，
-// 插件直接在 body 内联这两条：内联声明赢过样式表规则，两代 dsh 都吃得到，也不必与谁抢上游
+// 插件直接在 body 内联这两条：内联声明赢过样式表规则，也不必与谁抢上游
 const HOST_TEXT_FONT_PROPERTY = "--dsw-font-family";
 const HOST_CODE_FONT_PROPERTY = "--ds-font-family-code";
 /**
@@ -3491,8 +3199,7 @@ function captureHostTokens() {
  * 抄过之后这两列里一个字、一个底、一条悬停色都不再经纸感的手。重复调用是幂等的——setOwned
  * 只在值变了时才真的写 DOM，而写一条 custom property 会让整篇文档的样式失效一遍
  *
- * 宿主自己没有定义的那几条（旧版 dsh 的 `--dsw-font-family` 之类）不写：没有原值可还，
- * 那一条在这两列上只能跟着 body 走
+ * 宿主自己没有定义的那几条不写：没有原值可还，那一条在这两列上只能跟着 body 走
  */
 function applySidebarHostTokens(columns) {
     if (hostSnapshot === null)
@@ -4378,7 +4085,7 @@ function installFileMutationRow(slots, liveDiff) {
 function FileMutationRow(props) {
     const { t, block, toolName, cwd, home, openFile, inspect, useDisclosure } = props;
     const { expanded, toggle } = useDisclosure();
-    // dsh 0.2.1-alpha.1 起每个阶段都带 args 视图，不再有旧版那个前缀订阅口
+    // 每个阶段都带 args 视图，准备态可能还不完整
     const parsedArgs = (0, react_1.useMemo)(() => {
         const head = callHead(block);
         return head === null ? null : parseArgs(head.argsRaw);
@@ -5299,11 +5006,13 @@ function installFoldGlide() {
             const controlledElement = document.getElementById(controls);
             return controlledElement instanceof HTMLElement ? controlledElement : null;
         }
-        // 认 header 优先：0.2.1-alpha.2 起外层多了一层 [data-disclosure-header]，根在它上面一层。
-        // 它里面那个 headerAccessory 槽位正好落在旧写法会取到的位置上，取过来的话收起时会把那个按钮压扁
-        const row = control.closest(dom_contract_1.DISCLOSURE_HEADER_SELECTOR) ?? control;
-        const bodyCandidate = row.parentElement?.lastElementChild;
-        return bodyCandidate instanceof HTMLElement && bodyCandidate !== row ? bodyCandidate : null;
+        // 展开体挂在 [data-disclosure-header] 的兄弟位置上，header 把被点行与 headerAccessory 槽位一起裹住。
+        // 只认被点行的话，它的兄弟正好是 headerAccessory 那个空槽位，收起时会把那个按钮压扁
+        const header = control.closest(dom_contract_1.DISCLOSURE_HEADER_SELECTOR);
+        if (header === null)
+            return null;
+        const bodyCandidate = header.parentElement?.lastElementChild;
+        return bodyCandidate instanceof HTMLElement && bodyCandidate !== header ? bodyCandidate : null;
     };
     /**
      * 控件控制的过程组体，不是组头时为 null
@@ -8096,11 +7805,18 @@ function applyPaperBubble(mode) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.currentPaperMode = currentPaperMode;
 exports.watchThemeMode = watchThemeMode;
-// dsh 在 body 上标深色配色的属性
-const DARK_THEME_ATTRIBUTE = "data-ds-dark-theme";
+/**
+ * 纸的明暗：跟着 dsh 的主题走。
+ *
+ * dsh 的 ui-layout 把配色方案投影到文档上：深色时给 body 挂 data-ds-dark-theme，同时把 color-scheme
+ * 写在根元素上。纸只认前者——那是宿主自己选配色的那个属性，正文、代码块、菜单读的也是它。
+ *
+ * 纸这边不缓存这个值：每帧现读一次属性，代价是一次 hasAttribute，比维护一份可能与宿主分叉的副本便宜
+ */
+const dom_contract_1 = require("../../dom-contract");
 // 当下是哪一档。body 还没建出来时按亮档：那种时候页面还什么都没画
 function currentPaperMode() {
-    return document.body?.hasAttribute(DARK_THEME_ATTRIBUTE) === true ? "dark" : "light";
+    return document.body?.hasAttribute(dom_contract_1.DARK_THEME_ATTRIBUTE) === true ? "dark" : "light";
 }
 /**
  * 主题变了就叫一次。
@@ -8111,13 +7827,13 @@ function currentPaperMode() {
 function watchThemeMode(onChange) {
     const observer = new MutationObserver((records) => {
         for (const record of records) {
-            if (record.attributeName !== DARK_THEME_ATTRIBUTE)
+            if (record.attributeName !== dom_contract_1.DARK_THEME_ATTRIBUTE)
                 continue;
             onChange();
             return;
         }
     });
-    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_THEME_ATTRIBUTE] });
+    observer.observe(document.body, { attributes: true, attributeFilter: [dom_contract_1.DARK_THEME_ATTRIBUTE] });
     return () => observer.disconnect();
 }
     };
@@ -9992,8 +9708,8 @@ const NOTIFY_DONE_FIELD = "notifyDone";
 const ZH_COPY = {
     summary: () => "纸感、光标动效、读数、输入框玻璃与发送气泡都在这里调。",
     paperLabel: "纸感",
-    paperHint: "聊天区铺一张纸：那一列的底色换成纸的调子，输入框与气泡读起来像纸面上压出来的一层，"
-        + "输入光标也变成一支羽毛笔；左右两栏不受影响，仍是 dsh 自己的样子。关掉就一起收掉。",
+    paperHint: "聊天区铺一张纸：那一列的底色换成纸的调子，输入框与气泡读起来像纸面上压出来的一层；"
+        + "左右两栏不受影响，仍是 dsh 自己的样子。关掉就一起收掉。",
     paperFontLabel: "纸面字体",
     paperFontHint: "正文与代码换成纸上的那套：正文是衬线，代码是打字机。关掉就回到你自己在 dsh 里配的字体，"
         + "纸照铺；纸感关掉时这一项不起作用。",
@@ -10042,8 +9758,7 @@ const EN_COPY = {
     summary: () => "The paper, the caret motion, the readouts, the composer glass and the send bubble are all adjustable here.",
     paperLabel: "Paper",
     paperHint: "The chat column lies on a sheet of paper: its background takes that paper's tone, so the composer and the "
-        + "bubbles read as layers pressed into it, and the caret becomes a quill. The side columns keep dsh's own "
-        + "look. Off takes all of it away.",
+        + "bubbles read as layers pressed into it. The side columns keep dsh's own look. Off takes all of it away.",
     paperFontLabel: "Paper typeface",
     paperFontHint: "Body text and code take the paper's own faces — a serif for prose, a typewriter for code. Off keeps the font "
         + "you set in dsh and the paper stays; it does nothing while paper is off either.",
@@ -10631,14 +10346,13 @@ exports.CARET_MOTION_CSS = void 0;
  * 三条规则：按掉原生插入符、给挂那根的父元素补定位上下文、把自绘的那根画出来
  * 前两条只认 caret-motion.ts 写上的标记，脚本半途没跑起来时一条都不命中，原生插入符还在
  * 这是这套动效唯一真正会伤人的地方（读者看不见光标），所以隐藏永远由脚本自己开启，CSS 不先斩后奏
- *
- * 纸感开着时那根画成一支羽毛，那一份表在 ../paper/caret/quill-styles，拼在最后面：
- * 它要求根元素上有纸感标记、并且那根带着羽毛标记，条件不成立时这里一个字节都不受影响
  */
 const caret_motion_1 = require("./caret-motion");
-const quill_styles_1 = require("../paper/caret/quill-styles");
-// 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px，与这里同档
-const CARET_WIDTH = "2px";
+const dom_contract_1 = require("../../dom-contract");
+// 自绘插入符的宽度。VS Code 的 cursorWidth 默认是 0，渲染时按屏幕缩放落到 2px；这里比它粗一点
+// 这一份只是兜底：caret-motion 每画一帧都按 devicePixelRatio 写回一个对齐到物理像素的宽度
+// （DPR 1.25 时是 2.4px，也就是整 3 个物理像素），不按物理像素对齐的话左右各留半格灰边
+const CARET_WIDTH = "2.5px";
 // 位移时长，与 VS Code 的平滑光标同档
 const CARET_TRAVEL_MS = "80ms";
 // 闪烁周期。Chromium 自己的插入符就是亮五百毫秒、灭五百毫秒
@@ -10679,17 +10393,28 @@ ${LAYER} {
   border: 0;
   visibility: hidden;
   pointer-events: none;
-  /* 颜色是接管那一刻从这个面的原生插入符上读下来的；读到之前退回 dsh 给主输入框定的那一支 */
-  background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
+  /* 颜色跟着 dsh 的明暗走：浅色黑、深色白（深色那一条在下面），写成一个变量再由 background 取用 */
+  ${caret_motion_1.CARET_COLOR_PROPERTY}: #000000d9;
+  background: var(${caret_motion_1.CARET_COLOR_PROPERTY});
+  /* 两端圆角。这根只有两三个像素宽，999px 会被 CSS 按边长收成两端半圆，看起来是一根圆头的条 */
+  border-radius: 999px;
   /* 过渡的是 transform 而不是 top 与 left：VS Code 那边过渡的是布局属性，这里没有理由跟着付那份代价 */
   transition: transform ${CARET_TRAVEL_MS} ease;
-  will-change: transform;
+  /* 这里不写 will-change：常驻的合成层会让落在非整数偏移上的这一根被合成器重采样，边缘反而更糊。
+     过渡真在跑的那一段由 caret-motion 的 armWillChange 临时提上去，过完就撤 */
+
   /* 原生那根被按下去了，闪烁得自己来 */
   animation: ${caret_motion_1.CARET_BLINK_NAME} ${CARET_BLINK_PERIOD} step-end infinite;
 }
 
 ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
   visibility: visible;
+}
+
+/* 深色配色：dsh 把配色方案投影在 body 上，纸感的明暗认的也是这一个属性。
+   选择器比上面那条多一段，赢的是它，切换主题时当场生效、不必重建那根 */
+body[${dom_contract_1.DARK_THEME_ATTRIBUTE}] ${LAYER} {
+  ${caret_motion_1.CARET_COLOR_PROPERTY}: #ffffffe7;
 }
 
 @keyframes ${caret_motion_1.CARET_BLINK_NAME} {
@@ -10702,185 +10427,6 @@ ${LAYER}[${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}] {
     transition: none;
     animation: none;
   }
-}
-`
-    // 纸感开着时那根换成羽毛。它整张表都以纸感标记与羽毛标记为前提，两个条件缺一个就一条都不命中
-    + quill_styles_1.QUILL_CSS;
-    };
-
-    __registry["chat/paper/caret/quill-styles.js"] = function (module, exports, require) {
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.QUILL_CSS = void 0;
-/**
- * 羽毛光标的样式
- *
- * 整张表都拿「根元素上有纸感标记 + 那根自绘插入符上带着 QUILL_ATTRIBUTE」当前提。这两个条件缺一个，
- * 下面一条都不命中，那根仍是 caret-motion-styles 里的 2px 条——纸感关掉、纸还没挂上、脚本半路停了，
- * 读者看到的都是原来那根光标，不存在「什么都没有」的那一帧
- *
- * 为什么要两个条件都认：QUILL_ATTRIBUTE 是脚本写的，摘掉它的那一瞬间纸感可能已经先关了（配置先落、
- * 下一帧才重建光标）。只有纸感标记也当前提，那种中间态下底色才会回到 2px 条的那一支，而不是留在
- * 「被撤掉的底色」上
- *
- * 颜色从纸感的两个变量派生（--dsh-chat-ux-paper-ink 与 --dsh-chat-ux-paper-paper），不写死色值：
- * 换纸、换房间时羽毛自然跟着走。描金与角质笔杆是定值，它们不该随纸变
- *
- * **整张表里没有一条会自己跑的动画。** 这支笔在屏幕上完全静止：不闪烁、不呼吸、笔尖那点光也不来回亮。
- * 会动的只剩两条，都不属于「闪」：读者挪光标时那一趟 80 ms 位移过渡（geometry 那一侧的事），
- * 以及哪一帧该出现、哪一帧该藏起来（caret-motion 的事）
- */
-const dom_contract_1 = require("../../../dom-contract");
-const caret_motion_1 = require("../../caret/caret-motion");
-const paper_tokens_1 = require("../paper-tokens");
-const quill_1 = require("./quill");
-// 纸感标记在根元素上时的选择器前缀
-const ROOT_SCOPE = "html[" + paper_tokens_1.PAPER_ROOT_ATTRIBUTE + "]";
-/**
- * 装载羽毛的那根自绘插入符，三个属性写作 0-3-1
- *
- * 要压过 caret-motion-styles 里那份 0-2-0：它给这根写了 background 与 width，
- * 羽毛模式下这根只剩一个装着笔的盒子，那两样都得让掉
- */
-const LAYER = ROOT_SCOPE + " [" + caret_motion_1.CARET_LAYER_ATTRIBUTE + "][" + quill_1.QUILL_ATTRIBUTE + "]";
-// 羽毛根
-const ROOT = "." + quill_1.QUILL_ROOT_CLASS;
-/**
- * 空输入框里那行提示要给羽毛让开多宽。
- *
- * 一支笔从笔尖朝右上伸出去 60 个本地单位，整支高 78 单位、按插入符的高度画：
- * 默认档 16px 字、字盒约 22px 时横向占到 60 / 78 × 22 ≈ 17px，约合 1.06em。
- * 这里取 1.25em——中文界面下五个半角空格差不多就这么宽——比笔宽多出来的那一点是缝。
- *
- * 写 em 不写 px：字号一变，笔与提示按同一个比例放大，这道缝不会在大字号上消失
- */
-const PLACEHOLDER_INDENT_EM = 1.25;
-/**
- * 羽毛光标那一整张表。
- *
- * 由 caret-motion-styles 拼进它自己那张，随 CARET_MOTION_CSS 一起进 styles.ts 的 ALL_CSS：
- * 入口只认那一处，这里不再单独注册
- */
-exports.QUILL_CSS = `
-/* 装载羽毛的那根盒子：底色让掉，闪烁也停掉。
-   caret-motion-styles 给这一根写了闪烁（1s step-end，一半时间 opacity 0），那根条必须闪，
-   因为浏览器自己画的插入符就在闪。羽毛不该闪：读者要的是一支摆在那里的笔。
-   animation: none 就是这一条唯一的职责；恒定在这里，不在 keyframes 里 */
-${LAYER} {
-  background: none;
-  /* 宽度仍是 2px，不改成 auto：纸感那一层是拿这一根的矩形去点灯、画脚下那圈光的，
-     宽度一缩，它量到的位置就跟着漂。羽毛是绝对定位的子元素，本来就不靠父元素的宽度 */
-  overflow: visible;
-  /* 不闪。caret-motion 的 draw() 每次移动都会把那条闪烁动画拉回起点，这一根身上没有那条动画，
-     那段循环对它就是空转——它只认动画名，认不到就什么都不做
-
-     caret-motion-styles 的 prefers-reduced-motion 那一段对这里没有额外的事可做：
-     整支本来就是静止的。那一档要停的位移过渡（80 ms）仍然由 caret-motion-styles 那一份关掉，
-     这里不重复写 */
-  animation: none;
-  /* 颜色从纸上的墨与纸派生。这里是兜底的那一档：浏览器不认识 color-mix 时用纯墨色，仍是一支看得见的笔 */
-  --dsh-chat-ux-paper-quill-edge: var(--dsh-chat-ux-paper-ink, currentColor);
-  --dsh-chat-ux-paper-quill-body: var(--dsh-chat-ux-paper-ink, currentColor);
-  --dsh-chat-ux-paper-quill-sheen: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
-  --dsh-chat-ux-paper-quill-barb: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
-  --dsh-chat-ux-paper-quill-rachis: var(--dsh-chat-ux-paper-paper, #f2e9d8);
-  --dsh-chat-ux-paper-quill-down: var(--dsh-chat-ux-paper-ink-muted, var(--dsh-chat-ux-paper-ink, currentColor));
-  /* 描金与角质笔杆：照搬 nocturne 的定值。金色在任何纸色上都成立，跟着纸走反而会糊成一块脏斑 */
-  --dsh-chat-ux-paper-quill-metal-lo: #5e431c;
-  --dsh-chat-ux-paper-quill-metal-hi: #f3dca4;
-  --dsh-chat-ux-paper-quill-metal: #b8904c;
-  --dsh-chat-ux-paper-quill-horn-lo: #8c7651;
-  --dsh-chat-ux-paper-quill-horn-hi: #f3e6c6;
-}
-
-/* 羽片比墨浅一档、羽枝比羽片再亮一档、笔脊就是纸色——这三档由墨与纸两个变量现算，
-   深浅两种纸各自成立，不必分主题写两套 */
-@supports (color: color-mix(in srgb, red 50%, blue)) {
-  ${LAYER} {
-    --dsh-chat-ux-paper-quill-body: color-mix(
-      in srgb,
-      var(--dsh-chat-ux-paper-ink, currentColor) 74%,
-      var(--dsh-chat-ux-paper-paper, #f2e9d8)
-    );
-    --dsh-chat-ux-paper-quill-sheen: color-mix(
-      in srgb,
-      var(--dsh-chat-ux-paper-ink, currentColor) 46%,
-      var(--dsh-chat-ux-paper-paper, #f2e9d8)
-    );
-    --dsh-chat-ux-paper-quill-barb: color-mix(
-      in srgb,
-      var(--dsh-chat-ux-paper-paper, #f2e9d8) 58%,
-      var(--dsh-chat-ux-paper-ink, currentColor)
-    );
-    --dsh-chat-ux-paper-quill-down: color-mix(in srgb, var(--dsh-chat-ux-paper-ink, currentColor) 55%, transparent);
-  }
-}
-
-/* 羽毛自己。尺寸与偏移由 quill.ts 的 placeQuillCaret 每帧写在那根盒子里，
-   这里只给材质：一支压在纸上的笔画，所以带一层很浅的落影 */
-${ROOT} {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: block;
-  pointer-events: none;
-  filter: drop-shadow(0.8px 1.6px 1px rgba(0, 0, 0, 0.3));
-}
-
-/* 纸感标记不在时，装进去的那支笔整个收起来。
-   这一条是给「纸先关、光标下一帧才重建」那种中间态兜底的：那一帧底色已经回到 2px 条，
-   不藏的话会看到一根条和一支笔叠在一起 */
-html:not([${paper_tokens_1.PAPER_ROOT_ATTRIBUTE}]) ${ROOT} {
-  display: none;
-}
-
-/* 羽毛不在怀里时，2px 的条自己回来——这是这套东西唯一真正会伤到读者的失效方式的兜底。
-   能让它发生的只有一件事：React 把这根连同里面的笔一起摘掉、再挂回来，而中间没有一次同步。
-   那期间标记还在（所以上面那条把底色让掉了）、笔没了，纯靠脚本等着下一帧才修的话，
-   读者看到的是一根没有底色的空盒子。:has 不支持的浏览器上这条不成立，退化成上面那条的行为
-
-   **这条兜底不闪**：它是一根等下一次同步来把羽毛挂回去的临时条，通常只存在一两帧，
-   给它挂上闪烁只会让这期间的光标看起来在闪——正是这一轮要去掉的东西。
-   恒定底色就够了：读者的要求是看得见光标，不是看得见它闪 */
-${LAYER}:not(:has(> ${ROOT})) {
-  background: var(${caret_motion_1.CARET_COLOR_PROPERTY}, var(--dsw-alias-state-business-primary, currentColor));
-}
-
-${ROOT} svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  /* 羽枝伸到字盒之外，viewBox 装不下整支笔：裁掉就只剩个笔尖 */
-  overflow: visible;
-}
-
-${ROOT}-vane { fill: url(#${quill_1.QUILL_ID}-vane); }
-${ROOT}-barbs { fill: none; stroke: var(--dsh-chat-ux-paper-quill-barb); stroke-width: 0.28; stroke-linecap: round; }
-${ROOT}-rachis { fill: var(--dsh-chat-ux-paper-quill-rachis); }
-${ROOT}-rachis-light { fill: none; stroke: #fff; stroke-width: 0.22; opacity: 0.45; }
-${ROOT}-down { fill: none; stroke: var(--dsh-chat-ux-paper-quill-down); stroke-width: 0.35; stroke-linecap: round; }
-${ROOT}-engraving { fill: none; stroke: var(--dsh-chat-ux-paper-quill-metal-lo); stroke-width: 0.3; }
-${ROOT}-hole { fill: var(--dsh-chat-ux-paper-quill-metal-lo); }
-
-/* 笔尖那一点光：一个恒定的小亮点，不闪。
-   它原来是 2.8s 亮一次的循环，那是「这根还活着」的信号；静态之后这个信号没有地方安放，
-   就留成一点固定的高光——笔尖上有一点反光本来就成立，它只是不再随时间变
-   羽片上那道上下扫过的光从移植起就没带过来：羽片只有几十像素宽，扫光看不出来，却多一条常驻动画 */
-${ROOT}-glint {
-  fill: #fff;
-  opacity: 0.55;
-}
-
-/* 空着的时候，那行提示要给这支笔让开。
-   笔尖钉在插入点上，整支朝右上伸出去，正好横过提示最前面几个字；提示整行向右让出一段，字就不被压住。
-
-   只有笔真画在那里才让：插入符层上带着羽毛标记、并且这一帧是可见的。
-   没聚焦、插入符动效关着、纸感关着——这些时候提示都留在原处，不会平白无故挪一下。
-
-   :has 从提示的父元素往下找那根笔：插入符层与提示同级，都挂在可编辑面的父元素下面
-   （caret-motion 的 layerFor 把那一根 append 到 input.parentElement 上） */
-${ROOT_SCOPE} *:has(> [${caret_motion_1.CARET_LAYER_ATTRIBUTE}][${quill_1.QUILL_ATTRIBUTE}][${caret_motion_1.CARET_VISIBLE_ATTRIBUTE}]) > ${dom_contract_1.COMPOSER_PLACEHOLDER_SELECTOR} {
-  padding-left: ${PLACEHOLDER_INDENT_EM}em;
 }
 `;
     };
@@ -10897,7 +10443,7 @@ exports.COMPOSER_SCROLL_CSS = void 0;
  *
  * **为什么非做不可。** 主输入框的滚动容器只声明了 overflow-y: auto；按 CSS Overflow 规范，
  * 另一个轴是 visible 时会计算成 auto，于是它同时成了横向滚动容器。纵向条一出现就吃掉 5px 宽度，
- * 贴右缘的内容当场横向溢出，两根条一起冒出来；羽毛光标朝右上伸出去的那一截也计入它的可滚动宽度。
+ * 贴右缘的内容当场横向溢出，两根条一起冒出来。
  * 两根条不只难看，出现与消失还会让文字列左右跳一下。
  *
  * **两条属性并存是有意的。** scrollbar-width: none 给新 Chromium 与 Firefox，条消失、也不占位；

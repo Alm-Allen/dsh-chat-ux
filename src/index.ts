@@ -17,7 +17,7 @@ export const SETTINGS_NAMESPACE = "dsh-chat-ux"
 // 下面每个默认值在前端 client/settings/settings-scope.ts 里都有一份，改一处就要改另一处
 
 // 纸感总开关：整页铺一张纸，页面底色与左侧栏也跟着换成这张纸的调子。默认关着。
-// 开着时纸感这一整块都在（纸、令牌、羽毛、侧栏那层纹理），关掉就一处不剩。
+// 开着时纸感这一整块都在（纸、令牌、侧栏那层纹理），关掉就一处不剩。
 // 2026-11-03 从开改成关：整页材质的改动太大，不该是装完插件就落下来的默认状态。
 // 老读者的配置里已经写着 paperOn: true，改默认值盖不到它，那一次强关由浏览器侧做（见 PAPER_OFF_MIGRATION_TAG）
 export const DEFAULT_PAPER_ON = false

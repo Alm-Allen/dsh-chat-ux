@@ -52,7 +52,7 @@ const HOST_BG_DOCUMENT_PREVIEW_PROPERTY = "--dsw-alias-bg-document-preview"
 // --dsh-font-family-text 与 --dsh-font-family-code（FONT_FAMILY_VARIABLES），插件写同一对名字
 // 就是与它抢同一个变量，而且它的撤销集会 removeProperty 把插件写的那一笔一起删掉。
 // body 上的 --dsw-font-family 与 --ds-font-family-code 是 base.css 由那两条算出来的消费点，
-// 插件直接在 body 内联这两条：内联声明赢过样式表规则，两代 dsh 都吃得到，也不必与谁抢上游
+// 插件直接在 body 内联这两条：内联声明赢过样式表规则，也不必与谁抢上游
 const HOST_TEXT_FONT_PROPERTY = "--dsw-font-family"
 const HOST_CODE_FONT_PROPERTY = "--ds-font-family-code"
 
@@ -295,8 +295,7 @@ export function captureHostTokens(): void {
  * 抄过之后这两列里一个字、一个底、一条悬停色都不再经纸感的手。重复调用是幂等的——setOwned
  * 只在值变了时才真的写 DOM，而写一条 custom property 会让整篇文档的样式失效一遍
  *
- * 宿主自己没有定义的那几条（旧版 dsh 的 `--dsw-font-family` 之类）不写：没有原值可还，
- * 那一条在这两列上只能跟着 body 走
+ * 宿主自己没有定义的那几条不写：没有原值可还，那一条在这两列上只能跟着 body 走
  */
 export function applySidebarHostTokens(columns: readonly HTMLElement[]): void {
     if (hostSnapshot === null) return

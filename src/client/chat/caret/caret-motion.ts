@@ -7,7 +7,6 @@
  * ⚠️ 原生被按下去、自绘没画出来就是读者看不见光标，所以量不出来一律退回原生，绝不维持现状
  */
 import {COMPOSER_INPUT_SELECTOR, COMPOSER_TEXTAREA_SELECTOR} from "../../dom-contract"
-import {QUILL_ATTRIBUTE, buildQuillCaret, placeQuillCaret} from "../paper/caret/quill"
 
 // 闪烁动画的名字。caret-motion-styles.ts 用它拼 keyframes，两处必须一字不差
 export const CARET_BLINK_NAME = "dsh-chat-ux-caret-blink"
@@ -27,11 +26,18 @@ const CHIP_SELECTED_ATTRIBUTE = "data-composer-chip-selected"
 // 挂在不是定位上下文的父元素上：样式表见到它就补一条 position: relative
 export const CARET_HOST_ATTRIBUTE = "data-chat-ux-caret-host"
 
-// 自绘那根的颜色，写在它自己身上：接管那一刻从可编辑面的原生插入符上读下来
+// 自绘那根的颜色。由样式表按 dsh 的明暗直接写在根上（浅色黑、深色白），脚本不再从原生插入符上读
 export const CARET_COLOR_PROPERTY = "--dsh-chat-ux-caret-color"
 
 // 聚焦之后隔多久补看一次。切会话时，聚焦与选区就绪之间隔着几帧
 const FOCUS_SETTLE_MS = 120
+
+// 自绘那根的基准宽度，以及位移时长。caret-motion-styles.ts 里有同一组值（CARET_WIDTH、CARET_TRAVEL_MS）：
+// 宽度那份由这里按设备像素改写，时长那份用来定 will-change 撤除的时刻，改一处就要改另一处
+// 2.5 是「比 VS Code 的 2px 粗一点」的取值：吸到物理像素之后实际落在三个物理像素上（DPR 1 时 3px，
+// 1.25 时 2.4px，2 时 2.5px），比原来的 2px 明显，又不至于像一条色块
+const CARET_BASE_WIDTH_PX = 1.8
+const CARET_TRAVEL_MS = 80
 
 // 镜像层要从 textarea 上抄的样式：影响字形宽度与折行位置的都在这里
 // 少抄一条，镜像里的折行就和 textarea 里的对不上，插入符会落到别的行上
@@ -56,10 +62,7 @@ export interface CaretMotionHandle {
 }
 
 // 给整页装上插入符动效。档位在每次同步时现读，所以运行期改档不必重新安装
-export function installCaretMotion(
-    readMotionMode: () => CaretMotionMode,
-    readQuillOn: () => boolean = () => false,
-): CaretMotionHandle {
+export function installCaretMotion(readMotionMode: () => CaretMotionMode): CaretMotionHandle {
     // 每个可编辑面一份自绘状态。同屏只有一个面拿着焦点，所以这里通常只有一项
     const caretLayerMap = new Map<HTMLElement, CaretLayer>()
     // 一次同步已经排在下一帧
@@ -72,6 +75,8 @@ export function installCaretMotion(
     let disposed = false
     // 这一帧里来过一次输入。move 档靠它把打字和显式移动分开
     let typedThisFrame = false
+    // 减少动效偏好。开着时位移过渡整条被样式表停掉，也就没有合成层要提
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     // 上一次移动插入符的是 End 键
     // 软换行处的同一个偏移有两个位置：上一行行尾与下一行行首。textarea 不交出偏向哪一边，
     // 而 Chromium 在 End 之后画在行尾、其余时候画在行首，所以记住这一下
@@ -322,10 +327,9 @@ export function installCaretMotion(
 
     // 把一个面的自绘状态整个撤掉：那一根、按掉标记、以及替它补过的定位上下文
     const release = (input: HTMLElement, layer: CaretLayer): void => {
+        window.clearTimeout(layer.willChangeTimer)
+        layer.willChangeTimer = 0
         layer.caret.remove()
-        // 那根连同它怀里的羽毛一起撤掉了；引用留着会让下一次重建接回旧节点
-        layer.quill = null
-        layer.quillHeight = 0
         input.removeAttribute(CARET_ATTRIBUTE)
         if (layer.markedHost) layer.host.removeAttribute(CARET_HOST_ATTRIBUTE)
     }
@@ -358,47 +362,25 @@ export function installCaretMotion(
         caret.setAttribute(CARET_LAYER_ATTRIBUTE, "")
         host.appendChild(caret)
         if (input.isContentEditable) observeComposer(input)
-        const layer: CaretLayer = {caret, visible: false, host, markedHost, quill: null, quillHeight: 0}
+        const layer: CaretLayer = {caret, visible: false, host, markedHost, willChangeTimer: 0}
         caretLayerMap.set(input, layer)
         return layer
     }
 
-    // 接管那一刻读下原生插入符的颜色，自绘的那根照着画
-    // 只在按掉标记还没写上时读得到：写上之后算出来的就是 transparent 了。auto 的意思是跟字色走
-    const adoptCaretColor = (input: HTMLElement, layer: CaretLayer): void => {
-        const style = getComputedStyle(input)
-        const color = style.caretColor === "auto" ? style.color : style.caretColor
-        layer.caret.style.setProperty(CARET_COLOR_PROPERTY, color)
-    }
-
-    // 给这一根装上一支羽毛，并按插入符高度摆好
-    // 先挂笔、再打标记：标记一到，样式表就把 2px 的底色撤掉；反过来写的话，
-    // 中间那一帧读者看到的是一根没有底色的条
-    const markQuill = (layer: CaretLayer, caretHeight: number): void => {
-        // React 重渲染会把那根连同里面那支笔一起摘掉再挂回来，所以每次按「笔还在不在」判一次。
-        // 重复调用是幂等的，标记在不在都一样走
-        if (layer.quill === null || layer.quill.parentElement !== layer.caret) {
-            layer.quill = buildQuillCaret()
-            layer.caret.appendChild(layer.quill)
-            layer.quillHeight = 0
-        }
-        // 高度没变就不重写尺寸与偏移：这一帧 DOM 已经写够了
-        if (Math.abs(layer.quillHeight - caretHeight) > 0.01) {
-            placeQuillCaret(layer.quill, caretHeight)
-            layer.quillHeight = caretHeight
-        }
-        layer.caret.setAttribute(QUILL_ATTRIBUTE, "")
-    }
-
-    // 撤掉怀里那支笔，把 2px 条要回来
-    // 先摘标记、后撤笔：摘标记那一刻样式表已经把条画回来，笔留着一瞬也只是叠着；
-    // 反过来先撤笔的话，中途只要有谁强制回流，那一瞬就是一根没有底色的空盒子
-    const dropQuill = (layer: CaretLayer): void => {
-        if (!layer.caret.hasAttribute(QUILL_ATTRIBUTE)) return
-        layer.caret.removeAttribute(QUILL_ATTRIBUTE)
-        layer.quill?.remove()
-        layer.quill = null
-        layer.quillHeight = 0
+    /**
+     * 只在过渡真的会跑的那一段把这一层提成合成层，过完就撤。
+     *
+     * 常驻的 will-change 会让它变成一个常驻合成层，而落在非整数偏移上的合成层会被合成器重采样，
+     * 边缘比普通绘制更糊——那正是这一轮要消掉的那种糊。连续打字时每一格都会重新计时，
+     * 停手一百毫秒之后这一层才落回去。
+     */
+    const armWillChange = (layer: CaretLayer): void => {
+        window.clearTimeout(layer.willChangeTimer)
+        layer.caret.style.willChange = "transform"
+        layer.willChangeTimer = window.setTimeout(() => {
+            layer.willChangeTimer = 0
+            layer.caret.style.willChange = ""
+        }, CARET_TRAVEL_MS + 20)
     }
 
     // 把自绘的光标放到这个视口矩形上
@@ -406,17 +388,22 @@ export function installCaretMotion(
     const draw = (layer: CaretLayer, box: CaretBox, paused: boolean): void => {
         // 绝对定位按容器的内边距盒算，而且跟着容器自己的滚动走：矩形差值里扣掉边框、加回滚走的量
         const hostRect = layer.host.getBoundingClientRect()
-        // 对齐到整像素。原生插入符就落在像素网格上，落在分数位置的矩形会被抗锯齿抹开一圈灰边，
-        // 看起来和它不是一套。代价是位置最多偏半像素，看不出来
-        const left = Math.round(box.left - hostRect.left - layer.host.clientLeft + layer.host.scrollLeft)
-        const top = Math.round(box.top - hostRect.top - layer.host.clientTop + layer.host.scrollTop)
+        // 对齐到设备像素，不是 CSS 像素。对齐的是最终视口坐标：只把「相对容器」的偏移取整的话，
+        // 容器自己落在半个像素上时它仍然是半个像素，2px 的条照样横跨两个物理像素、两边各留半格灰边
+        const left = snapToDevicePixel(box.left) - (hostRect.left + layer.host.clientLeft - layer.host.scrollLeft)
+        const top = snapToDevicePixel(box.top) - (hostRect.top + layer.host.clientTop - layer.host.scrollTop)
+        // 宽度与高度同理：19px 在 DPR 1.25 下是 23.75 个物理像素，上下各差四分之一个像素，一样会糊
+        const width = snapToDevicePixel(CARET_BASE_WIDTH_PX)
+        const height = snapToDevicePixel(box.height)
 
         // 不播过渡的那一帧必须瞬时就位，下一帧再把过渡接回来
         const fresh = !layer.visible
         const instant = fresh || paused
         if (instant) layer.caret.style.transitionProperty = "none"
         layer.caret.style.transform = "translate(" + left + "px, " + top + "px)"
-        layer.caret.style.height = box.height + "px"
+        layer.caret.style.width = width + "px"
+        layer.caret.style.height = height + "px"
+        if (!instant && !reducedMotion.matches) armWillChange(layer)
         if (instant) {
             requestAnimationFrame(() => {
                 layer.caret.style.transitionProperty = ""
@@ -426,17 +413,10 @@ export function installCaretMotion(
             layer.visible = true
             layer.caret.setAttribute(CARET_VISIBLE_ATTRIBUTE, "")
         }
-        // 纸感开着就把怀里那支笔摆到这一帧的高度上，关着就把它撤掉、把 2px 条要回来。
-        // 两档都在这里落，是因为只有这里才拿到刚量出来的高度
-        if (readQuillOn()) markQuill(layer, box.height)
-        else dropQuill(layer)
         // 每移动一次都让闪烁从头开始：否则赶上灭的那半周期，读者会以为光标没跟上来
         // 只认闪烁那一条。getAnimations() 里也有正在跑的位移过渡，把那条也拉回起点的话，
         // 连续打字就变成一格一格地卡，光标永远落在上一格的插值位置上
         //
-        // 纸感开着、羽毛在场时这里什么都不做，这是有意的：羽毛那一档把闪烁整个关掉了
-        // （quill-styles 给这根写了 animation: none），getAnimations() 里根本没有叫这个名字的动画，
-        // 循环空转一圈就过去。留着它是因为 2px 条那条路径还要靠它，两条路径共用这一段
         for (const animation of layer.caret.getAnimations()) {
             if (animation instanceof CSSAnimation && animation.animationName === CARET_BLINK_NAME) animation.currentTime = 0
         }
@@ -450,12 +430,6 @@ export function installCaretMotion(
             for (const [input, layer] of caretLayerMap) release(input, layer)
             caretLayerMap.clear()
             return
-        }
-        // 纸感关掉而光标还开着：把怀里的羽毛撤掉，让 2px 条回来。
-        // 样式表也挡得住（它要求根上有纸感标记），但那认的是纸挂没挂上、不是配置；
-        // 配置先落、纸下一帧才摘的那一段，两边都不动的话读者会看到一支笔和一根条叠着
-        if (!readQuillOn()) {
-            for (const layer of caretLayerMap.values()) dropQuill(layer)
         }
         const selection = document.getSelection()
         const activeElement = document.activeElement
@@ -509,7 +483,6 @@ export function installCaretMotion(
             hide(layer)
             return
         }
-        if (!caretSurface.hasAttribute(CARET_ATTRIBUTE)) adoptCaretColor(caretSurface, layer)
         // 纯文本面内部滚走的那一截不画。这不是测量失败——原生那根这时也看不见——所以标记照写
         let caretBox: CaretBox | null = measured
         if (caretSurface instanceof HTMLTextAreaElement) caretBox = clipToField(caretSurface, measured)
@@ -554,6 +527,19 @@ export function installCaretMotion(
     }
 }
 
+/**
+ * 把一个视口坐标吸到设备像素网格上。
+ *
+ * 只按 CSS 像素取整是不够的：它只保证「相对容器」是整数，容器自己落在半个像素上时
+ * （输入卡片居中、窗口宽被除成奇数、显示缩放不是 100%），加回去仍然是半个像素。
+ * DPR 是 1.25、1.5 这类值时，半个 CSS 像素就是四分之一个物理像素，2px 宽的条会被抗锯齿抹开一圈灰边。
+ */
+function snapToDevicePixel(value: number): number {
+    const ratio = window.devicePixelRatio
+    if (!(ratio > 0) || !Number.isFinite(ratio)) return Math.round(value)
+    return Math.round(value * ratio) / ratio
+}
+
 // 一个元素是不是本模块接管的可编辑面，是哪一种
 // rich 是主输入框，plain 是输入区里可编辑的 textarea，都不是给 null
 function surfaceOf(element: HTMLElement): SurfaceKind | null {
@@ -582,10 +568,8 @@ interface CaretLayer {
     host: HTMLElement
     // 父元素原本不是定位上下文、由这里补过标记；撤掉那根时标记要一起还回去
     markedHost: boolean
-    // 怀里那支羽毛；纸感关着、或者还用不上时为 null
-    quill: HTMLElement | null
-    // 羽毛上一次摆好的插入符高度：相同就不再写一次尺寸与偏移
-    quillHeight: number
+    // will-change 的撤除定时器；0 表示没有挂着
+    willChangeTimer: number
 }
 
 // 光标贴着的那个换行符，以及光标在它的哪一侧

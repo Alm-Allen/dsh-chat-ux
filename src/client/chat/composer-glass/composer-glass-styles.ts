@@ -203,15 +203,6 @@ body[${GLASS_ATTRIBUTE}][data-ds-dark-theme] {
 	  inset 0 -10px 14px -12px rgb(0 0 0 / 0.5) !important;
   }
 
-  /* rc.2 那条「不可用就整枚淡到四成」在这里收回来 */
-  /* dsh 0.2.0-rc.2 给这枚按钮的 :disabled 是 opacity: .4（0.2.1-alpha.2 已经不用这条，空输入框时
-     照旧实心），不收回来的话同一块玻璃在「输入框为空」时会整枚淡掉，两版观感就此分叉（实测 rc.2 空输
-     入时按钮面 #b8cbf2、打字之后 #5d89e5，alpha.2 一直是 #5e8ae7）。代价照实说：收回来之后「还不能发
-     送」没有视觉提示了，按钮仍由 dsh 端拒收、点不动，这与 alpha.2 一致；深色档一样收 */
-  body[${GLASS_ATTRIBUTE}] [data-composer-card] :is([${GLASS_PRIMARY_ATTRIBUTE}], [${GLASS_STOP_ATTRIBUTE}]):disabled {
-	opacity: 1 !important;
-  }
-
   /* 左下角那枚加号（添加文件或调指令）：同一块玻璃上的一片灰 */
   /* 与主按钮同一套做法：底是 dsh 那个令牌（--dsw-specific-selector，比卡片底深一档），让出两成之后
      卡片那层玻璃底从小圆底下透上来。三笔质感按 28px 的小圆收一遍（主按钮那三笔是给 34px 写的），

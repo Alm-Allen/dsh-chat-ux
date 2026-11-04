@@ -20,7 +20,7 @@ import {currentPaperMode} from "./paper-theme"
 
 // 安装时现读的配置。默认值在 settings-scope.ts 里也有一份
 export interface PaperSettingsInput {
-    // 纸感总开关。开着时这一整块都在（纸、令牌、羽毛），关掉就一处不剩
+    // 纸感总开关。开着时这一整块都在（纸、令牌），关掉就一处不剩
     on: boolean
     // 纸感要不要接管字族。关掉时纸照铺，正文与代码那两栈回到读者自己那套
     font: boolean

@@ -84,7 +84,7 @@ export function installFileMutationRow(slots: SlotsService, liveDiff: () => bool
 export function FileMutationRow(props: FileMutationRowProps): ReactElement {
     const {t, block, toolName, cwd, home, openFile, inspect, useDisclosure} = props
     const {expanded, toggle} = useDisclosure()
-    // dsh 0.2.1-alpha.1 起每个阶段都带 args 视图，不再有旧版那个前缀订阅口
+    // 每个阶段都带 args 视图，准备态可能还不完整
     const parsedArgs = useMemo(() => {
         const head = callHead(block)
         return head === null ? null : parseArgs(head.argsRaw)
@@ -263,7 +263,7 @@ interface PreparingToolCall {
     callId: string
     parentCallId?: string | undefined
     name: string
-    // 参数视图在这里就可用，但准备态可能还没收全；旧版 dsh 没有它
+    // 参数视图在这里就可用，但准备态可能还没收全
     args?: ToolArgs | undefined
 }
 

@@ -159,11 +159,12 @@ export function installFoldGlide(): () => void {
             const controlledElement = document.getElementById(controls)
             return controlledElement instanceof HTMLElement ? controlledElement : null
         }
-        // 认 header 优先：0.2.1-alpha.2 起外层多了一层 [data-disclosure-header]，根在它上面一层。
-        // 它里面那个 headerAccessory 槽位正好落在旧写法会取到的位置上，取过来的话收起时会把那个按钮压扁
-        const row = control.closest(DISCLOSURE_HEADER_SELECTOR) ?? control
-        const bodyCandidate = row.parentElement?.lastElementChild
-        return bodyCandidate instanceof HTMLElement && bodyCandidate !== row ? bodyCandidate : null
+        // 展开体挂在 [data-disclosure-header] 的兄弟位置上，header 把被点行与 headerAccessory 槽位一起裹住。
+        // 只认被点行的话，它的兄弟正好是 headerAccessory 那个空槽位，收起时会把那个按钮压扁
+        const header = control.closest(DISCLOSURE_HEADER_SELECTOR)
+        if (header === null) return null
+        const bodyCandidate = header.parentElement?.lastElementChild
+        return bodyCandidate instanceof HTMLElement && bodyCandidate !== header ? bodyCandidate : null
     }
 
     /**

@@ -92,9 +92,7 @@ export function apply(ctx: ClientContext): void {
 
     // 插入符动效与字体两项不是每一轮现读，而是常驻的 DOM 状态：配置一改就得重新落一次
     // （卡片上保存完不必刷新页面），插件卸下时也要把写过的东西撤干净。所以订阅由这里拿着，syncSettings 是唯一的入口
-    // 纸感开着时那根自绘插入符画成羽毛，关掉时回到 2px 的竖线。几何、位移与闪烁仍归 caret-motion，
-    // 羽毛只是它里面的一种画法——两套自绘互相覆盖是这套动效最容易翻车的地方，所以不另起一根
-    const caret = installCaretMotion(() => settings.caret, () => settings.paperOn)
+    const caret = installCaretMotion(() => settings.caret)
     // 上下文占用那个圆也归这一处：dsh 画的是环、也没有档位色。它不是座位（InputBar 直接渲染的那一个），
     // 接不过来，所以从 DOM 上认它，只写读数与档位，形状与颜色由样式表接。
     // 开关关掉时整块卸下：写过的属性、内联样式与数字滚动一起撤干净，读者看到的是 dsh 原来那圈环
@@ -412,7 +410,7 @@ interface ChatUxSettings {
     // 发送气泡是否走形变（整张卡片收成气泡），改一次就得重落一次
     sendFlight: boolean
     // 纸感总开关。它不只是画不画，还决定整页底色那几条令牌写不写。
-    // 关掉时纸感这一整块一起收：两片 canvas、令牌、羽毛、侧栏那层纹理，一处不剩
+    // 关掉时纸感这一整块一起收：两片 canvas、令牌、侧栏那层纹理，一处不剩
     paperOn: boolean
     // 纸感要不要接管字族。挂在前一项底下：纸关掉时它不起作用
     paperFont: boolean
