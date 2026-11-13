@@ -78,8 +78,9 @@ Every switch lives on the plugin's own row on the **Plugins** page:
 
 ## Compatibility
 
-- Developed and verified on dsh `0.2.1-rc.1` (web) and `0.2.1-alpha.2` (desktop). **The minimum supported release is `0.2.1-alpha.1`; `0.2.0-rc.2` and older are no longer supported** — the 2026-10-17 drop removed the `data-text-shimmer` alias, the old dock-shape branch, the built-in stats pill takeover (`legacy-usage-pill.ts`), and the file-mutation row's raw-argument prefix scan.
-- From `0.2.1-alpha.1` on, the stats dock carries `data-composer-dock` and every preparing block carries `block.args`; the plugin reads those directly. On anything older it leaves what it cannot recognise untouched instead of drawing it wrong.
+- Targets the newest RC and the newest Alpha of both dsh lines (web and desktop). **The minimum supported release is `0.2.2-rc.1`** (from `0.3.2` on); `0.2.1` and older are no longer supported and get no fallbacks.
+- Verified against dsh `0.2.2-rc.2` on 2026-11-13: every one of the plugin's 44 `data-*` attributes, 47 design tokens, 3 seat names, the `configForms` service, 24 locale keys and 4 settings fields still resolves.
+- **The platform module export surface has to be re-checked every release.** `0.2.2-rc.2` deleted `useAnchoredPosition` from `ui-primitives`: no attribute or token changed, only a function went away, and the cache-hit pill crashed on every render and silently fell back to the built-in one. The plugin uses 5 of that table's 11 modules (`react`, `react-dom`, `react-dom/client`, `@deepseek-ai/cordis`, `@deepseek-ai/dsh-client-ui-primitives`), 15 symbols in total.
 - Node `^22.19.0 || >=24.0.0`.
 
 ## About this repository

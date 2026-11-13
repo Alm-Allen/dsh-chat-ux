@@ -78,10 +78,10 @@ dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
 
 ## 兼容性
 
-- 兼容目标是 dsh 的两条发布线：**网页端 `0.2.1-rc.5`** 与**桌面端 `0.2.2-alpha.2`**。两者都实测过，插件认的契约面在这两版上一致。
-- **最低支持 `0.2.1-alpha.1`**；`0.2.0-rc.2` 及更早不再适配（2026-10-17 下线了那几处兜底：`data-text-shimmer` 双认、坞的「按形状找」老版分支、内置统计胶囊的收尾、文件变更行准备态的参数前缀扫描）。
-- `0.2.1-alpha.1` 起，输入框下方的统计坞带 `data-composer-dock`、准备态块带 `block.args`，插件直接认它们；更早的版本上它认不出来时原样不动，不会画错。
-- 2026-10-31 核对过 rc.5 与 alpha.2 的全部接触面：`PLATFORM_MODULES`（11 个键）、四个座位名、插件认的 32 个 `data-*` 语义属性、`DisclosureRow` / `TextShimmer` / `ContextMeter` 三处实现、设计令牌的取用，两版逐项相同。改动只有一处不影响本插件的：`conversation.chat.reasoning.body` 那一版的 owner props 多一个 `rawText` 字段。
+- 兼容目标是 dsh 的两条发布线：**网页端与桌面端**，都按最新的 RC 与最新的 Alpha 两条线走。
+- **最低支持 `0.2.2-rc.1`**（`0.3.2` 起）。`0.2.1` 全系与更早不再适配，也不为它们写兜底。
+- 2026-11-13 对着 dsh `0.2.2-rc.2` 核过全部接触面：插件点名的 44 个 `data-*`、47 个设计令牌、3 个座位名、`configForms` 服务、24 个文案 key、4 个设置字段全部命中。
+- **平台模块的导出面每版都要单独核**：`0.2.2-rc.2` 删掉了 `ui-primitives` 的 `useAnchoredPosition`，属性与令牌一个都没动、只是函数没了，缓存命中胶囊因此每次渲染抛一次错、静默退回内置那一枚。插件现在从那 11 个模块里拿 5 个（`react`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-primitives`），合计 15 个符号，逐版都要核。
 - Node `^22.19.0 || >=24.0.0`。
 
 ## 关于本仓库
