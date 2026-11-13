@@ -1773,7 +1773,8 @@ const jsx_runtime_1 = require("react/jsx-runtime");
  * 段标记与段内位置走 ../ramp
  *
  * 内置那一套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以照着它的样子重画；
- * 弹窗定位与「点外面就关」复用 primitives 那两个共享钩子，行为与内置一致
+ * 弹窗定位跟 dsh 自己的统计弹窗一样交给 CSS anchor（锚点名字内联在座位根上、面板上写 position-anchor，
+ * 四条边与五条回退都在 cache-hit-styles），「点外面就关」复用 primitives 那个共享钩子，行为与内置一致
  */
 const react_1 = require("react");
 const react_dom_1 = require("react-dom");
@@ -1782,12 +1783,6 @@ const settings_scope_1 = require("../../settings/settings-scope");
 const cache_hit_styles_1 = require("./cache-hit-styles");
 const ramp_1 = require("../ramp");
 const digit_reel_1 = require("../reel/digit-reel");
-// 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值
-const PANEL_GAP = 8;
-// 面板与视口边缘留的余量，与内置的 stat 弹窗同值
-const PANEL_MARGIN = 12;
-// 还没量出位置的那一帧：先按隐藏布局画出来，定位夹取才量得到真实尺寸
-const MEASURE_STYLE = { visibility: "hidden", left: 0, top: 0 };
 // 没读到 host 分节时的档位，与 dsh 自己的默认值一致
 const DEFAULT_PERFORMANCE_USAGE = "detailed";
 // dsh 那份「性能与用量」表单的条目 id
@@ -1846,9 +1841,9 @@ function CacheHitPill({ useProjection, t }) {
     const [open, setOpen] = (0, react_1.useState)(false);
     const rootRef = (0, react_1.useRef)(null);
     const panelRef = (0, react_1.useRef)(null);
-    const panelStyle = (0, dsh_client_ui_primitives_1.useAnchoredPosition)({
-        open, anchorRef: rootRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN,
-    });
+    // 面板的锚点名字：anchor-name 必须是 dashed-ident，而 useId 交回来的带冒号，去掉才合法。
+    // 这一句不能挪进紧凑档那条分支，钩子调用的次序必须场场一致
+    const anchorName = `--dsh-chat-ux-hit-${(0, react_1.useId)().replaceAll(":", "")}`;
     (0, dsh_client_ui_primitives_1.useDismissOnOutsidePointer)(rootRef, open, setOpen, panelRef);
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef);
     if (tokenUsage === undefined)
@@ -1872,7 +1867,7 @@ function CacheHitPill({ useProjection, t }) {
     const totalText = t("message.turnUsage.count", { count: formatTokens(total, t) });
     const title = t("stats.dialog.usageTitle");
     const summary = hit === null ? totalText : totalText + " · " + hitLabel + " " + hit.text;
-    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => setOpen(!open), children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, reading !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), reading] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: panelStyle ?? MEASURE_STYLE, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.input") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheRead") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheReadTokens, t) }), tokenUsage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheWrite") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.output") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.outputTokens, t) })] })] }), document.body)] }));
+    return ((0, jsx_runtime_1.jsxs)("span", { ref: rootRef, className: cache_hit_styles_1.CACHE_HIT_ANCHOR_CLASS, "data-composer-stat": USAGE_STAT_ID, style: { anchorName }, children: [(0, jsx_runtime_1.jsxs)("button", { type: "button", className: cache_hit_styles_1.CACHE_HIT_PILL_CLASS, "aria-haspopup": "dialog", "aria-expanded": open, "aria-label": summary, onClick: () => setOpen(!open), children: [icon, (0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_LABEL_CLASS, children: [totalText, reading !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_SEP_CLASS, "aria-hidden": true, children: "\u00B7" }), reading] }))] })] }), open && (0, react_dom_1.createPortal)((0, jsx_runtime_1.jsxs)("div", { ref: panelRef, className: cache_hit_styles_1.CACHE_HIT_PANEL_CLASS, role: "dialog", "aria-label": title, style: { positionAnchor: anchorName }, children: [(0, jsx_runtime_1.jsxs)("div", { className: cache_hit_styles_1.CACHE_HIT_TITLE_CLASS, children: [(0, jsx_runtime_1.jsxs)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_LABEL_CLASS, children: [icon, title] }), (0, jsx_runtime_1.jsx)("span", { className: cache_hit_styles_1.CACHE_HIT_TITLE_VALUE_CLASS, children: exactCount(total, t) })] }), (0, jsx_runtime_1.jsx)("div", { className: cache_hit_styles_1.CACHE_HIT_RULE_CLASS, "aria-hidden": true }), (0, jsx_runtime_1.jsxs)("dl", { className: cache_hit_styles_1.CACHE_HIT_DETAILS_CLASS, children: [hit !== null && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: hitLabel }), (0, jsx_runtime_1.jsx)("dd", { children: hit.text })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.input") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.uncachedInputTokens, t) }), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheRead") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheReadTokens, t) }), tokenUsage.cacheWriteTokens !== 0 && ((0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, { children: [(0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.cacheWrite") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.cacheWriteTokens, t) })] })), (0, jsx_runtime_1.jsx)("dt", { children: t("message.turnUsage.output") }), (0, jsx_runtime_1.jsx)("dd", { children: exactCount(tokenUsage.outputTokens, t) })] })] }), document.body)] }));
 }
 // 命中率读数：恒一位小数，同时给出色阶位置；没有计过价的输入时是 null
 function hitReading(cacheReadTokens, billedInputTokens) {
@@ -2018,7 +2013,7 @@ exports.CACHE_HIT_CSS = exports.CACHE_HIT_DETAILS_CLASS = exports.CACHE_HIT_RULE
  * 数字滚动的类名与规则在 ../reel/reel-styles，两处共用；色阶的段标记与位置也不在这里，在 ../ramp
  */
 const ramp_1 = require("../ramp");
-// 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己
+// 座位根，也是弹窗的定位锚点：只包住胶囊，锚点框因此就是胶囊自己
 exports.CACHE_HIT_ANCHOR_CLASS = "dsh-chat-ux-hit-anchor";
 // 胶囊本体：静态读数是 span，能展开明细的是 button
 exports.CACHE_HIT_PILL_CLASS = "dsh-chat-ux-hit-pill";
@@ -2167,7 +2162,14 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   }
 }
 
-/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给 */
+/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层
+
+   定位交给 CSS anchor：座位根上内联的那个 anchor-name 是锚点，这里的 position-anchor 认它。
+   四条边走 anchor() 换算，尺寸与回退用下面的 @position-try，dsh 自己的统计弹窗与上下文比例圆
+   也是这一套，参数逐条对齐。面板体仍挂在 body 下（portal），锚点是靠名字引用的，跨 portal 照样成立
+
+   高度上限是这一版补上的：JS 定位那个年代 hook 写的是 --dsh-anchored-max-height，而这张表从没读过它，
+   面板内容再多也照旧溢出视口 */
 .${exports.CACHE_HIT_PANEL_CLASS} {
   position: fixed;
   z-index: 1100;
@@ -2186,6 +2188,70 @@ button.${exports.CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
   cursor: default;
+  max-height: calc(100dvh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 面板第一次有了纵向滚动，滚动条按 dsh 那些菜单面的口径上色 */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: max(12px, calc(anchor(top) + 8px));
+  left: max(12px, anchor(left));
+  right: 12px;
+  position-try-fallbacks: --dsh-chat-ux-hit-window, --dsh-chat-ux-hit-opposite, --dsh-chat-ux-hit-wide-opposite, --dsh-chat-ux-hit-tall, --dsh-chat-ux-hit-viewport;
+  align-self: end;
+  justify-self: start;
+  height: fit-content;
+  min-height: 0;
+  margin: 0;
+}
+
+/* 面板的五个落脚点，按上面的顺序依次试：窗口窄到放不下就在窗口里铺满、翻到锚点下方、
+   再铺满、纵向拉长、最后兜进视口。名字用自己的前缀，不和 dsh 的 --dsh-stat-* 撞 */
+@position-try --dsh-chat-ux-hit-window {
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: max(12px, calc(anchor(top) + 8px));
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  align-self: safe end;
+  justify-self: safe end;
+}
+
+@position-try --dsh-chat-ux-hit-opposite {
+  top: max(12px, calc(anchor(bottom) + 8px));
+  bottom: 12px;
+  align-self: start;
+}
+
+@position-try --dsh-chat-ux-hit-wide-opposite {
+  top: max(12px, calc(anchor(bottom) + 8px));
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  align-self: start;
+  justify-self: safe end;
+}
+
+@position-try --dsh-chat-ux-hit-tall {
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: 12px;
+  left: max(12px, anchor(left));
+  right: 12px;
+  margin: 0;
+  align-self: safe start;
+  justify-self: start;
+}
+
+@position-try --dsh-chat-ux-hit-viewport {
+  position-area: none;
+  inset: max(12px, var(--dsh-frame-overlay-top, 12px)) 12px 12px;
+  margin: 0;
+  align-self: safe start;
+  justify-self: safe end;
 }
 
 .${exports.CACHE_HIT_TITLE_CLASS} {

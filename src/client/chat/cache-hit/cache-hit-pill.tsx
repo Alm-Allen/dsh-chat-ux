@@ -6,13 +6,14 @@
  * 段标记与段内位置走 ../ramp
  *
  * 内置那一套类名带构建期 hash、组件也不在冻结的基座模块表里，拿不到，所以照着它的样子重画；
- * 弹窗定位与「点外面就关」复用 primitives 那两个共享钩子，行为与内置一致
+ * 弹窗定位跟 dsh 自己的统计弹窗一样交给 CSS anchor（锚点名字内联在座位根上、面板上写 position-anchor，
+ * 四条边与五条回退都在 cache-hit-styles），「点外面就关」复用 primitives 那个共享钩子，行为与内置一致
  */
-import {useEffect, useRef, useState, useSyncExternalStore} from "react"
+import {useEffect, useId, useRef, useState, useSyncExternalStore} from "react"
 import type {CSSProperties, MutableRefObject, ReactElement} from "react"
 import {createPortal} from "react-dom"
 import {
-    IconDatabaseOutlineRegular, useAnchoredPosition, useDismissOnOutsidePointer,
+    IconDatabaseOutlineRegular, useDismissOnOutsidePointer,
 } from "@deepseek-ai/dsh-client-ui-primitives"
 import type {SlotsService} from "../file-mutation/file-mutation-row"
 import {DEFAULT_HIT_REEL} from "../../settings/settings-scope"
@@ -25,15 +26,6 @@ import {
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, rampPosition} from "../ramp"
 import type {RampPosition} from "../ramp"
 import {DigitReel} from "../reel/digit-reel"
-
-// 锚点顶边与面板底边之间那道缝，与内置的 stat 弹窗同值
-const PANEL_GAP = 8
-
-// 面板与视口边缘留的余量，与内置的 stat 弹窗同值
-const PANEL_MARGIN = 12
-
-// 还没量出位置的那一帧：先按隐藏布局画出来，定位夹取才量得到真实尺寸
-const MEASURE_STYLE: CSSProperties = {visibility: "hidden", left: 0, top: 0}
 
 // 没读到 host 分节时的档位，与 dsh 自己的默认值一致
 const DEFAULT_PERFORMANCE_USAGE = "detailed"
@@ -136,9 +128,9 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     const [open, setOpen] = useState(false)
     const rootRef = useRef<HTMLSpanElement | null>(null)
     const panelRef = useRef<HTMLDivElement | null>(null)
-    const panelStyle = useAnchoredPosition({
-        open, anchorRef: rootRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN,
-    })
+    // 面板的锚点名字：anchor-name 必须是 dashed-ident，而 useId 交回来的带冒号，去掉才合法。
+    // 这一句不能挪进紧凑档那条分支，钩子调用的次序必须场场一致
+    const anchorName = `--dsh-chat-ux-hit-${useId().replaceAll(":", "")}`
     useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
     useEscapeAndOutsideClick(open, setOpen, rootRef, panelRef)
     if (tokenUsage === undefined) return null
@@ -179,7 +171,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
     const title = t("stats.dialog.usageTitle")
     const summary = hit === null ? totalText : totalText + " · " + hitLabel + " " + hit.text
     return (
-        <span ref={rootRef} className={CACHE_HIT_ANCHOR_CLASS} data-composer-stat={USAGE_STAT_ID}>
+        <span ref={rootRef} className={CACHE_HIT_ANCHOR_CLASS} data-composer-stat={USAGE_STAT_ID} style={{anchorName}}>
 			<button
                 type="button"
                 className={CACHE_HIT_PILL_CLASS}
@@ -205,7 +197,7 @@ export function CacheHitPill({useProjection, t}: CacheHitPillProps): ReactElemen
                     className={CACHE_HIT_PANEL_CLASS}
                     role="dialog"
                     aria-label={title}
-                    style={panelStyle ?? MEASURE_STYLE}
+                    style={{positionAnchor: anchorName}}
                 >
                     <div className={CACHE_HIT_TITLE_CLASS}>
                         <span className={CACHE_HIT_TITLE_LABEL_CLASS}>{icon}{title}</span>

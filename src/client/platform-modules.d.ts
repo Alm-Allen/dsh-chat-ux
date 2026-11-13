@@ -1,14 +1,15 @@
 /**
  * DSH 客户端模块加载器从冻结的基座模块表（`PLATFORM_MODULES`）里提供的平台模块，在这里做环境声明
  *
- * 那张表只认九个键：react、react/jsx-runtime、react-dom、react-dom/client、@deepseek-ai/cordis、
- * dsh-client-store、dsh-client-ui-slots、dsh-client-ui-primitives、dsh-client-ui-dockkit
+ * 那张表只有十一个键，顺序是表里的顺序：react、react/jsx-runtime、react-dom、react-dom/client、
+ * @deepseek-ai/cordis、zod、@tanstack/react-virtual、@deepseek-ai/dsh-client-store、
+ * @deepseek-ai/dsh-client-ui-slots、@deepseek-ai/dsh-client-ui-primitives、@deepseek-ai/dsh-client-ui-dockkit
  * 表外的一切（clsx、内置工具行所在的 @deepseek-ai/dsh-client-ui-tool、各种 util 包）都拿不到，
  * 本插件也不安装它们，所以只声明真正用到的部分，宽度到调用点够用为止
  */
 
 declare module "@deepseek-ai/dsh-client-ui-primitives" {
-    import type {CSSProperties, ReactElement, ReactNode} from "react"
+    import type {ReactElement, ReactNode} from "react"
 
     // 只读胶囊徽标。neutral 是低饱和的那一套
     export function Tag(props: {
@@ -130,23 +131,6 @@ declare module "@deepseek-ai/dsh-client-ui-primitives" {
     export function IconInspectOutlineRegular(props: IconProps): ReactElement
 
     export function IconDatabaseOutlineRegular(props: IconProps): ReactElement
-
-    // 弹窗定位的输入：锚点、面板与夹取量
-    export interface AnchoredPositionOptions {
-        // 面板是否开着；关着时不测量
-        open: boolean
-        anchorRef: { current: HTMLElement | null }
-        panelRef: { current: HTMLElement | null }
-        // 只落上方
-        side: "top"
-        // 锚点与面板之间那道缝
-        gap: number
-        // 与视口边缘留的余量
-        margin: number
-    }
-
-    // 夹进视口之后的固定定位；还没量出来时是 null
-    export function useAnchoredPosition(options: AnchoredPositionOptions): CSSProperties | null
 
     // 点到锚点与面板之外时关掉
     export function useDismissOnOutsidePointer(

@@ -9,7 +9,7 @@
  */
 import {RAMP_POSITION_VAR, RAMP_SPAN_ATTRIBUTE, RAMP_SPAN_HIGH, RAMP_SPAN_LOW} from "../ramp"
 
-// 座位根，也是弹窗的定位锚点：只包住胶囊，让定位夹取量的是胶囊自己
+// 座位根，也是弹窗的定位锚点：只包住胶囊，锚点框因此就是胶囊自己
 export const CACHE_HIT_ANCHOR_CLASS = "dsh-chat-ux-hit-anchor"
 
 // 胶囊本体：静态读数是 span，能展开明细的是 button
@@ -169,7 +169,14 @@ button.${CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   }
 }
 
-/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层。定位由 useAnchoredPosition 给 */
+/* 明细面板：菜单面、突出阴影，与内置的 stat 弹窗同一层
+
+   定位交给 CSS anchor：座位根上内联的那个 anchor-name 是锚点，这里的 position-anchor 认它。
+   四条边走 anchor() 换算，尺寸与回退用下面的 @position-try，dsh 自己的统计弹窗与上下文比例圆
+   也是这一套，参数逐条对齐。面板体仍挂在 body 下（portal），锚点是靠名字引用的，跨 portal 照样成立
+
+   高度上限是这一版补上的：JS 定位那个年代 hook 写的是 --dsh-anchored-max-height，而这张表从没读过它，
+   面板内容再多也照旧溢出视口 */
 .${CACHE_HIT_PANEL_CLASS} {
   position: fixed;
   z-index: 1100;
@@ -188,6 +195,70 @@ button.${CACHE_HIT_PILL_CLASS}[aria-expanded='true'] {
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
   cursor: default;
+  max-height: calc(100dvh - 12px - max(12px, var(--dsh-frame-overlay-top, 12px)));
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 面板第一次有了纵向滚动，滚动条按 dsh 那些菜单面的口径上色 */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: max(12px, calc(anchor(top) + 8px));
+  left: max(12px, anchor(left));
+  right: 12px;
+  position-try-fallbacks: --dsh-chat-ux-hit-window, --dsh-chat-ux-hit-opposite, --dsh-chat-ux-hit-wide-opposite, --dsh-chat-ux-hit-tall, --dsh-chat-ux-hit-viewport;
+  align-self: end;
+  justify-self: start;
+  height: fit-content;
+  min-height: 0;
+  margin: 0;
+}
+
+/* 面板的五个落脚点，按上面的顺序依次试：窗口窄到放不下就在窗口里铺满、翻到锚点下方、
+   再铺满、纵向拉长、最后兜进视口。名字用自己的前缀，不和 dsh 的 --dsh-stat-* 撞 */
+@position-try --dsh-chat-ux-hit-window {
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: max(12px, calc(anchor(top) + 8px));
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  align-self: safe end;
+  justify-self: safe end;
+}
+
+@position-try --dsh-chat-ux-hit-opposite {
+  top: max(12px, calc(anchor(bottom) + 8px));
+  bottom: 12px;
+  align-self: start;
+}
+
+@position-try --dsh-chat-ux-hit-wide-opposite {
+  top: max(12px, calc(anchor(bottom) + 8px));
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  align-self: start;
+  justify-self: safe end;
+}
+
+@position-try --dsh-chat-ux-hit-tall {
+  position-area: none;
+  top: max(12px, var(--dsh-frame-overlay-top, 12px));
+  bottom: 12px;
+  left: max(12px, anchor(left));
+  right: 12px;
+  margin: 0;
+  align-self: safe start;
+  justify-self: start;
+}
+
+@position-try --dsh-chat-ux-hit-viewport {
+  position-area: none;
+  inset: max(12px, var(--dsh-frame-overlay-top, 12px)) 12px 12px;
+  margin: 0;
+  align-self: safe start;
+  justify-self: safe end;
 }
 
 .${CACHE_HIT_TITLE_CLASS} {
