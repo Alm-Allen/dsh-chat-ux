@@ -113,12 +113,18 @@ body {
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 2px);
 }
 
-.${FILE_ADD_CLASS} {
-  color: var(--dsh-chat-ux-diff-added);
+/* 两个类叠着写，是因为这一处颜色挂在 TextShimmer 的根上：那一层的 .root 自带一条 color: inherit，
+   与单个类特异性相同，谁后注入就由谁说话。写成两个类就与加载顺序无关。
+   变量取不到时直接落到宿主令牌：中间那一层只是留给调试与主题覆盖的把手，不该成为唯一通路。
+   内层那一条是给数字轮的——它自己不写颜色，靠一层层继承，而 TextShimmer 的内容层也在继承链上 */
+.${FILE_STAT_CLASS}.${FILE_ADD_CLASS},
+.${FILE_STAT_CLASS}.${FILE_ADD_CLASS} .${REEL_TEXT_CLASS} {
+  color: var(--dsh-chat-ux-diff-added, var(--dsw-alias-file-diff-added-marker));
 }
 
-.${FILE_DEL_CLASS} {
-  color: var(--dsh-chat-ux-diff-deleted);
+.${FILE_STAT_CLASS}.${FILE_DEL_CLASS},
+.${FILE_STAT_CLASS}.${FILE_DEL_CLASS} .${REEL_TEXT_CLASS} {
+  color: var(--dsh-chat-ux-diff-deleted, var(--dsw-alias-file-diff-deleted-marker));
 }
 
 /* 悬停整行提亮，但行尾那两个数字不跟：它们是这一行的结论，颜色本身就是信息，
