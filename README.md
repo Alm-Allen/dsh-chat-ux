@@ -81,7 +81,8 @@ dsh plugin --profile web add github:Alm-Allen/dsh-chat-ux#<commit-sha>
 - 兼容目标是 dsh 的两条发布线：**网页端与桌面端**，都按最新的 RC 与最新的 Alpha 两条线走。
 - **最低支持 `0.2.2-rc.1`**（`0.3.2` 起）。`0.2.1` 全系与更早不再适配，也不为它们写兜底。
 - 2026-11-13 对着 dsh `0.2.2-rc.2` 核过全部接触面：插件点名的 44 个 `data-*`、47 个设计令牌、3 个座位名、`configForms` 服务、24 个文案 key、4 个设置字段全部命中。
-- **平台模块的导出面每版都要单独核**：`0.2.2-rc.2` 删掉了 `ui-primitives` 的 `useAnchoredPosition`，属性与令牌一个都没动、只是函数没了，缓存命中胶囊因此每次渲染抛一次错、静默退回内置那一枚。插件现在从那 11 个模块里拿 5 个（`react`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-primitives`），合计 15 个符号，逐版都要核。
+- 2026-11-14 对着 dsh `0.2.2-rc.3` 又核了一遍（口径：源码去重、剔除插件自有的属性与令牌）：42 个宿主 `data-*`、54 个设计令牌、`ui-primitives` 的 14 个符号、3 个座位名、`configForms` 服务一条没少。这一版对插件是纯加法——两个新座位、一枚新图标，不需要适配；核对记录在本仓库 `文档/方案/dsh-0.2.2-rc.3-适配.md`。
+- **平台模块的导出面每版都要单独核**：`0.2.2-rc.2` 删掉了 `ui-primitives` 的 `useAnchoredPosition`，属性与令牌一个都没动、只是函数没了，缓存命中胶囊因此每次渲染抛一次错、静默退回内置那一枚。插件现在从那 11 个模块里拿 5 个（`react`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-client-ui-primitives`）；`ui-primitives` 这一处 14 个符号（删掉 `useAnchoredPosition` 之前是 15 个），逐版都要核。
 - Node `^22.19.0 || >=24.0.0`。
 
 ## 关于本仓库
